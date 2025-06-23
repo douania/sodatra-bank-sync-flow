@@ -104,7 +104,7 @@ export class FileProcessingService {
     `;
 
     const extractionResult = extractFundPosition(mockContent);
-    return extractionResult.success ? extractionResult.data as FundPosition : null;
+    return extractionResult.success ? extractionResult.data : null;
   }
 
   private async processClientReconciliation(file: File): Promise<ClientReconciliation[]> {
@@ -117,7 +117,7 @@ export class FileProcessingService {
     `;
 
     const extractionResult = extractClientReconciliation(mockContent);
-    return extractionResult.success ? extractionResult.data as ClientReconciliation[] : [];
+    return extractionResult.success ? extractionResult.data : [];
   }
 
   private generateMockPdfContent(bankName: string): string {
