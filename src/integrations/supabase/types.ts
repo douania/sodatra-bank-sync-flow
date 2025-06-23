@@ -106,31 +106,103 @@ export type Database = {
       }
       collection_report: {
         Row: {
+          bank_commission: number | null
           bank_name: string | null
+          bank_name_display: string | null
           client_code: string
           collection_amount: number
+          commission: number | null
           created_at: string
+          credited_date: string | null
+          d_n_amount: number | null
+          date_of_impay: string | null
+          date_of_validity: string | null
+          depo_ref: string | null
+          facture_no: string | null
+          frais_escompte: number | null
           id: string
+          income: number | null
+          interet: number | null
+          match_confidence: number | null
+          match_method: string | null
+          matched_bank_deposit_id: string | null
+          nj: number | null
+          no_chq_bd: string | null
+          processed_at: string | null
+          processing_status: string | null
+          reglement_impaye: string | null
+          remarques: string | null
           report_date: string
+          sg_or_fa_no: string | null
           status: string | null
+          taux: number | null
+          tob: number | null
         }
         Insert: {
+          bank_commission?: number | null
           bank_name?: string | null
+          bank_name_display?: string | null
           client_code: string
           collection_amount: number
+          commission?: number | null
           created_at?: string
+          credited_date?: string | null
+          d_n_amount?: number | null
+          date_of_impay?: string | null
+          date_of_validity?: string | null
+          depo_ref?: string | null
+          facture_no?: string | null
+          frais_escompte?: number | null
           id?: string
+          income?: number | null
+          interet?: number | null
+          match_confidence?: number | null
+          match_method?: string | null
+          matched_bank_deposit_id?: string | null
+          nj?: number | null
+          no_chq_bd?: string | null
+          processed_at?: string | null
+          processing_status?: string | null
+          reglement_impaye?: string | null
+          remarques?: string | null
           report_date: string
+          sg_or_fa_no?: string | null
           status?: string | null
+          taux?: number | null
+          tob?: number | null
         }
         Update: {
+          bank_commission?: number | null
           bank_name?: string | null
+          bank_name_display?: string | null
           client_code?: string
           collection_amount?: number
+          commission?: number | null
           created_at?: string
+          credited_date?: string | null
+          d_n_amount?: number | null
+          date_of_impay?: string | null
+          date_of_validity?: string | null
+          depo_ref?: string | null
+          facture_no?: string | null
+          frais_escompte?: number | null
           id?: string
+          income?: number | null
+          interet?: number | null
+          match_confidence?: number | null
+          match_method?: string | null
+          matched_bank_deposit_id?: string | null
+          nj?: number | null
+          no_chq_bd?: string | null
+          processed_at?: string | null
+          processing_status?: string | null
+          reglement_impaye?: string | null
+          remarques?: string | null
           report_date?: string
+          sg_or_fa_no?: string | null
           status?: string | null
+          taux?: number | null
+          tob?: number | null
         }
         Relationships: []
       }

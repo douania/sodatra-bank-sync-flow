@@ -70,7 +70,40 @@ export interface CollectionReport {
   collectionAmount: number;
   bankName?: string;
   status: 'pending' | 'processed' | 'failed';
-  dateOfValidity?: string; // Nouvelle propriété pour la date de crédit en banque
+  
+  // ⭐ NOUVELLES COLONNES AJOUTÉES
+  dateOfValidity?: string; // Date de crédit en banque (CRUCIALE pour rapprochement)
+  factureNo?: string; // Numéro de facture
+  noChqBd?: string; // Numéro chèque/BD
+  bankNameDisplay?: string; // Nom affiché de la banque
+  depoRef?: string; // Référence de dépôt
+  
+  // ⭐ CALCULS FINANCIERS
+  nj?: number; // Nombre de jours
+  taux?: number; // Taux
+  interet?: number; // Intérêt
+  commission?: number; // Commission
+  tob?: number; // TOB
+  fraisEscompte?: number; // Frais d'escompte
+  bankCommission?: number; // Commission bancaire
+  
+  // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
+  sgOrFaNo?: string; // Numéro SG ou FA
+  dNAmount?: number; // Montant D.N
+  income?: number; // Revenus
+  
+  // ⭐ GESTION DES IMPAYÉS
+  dateOfImpay?: string; // Date d'impayé
+  reglementImpaye?: string; // Règlement impayé
+  remarques?: string; // Remarques
+  
+  // ⭐ MÉTADONNÉES DE TRAITEMENT
+  creditedDate?: string; // Date effective de crédit
+  processingStatus?: string; // Statut de traitement
+  matchedBankDepositId?: string; // ID du dépôt bancaire rapproché
+  matchConfidence?: number; // Score de confiance du rapprochement
+  matchMethod?: string; // Méthode de rapprochement
+  processedAt?: string; // Date de traitement
 }
 
 // Types pour les données de test réelles du guide

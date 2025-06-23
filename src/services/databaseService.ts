@@ -155,7 +155,7 @@ export class DatabaseService {
     }
   }
 
-  // Sauvegarder Collection Report
+  // Sauvegarder Collection Report avec TOUTES les nouvelles colonnes
   async saveCollectionReport(collection: CollectionReport): Promise<{ success: boolean; error?: string }> {
     try {
       console.log('📊 Sauvegarde Collection Report...');
@@ -169,13 +169,47 @@ export class DatabaseService {
         .maybeSingle();
 
       if (existing) {
-        // Mettre à jour
+        // Mettre à jour avec TOUTES les colonnes
         const { error } = await supabase
           .from('collection_report')
           .update({
             collection_amount: collection.collectionAmount,
             bank_name: collection.bankName,
-            status: collection.status
+            status: collection.status,
+            
+            // ⭐ NOUVELLES COLONNES AJOUTÉES
+            date_of_validity: collection.dateOfValidity,
+            facture_no: collection.factureNo,
+            no_chq_bd: collection.noChqBd,
+            bank_name_display: collection.bankNameDisplay,
+            depo_ref: collection.depoRef,
+            
+            // ⭐ CALCULS FINANCIERS
+            nj: collection.nj,
+            taux: collection.taux,
+            interet: collection.interet,
+            commission: collection.commission,
+            tob: collection.tob,
+            frais_escompte: collection.fraisEscompte,
+            bank_commission: collection.bankCommission,
+            
+            // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
+            sg_or_fa_no: collection.sgOrFaNo,
+            d_n_amount: collection.dNAmount,
+            income: collection.income,
+            
+            // ⭐ GESTION DES IMPAYÉS
+            date_of_impay: collection.dateOfImpay,
+            reglement_impaye: collection.reglementImpaye,
+            remarques: collection.remarques,
+            
+            // ⭐ MÉTADONNÉES DE TRAITEMENT
+            credited_date: collection.creditedDate,
+            processing_status: collection.processingStatus,
+            matched_bank_deposit_id: collection.matchedBankDepositId,
+            match_confidence: collection.matchConfidence,
+            match_method: collection.matchMethod,
+            processed_at: collection.processedAt
           })
           .eq('id', existing.id);
 
@@ -185,7 +219,7 @@ export class DatabaseService {
         }
         console.log('🔄 Collection mise à jour');
       } else {
-        // Créer nouvelle collection
+        // Créer nouvelle collection avec TOUTES les colonnes
         const { error } = await supabase
           .from('collection_report')
           .insert({
@@ -193,7 +227,41 @@ export class DatabaseService {
             client_code: collection.clientCode,
             collection_amount: collection.collectionAmount,
             bank_name: collection.bankName,
-            status: collection.status || 'pending'
+            status: collection.status || 'pending',
+            
+            // ⭐ NOUVELLES COLONNES AJOUTÉES
+            date_of_validity: collection.dateOfValidity,
+            facture_no: collection.factureNo,
+            no_chq_bd: collection.noChqBd,
+            bank_name_display: collection.bankNameDisplay,
+            depo_ref: collection.depoRef,
+            
+            // ⭐ CALCULS FINANCIERS
+            nj: collection.nj,
+            taux: collection.taux,
+            interet: collection.interet,
+            commission: collection.commission,
+            tob: collection.tob,
+            frais_escompte: collection.fraisEscompte,
+            bank_commission: collection.bankCommission,
+            
+            // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
+            sg_or_fa_no: collection.sgOrFaNo,
+            d_n_amount: collection.dNAmount,
+            income: collection.income,
+            
+            // ⭐ GESTION DES IMPAYÉS
+            date_of_impay: collection.dateOfImpay,
+            reglement_impaye: collection.reglementImpaye,
+            remarques: collection.remarques,
+            
+            // ⭐ MÉTADONNÉES DE TRAITEMENT
+            credited_date: collection.creditedDate,
+            processing_status: collection.processingStatus || 'NEW',
+            matched_bank_deposit_id: collection.matchedBankDepositId,
+            match_confidence: collection.matchConfidence,
+            match_method: collection.matchMethod,
+            processed_at: collection.processedAt
           });
 
         if (error) {
@@ -214,7 +282,7 @@ export class DatabaseService {
     }
   }
 
-  // Récupérer tous les rapports de collection
+  // Récupérer tous les rapports de collection avec TOUTES les colonnes
   async getCollectionReports(): Promise<CollectionReport[]> {
     try {
       console.log('📊 Récupération des collections...');
@@ -241,7 +309,40 @@ export class DatabaseService {
         collectionAmount: item.collection_amount || 0,
         bankName: item.bank_name,
         status: (item.status as 'pending' | 'processed' | 'failed') || 'pending',
-        dateOfValidity: item.date_of_validity || undefined
+        
+        // ⭐ NOUVELLES COLONNES MAPPÉES
+        dateOfValidity: item.date_of_validity || undefined,
+        factureNo: item.facture_no || undefined,
+        noChqBd: item.no_chq_bd || undefined,
+        bankNameDisplay: item.bank_name_display || undefined,
+        depoRef: item.depo_ref || undefined,
+        
+        // ⭐ CALCULS FINANCIERS
+        nj: item.nj || undefined,
+        taux: item.taux || undefined,
+        interet: item.interet || undefined,
+        commission: item.commission || undefined,
+        tob: item.tob || undefined,
+        fraisEscompte: item.frais_escompte || undefined,
+        bankCommission: item.bank_commission || undefined,
+        
+        // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
+        sgOrFaNo: item.sg_or_fa_no || undefined,
+        dNAmount: item.d_n_amount || undefined,
+        income: item.income || undefined,
+        
+        // ⭐ GESTION DES IMPAYÉS
+        dateOfImpay: item.date_of_impay || undefined,
+        reglementImpaye: item.reglement_impaye || undefined,
+        remarques: item.remarques || undefined,
+        
+        // ⭐ MÉTADONNÉES DE TRAITEMENT
+        creditedDate: item.credited_date || undefined,
+        processingStatus: item.processing_status || undefined,
+        matchedBankDepositId: item.matched_bank_deposit_id || undefined,
+        matchConfidence: item.match_confidence || undefined,
+        matchMethod: item.match_method || undefined,
+        processedAt: item.processed_at || undefined
       }));
 
       console.log(`✅ ${collections.length} collections récupérées`);
@@ -253,7 +354,7 @@ export class DatabaseService {
     }
   }
 
-  // Mettre à jour la date de validité d'une collection
+  // Mettre à jour la date de validité d'une collection (FONCTION CRUCIALE!)
   async updateCollectionDateOfValidity(collectionId: string, dateOfValidity: string): Promise<{ success: boolean; error?: string }> {
     try {
       console.log('📅 Mise à jour date de validité collection...');
@@ -262,7 +363,9 @@ export class DatabaseService {
         .from('collection_report')
         .update({
           status: 'processed',
-          date_of_validity: dateOfValidity
+          date_of_validity: dateOfValidity,
+          credited_date: dateOfValidity,
+          processed_at: new Date().toISOString()
         })
         .eq('id', collectionId);
 
@@ -396,7 +499,7 @@ export class DatabaseService {
           description: i.description,
           montant: i.montant
         })) || [],
-        checksNotCleared: [] // Ajouté pour la compatibilité
+        checksNotCleared: []
       }));
 
       console.log(`✅ ${bankReports.length} rapports bancaires récupérés`);
