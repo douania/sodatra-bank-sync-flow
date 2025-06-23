@@ -4,6 +4,9 @@ import { databaseService } from '@/services/databaseService';
 import { crossBankAnalysisService } from '@/services/crossBankAnalysisService';
 import { BankReport } from '@/types/banking';
 import ConsolidatedBankView from '@/components/ConsolidatedBankView';
+import ConsolidatedMetrics from '@/components/ConsolidatedMetrics';
+import ConsolidatedCharts from '@/components/ConsolidatedCharts';
+import CriticalAlertsPanel from '@/components/CriticalAlertsPanel';
 
 const ConsolidatedDashboard = () => {
   const [bankReports, setBankReports] = useState<BankReport[]>([]);
@@ -66,14 +69,29 @@ const ConsolidatedDashboard = () => {
           Vue Consolidée Multi-Banques SODATRA
         </h1>
         <div className="text-sm text-gray-500">
-          Analyse en temps réel de {bankReports.length} banques
+          Analyse en temps réel de {bankReports.length} banques • {new Date().toLocaleDateString('fr-FR')}
         </div>
       </div>
 
+      {/* Métriques Consolidées */}
+      <ConsolidatedMetrics consolidatedAnalysis={consolidatedAnalysis} />
+
+      {/* Alertes Critiques */}
+      {consolidatedAnalysis && (
+        <CriticalAlertsPanel 
+          criticalAlerts={consolidatedAnalysis.criticalAlerts} 
+          crossBankClients={consolidatedAnalysis.crossBankClients}
+        />
+      )}
+
+      {/* Vue Consolidée Spécialisée */}
       <ConsolidatedBankView 
         bankReports={bankReports} 
         consolidatedAnalysis={consolidatedAnalysis} 
       />
+
+      {/* Graphiques Avancés */}
+      <ConsolidatedCharts bankReports={bankReports} />
     </div>
   );
 };
