@@ -1,5 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
-import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
+import { BankReport, Impaye, BankFacility, CollectionReport, FundPosition, DepositsNotCleared } from '@/types/banking';
 
 export class DatabaseService {
   
@@ -247,7 +247,7 @@ export class DatabaseService {
             
             // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
             sg_or_fa_no: collection.sgOrFaNo,
-            d_n_amount: collection.dNAmount,
+            dNAmount: collection.dNAmount,
             income: collection.income,
             
             // ⭐ GESTION DES IMPAYÉS
@@ -285,72 +285,55 @@ export class DatabaseService {
   // Récupérer tous les rapports de collection avec TOUTES les colonnes
   async getCollectionReports(): Promise<CollectionReport[]> {
     try {
-      console.log('📊 Récupération des collections...');
+      console.log('🔍 Récupération des rapports de collection...');
       
       const { data, error } = await supabase
         .from('collection_report')
         .select('*')
-        .order('report_date', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('❌ Erreur récupération collections:', error);
-        return [];
+        console.error('❌ Erreur récupération rapports collection:', error);
+        throw error;
       }
 
       if (!data || data.length === 0) {
-        console.log('⚠️ Aucune collection trouvée');
+        console.log('ℹ️ Aucun rapport de collection trouvé');
         return [];
       }
 
-      const collections = data.map(item => ({
-        id: item.id,
-        reportDate: item.report_date,
-        clientCode: item.client_code,
-        collectionAmount: item.collection_amount || 0,
-        bankName: item.bank_name,
-        status: (item.status as 'pending' | 'processed' | 'failed') || 'pending',
-        
-        // ⭐ NOUVELLES COLONNES MAPPÉES
-        dateOfValidity: item.date_of_validity || undefined,
-        factureNo: item.facture_no || undefined,
-        noChqBd: item.no_chq_bd || undefined,
-        bankNameDisplay: item.bank_name_display || undefined,
-        depoRef: item.depo_ref || undefined,
-        
-        // ⭐ CALCULS FINANCIERS
-        nj: item.nj || undefined,
-        taux: item.taux || undefined,
-        interet: item.interet || undefined,
-        commission: item.commission || undefined,
-        tob: item.tob || undefined,
-        fraisEscompte: item.frais_escompte || undefined,
-        bankCommission: item.bank_commission || undefined,
-        
-        // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
-        sgOrFaNo: item.sg_or_fa_no || undefined,
-        dNAmount: item.d_n_amount || undefined,
-        income: item.income || undefined,
-        
-        // ⭐ GESTION DES IMPAYÉS
-        dateOfImpay: item.date_of_impay || undefined,
-        reglementImpaye: item.reglement_impaye || undefined,
-        remarques: item.remarques || undefined,
-        
-        // ⭐ MÉTADONNÉES DE TRAITEMENT
-        creditedDate: item.credited_date || undefined,
-        processingStatus: item.processing_status || undefined,
-        matchedBankDepositId: item.matched_bank_deposit_id || undefined,
-        matchConfidence: item.match_confidence || undefined,
-        matchMethod: item.match_method || undefined,
-        processedAt: item.processed_at || undefined
+      const collectionReports: CollectionReport[] = data.map(report => ({
+        clientCode: report.client_code,
+        collectionAmount: report.collection_amount,
+        bankName: report.bank_name || '',
+        reportDate: report.report_date,
+        dateOfValidity: report.date_of_validity || '',
+        factureNo: report.facture_no || '',
+        noChqBd: report.no_chq_bd || '',
+        bankNameDisplay: report.bank_name_display || '',
+        depoRef: report.depo_ref || '',
+        nj: report.nj || 0,
+        taux: report.taux || 0,
+        interet: report.interet || 0,
+        commission: report.commission || 0,
+        tob: report.tob || 0,
+        fraisEscompte: report.frais_escompte || 0,
+        bankCommission: report.bank_commission || 0,
+        sgOrFaNo: report.sg_or_fa_no || '',
+        dNAmount: report.d_n_amount || 0,
+        income: report.income || 0,
+        dateOfImpay: report.date_of_impay || '',
+        reglementImpaye: report.reglement_impaye || '',
+        remarques: report.remarques || '',
+        status: report.status || 'pending'
       }));
 
-      console.log(`✅ ${collections.length} collections récupérées`);
-      return collections;
+      console.log(`✅ ${collectionReports.length} rapports de collection récupérés avec succès`);
+      return collectionReports;
 
     } catch (error) {
-      console.error('❌ Erreur générale récupération collections:', error);
-      return [];
+      console.error('❌ Erreur générale récupération rapports collection:', error);
+      throw error;
     }
   }
 
@@ -446,107 +429,141 @@ export class DatabaseService {
   // Récupérer les derniers rapports bancaires
   async getLatestBankReports(): Promise<BankReport[]> {
     try {
-      console.log('📊 Récupération des rapports bancaires...');
+      console.log('🔍 Récupération des derniers rapports bancaires...');
       
-      const { data: reports, error } = await supabase
+      // Récupérer tous les rapports bancaires avec leurs relations
+      const { data: bankReportsData, error: reportsError } = await supabase
         .from('bank_reports')
-        .select(`
-          *,
-          deposits_not_cleared(*),
-          bank_facilities(*),
-          impayes(*)
-        `)
-        .order('report_date', { ascending: false })
-        .limit(20);
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('❌ Erreur récupération rapports:', error);
+      if (reportsError) {
+        console.error('❌ Erreur récupération rapports bancaires:', reportsError);
+        throw reportsError;
+      }
+
+      if (!bankReportsData || bankReportsData.length === 0) {
+        console.log('ℹ️ Aucun rapport bancaire trouvé');
         return [];
       }
 
-      if (!reports || reports.length === 0) {
-        console.log('⚠️ Aucun rapport bancaire trouvé');
-        return [];
+      // Récupérer les impayés pour chaque rapport
+      const { data: impayesData, error: impayesError } = await supabase
+        .from('impayes')
+        .select('*');
+
+      if (impayesError) {
+        console.error('❌ Erreur récupération impayés:', impayesError);
       }
 
-      const bankReports = reports.map(report => ({
-        id: report.id,
-        bank: report.bank_name,
-        date: report.report_date,
-        openingBalance: report.opening_balance || 0,
-        closingBalance: report.closing_balance || 0,
-        depositsNotCleared: report.deposits_not_cleared?.map((d: any) => ({
-          id: d.id,
-          dateDepot: d.date_depot,
-          dateValeur: d.date_valeur,
-          typeReglement: d.type_reglement,
-          clientCode: d.client_code,
-          reference: d.reference,
-          montant: d.montant
-        })) || [],
-        bankFacilities: report.bank_facilities?.map((f: any) => ({
-          id: f.id,
-          facilityType: f.facility_type,
-          limitAmount: f.limit_amount || 0,
-          usedAmount: f.used_amount || 0,
-          availableAmount: f.available_amount || 0
-        })) || [],
-        impayes: report.impayes?.map((i: any) => ({
-          id: i.id,
-          dateEcheance: i.date_echeance,
-          dateRetour: i.date_retour,
-          clientCode: i.client_code,
-          description: i.description,
-          montant: i.montant
-        })) || [],
-        checksNotCleared: []
-      }));
+      // Récupérer les facilités bancaires
+      const { data: facilitiesData, error: facilitiesError } = await supabase
+        .from('bank_facilities')
+        .select('*');
 
-      console.log(`✅ ${bankReports.length} rapports bancaires récupérés`);
+      if (facilitiesError) {
+        console.error('❌ Erreur récupération facilités:', facilitiesError);
+      }
+
+      // Récupérer les dépôts non débités
+      const { data: depositsData, error: depositsError } = await supabase
+        .from('deposits_not_cleared')
+        .select('*');
+
+      if (depositsError) {
+        console.error('❌ Erreur récupération dépôts:', depositsError);
+      }
+
+      // Transformer les données en format BankReport
+      const bankReports: BankReport[] = bankReportsData.map(report => {
+        // Filtrer les impayés pour ce rapport
+        const reportImpayes = (impayesData || [])
+          .filter(impaye => impaye.bank_report_id === report.id)
+          .map(impaye => ({
+            clientCode: impaye.client_code,
+            montant: impaye.montant,
+            dateEcheance: impaye.date_echeance,
+            dateRetour: impaye.date_retour,
+            description: impaye.description || ''
+          }));
+
+        // Filtrer les facilités pour ce rapport
+        const reportFacilities = (facilitiesData || [])
+          .filter(facility => facility.bank_report_id === report.id)
+          .map(facility => ({
+            facilityType: facility.facility_type,
+            limitAmount: facility.limit_amount,
+            usedAmount: facility.used_amount,
+            availableAmount: facility.available_amount
+          }));
+
+        // Filtrer les dépôts pour ce rapport
+        const reportDeposits = (depositsData || [])
+          .filter(deposit => deposit.bank_report_id === report.id)
+          .map(deposit => ({
+            dateDepot: deposit.date_depot,
+            dateValeur: deposit.date_valeur,
+            typeReglement: deposit.type_reglement,
+            reference: deposit.reference || '',
+            clientCode: deposit.client_code || '',
+            montant: deposit.montant
+          }));
+
+        return {
+          bank: report.bank_name,
+          reportDate: report.report_date,
+          openingBalance: report.opening_balance,
+          closingBalance: report.closing_balance,
+          impayes: reportImpayes,
+          bankFacilities: reportFacilities,
+          checksNotCleared: reportDeposits
+        };
+      });
+
+      console.log(`✅ ${bankReports.length} rapports bancaires récupérés avec succès`);
       return bankReports;
 
     } catch (error) {
-      console.error('❌ Erreur générale récupération rapports:', error);
-      return [];
+      console.error('❌ Erreur récupération rapports bancaires:', error);
+      throw error;
     }
   }
 
   // Récupérer la dernière Fund Position
   async getLatestFundPosition(): Promise<FundPosition | null> {
     try {
-      console.log('💰 Récupération Fund Position...');
+      console.log('🔍 Récupération de la position des fonds...');
       
       const { data, error } = await supabase
         .from('fund_position')
         .select('*')
-        .order('report_date', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
       if (error) {
-        console.error('❌ Erreur récupération Fund Position:', error);
-        return null;
+        console.error('❌ Erreur récupération position fonds:', error);
+        throw error;
       }
 
       if (!data) {
-        console.log('⚠️ Aucune Fund Position trouvée');
+        console.log('ℹ️ Aucune position de fonds trouvée');
         return null;
       }
 
-      const fundPosition = {
-        id: data.id,
+      const fundPosition: FundPosition = {
         reportDate: data.report_date,
-        totalFundAvailable: data.total_fund_available || 0,
-        collectionsNotDeposited: data.collections_not_deposited || 0,
-        grandTotal: data.grand_total || 0
+        totalFundAvailable: data.total_fund_available,
+        collectionsNotDeposited: data.collections_not_deposited,
+        grandTotal: data.grand_total
       };
 
-      console.log('✅ Fund Position récupérée');
+      console.log('✅ Position des fonds récupérée avec succès');
       return fundPosition;
 
     } catch (error) {
-      console.error('❌ Erreur générale Fund Position:', error);
-      return null;
+      console.error('❌ Erreur récupération position fonds:', error);
+      throw error;
     }
   }
 
@@ -568,6 +585,35 @@ export class DatabaseService {
     } catch (error) {
       console.error('❌ Erreur test connexion:', error);
       return false;
+    }
+  }
+
+  // Récupérer les rapports bancaires par période
+  async getBankReportsByDateRange(startDate: string, endDate: string): Promise<BankReport[]> {
+    try {
+      const { data, error } = await supabase
+        .from('bank_reports')
+        .select('*')
+        .gte('report_date', startDate)
+        .lte('report_date', endDate)
+        .order('report_date', { ascending: false });
+
+      if (error) throw error;
+
+      // Transformer les données comme dans getLatestBankReports
+      return data?.map(report => ({
+        bank: report.bank_name,
+        reportDate: report.report_date,
+        openingBalance: report.opening_balance,
+        closingBalance: report.closing_balance,
+        impayes: [],
+        bankFacilities: [],
+        checksNotCleared: []
+      })) || [];
+
+    } catch (error) {
+      console.error('❌ Erreur récupération rapports par période:', error);
+      throw error;
     }
   }
 }

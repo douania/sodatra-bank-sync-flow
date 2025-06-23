@@ -4,15 +4,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle, AlertTriangle, Clock, FileX, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { databaseService } from '@/services/databaseService';
+import { dashboardMetricsService, DashboardMetrics } from '@/services/dashboardMetricsService';
 import { crossBankAnalysisService } from '@/services/crossBankAnalysisService';
-import { BankReport, FundPosition } from '@/types/banking';
+import { BankReport, FundPosition, CollectionReport } from '@/types/banking';
 import ConsolidatedMetrics from '@/components/ConsolidatedMetrics';
 import ConsolidatedCharts from '@/components/ConsolidatedCharts';
 import CriticalAlertsPanel from '@/components/CriticalAlertsPanel';
 
 const Dashboard = () => {
   const [bankReports, setBankReports] = useState<BankReport[]>([]);
+  const [collectionReports, setCollectionReports] = useState<CollectionReport[]>([]);
   const [fundPosition, setFundPosition] = useState<FundPosition | null>(null);
+  const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +28,7 @@ const Dashboard = () => {
     try {
       setLoading(true);
       setError(null);
-      console.log('🔄 Chargement du dashboard consolidé...');
+      console.log('🔄 Chargement du dashboard consolidé avec données réelles...');
       
       // Test de connexion d'abord
       const isConnected = await databaseService.testConnection();
@@ -33,46 +36,49 @@ const Dashboard = () => {
         throw new Error('Impossible de se connecter à la base de données');
       }
 
-      const [reports, position] = await Promise.all([
+      // Récupérer toutes les données en parallèle
+      const [reports, collections, position] = await Promise.all([
         databaseService.getLatestBankReports(),
+        databaseService.getCollectionReports(),
         databaseService.getLatestFundPosition()
       ]);
       
-      console.log(`📊 Données récupérées: ${reports.length} rapports, Fund Position: ${position ? 'Oui' : 'Non'}`);
+      console.log(`📊 Données récupérées: ${reports.length} rapports bancaires, ${collections.length} collections, Fund Position: ${position ? 'Oui' : 'Non'}`);
       
       setBankReports(reports);
+      setCollectionReports(collections);
       setFundPosition(position);
       
+      // Calculer les métriques du dashboard
+      const metrics = dashboardMetricsService.calculateDashboardMetrics(reports, collections, position);
+      setDashboardMetrics(metrics);
+      
       if (reports.length > 0) {
+        // Analyse consolidée pour les alertes
         const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(reports);
         const alerts = crossBankAnalysisService.generateCriticalAlerts(analysis);
         
         setConsolidatedAnalysis({
           consolidatedPosition: analysis,
           consolidatedFacilities: {
-            totalLimits: analysis.totalFacilityLimits,
-            totalUsed: analysis.totalFacilityUsed,
-            totalAvailable: analysis.totalFacilityAvailable,
-            utilizationRate: analysis.utilizationRate
+            totalLimits: metrics.totalFacilities,
+            totalUsed: metrics.facilitiesUsed,
+            totalAvailable: metrics.facilitiesAvailable,
+            utilizationRate: metrics.utilizationRate
           },
           totalImpayes: {
-            totalAmount: analysis.totalImpayes,
-            totalCount: analysis.impayeCount
+            totalAmount: metrics.totalImpayes,
+            totalCount: metrics.impayesCount
           },
           crossBankClients: {
-            riskyClients: analysis.crossBankImpayes.map(impaye => ({
-              clientCode: impaye.clientCode,
-              bankCount: impaye.bankCount,
-              banks: impaye.banks.map(b => b.bankName),
-              totalRisk: impaye.totalAmount
-            }))
+            riskyClients: metrics.topRiskyClients
           },
           criticalAlerts: alerts
         });
         
-        console.log('🏦 Analyse consolidée terminée');
+        console.log('🏦 Analyse consolidée terminée avec données réelles');
       } else {
-        console.log('⚠️ Aucune donnée à analyser');
+        console.log('⚠️ Aucune donnée bancaire à analyser');
       }
     } catch (error) {
       console.error('❌ Erreur chargement dashboard:', error);
@@ -87,7 +93,8 @@ const Dashboard = () => {
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
           <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <div className="text-lg">Chargement du dashboard consolidé...</div>
+          <div className="text-lg">Chargement des données réelles...</div>
+          <div className="text-sm text-gray-500 mt-2">Récupération des rapports bancaires et collections</div>
         </div>
       </div>
     );
@@ -115,7 +122,7 @@ const Dashboard = () => {
     );
   }
 
-  if (bankReports.length === 0) {
+  if (bankReports.length === 0 && collectionReports.length === 0) {
     return (
       <div className="flex items-center justify-center h-96">
         <Card className="w-96">
@@ -127,7 +134,7 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             <p className="text-gray-600 mb-4">
-              Aucun rapport bancaire n'a été trouvé. Veuillez d'abord importer vos fichiers.
+              Aucun rapport bancaire ou collection n'a été trouvé. Veuillez d'abord importer vos fichiers.
             </p>
             <Button onClick={() => window.location.href = '/upload'} className="w-full">
               Importer des fichiers
@@ -148,13 +155,14 @@ const Dashboard = () => {
             Actualiser
           </Button>
           <div className="text-sm text-gray-500">
-            Position consolidée au {new Date().toLocaleDateString('fr-FR')} • {bankReports.length} banques surveillées
+            Position consolidée au {new Date().toLocaleDateString('fr-FR')} • 
+            {bankReports.length} banques • {collectionReports.length} collections
           </div>
         </div>
       </div>
 
-      {/* KPIs Consolidés Critiques */}
-      <ConsolidatedMetrics consolidatedAnalysis={consolidatedAnalysis} />
+      {/* KPIs Consolidés avec données réelles */}
+      <ConsolidatedMetrics metrics={dashboardMetrics} />
 
       {/* Alertes Cross-Bank Critiques */}
       {consolidatedAnalysis && (
@@ -167,10 +175,41 @@ const Dashboard = () => {
       {/* Graphiques Consolidés */}
       <ConsolidatedCharts bankReports={bankReports} />
 
-      {/* Statut Détaillé par Banque */}
+      {/* Collections récentes */}
+      {collectionReports.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>📋 Collections Récentes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {collectionReports.slice(0, 5).map((collection, index) => (
+                <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                  <div>
+                    <span className="font-medium">{collection.clientCode}</span>
+                    <div className="text-sm text-gray-600">
+                      {collection.bankName} • {collection.factureNo}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-medium">
+                      {(collection.collectionAmount / 1000000).toFixed(1)}M FCFA
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {collection.reportDate}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Statut Détaillé par Banque avec données réelles */}
       <Card>
         <CardHeader>
-          <CardTitle>🏦 Position Détaillée par Banque</CardTitle>
+          <CardTitle>🏦 Position Détaillée par Banque (Données Réelles)</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
