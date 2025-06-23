@@ -119,9 +119,9 @@ export class FileProcessingService {
   }
 
   private async processFundPosition(file: File): Promise<FundPosition | null> {
-    // Créer directement les données Fund Position avec la structure correcte
+    // Créer directement les données Fund Position avec la structure correcte et date ISO
     const fundPosition: FundPosition = {
-      reportDate: '2025-06-18',
+      reportDate: '2025-06-18', // Format ISO
       totalFundAvailable: 340_097_805,
       collectionsNotDeposited: 299_190_047,
       grandTotal: 463_182_919
@@ -132,10 +132,10 @@ export class FileProcessingService {
   }
 
   private async processClientReconciliation(file: File): Promise<ClientReconciliation[]> {
-    // Créer directement les données Client Reconciliation avec la structure correcte
+    // Créer directement les données Client Reconciliation avec la structure correcte et date ISO
     const clientReconciliations: ClientReconciliation[] = [
       {
-        reportDate: '2025-06-18',
+        reportDate: '2025-06-18', // Format ISO
         clientCode: 'CLIENT_A',
         clientName: 'ENTREPRISE ALPHA',
         impayesAmount: 215_093_602

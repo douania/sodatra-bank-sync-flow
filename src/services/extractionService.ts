@@ -1,4 +1,3 @@
-
 import { BankReport, ExtractionResult, DepositNotCleared, BankFacility, Impaye } from '@/types/banking';
 
 // Patterns améliorés et plus robustes
@@ -25,6 +24,38 @@ export const VALIDATED_PATTERNS = {
   impaye_section: /(?:IMPAY[EÉ]S?|UNPAID)/gi,
   impaye_line: /(\d{2}[\/\-]\d{2}[\/\-]\d{4})\s*(?:(\d{2}[\/\-]\d{2}[\/\-]\d{4}))?\s*IMPAY[EÉ]\s+(\w+)\s+(.*?)\s+([\d\s,\.]+)/gi
 };
+
+// Fonction utilitaire pour convertir les dates françaises en format ISO
+function convertToISODate(dateStr: string): string {
+  if (!dateStr) {
+    return new Date().toISOString().split('T')[0];
+  }
+  
+  try {
+    // Nettoyer la chaîne de date
+    const cleanDate = dateStr.replace(/\s/g, '').trim();
+    
+    // Détecter le format DD/MM/YYYY ou DD-MM-YYYY
+    const frenchDateMatch = cleanDate.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+    if (frenchDateMatch) {
+      const [, day, month, year] = frenchDateMatch;
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    
+    // Si déjà au format YYYY-MM-DD
+    const isoDateMatch = cleanDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoDateMatch) {
+      return cleanDate;
+    }
+    
+    // Fallback sur la date actuelle
+    console.log(`⚠️ Format de date non reconnu: ${dateStr}, utilisation de la date actuelle`);
+    return new Date().toISOString().split('T')[0];
+  } catch (error) {
+    console.error('❌ Erreur conversion date:', dateStr, error);
+    return new Date().toISOString().split('T')[0];
+  }
+}
 
 // Fonction utilitaire améliorée pour nettoyer les montants
 function cleanAmount(amountStr: string | undefined): number {
@@ -54,13 +85,14 @@ function cleanAmount(amountStr: string | undefined): number {
 function extractDate(text: string): string {
   const headerMatch = text.match(VALIDATED_PATTERNS.header);
   if (headerMatch && headerMatch[1]) {
-    const dateStr = headerMatch[1].replace(/[-]/g, '/');
-    console.log(`📅 Date extraite: ${dateStr}`);
-    return dateStr;
+    const dateStr = headerMatch[1];
+    const isoDate = convertToISODate(dateStr);
+    console.log(`📅 Date extraite et convertie: ${dateStr} -> ${isoDate}`);
+    return isoDate;
   }
   
-  // Fallback sur la date actuelle
-  const fallbackDate = new Date().toLocaleDateString('fr-FR');
+  // Fallback sur la date actuelle au format ISO
+  const fallbackDate = new Date().toISOString().split('T')[0];
   console.log(`📅 Date fallback utilisée: ${fallbackDate}`);
   return fallbackDate;
 }
@@ -147,8 +179,8 @@ function extractDepositsNotCleared(text: string): DepositNotCleared[] {
     for (const match of matches) {
       if (match[1] && match[2] && match[5]) {
         deposits.push({
-          dateDepot: match[1],
-          dateValeur: match[2],
+          dateDepot: convertToISODate(match[1]),
+          dateValeur: convertToISODate(match[2]),
           typeReglement: match[3] || 'REGLEMENT FACTURE',
           clientCode: match[4] || 'UNKNOWN',
           reference: match[4] || 'REF',
@@ -221,8 +253,8 @@ function extractImpayes(text: string): Impaye[] {
     for (const match of matches) {
       if (match[1] && match[3] && match[5]) {
         impayes.push({
-          dateEcheance: match[1],
-          dateRetour: match[2] || undefined,
+          dateEcheance: convertToISODate(match[1]),
+          dateRetour: match[2] ? convertToISODate(match[2]) : undefined,
           clientCode: match[3],
           description: match[4]?.trim() || 'IMPAYE',
           montant: cleanAmount(match[5])
