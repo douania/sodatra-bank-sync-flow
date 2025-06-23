@@ -1,205 +1,176 @@
 
-import React from 'react';
-import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { 
-  Building2, 
-  Upload, 
-  FileText, 
-  AlertTriangle, 
-  BarChart3, 
-  Clock,
-  CheckCircle,
-  ArrowRight
-} from 'lucide-react';
+import { Building2, BarChart3, AlertTriangle, FileText, Users, TrendingUp } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const Index = () => {
-  const features = [
-    {
-      icon: Upload,
-      title: 'Upload Automatisé',
-      description: 'Réception automatique des fichiers par email ou upload manuel des relevés bancaires, Collection Reports et rapports de rapprochement.',
-      link: '/upload'
-    },
-    {
-      icon: FileText,
-      title: 'Extraction Intelligente',
-      description: 'Extraction automatique des données depuis les PDFs bancaires et fichiers Excel avec reconnaissance des patterns bancaires.',
-      link: '/upload'
-    },
-    {
-      icon: BarChart3,
-      title: 'Rapprochement Croisé',
-      description: 'Rapprochement automatisé multi-critères avec scoring intelligent et détection d\'écarts.',
-      link: '/reconciliation'
-    },
-    {
-      icon: AlertTriangle,
-      title: 'Alertes Temps Réel',
-      description: 'Système d\'alertes automatique pour les écarts, impayés, anomalies et fichiers manquants.',
-      link: '/alerts'
-    }
-  ];
-
-  const stats = [
-    { label: 'Banques Supportées', value: '4', description: 'SGS, BDK, BICIS, UBA' },
-    { label: 'Taux de Précision', value: '98%', description: 'Rapprochement automatique' },
-    { label: 'Gain de Temps', value: '85%', description: 'Par rapport au manuel' },
-    { label: 'Alertes/Jour', value: '<5', description: 'Anomalies détectées' }
-  ];
-
   return (
-    <div className="space-y-12">
-      {/* Hero Section */}
-      <div className="text-center space-y-6">
-        <div className="flex justify-center">
-          <Building2 className="h-16 w-16 text-blue-600" />
-        </div>
-        <h1 className="text-4xl font-bold text-gray-900 sm:text-5xl">
-          SODATRA Bank Control
-        </h1>
-        <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-          Solution d'automatisation complète pour l'audit et le rapprochement bancaire quotidien. 
-          Traitement intelligent des relevés PDF, Collection Reports Excel et rapports de position de fonds.
-        </p>
-        <div className="flex justify-center space-x-4">
-          <Link to="/dashboard">
-            <Button size="lg" className="px-8">
-              Accéder au Dashboard
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          </Link>
-          <Link to="/upload">
-            <Button variant="outline" size="lg" className="px-8">
-              Commencer l'Upload
-            </Button>
-          </Link>
-        </div>
-      </div>
-
-      {/* Stats Section */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        {stats.map((stat, index) => (
-          <Card key={index} className="text-center">
-            <CardContent className="pt-6">
-              <div className="text-3xl font-bold text-blue-600 mb-2">{stat.value}</div>
-              <div className="font-medium text-gray-900 mb-1">{stat.label}</div>
-              <div className="text-sm text-gray-600">{stat.description}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Features Section */}
-      <div className="space-y-8">
-        <div className="text-center">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">
-            Fonctionnalités Principales
-          </h2>
-          <p className="text-lg text-gray-600">
-            Une suite complète d'outils pour automatiser votre contrôle bancaire
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      <div className="container mx-auto px-6 py-12">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            SODATRA - Système de Gestion Financière Multi-Banques
+          </h1>
+          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+            Plateforme de surveillance et d'analyse consolidée des positions bancaires en temps réel
           </p>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {features.map((feature, index) => {
-            const Icon = feature.icon;
-            return (
-              <Card key={index} className="hover:shadow-lg transition-shadow">
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-3">
-                    <Icon className="h-6 w-6 text-blue-600" />
-                    <span>{feature.title}</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-600 mb-4">{feature.description}</p>
-                  <Link to={feature.link}>
-                    <Button variant="outline" size="sm">
-                      En savoir plus
-                      <ArrowRight className="ml-2 h-3 w-3" />
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
-            );
-          })}
+
+        {/* Main Navigation Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2 text-blue-600">
+                <BarChart3 className="h-6 w-6" />
+                <span>Dashboard Principal</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-600 mb-4">
+                Vue d'ensemble des positions bancaires avec analyses détaillées par banque
+              </p>
+              <Link to="/dashboard">
+                <Button className="w-full">
+                  Accéder au Dashboard
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow border-2 border-green-200">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2 text-green-600">
+                <Building2 className="h-6 w-6" />
+                <span>Vue Consolidée</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-600 mb-4">
+                Analyse cross-bank avancée avec détection automatique des risques multi-banques
+              </p>
+              <Link to="/consolidated">
+                <Button variant="outline" className="w-full border-green-600 text-green-600 hover:bg-green-50">
+                  Vue Consolidée Multi-Banques
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2 text-purple-600">
+                <AlertTriangle className="h-6 w-6" />
+                <span>Alertes Critiques</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-600 mb-4">
+                Surveillance des alertes et incidents nécessitant une attention immédiate
+              </p>
+              <Link to="/alerts">
+                <Button variant="outline" className="w-full border-purple-600 text-purple-600 hover:bg-purple-50">
+                  Voir les Alertes
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2 text-orange-600">
+                <FileText className="h-6 w-6" />
+                <span>Import de Données</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-600 mb-4">
+                Upload et traitement automatique des rapports bancaires Excel
+              </p>
+              <Link to="/upload">
+                <Button variant="outline" className="w-full border-orange-600 text-orange-600 hover:bg-orange-50">
+                  Importer des Fichiers
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2 text-teal-600">
+                <Users className="h-6 w-6" />
+                <span>Réconciliation</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-600 mb-4">
+                Réconciliation des comptes clients et vérification des soldes
+              </p>
+              <Link to="/reconciliation">
+                <Button variant="outline" className="w-full border-teal-600 text-teal-600 hover:bg-teal-50">
+                  Réconciliation Clients
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Key Features */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <TrendingUp className="h-6 w-6 text-blue-600" />
+              <span>Fonctionnalités Clés du Système</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="text-center p-4">
+                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-3">
+                  <Building2 className="h-6 w-6 text-blue-600" />
+                </div>
+                <h3 className="font-semibold mb-2">Multi-Banques</h3>
+                <p className="text-sm text-gray-600">Surveillance simultanée de toutes vos banques</p>
+              </div>
+              
+              <div className="text-center p-4">
+                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-3">
+                  <AlertTriangle className="h-6 w-6 text-green-600" />
+                </div>
+                <h3 className="font-semibold mb-2">Alertes Intelligentes</h3>
+                <p className="text-sm text-gray-600">Détection automatique des risques cross-bank</p>
+              </div>
+              
+              <div className="text-center p-4">
+                <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mx-auto mb-3">
+                  <BarChart3 className="h-6 w-6 text-purple-600" />
+                </div>
+                <h3 className="font-semibold mb-2">Analyses Avancées</h3>
+                <p className="text-sm text-gray-600">Métriques consolidées et tableaux de bord</p>
+              </div>
+              
+              <div className="text-center p-4">
+                <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center mx-auto mb-3">
+                  <FileText className="h-6 w-6 text-orange-600" />
+                </div>
+                <h3 className="font-semibold mb-2">Import Automatique</h3>
+                <p className="text-sm text-gray-600">Traitement intelligent des fichiers Excel</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Quick Stats Preview */}
+        <div className="text-center">
+          <p className="text-gray-500 mb-4">Système opérationnel - Prêt pour l'analyse en temps réel</p>
+          <Link to="/consolidated">
+            <Button size="lg" className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
+              🚀 Accéder à la Vue Consolidée Multi-Banques
+            </Button>
+          </Link>
         </div>
       </div>
-
-      {/* Workflow Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-center text-2xl">Workflow de Traitement</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="text-center space-y-3">
-              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
-                <Upload className="h-6 w-6 text-blue-600" />
-              </div>
-              <h3 className="font-semibold">1. Réception</h3>
-              <p className="text-sm text-gray-600">Upload ou réception automatique des fichiers par email</p>
-            </div>
-            
-            <div className="text-center space-y-3">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-                <FileText className="h-6 w-6 text-green-600" />
-              </div>
-              <h3 className="font-semibold">2. Extraction</h3>
-              <p className="text-sm text-gray-600">Extraction automatique des données PDF et Excel</p>
-            </div>
-            
-            <div className="text-center space-y-3">
-              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto">
-                <BarChart3 className="h-6 w-6 text-purple-600" />
-              </div>
-              <h3 className="font-semibold">3. Rapprochement</h3>
-              <p className="text-sm text-gray-600">Analyse croisée et rapprochement multi-critères</p>
-            </div>
-            
-            <div className="text-center space-y-3">
-              <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle className="h-6 w-6 text-orange-600" />
-              </div>
-              <h3 className="font-semibold">4. Reporting</h3>
-              <p className="text-sm text-gray-600">Génération de rapports et alertes automatiques</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Quick Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Actions Rapides</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Link to="/dashboard" className="block">
-              <Button variant="outline" className="w-full h-16 flex-col space-y-2">
-                <BarChart3 className="h-5 w-5" />
-                <span>Voir le Dashboard</span>
-              </Button>
-            </Link>
-            
-            <Link to="/upload" className="block">
-              <Button variant="outline" className="w-full h-16 flex-col space-y-2">
-                <Upload className="h-5 w-5" />
-                <span>Uploader des Fichiers</span>
-              </Button>
-            </Link>
-            
-            <Link to="/alerts" className="block">
-              <Button variant="outline" className="w-full h-16 flex-col space-y-2">
-                <AlertTriangle className="h-5 w-5" />
-                <span>Voir les Alertes</span>
-              </Button>
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 };
