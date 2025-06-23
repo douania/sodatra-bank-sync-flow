@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
@@ -325,7 +324,7 @@ export class DatabaseService {
     try {
       const { data, error } = await supabase
         .from('bank_reports')
-        .select('count(*)')
+        .select('id')
         .limit(1);
       
       if (error) {
