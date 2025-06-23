@@ -412,7 +412,7 @@ const FileUpload = () => {
                             <div className="ml-4 space-y-1">
                               {Object.entries(processingResults.debugInfo.columnAnalysis.mapping).map(([excel, supabase]) => (
                                 <div key={excel} className="text-xs">
-                                  <span className="text-blue-600">"{excel}"</span> → <span className="text-green-600">{supabase}</span>
+                                  <span className="text-blue-600">"{excel}"</span> → <span className="text-green-600">{String(supabase)}</span>
                                 </div>
                               ))}
                             </div>
