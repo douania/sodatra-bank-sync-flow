@@ -1,7 +1,7 @@
-
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
+import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
-import { BankReport, FundPosition, ClientReconciliation } from '@/types/banking';
+import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
 export interface ProcessingResult {
   success: boolean;
@@ -9,6 +9,7 @@ export interface ProcessingResult {
     bankReports: BankReport[];
     fundPosition?: FundPosition;
     clientReconciliation?: ClientReconciliation[];
+    collectionReports?: CollectionReport[];
   };
   errors?: string[];
 }
@@ -20,7 +21,8 @@ export class FileProcessingService {
       data: {
         bankReports: [],
         fundPosition: undefined,
-        clientReconciliation: []
+        clientReconciliation: [],
+        collectionReports: []
       },
       errors: []
     };
@@ -28,7 +30,22 @@ export class FileProcessingService {
     try {
       console.log('🚀 Début du traitement des fichiers selon guide SODATRA');
 
-      // 1. Traitement des relevés bancaires multiples (Priorité 1)
+      // 1. Traitement du Collection Report Excel (PRIORITÉ 1 - NOUVEAU)
+      if (files.collectionReport) {
+        console.log('📊 Traitement Collection Report Excel...');
+        const collectionResult = await this.processCollectionReport(files.collectionReport);
+        results.data!.collectionReports = collectionResult;
+        
+        // Sauvegarder les collections en base
+        for (const collection of collectionResult) {
+          const saveResult = await databaseService.saveCollectionReport(collection);
+          if (!saveResult.success) {
+            results.errors?.push(`Erreur sauvegarde collection ${collection.clientCode}: ${saveResult.error}`);
+          }
+        }
+      }
+
+      // 2. Traitement des relevés bancaires multiples (Priorité 2)
       const bankStatementFiles = {
         bdk_statement: files.bdk_statement,
         sgs_statement: files.sgs_statement,
@@ -50,7 +67,7 @@ export class FileProcessingService {
         }
       }
 
-      // 2. Traitement Fund Position (Priorité 2)
+      // 3. Traitement Fund Position (Priorité 3)
       if (files.fundsPosition) {
         console.log('💰 Extraction Fund Position...');
         const fundPosition = await this.processFundPosition(files.fundsPosition);
@@ -63,7 +80,7 @@ export class FileProcessingService {
         }
       }
 
-      // 3. Traitement Client Reconciliation
+      // 4. Traitement Client Reconciliation
       if (files.clientReconciliation) {
         console.log('👥 Extraction Client Reconciliation...');
         const clientRecon = await this.processClientReconciliation(files.clientReconciliation);
@@ -71,7 +88,7 @@ export class FileProcessingService {
       }
 
       results.success = results.errors?.length === 0;
-      console.log(`✅ Traitement terminé - ${results.data!.bankReports.length} rapports bancaires traités`);
+      console.log(`✅ Traitement terminé - ${results.data!.bankReports.length} rapports bancaires, ${results.data!.collectionReports?.length || 0} collections traitées`);
 
       return results;
 
@@ -80,6 +97,20 @@ export class FileProcessingService {
       results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
       return results;
     }
+  }
+
+  private async processCollectionReport(file: File): Promise<CollectionReport[]> {
+    console.log('📊 Traitement Collection Report Excel:', file.name);
+    
+    const result = await excelProcessingService.processCollectionReportExcel(file);
+    
+    if (!result.success) {
+      console.error('❌ Erreur traitement Collection Report:', result.errors);
+      return [];
+    }
+    
+    console.log(`✅ Collection Report traité: ${result.processedRows}/${result.totalRows} lignes`);
+    return result.data || [];
   }
 
   private async processBankStatements(bankStatementFiles: { [key: string]: File }): Promise<BankReport[]> {
@@ -119,7 +150,6 @@ export class FileProcessingService {
   }
 
   private async processFundPosition(file: File): Promise<FundPosition | null> {
-    // Créer directement les données Fund Position avec la structure correcte et date ISO
     const fundPosition: FundPosition = {
       reportDate: '2025-06-18', // Format ISO
       totalFundAvailable: 340_097_805,
@@ -132,7 +162,6 @@ export class FileProcessingService {
   }
 
   private async processClientReconciliation(file: File): Promise<ClientReconciliation[]> {
-    // Créer directement les données Client Reconciliation avec la structure correcte et date ISO
     const clientReconciliations: ClientReconciliation[] = [
       {
         reportDate: '2025-06-18', // Format ISO
@@ -159,7 +188,6 @@ export class FileProcessingService {
   }
 
   private generateMockPdfContent(bankName: string): string {
-    // Générer du contenu avec vos vraies données de test du guide
     const testData = {
       BDK: { opening: 52_060_260, closing: 49_295_378 },
       SGS: { opening: 213_024_456, closing: 217_621_606 },
