@@ -155,6 +155,134 @@ export class DatabaseService {
     }
   }
 
+  // Sauvegarder Collection Report
+  async saveCollectionReport(collection: CollectionReport): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log('📊 Sauvegarde Collection Report...');
+      
+      // Vérifier si une collection existe déjà pour ce client et cette date
+      const { data: existing } = await supabase
+        .from('collection_report')
+        .select('id')
+        .eq('client_code', collection.clientCode)
+        .eq('report_date', collection.reportDate)
+        .maybeSingle();
+
+      if (existing) {
+        // Mettre à jour
+        const { error } = await supabase
+          .from('collection_report')
+          .update({
+            collection_amount: collection.collectionAmount,
+            bank_name: collection.bankName,
+            status: collection.status
+          })
+          .eq('id', existing.id);
+
+        if (error) {
+          console.error('❌ Erreur mise à jour Collection:', error);
+          return { success: false, error: error.message };
+        }
+        console.log('🔄 Collection mise à jour');
+      } else {
+        // Créer nouvelle collection
+        const { error } = await supabase
+          .from('collection_report')
+          .insert({
+            report_date: collection.reportDate,
+            client_code: collection.clientCode,
+            collection_amount: collection.collectionAmount,
+            bank_name: collection.bankName,
+            status: collection.status || 'pending'
+          });
+
+        if (error) {
+          console.error('❌ Erreur création Collection:', error);
+          return { success: false, error: error.message };
+        }
+        console.log('✅ Collection créée');
+      }
+
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Erreur générale Collection:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Erreur inconnue' 
+      };
+    }
+  }
+
+  // Récupérer tous les rapports de collection
+  async getCollectionReports(): Promise<CollectionReport[]> {
+    try {
+      console.log('📊 Récupération des collections...');
+      
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .order('report_date', { ascending: false });
+
+      if (error) {
+        console.error('❌ Erreur récupération collections:', error);
+        return [];
+      }
+
+      if (!data || data.length === 0) {
+        console.log('⚠️ Aucune collection trouvée');
+        return [];
+      }
+
+      const collections = data.map(item => ({
+        id: item.id,
+        reportDate: item.report_date,
+        clientCode: item.client_code,
+        collectionAmount: item.collection_amount || 0,
+        bankName: item.bank_name,
+        status: (item.status as 'pending' | 'processed' | 'failed') || 'pending',
+        dateOfValidity: item.date_of_validity || undefined
+      }));
+
+      console.log(`✅ ${collections.length} collections récupérées`);
+      return collections;
+
+    } catch (error) {
+      console.error('❌ Erreur générale récupération collections:', error);
+      return [];
+    }
+  }
+
+  // Mettre à jour la date de validité d'une collection
+  async updateCollectionDateOfValidity(collectionId: string, dateOfValidity: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log('📅 Mise à jour date de validité collection...');
+      
+      const { error } = await supabase
+        .from('collection_report')
+        .update({
+          status: 'processed',
+          date_of_validity: dateOfValidity
+        })
+        .eq('id', collectionId);
+
+      if (error) {
+        console.error('❌ Erreur mise à jour date validité:', error);
+        return { success: false, error: error.message };
+      }
+
+      console.log('✅ Date de validité mise à jour');
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Erreur générale mise à jour date validité:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Erreur inconnue' 
+      };
+    }
+  }
+
   // Sauvegarder Fund Position
   async saveFundPosition(fundPosition: FundPosition): Promise<{ success: boolean; error?: string }> {
     try {

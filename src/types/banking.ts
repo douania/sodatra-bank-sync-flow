@@ -70,6 +70,7 @@ export interface CollectionReport {
   collectionAmount: number;
   bankName?: string;
   status: 'pending' | 'processed' | 'failed';
+  dateOfValidity?: string; // Nouvelle propriété pour la date de crédit en banque
 }
 
 // Types pour les données de test réelles du guide
