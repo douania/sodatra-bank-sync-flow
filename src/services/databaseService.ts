@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, Impaye, BankFacility, CollectionReport, FundPosition, DepositNotCleared } from '@/types/banking';
 
@@ -156,120 +155,96 @@ export class DatabaseService {
     }
   }
 
-  // Sauvegarder Collection Report avec TOUTES les nouvelles colonnes
+  // Sauvegarder Collection Report avec TOUTES les nouvelles colonnes et logs détaillés
   async saveCollectionReport(collection: CollectionReport): Promise<{ success: boolean; error?: string }> {
     try {
-      console.log('📊 Sauvegarde Collection Report...');
+      console.log('📊 Début sauvegarde Collection Report:', {
+        clientCode: collection.clientCode,
+        collectionAmount: collection.collectionAmount,
+        bankName: collection.bankName,
+        reportDate: collection.reportDate
+      });
       
       // Vérifier si une collection existe déjà pour ce client et cette date
-      const { data: existing } = await supabase
+      const { data: existing, error: selectError } = await supabase
         .from('collection_report')
         .select('id')
         .eq('client_code', collection.clientCode)
         .eq('report_date', collection.reportDate)
         .maybeSingle();
 
+      if (selectError) {
+        console.error('❌ Erreur vérification existence:', selectError);
+        return { success: false, error: selectError.message };
+      }
+
+      const collectionData = {
+        report_date: collection.reportDate,
+        client_code: collection.clientCode,
+        collection_amount: collection.collectionAmount,
+        bank_name: collection.bankName || '',
+        status: collection.status || 'pending',
+        
+        // Nouvelles colonnes
+        date_of_validity: collection.dateOfValidity || null,
+        facture_no: collection.factureNo || null,
+        no_chq_bd: collection.noChqBd || null,
+        bank_name_display: collection.bankNameDisplay || null,
+        depo_ref: collection.depoRef || null,
+        
+        // Calculs financiers
+        nj: collection.nj || null,
+        taux: collection.taux || null,
+        interet: collection.interet || null,
+        commission: collection.commission || null,
+        tob: collection.tob || null,
+        frais_escompte: collection.fraisEscompte || null,
+        bank_commission: collection.bankCommission || null,
+        
+        // Références supplémentaires
+        sg_or_fa_no: collection.sgOrFaNo || null,
+        d_n_amount: collection.dNAmount || null,
+        income: collection.income || null,
+        
+        // Gestion des impayés
+        date_of_impay: collection.dateOfImpay || null,
+        reglement_impaye: collection.reglementImpaye || null,
+        remarques: collection.remarques || null,
+        
+        // Métadonnées de traitement
+        credited_date: collection.creditedDate || null,
+        processing_status: collection.processingStatus || 'NEW',
+        matched_bank_deposit_id: collection.matchedBankDepositId || null,
+        match_confidence: collection.matchConfidence || null,
+        match_method: collection.matchMethod || null,
+        processed_at: collection.processedAt || null
+      };
+
       if (existing) {
         // Mettre à jour avec TOUTES les colonnes
+        console.log('🔄 Mise à jour collection existante ID:', existing.id);
         const { error } = await supabase
           .from('collection_report')
-          .update({
-            collection_amount: collection.collectionAmount,
-            bank_name: collection.bankName,
-            status: collection.status,
-            
-            // ⭐ NOUVELLES COLONNES AJOUTÉES
-            date_of_validity: collection.dateOfValidity,
-            facture_no: collection.factureNo,
-            no_chq_bd: collection.noChqBd,
-            bank_name_display: collection.bankNameDisplay,
-            depo_ref: collection.depoRef,
-            
-            // ⭐ CALCULS FINANCIERS
-            nj: collection.nj,
-            taux: collection.taux,
-            interet: collection.interet,
-            commission: collection.commission,
-            tob: collection.tob,
-            frais_escompte: collection.fraisEscompte,
-            bank_commission: collection.bankCommission,
-            
-            // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
-            sg_or_fa_no: collection.sgOrFaNo,
-            d_n_amount: collection.dNAmount,
-            income: collection.income,
-            
-            // ⭐ GESTION DES IMPAYÉS
-            date_of_impay: collection.dateOfImpay,
-            reglement_impaye: collection.reglementImpaye,
-            remarques: collection.remarques,
-            
-            // ⭐ MÉTADONNÉES DE TRAITEMENT
-            credited_date: collection.creditedDate,
-            processing_status: collection.processingStatus,
-            matched_bank_deposit_id: collection.matchedBankDepositId,
-            match_confidence: collection.matchConfidence,
-            match_method: collection.matchMethod,
-            processed_at: collection.processedAt
-          })
+          .update(collectionData)
           .eq('id', existing.id);
 
         if (error) {
           console.error('❌ Erreur mise à jour Collection:', error);
           return { success: false, error: error.message };
         }
-        console.log('🔄 Collection mise à jour');
+        console.log('✅ Collection mise à jour avec succès');
       } else {
         // Créer nouvelle collection avec TOUTES les colonnes
+        console.log('✨ Création nouvelle collection');
         const { error } = await supabase
           .from('collection_report')
-          .insert({
-            report_date: collection.reportDate,
-            client_code: collection.clientCode,
-            collection_amount: collection.collectionAmount,
-            bank_name: collection.bankName,
-            status: collection.status || 'pending',
-            
-            // ⭐ NOUVELLES COLONNES AJOUTÉES
-            date_of_validity: collection.dateOfValidity,
-            facture_no: collection.factureNo,
-            no_chq_bd: collection.noChqBd,
-            bank_name_display: collection.bankNameDisplay,
-            depo_ref: collection.depoRef,
-            
-            // ⭐ CALCULS FINANCIERS
-            nj: collection.nj,
-            taux: collection.taux,
-            interet: collection.interet,
-            commission: collection.commission,
-            tob: collection.tob,
-            frais_escompte: collection.fraisEscompte,
-            bank_commission: collection.bankCommission,
-            
-            // ⭐ RÉFÉRENCES SUPPLÉMENTAIRES
-            sg_or_fa_no: collection.sgOrFaNo,
-            dNAmount: collection.dNAmount,
-            income: collection.income,
-            
-            // ⭐ GESTION DES IMPAYÉS
-            date_of_impay: collection.dateOfImpay,
-            reglement_impaye: collection.reglementImpaye,
-            remarques: collection.remarques,
-            
-            // ⭐ MÉTADONNÉES DE TRAITEMENT
-            credited_date: collection.creditedDate,
-            processing_status: collection.processingStatus || 'NEW',
-            matched_bank_deposit_id: collection.matchedBankDepositId,
-            match_confidence: collection.matchConfidence,
-            match_method: collection.matchMethod,
-            processed_at: collection.processedAt
-          });
+          .insert(collectionData);
 
         if (error) {
           console.error('❌ Erreur création Collection:', error);
           return { success: false, error: error.message };
         }
-        console.log('✅ Collection créée');
+        console.log('✅ Collection créée avec succès');
       }
 
       return { success: true };

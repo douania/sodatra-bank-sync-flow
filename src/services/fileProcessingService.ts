@@ -36,13 +36,29 @@ export class FileProcessingService {
         const collectionResult = await this.processCollectionReport(files.collectionReport);
         results.data!.collectionReports = collectionResult;
         
-        // Sauvegarder les collections en base
+        console.log(`📊 ${collectionResult.length} collections extraites, début sauvegarde...`);
+        
+        // Sauvegarder les collections en base avec logs détaillés
+        let savedCount = 0;
         for (const collection of collectionResult) {
-          const saveResult = await databaseService.saveCollectionReport(collection);
-          if (!saveResult.success) {
-            results.errors?.push(`Erreur sauvegarde collection ${collection.clientCode}: ${saveResult.error}`);
+          try {
+            console.log(`💾 Sauvegarde collection ${collection.clientCode} - ${collection.collectionAmount}...`);
+            const saveResult = await databaseService.saveCollectionReport(collection);
+            if (saveResult.success) {
+              savedCount++;
+              console.log(`✅ Collection ${collection.clientCode} sauvegardée`);
+            } else {
+              const errorMsg = `Erreur sauvegarde collection ${collection.clientCode}: ${saveResult.error}`;
+              console.error('❌', errorMsg);
+              results.errors?.push(errorMsg);
+            }
+          } catch (error) {
+            const errorMsg = `Exception sauvegarde collection ${collection.clientCode}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
+            console.error('❌', errorMsg);
+            results.errors?.push(errorMsg);
           }
         }
+        console.log(`💾 Sauvegarde terminée: ${savedCount}/${collectionResult.length} collections sauvegardées`);
       }
 
       // 2. Traitement des relevés bancaires multiples (Priorité 2)
@@ -102,15 +118,22 @@ export class FileProcessingService {
   private async processCollectionReport(file: File): Promise<CollectionReport[]> {
     console.log('📊 Traitement Collection Report Excel:', file.name);
     
-    const result = await excelProcessingService.processCollectionReportExcel(file);
-    
-    if (!result.success) {
-      console.error('❌ Erreur traitement Collection Report:', result.errors);
+    try {
+      const result = await excelProcessingService.processCollectionReportExcel(file);
+      
+      if (!result.success) {
+        console.error('❌ Erreur traitement Collection Report:', result.errors);
+        return [];
+      }
+      
+      console.log(`✅ Collection Report traité: ${result.processedRows}/${result.totalRows} lignes`);
+      console.log('📋 Données extraites:', result.data);
+      
+      return result.data || [];
+    } catch (error) {
+      console.error('❌ Exception lors du traitement Collection Report:', error);
       return [];
     }
-    
-    console.log(`✅ Collection Report traité: ${result.processedRows}/${result.totalRows} lignes`);
-    return result.data || [];
   }
 
   private async processBankStatements(bankStatementFiles: { [key: string]: File }): Promise<BankReport[]> {

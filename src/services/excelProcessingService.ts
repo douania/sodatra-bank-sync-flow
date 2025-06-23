@@ -78,11 +78,12 @@ export class ExcelProcessingService {
           const collection = this.processRow(headers, row, rowNumber);
           if (collection) {
             collections.push(collection);
+            console.log(`✅ Ligne ${rowNumber} traitée: ${collection.clientCode} - ${collection.collectionAmount}`);
           }
         } catch (error) {
           const errorMsg = `Erreur ligne ${rowNumber}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
           errors.push(errorMsg);
-          console.warn(errorMsg);
+          console.warn('⚠️', errorMsg);
         }
       }
 
@@ -137,6 +138,8 @@ export class ExcelProcessingService {
 
       if (mappedField) {
         this.setFieldValue(collection, mappedField, value);
+      } else {
+        console.log(`🔍 Colonne non mappée: "${normalizedHeader}" = "${value}"`);
       }
     });
 
@@ -148,6 +151,13 @@ export class ExcelProcessingService {
     if (!collection.collectionAmount || collection.collectionAmount <= 0) {
       throw new Error('COLLECTION AMOUNT manquant ou invalide');
     }
+
+    console.log(`📝 Collection créée pour ${collection.clientCode}:`, {
+      clientCode: collection.clientCode,
+      collectionAmount: collection.collectionAmount,
+      bankName: collection.bankName,
+      status: collection.status
+    });
 
     return collection as CollectionReport;
   }
