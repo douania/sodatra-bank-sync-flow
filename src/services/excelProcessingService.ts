@@ -1,5 +1,7 @@
+
 import * as XLSX from 'xlsx';
 import { CollectionReport } from '@/types/banking';
+import { excelMappingService } from './excelMappingService';
 
 export interface ExcelProcessingResult {
   success: boolean;
@@ -11,51 +13,15 @@ export interface ExcelProcessingResult {
     detectedHeaders: string[];
     sampleRows: any[];
     mappingResults: { [key: string]: any };
+    columnAnalysis: {
+      recognized: string[];
+      unrecognized: string[];
+      mapping: { [key: string]: string };
+    };
   };
 }
 
 export class ExcelProcessingService {
-  
-  // Mapping des colonnes Excel vers les propriétés TypeScript - VERSION ÉTENDUE
-  private static readonly COLUMN_MAPPING = {
-    'CLIENT CODE': 'clientCode',
-    'COLLECTION AMOUNT': 'collectionAmount',
-    'BANK NAME': 'bankName',
-    'DATE OF VALIDITY': 'dateOfValidity',
-    'FACTURE NO': 'factureNo',
-    'NO CHQ/BD': 'noChqBd',
-    'BANK NAME DISPLAY': 'bankNameDisplay',
-    'DEPO REF': 'depoRef',
-    'N.J': 'nj',
-    'TAUX': 'taux',
-    'INTERET': 'interet',
-    'COMMISSION': 'commission',
-    'TOB': 'tob',
-    'FRAIS ESCOMPTE': 'fraisEscompte',
-    'BANK COMMISSION': 'bankCommission',
-    'SG OR FA NO': 'sgOrFaNo',
-    'D.N AMOUNT': 'dNAmount',
-    'INCOME': 'income',
-    'DATE OF IMPAY': 'dateOfImpay',
-    'REGLEMENT IMPAYE': 'reglementImpaye',
-    'REMARQUES': 'remarques',
-    
-    // Variations possibles des noms de colonnes
-    'CODE CLIENT': 'clientCode',
-    'MONTANT COLLECTION': 'collectionAmount',
-    'NOM BANQUE': 'bankName',
-    'DATE VALIDITE': 'dateOfValidity',
-    'NUMERO FACTURE': 'factureNo',
-    'CHQ/BD': 'noChqBd',
-    'REF DEPOT': 'depoRef',
-    'NJ': 'nj',
-    'FRAIS': 'fraisEscompte',
-    'COMMISSION BANQUE': 'bankCommission',
-    'MONTANT DN': 'dNAmount',
-    'REVENUS': 'income',
-    'DATE IMPAYE': 'dateOfImpay',
-    'IMPAYE': 'reglementImpaye'
-  };
 
   async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
     try {
@@ -91,14 +57,28 @@ export class ExcelProcessingService {
       
       console.log('📋 EN-TÊTES DÉTECTÉS:', headers);
       console.log('📊 NOMBRE DE LIGNES DE DONNÉES:', dataRows.length);
-      
+
+      // ⭐ ANALYSE DES COLONNES AVEC LE NOUVEAU MAPPER
+      const columnAnalysis = excelMappingService.analyzeExcelColumns(headers);
+      console.log('🗺️ ANALYSE DES COLONNES:', columnAnalysis);
+
+      if (columnAnalysis.recognized.length === 0) {
+        console.error('❌ Aucune colonne reconnue dans le fichier Excel');
+        return {
+          success: false,
+          errors: [`Aucune colonne reconnue. Colonnes détectées: ${headers.join(', ')}`],
+          debugInfo: {
+            detectedHeaders: headers,
+            sampleRows: [],
+            mappingResults: {},
+            columnAnalysis
+          }
+        };
+      }
+
       // Afficher un échantillon des premières lignes pour debug
       const sampleRows = dataRows.slice(0, 3);
       console.log('🔍 ÉCHANTILLON DES DONNÉES (3 premières lignes):', sampleRows);
-
-      // Analyser le mapping des colonnes
-      const mappingResults = this.analyzeColumnMapping(headers);
-      console.log('🗺️ RÉSULTATS DU MAPPING:', mappingResults);
 
       // Traiter chaque ligne de données
       const collections: CollectionReport[] = [];
@@ -111,17 +91,30 @@ export class ExcelProcessingService {
         console.log(`\n🔄 TRAITEMENT LIGNE ${rowNumber}:`, row);
         
         try {
-          const collection = this.processRow(headers, row, rowNumber);
-          if (collection) {
-            collections.push(collection);
-            console.log(`✅ Ligne ${rowNumber} traitée avec succès:`, {
-              clientCode: collection.clientCode,
-              collectionAmount: collection.collectionAmount,
-              bankName: collection.bankName
-            });
-          } else {
-            console.log(`⚠️ Ligne ${rowNumber} ignorée (vide)`);
+          // Créer un objet avec les en-têtes comme clés
+          const rowObject: any = {};
+          headers.forEach((header, index) => {
+            rowObject[header] = row[index];
+          });
+
+          console.log(`🔍 [${rowNumber}] Objet ligne:`, rowObject);
+
+          // Vérifier si la ligne est vide
+          if (row.every(cell => !cell || cell.toString().trim() === '')) {
+            console.log(`⚠️ Ligne ${rowNumber} vide, ignorée`);
+            continue;
           }
+
+          // ⭐ UTILISER LE NOUVEAU MAPPER
+          const collection = excelMappingService.transformExcelRowToSupabase(rowObject, rowNumber);
+          
+          collections.push(collection);
+          console.log(`✅ Ligne ${rowNumber} traitée avec succès:`, {
+            clientCode: collection.clientCode,
+            collectionAmount: collection.collectionAmount,
+            bankName: collection.bankName
+          });
+
         } catch (error) {
           const errorMsg = `Erreur ligne ${rowNumber}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
           errors.push(errorMsg);
@@ -138,7 +131,8 @@ export class ExcelProcessingService {
         debugInfo: {
           detectedHeaders: headers,
           sampleRows: sampleRows,
-          mappingResults: mappingResults
+          mappingResults: columnAnalysis.mapping,
+          columnAnalysis
         }
       };
 
@@ -146,6 +140,7 @@ export class ExcelProcessingService {
       console.log(`✅ Collections créées: ${collections.length}`);
       console.log(`❌ Erreurs: ${errors.length}`);
       console.log(`📋 Total lignes: ${dataRows.length}`);
+      console.log(`🗺️ Colonnes reconnues: ${columnAnalysis.recognized.length}/${headers.length}`);
       
       if (collections.length > 0) {
         console.log('🎯 Première collection créée:', collections[0]);
@@ -159,183 +154,6 @@ export class ExcelProcessingService {
         success: false,
         errors: [error instanceof Error ? error.message : 'Erreur inconnue lors du traitement Excel']
       };
-    }
-  }
-
-  private analyzeColumnMapping(headers: string[]): { [key: string]: any } {
-    const mappingResults: { [key: string]: any } = {};
-    
-    headers.forEach((header, index) => {
-      const normalizedHeader = header?.toString().toUpperCase().trim();
-      
-      if (!normalizedHeader) {
-        mappingResults[`Colonne_${index}`] = { original: header, mapped: null, reason: 'En-tête vide' };
-        return;
-      }
-
-      // Rechercher la correspondance dans le mapping
-      const mappedField = Object.entries(ExcelProcessingService.COLUMN_MAPPING)
-        .find(([excelCol]) => excelCol === normalizedHeader)?.[1];
-
-      if (mappedField) {
-        mappingResults[normalizedHeader] = { 
-          original: header, 
-          mapped: mappedField, 
-          reason: 'Mappé avec succès',
-          index: index
-        };
-      } else {
-        mappingResults[normalizedHeader] = { 
-          original: header, 
-          mapped: null, 
-          reason: 'Pas de correspondance trouvée',
-          index: index
-        };
-      }
-    });
-    
-    return mappingResults;
-  }
-
-  private processRow(headers: string[], row: any[], rowNumber: number): CollectionReport | null {
-    // Vérifier si la ligne est vide
-    if (!row || row.every(cell => !cell || cell.toString().trim() === '')) {
-      console.log(`⚠️ Ligne ${rowNumber} vide, ignorée`);
-      return null;
-    }
-
-    console.log(`🔍 Traitement ligne ${rowNumber} - Données:`, row);
-
-    // Créer un objet avec les valeurs mappées
-    const collection: Partial<CollectionReport> = {
-      reportDate: new Date().toISOString().split('T')[0], // Date actuelle par défaut
-      status: 'pending'
-    };
-
-    // Mapper chaque colonne
-    headers.forEach((header, index) => {
-      const normalizedHeader = header?.toString().toUpperCase().trim();
-      const value = row[index];
-      
-      if (!normalizedHeader || value === undefined || value === null) {
-        return;
-      }
-
-      console.log(`🔗 Mapping colonne "${normalizedHeader}" (index ${index}) = "${value}"`);
-
-      // Rechercher la correspondance dans le mapping
-      const mappedField = Object.entries(ExcelProcessingService.COLUMN_MAPPING)
-        .find(([excelCol]) => excelCol === normalizedHeader)?.[1];
-
-      if (mappedField) {
-        this.setFieldValue(collection, mappedField, value);
-        console.log(`✅ Colonne mappée: ${normalizedHeader} -> ${mappedField} = ${value}`);
-      } else {
-        console.log(`⚠️ Colonne non mappée: "${normalizedHeader}" = "${value}"`);
-      }
-    });
-
-    // Validation des champs obligatoires avec logs détaillés
-    console.log(`🔍 Validation collection:`, {
-      clientCode: collection.clientCode,
-      collectionAmount: collection.collectionAmount,
-      hasClientCode: !!collection.clientCode,
-      hasCollectionAmount: !!collection.collectionAmount && collection.collectionAmount > 0
-    });
-
-    if (!collection.clientCode) {
-      throw new Error('CLIENT CODE manquant');
-    }
-    
-    if (!collection.collectionAmount || collection.collectionAmount <= 0) {
-      throw new Error('COLLECTION AMOUNT manquant ou invalide');
-    }
-
-    const finalCollection = collection as CollectionReport;
-    console.log(`📝 Collection finale créée:`, finalCollection);
-
-    return finalCollection;
-  }
-
-  private setFieldValue(collection: Partial<CollectionReport>, field: string, value: any) {
-    const cleanValue = value?.toString().trim();
-    
-    if (!cleanValue) return;
-
-    switch (field) {
-      case 'clientCode':
-      case 'bankName':
-      case 'factureNo':
-      case 'noChqBd':
-      case 'bankNameDisplay':
-      case 'depoRef':
-      case 'sgOrFaNo':
-      case 'reglementImpaye':
-      case 'remarques':
-        (collection as any)[field] = cleanValue;
-        break;
-        
-      case 'collectionAmount':
-      case 'nj':
-        (collection as any)[field] = this.parseNumber(cleanValue);
-        break;
-        
-      case 'taux':
-      case 'interet':
-      case 'commission':
-      case 'tob':
-      case 'fraisEscompte':
-      case 'bankCommission':
-      case 'dNAmount':
-      case 'income':
-        (collection as any)[field] = this.parseDecimal(cleanValue);
-        break;
-        
-      case 'dateOfValidity':
-      case 'dateOfImpay':
-        const parsedDate = this.parseDate(cleanValue);
-        if (parsedDate) {
-          (collection as any)[field] = parsedDate;
-        }
-        break;
-    }
-  }
-
-  private parseNumber(value: string): number {
-    const cleaned = value.replace(/[^\d.-]/g, '');
-    const parsed = parseInt(cleaned, 10);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-
-  private parseDecimal(value: string): number {
-    const cleaned = value.replace(/[^\d.-]/g, '');
-    const parsed = parseFloat(cleaned);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-
-  private parseDate(value: string): string | null {
-    try {
-      // Essayer différents formats de date
-      let date: Date;
-      
-      // Format Excel numérique (nombre de jours depuis 1900)
-      if (/^\d+$/.test(value)) {
-        const excelDate = parseInt(value, 10);
-        // Excel compte les jours depuis le 1er janvier 1900
-        date = new Date(1900, 0, excelDate - 1);
-      } else {
-        // Format texte
-        date = new Date(value);
-      }
-      
-      if (isNaN(date.getTime())) {
-        return null;
-      }
-      
-      // Retourner au format ISO (YYYY-MM-DD)
-      return date.toISOString().split('T')[0];
-    } catch {
-      return null;
     }
   }
 }

@@ -384,26 +384,39 @@ const FileUpload = () => {
                     </Alert>
                   )}
 
-                  {/* Informations de debug pour le Collection Report */}
-                  {processingResults.debugInfo && (
+                  {/* ⭐ ANALYSE DÉTAILLÉE DES COLONNES */}
+                  {processingResults.debugInfo?.columnAnalysis && (
                     <Alert className="border-blue-200 bg-blue-50">
                       <Info className="h-4 w-4" />
                       <AlertDescription>
-                        <div className="font-semibold mb-2">Informations de debug (Collection Report) :</div>
-                        <div className="text-sm space-y-1">
-                          <div>En-têtes détectés : {processingResults.debugInfo.detectedHeaders?.join(', ')}</div>
-                          {processingResults.debugInfo.mappingResults && (
-                            <div className="mt-2">
-                              <div className="font-medium">Mapping des colonnes :</div>
-                              <ul className="list-disc list-inside ml-4">
-                                {Object.entries(processingResults.debugInfo.mappingResults).map(([key, value]: [string, any]) => (
-                                  <li key={key} className={value.mapped ? 'text-green-700' : 'text-orange-700'}>
-                                    {key} → {value.mapped || 'Non mappé'}
-                                  </li>
-                                ))}
-                              </ul>
+                        <div className="font-semibold mb-2">📊 Analyse des colonnes Excel :</div>
+                        <div className="text-sm space-y-2">
+                          <div>
+                            <span className="font-medium text-green-700">✅ Colonnes reconnues ({processingResults.debugInfo.columnAnalysis.recognized.length}) :</span>
+                            <div className="ml-4 text-green-600">
+                              {processingResults.debugInfo.columnAnalysis.recognized.join(', ')}
+                            </div>
+                          </div>
+                          
+                          {processingResults.debugInfo.columnAnalysis.unrecognized.length > 0 && (
+                            <div>
+                              <span className="font-medium text-orange-700">⚠️ Colonnes non reconnues ({processingResults.debugInfo.columnAnalysis.unrecognized.length}) :</span>
+                              <div className="ml-4 text-orange-600">
+                                {processingResults.debugInfo.columnAnalysis.unrecognized.join(', ')}
+                              </div>
                             </div>
                           )}
+
+                          <div className="mt-3">
+                            <span className="font-medium">🗺️ Mapping appliqué :</span>
+                            <div className="ml-4 space-y-1">
+                              {Object.entries(processingResults.debugInfo.columnAnalysis.mapping).map(([excel, supabase]) => (
+                                <div key={excel} className="text-xs">
+                                  <span className="text-blue-600">"{excel}"</span> → <span className="text-green-600">{supabase}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </AlertDescription>
                     </Alert>
