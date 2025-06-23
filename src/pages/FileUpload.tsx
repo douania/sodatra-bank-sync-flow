@@ -9,7 +9,12 @@ import Stepper from '@/components/Stepper';
 
 const FileUpload = () => {
   const [uploadedFiles, setUploadedFiles] = useState<{ [key: string]: File | null }>({
-    bankStatements: null,
+    bdk_statement: null,
+    sgs_statement: null,
+    bicis_statement: null,
+    atb_statement: null,
+    bis_statement: null,
+    ora_statement: null,
     collectionReport: null,
     clientReconciliation: null,
     fundsPosition: null
@@ -47,14 +52,58 @@ const FileUpload = () => {
     }
   ];
 
-  const fileTypes = [
+  const bankStatementTypes = [
     {
-      key: 'bankStatements',
-      label: 'Relevés Bancaires (PDF)',
-      description: 'BDK, SGS, BICIS, ATB, BIS, ORA selon guide',
+      key: 'bdk_statement',
+      label: 'Relevé BDK (PDF)',
+      bankName: 'BDK',
+      description: 'Banque de Kinshasa - Relevé bancaire PDF',
       accept: '.pdf',
       required: true
     },
+    {
+      key: 'sgs_statement',
+      label: 'Relevé SGS (PDF)',
+      bankName: 'SGS',
+      description: 'Société Générale Sénégal - Relevé bancaire PDF',
+      accept: '.pdf',
+      required: true
+    },
+    {
+      key: 'bicis_statement',
+      label: 'Relevé BICIS (PDF)',
+      bankName: 'BICIS',
+      description: 'BICIS - Relevé bancaire PDF',
+      accept: '.pdf',
+      required: true
+    },
+    {
+      key: 'atb_statement',
+      label: 'Relevé ATB (PDF)',
+      bankName: 'ATB',
+      description: 'Atlantic Bank - Relevé bancaire PDF',
+      accept: '.pdf',
+      required: true
+    },
+    {
+      key: 'bis_statement',
+      label: 'Relevé BIS (PDF)',
+      bankName: 'BIS',
+      description: 'Bank of Industry and Services - Relevé bancaire PDF',
+      accept: '.pdf',
+      required: true
+    },
+    {
+      key: 'ora_statement',
+      label: 'Relevé ORA (PDF)',
+      bankName: 'ORA',
+      description: 'ORA Bank - Relevé bancaire PDF',
+      accept: '.pdf',
+      required: true
+    }
+  ];
+
+  const otherFileTypes = [
     {
       key: 'collectionReport',
       label: 'Collection Report (Excel)',
@@ -93,9 +142,11 @@ const FileUpload = () => {
     }
   };
 
-  const allRequiredFilesUploaded = fileTypes.every(type => 
+  const allRequiredFilesUploaded = [...bankStatementTypes, ...otherFileTypes].every(type => 
     !type.required || uploadedFiles[type.key] !== null
   );
+
+  const uploadedBankStatements = bankStatementTypes.filter(type => uploadedFiles[type.key] !== null).length;
 
   const handleProcessFiles = async () => {
     if (!allRequiredFilesUploaded) return;
@@ -152,6 +203,56 @@ const FileUpload = () => {
     }
   };
 
+  const FileUploadCard = ({ fileType, index }: { fileType: any, index: number }) => (
+    <Card key={fileType.key} className="hover:shadow-md transition-shadow">
+      <CardHeader>
+        <CardTitle className="flex items-center space-x-2">
+          <FileText className="h-5 w-5" />
+          <span>{fileType.label}</span>
+          {fileType.required && <span className="text-red-500">*</span>}
+          {fileType.bankName && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+              {fileType.bankName}
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-600 mb-4">{fileType.description}</p>
+        
+        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+          <input
+            type="file"
+            accept={fileType.accept}
+            onChange={(e) => handleFileUpload(fileType.key, e)}
+            className="hidden"
+            id={`file-${fileType.key}`}
+          />
+          <label htmlFor={`file-${fileType.key}`} className="cursor-pointer">
+            {uploadedFiles[fileType.key] ? (
+              <div className="flex items-center justify-center space-x-2 text-green-600">
+                <CheckCircle className="h-5 w-5" />
+                <span className="text-sm font-medium">
+                  {uploadedFiles[fileType.key]?.name}
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Upload className="h-8 w-8 text-gray-400 mx-auto" />
+                <div className="text-sm text-gray-600">
+                  Cliquez pour télécharger ou glissez-déposez
+                </div>
+                <div className="text-xs text-gray-400">
+                  {fileType.accept.replace(/\./g, '').toUpperCase()}
+                </div>
+              </div>
+            )}
+          </label>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -164,51 +265,35 @@ const FileUpload = () => {
       <Stepper steps={steps} />
 
       {processStep === 1 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {fileTypes.map((fileType) => (
-            <Card key={fileType.key} className="hover:shadow-md transition-shadow">
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <FileText className="h-5 w-5" />
-                  <span>{fileType.label}</span>
-                  {fileType.required && <span className="text-red-500">*</span>}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-gray-600 mb-4">{fileType.description}</p>
-                
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
-                  <input
-                    type="file"
-                    accept={fileType.accept}
-                    onChange={(e) => handleFileUpload(fileType.key, e)}
-                    className="hidden"
-                    id={`file-${fileType.key}`}
-                  />
-                  <label htmlFor={`file-${fileType.key}`} className="cursor-pointer">
-                    {uploadedFiles[fileType.key] ? (
-                      <div className="flex items-center justify-center space-x-2 text-green-600">
-                        <CheckCircle className="h-5 w-5" />
-                        <span className="text-sm font-medium">
-                          {uploadedFiles[fileType.key]?.name}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <Upload className="h-8 w-8 text-gray-400 mx-auto" />
-                        <div className="text-sm text-gray-600">
-                          Cliquez pour télécharger ou glissez-déposez
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          {fileType.accept.replace(/\./g, '').toUpperCase()}
-                        </div>
-                      </div>
-                    )}
-                  </label>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="space-y-8">
+          {/* Section Relevés Bancaires */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900">
+                Relevés Bancaires (6 banques)
+              </h2>
+              <div className="text-sm text-gray-500">
+                {uploadedBankStatements}/6 relevés uploadés
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {bankStatementTypes.map((fileType, index) => (
+                <FileUploadCard key={fileType.key} fileType={fileType} index={index} />
+              ))}
+            </div>
+          </div>
+
+          {/* Section Autres Fichiers */}
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              Autres Documents Requis
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {otherFileTypes.map((fileType, index) => (
+                <FileUploadCard key={fileType.key} fileType={fileType} index={index} />
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

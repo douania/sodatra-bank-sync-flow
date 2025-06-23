@@ -1,3 +1,4 @@
+
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { databaseService } from './databaseService';
 import { BankReport, FundPosition, ClientReconciliation } from '@/types/banking';
@@ -27,18 +28,25 @@ export class FileProcessingService {
     try {
       console.log('🚀 Début du traitement des fichiers selon guide SODATRA');
 
-      // 1. Traitement des relevés bancaires (Priorité 1)
-      if (files.bankStatements) {
-        console.log('📄 Extraction des relevés bancaires...');
-        const bankReports = await this.processBankStatements(files.bankStatements);
-        results.data!.bankReports = bankReports;
+      // 1. Traitement des relevés bancaires multiples (Priorité 1)
+      const bankStatementFiles = {
+        bdk_statement: files.bdk_statement,
+        sgs_statement: files.sgs_statement,
+        bicis_statement: files.bicis_statement,
+        atb_statement: files.atb_statement,
+        bis_statement: files.bis_statement,
+        ora_statement: files.ora_statement
+      };
 
-        // Sauvegarde en base
-        for (const report of bankReports) {
-          const saveResult = await databaseService.saveBankReport(report);
-          if (!saveResult.success) {
-            results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
-          }
+      console.log('📄 Extraction des relevés bancaires multiples...');
+      const bankReports = await this.processBankStatements(bankStatementFiles);
+      results.data!.bankReports = bankReports;
+
+      // Sauvegarde en base
+      for (const report of bankReports) {
+        const saveResult = await databaseService.saveBankReport(report);
+        if (!saveResult.success) {
+          results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
         }
       }
 
@@ -74,22 +82,39 @@ export class FileProcessingService {
     }
   }
 
-  private async processBankStatements(file: File): Promise<BankReport[]> {
+  private async processBankStatements(bankStatementFiles: { [key: string]: File }): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     
-    // Simuler l'extraction PDF (en attendant une vraie lib PDF)
-    const bankNames = ['BDK', 'SGS', 'BICIS', 'ATB', 'BIS', 'ORA'];
-    
-    for (const bankName of bankNames) {
-      // Simuler le contenu PDF avec vos données de test réelles
-      const mockPdfContent = this.generateMockPdfContent(bankName);
-      
-      const extractionResult = extractBankReport(mockPdfContent, bankName);
-      if (extractionResult.success && extractionResult.data) {
-        reports.push(extractionResult.data);
+    // Mapping des clés de fichiers vers les noms de banques
+    const bankMapping = {
+      bdk_statement: 'BDK',
+      sgs_statement: 'SGS',
+      bicis_statement: 'BICIS',
+      atb_statement: 'ATB',
+      bis_statement: 'BIS',
+      ora_statement: 'ORA'
+    };
+
+    // Traiter chaque fichier de relevé bancaire uploadé
+    for (const [fileKey, file] of Object.entries(bankStatementFiles)) {
+      if (file) {
+        const bankName = bankMapping[fileKey as keyof typeof bankMapping];
+        console.log(`🏦 Traitement relevé ${bankName}...`);
+        
+        // Simuler l'extraction PDF (en attendant une vraie lib PDF)
+        const mockPdfContent = this.generateMockPdfContent(bankName);
+        
+        const extractionResult = extractBankReport(mockPdfContent, bankName);
+        if (extractionResult.success && extractionResult.data) {
+          reports.push(extractionResult.data);
+          console.log(`✅ Relevé ${bankName} traité avec succès`);
+        } else {
+          console.warn(`⚠️ Échec traitement relevé ${bankName}`);
+        }
       }
     }
 
+    console.log(`📊 ${reports.length} relevés bancaires traités au total`);
     return reports;
   }
 
