@@ -18,6 +18,11 @@ export interface ExcelProcessingResult {
       unrecognized: string[];
       mapping: { [key: string]: string };
     };
+    problemRows?: Array<{
+      rowNumber: number;
+      data: any;
+      error: string;
+    }>;
   };
 }
 
@@ -77,12 +82,13 @@ export class ExcelProcessingService {
       }
 
       // Afficher un échantillon des premières lignes pour debug
-      const sampleRows = dataRows.slice(0, 3);
-      console.log('🔍 ÉCHANTILLON DES DONNÉES (3 premières lignes):', sampleRows);
+      const sampleRows = dataRows.slice(0, 5);
+      console.log('🔍 ÉCHANTILLON DES DONNÉES (5 premières lignes):', sampleRows);
 
       // Traiter chaque ligne de données
       const collections: CollectionReport[] = [];
       const errors: string[] = [];
+      const problemRows: Array<{ rowNumber: number; data: any; error: string }> = [];
       
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
@@ -105,7 +111,13 @@ export class ExcelProcessingService {
             continue;
           }
 
-          // ⭐ UTILISER LE NOUVEAU MAPPER
+          // ⭐ LOG DÉTAILLÉ DU CLIENT NAME
+          const clientNameValue = rowObject["CLIENT NAME"];
+          const clientCodeValue = rowObject["CLIENT CODE"];
+          console.log(`🔍 [${rowNumber}] CLIENT NAME détecté: "${clientNameValue}" (type: ${typeof clientNameValue})`);
+          console.log(`🔍 [${rowNumber}] CLIENT CODE détecté: "${clientCodeValue}" (type: ${typeof clientCodeValue})`);
+          
+          // ⭐ UTILISER LE NOUVEAU MAPPER AVEC GESTION D'ERREUR
           const collection = excelMappingService.transformExcelRowToSupabase(rowObject, rowNumber);
           
           collections.push(collection);
@@ -118,7 +130,20 @@ export class ExcelProcessingService {
         } catch (error) {
           const errorMsg = `Erreur ligne ${rowNumber}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
           errors.push(errorMsg);
+          
+          // ⭐ CAPTURER LES LIGNES PROBLÉMATIQUES POUR ANALYSE
+          problemRows.push({
+            rowNumber,
+            data: row,
+            error: error instanceof Error ? error.message : 'Erreur inconnue'
+          });
+          
           console.error('❌', errorMsg, 'Données de la ligne:', row);
+          console.error('❌ Détails CLIENT NAME pour ligne', rowNumber, ':', {
+            clientNameRaw: row[headers.indexOf("CLIENT NAME")],
+            clientCodeRaw: row[headers.indexOf("CLIENT CODE")],
+            fullRowObject: headers.reduce((obj, header, idx) => ({ ...obj, [header]: row[idx] }), {})
+          });
         }
       }
 
@@ -132,7 +157,8 @@ export class ExcelProcessingService {
           detectedHeaders: headers,
           sampleRows: sampleRows,
           mappingResults: columnAnalysis.mapping,
-          columnAnalysis
+          columnAnalysis,
+          problemRows: problemRows.length > 0 ? problemRows : undefined
         }
       };
 
@@ -141,6 +167,13 @@ export class ExcelProcessingService {
       console.log(`❌ Erreurs: ${errors.length}`);
       console.log(`📋 Total lignes: ${dataRows.length}`);
       console.log(`🗺️ Colonnes reconnues: ${columnAnalysis.recognized.length}/${headers.length}`);
+      
+      if (problemRows.length > 0) {
+        console.log(`🔍 LIGNES PROBLÉMATIQUES (${problemRows.length}):`);
+        problemRows.slice(0, 10).forEach(problem => {
+          console.log(`   - Ligne ${problem.rowNumber}: ${problem.error}`);
+        });
+      }
       
       if (collections.length > 0) {
         console.log('🎯 Première collection créée:', collections[0]);

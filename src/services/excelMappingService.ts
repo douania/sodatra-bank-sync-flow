@@ -1,4 +1,3 @@
-
 import { CollectionReport } from '@/types/banking';
 
 export class ExcelToSupabaseMapper {
@@ -8,7 +7,8 @@ export class ExcelToSupabaseMapper {
     // ⭐ COLONNES PRINCIPALES
     "DATE": "reportDate",
     "FACTURE N°": "factureNo",                    // ⚠️ Caractère spécial °
-    "CLIENT NAME": "clientCode",                  // On utilise comme clientCode
+    "CLIENT NAME": "clientCode",                  // ⭐ CORRECTION: CLIENT NAME → clientCode
+    "CLIENT CODE": "clientCode",                  // ⭐ FALLBACK: si CLIENT CODE existe aussi
     "AMOUNT ": "collectionAmount",                // ⚠️ ESPACE à la fin !
     "BANK": "bankName",
     
@@ -40,7 +40,6 @@ export class ExcelToSupabaseMapper {
     "remarques": "remarques",
     
     // ⭐ ALTERNATIVES POSSIBLES (variations de noms)
-    "CLIENT CODE": "clientCode",
     "MONTANT": "collectionAmount",
     "BANQUE": "bankName",
     "FACTURE": "factureNo",
@@ -72,16 +71,44 @@ export class ExcelToSupabaseMapper {
       mapped.reportDate = new Date().toISOString().split('T')[0];
     }
     
-    console.log(`✅ [${rowNumber}] Objet mappé final:`, mapped);
+    console.log(`📋 [${rowNumber}] Objet mappé avant validation:`, mapped);
     
-    // ⭐ VALIDATION DES CHAMPS OBLIGATOIRES
-    if (!mapped.clientCode) {
-      throw new Error(`[${rowNumber}] CLIENT CODE manquant - colonnes détectées: ${Object.keys(excelRow).join(', ')}`);
+    // ⭐⭐ VALIDATION AMÉLIORÉE DU CLIENT CODE
+    if (!mapped.clientCode || mapped.clientCode.toString().trim() === '') {
+      // ⭐ LOGS DÉTAILLÉS POUR DEBUG
+      console.error(`❌ [${rowNumber}] CLIENT CODE manquant ou vide:`, {
+        clientCodeValue: mapped.clientCode,
+        clientNameFromExcel: excelRow["CLIENT NAME"],
+        clientCodeFromExcel: excelRow["CLIENT CODE"],
+        availableColumns: Object.keys(excelRow),
+        mappedObject: mapped
+      });
+      
+      // ⭐ TENTATIVE DE FALLBACK
+      const fallbackClientCode = excelRow["CLIENT NAME"] || excelRow["CLIENT CODE"] || excelRow["REFERENCE"] || `UNKNOWN_${rowNumber}`;
+      console.warn(`🔄 [${rowNumber}] Tentative fallback CLIENT CODE: "${fallbackClientCode}"`);
+      
+      if (fallbackClientCode && fallbackClientCode.toString().trim() !== '') {
+        mapped.clientCode = fallbackClientCode.toString().trim();
+        console.log(`✅ [${rowNumber}] CLIENT CODE récupéré via fallback: "${mapped.clientCode}"`);
+      } else {
+        throw new Error(`CLIENT CODE manquant - Valeur CLIENT NAME: "${excelRow["CLIENT NAME"]}" - Toutes colonnes: ${Object.keys(excelRow).join(', ')}`);
+      }
     }
     
+    // ⭐ VALIDATION DU MONTANT AVEC LOGS DÉTAILLÉS
     if (!mapped.collectionAmount || mapped.collectionAmount <= 0) {
-      throw new Error(`[${rowNumber}] COLLECTION AMOUNT manquant ou invalide (${mapped.collectionAmount}) - colonnes détectées: ${Object.keys(excelRow).join(', ')}`);
+      console.error(`❌ [${rowNumber}] COLLECTION AMOUNT invalide:`, {
+        collectionAmountValue: mapped.collectionAmount,
+        amountFromExcel: excelRow["AMOUNT "],
+        amountAltFromExcel: excelRow["MONTANT"],
+        availableColumns: Object.keys(excelRow)
+      });
+      
+      throw new Error(`COLLECTION AMOUNT invalide (${mapped.collectionAmount}) - Valeur AMOUNT: "${excelRow["AMOUNT "]}" - CLIENT: "${mapped.clientCode}"`);
     }
+    
+    console.log(`✅ [${rowNumber}] Validation réussie pour CLIENT: "${mapped.clientCode}", AMOUNT: ${mapped.collectionAmount}`);
     
     return mapped as CollectionReport;
   }
@@ -239,6 +266,12 @@ export class ExcelToSupabaseMapper {
         unrecognized.push(header);
       }
     });
+    
+    // ⭐ LOGS DÉTAILLÉS DU MAPPING
+    console.log('🗺️ ANALYSE DÉTAILLÉE DES COLONNES:');
+    console.log('✅ Reconnues:', recognized);
+    console.log('❌ Non reconnues:', unrecognized);
+    console.log('🔗 Mapping complet:', mapping);
     
     return { recognized, unrecognized, mapping };
   }

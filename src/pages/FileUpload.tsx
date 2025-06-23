@@ -369,17 +369,45 @@ const FileUpload = () => {
                     </AlertDescription>
                   </Alert>
 
-                  {/* Affichage des erreurs détaillées */}
+                  {/* ⭐ AFFICHAGE DÉTAILLÉ DES ERREURS AVEC EXEMPLES */}
                   {processingResults.errors && processingResults.errors.length > 0 && (
                     <Alert className="border-red-200 bg-red-50">
                       <AlertTriangle className="h-4 w-4" />
                       <AlertDescription>
-                        <div className="font-semibold mb-2">Erreurs détectées :</div>
-                        <ul className="list-disc list-inside space-y-1 text-sm">
-                          {processingResults.errors.map((error: string, index: number) => (
-                            <li key={index}>{error}</li>
+                        <div className="font-semibold mb-2">❌ Erreurs détectées ({processingResults.errors.length}):</div>
+                        <div className="max-h-40 overflow-y-auto space-y-1 text-sm">
+                          {processingResults.errors.slice(0, 10).map((error: string, index: number) => (
+                            <div key={index} className="text-red-700 bg-red-100 p-2 rounded text-xs">
+                              {error}
+                            </div>
                           ))}
-                        </ul>
+                          {processingResults.errors.length > 10 && (
+                            <div className="text-red-600 text-xs italic">
+                              ... et {processingResults.errors.length - 10} autres erreurs similaires
+                            </div>
+                          )}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* ⭐ LIGNES PROBLÉMATIQUES DÉTAILLÉES */}
+                  {processingResults.debugInfo?.problemRows && processingResults.debugInfo.problemRows.length > 0 && (
+                    <Alert className="border-orange-200 bg-orange-50">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="font-semibold mb-2">🔍 Lignes problématiques détectées :</div>
+                        <div className="max-h-60 overflow-y-auto space-y-2 text-sm">
+                          {processingResults.debugInfo.problemRows.slice(0, 5).map((problem, index) => (
+                            <div key={index} className="bg-orange-100 p-2 rounded text-xs">
+                              <div className="font-medium text-orange-800">Ligne {problem.rowNumber}:</div>
+                              <div className="text-orange-700">{problem.error}</div>
+                              <div className="text-orange-600 mt-1">
+                                Données: {JSON.stringify(problem.data).substring(0, 100)}...
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </AlertDescription>
                     </Alert>
                   )}
@@ -409,7 +437,7 @@ const FileUpload = () => {
 
                           <div className="mt-3">
                             <span className="font-medium">🗺️ Mapping appliqué :</span>
-                            <div className="ml-4 space-y-1">
+                            <div className="ml-4 space-y-1 max-h-32 overflow-y-auto">
                               {Object.entries(processingResults.debugInfo.columnAnalysis.mapping).map(([excel, supabase]) => (
                                 <div key={excel} className="text-xs">
                                   <span className="text-blue-600">"{excel}"</span> → <span className="text-green-600">{String(supabase)}</span>
