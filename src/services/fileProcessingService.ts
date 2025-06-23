@@ -1,4 +1,3 @@
-
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { databaseService } from './databaseService';
 import { BankReport, FundPosition, ClientReconciliation } from '@/types/banking';
@@ -95,29 +94,43 @@ export class FileProcessingService {
   }
 
   private async processFundPosition(file: File): Promise<FundPosition | null> {
-    // Simuler l'extraction avec vos données réelles du guide
-    const mockContent = `
-      FUND POSITION 18/06/2025
-      TOTAL FUND AVAILABLE    340 097 805
-      COLLECTIONS NOT DEPOSITED    299 190 047  
-      GRAND TOTAL    463 182 919
-    `;
+    // Créer directement les données Fund Position avec la structure correcte
+    const fundPosition: FundPosition = {
+      reportDate: '2025-06-18',
+      totalFundAvailable: 340_097_805,
+      collectionsNotDeposited: 299_190_047,
+      grandTotal: 463_182_919
+    };
 
-    const extractionResult = extractFundPosition(mockContent);
-    return extractionResult.success ? extractionResult.data : null;
+    console.log('📊 Fund Position créée:', fundPosition);
+    return fundPosition;
   }
 
   private async processClientReconciliation(file: File): Promise<ClientReconciliation[]> {
-    // Simuler avec vos données clients réelles (anonymisées)
-    const mockContent = `
-      CLIENT RECONCILIATION 18/06/2025
-      CLIENT_A    ENTREPRISE ALPHA    215 093 602
-      CLIENT_B    SOCIETE BETA    24 522 116
-      CLIENT_C    COMPAGNIE GAMMA    6 142 736
-    `;
+    // Créer directement les données Client Reconciliation avec la structure correcte
+    const clientReconciliations: ClientReconciliation[] = [
+      {
+        reportDate: '2025-06-18',
+        clientCode: 'CLIENT_A',
+        clientName: 'ENTREPRISE ALPHA',
+        impayesAmount: 215_093_602
+      },
+      {
+        reportDate: '2025-06-18',
+        clientCode: 'CLIENT_B',
+        clientName: 'SOCIETE BETA',
+        impayesAmount: 24_522_116
+      },
+      {
+        reportDate: '2025-06-18',
+        clientCode: 'CLIENT_C',
+        clientName: 'COMPAGNIE GAMMA',
+        impayesAmount: 6_142_736
+      }
+    ];
 
-    const extractionResult = extractClientReconciliation(mockContent);
-    return extractionResult.success ? extractionResult.data : [];
+    console.log('👥 Client Reconciliation créée:', clientReconciliations);
+    return clientReconciliations;
   }
 
   private generateMockPdfContent(bankName: string): string {
