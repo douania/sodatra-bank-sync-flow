@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CheckCircle, AlertTriangle, Clock, FileX } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Clock, FileX, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { databaseService } from '@/services/databaseService';
 import { crossBankAnalysisService } from '@/services/crossBankAnalysisService';
 import { BankReport, FundPosition } from '@/types/banking';
@@ -14,6 +15,7 @@ const Dashboard = () => {
   const [fundPosition, setFundPosition] = useState<FundPosition | null>(null);
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -21,10 +23,22 @@ const Dashboard = () => {
 
   const loadDashboardData = async () => {
     try {
+      setLoading(true);
+      setError(null);
+      console.log('🔄 Chargement du dashboard consolidé...');
+      
+      // Test de connexion d'abord
+      const isConnected = await databaseService.testConnection();
+      if (!isConnected) {
+        throw new Error('Impossible de se connecter à la base de données');
+      }
+
       const [reports, position] = await Promise.all([
         databaseService.getLatestBankReports(),
         databaseService.getLatestFundPosition()
       ]);
+      
+      console.log(`📊 Données récupérées: ${reports.length} rapports, Fund Position: ${position ? 'Oui' : 'Non'}`);
       
       setBankReports(reports);
       setFundPosition(position);
@@ -56,10 +70,13 @@ const Dashboard = () => {
           criticalAlerts: alerts
         });
         
-        console.log('🏦 Analyse consolidée:', analysis);
+        console.log('🏦 Analyse consolidée terminée');
+      } else {
+        console.log('⚠️ Aucune donnée à analyser');
       }
     } catch (error) {
-      console.error('Erreur chargement dashboard:', error);
+      console.error('❌ Erreur chargement dashboard:', error);
+      setError(error instanceof Error ? error.message : 'Erreur inconnue');
     } finally {
       setLoading(false);
     }
@@ -68,7 +85,55 @@ const Dashboard = () => {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="text-lg">Chargement du dashboard consolidé...</div>
+        <div className="text-center">
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <div className="text-lg">Chargement du dashboard consolidé...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <Card className="w-96">
+          <CardHeader>
+            <CardTitle className="text-red-600 flex items-center">
+              <AlertTriangle className="h-5 w-5 mr-2" />
+              Erreur de chargement
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-gray-600 mb-4">{error}</p>
+            <Button onClick={loadDashboardData} className="w-full">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Réessayer
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (bankReports.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <Card className="w-96">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <FileX className="h-5 w-5 mr-2" />
+              Aucune donnée disponible
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-gray-600 mb-4">
+              Aucun rapport bancaire n'a été trouvé. Veuillez d'abord importer vos fichiers.
+            </p>
+            <Button onClick={() => window.location.href = '/upload'} className="w-full">
+              Importer des fichiers
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -77,8 +142,14 @@ const Dashboard = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900">Dashboard Consolidé Multi-Banques SODATRA</h1>
-        <div className="text-sm text-gray-500">
-          Position consolidée au {new Date().toLocaleDateString('fr-FR')} • {bankReports.length} banques surveillées
+        <div className="flex items-center space-x-4">
+          <Button variant="outline" onClick={loadDashboardData}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Actualiser
+          </Button>
+          <div className="text-sm text-gray-500">
+            Position consolidée au {new Date().toLocaleDateString('fr-FR')} • {bankReports.length} banques surveillées
+          </div>
         </div>
       </div>
 
