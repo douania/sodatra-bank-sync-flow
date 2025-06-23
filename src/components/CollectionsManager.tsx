@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, CheckCircle, Clock, Filter } from 'lucide-react';
+import { Calendar, CheckCircle, Clock, Filter, Eye, MapPin } from 'lucide-react';
 import { databaseService } from '@/services/databaseService';
 import { CollectionReport } from '@/types/banking';
 
@@ -16,6 +16,7 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
   const [collections, setCollections] = useState<CollectionReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'processed'>('all');
+  const [selectedCollection, setSelectedCollection] = useState<CollectionReport | null>(null);
 
   useEffect(() => {
     loadCollections();
@@ -39,7 +40,6 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
       const today = new Date().toISOString().split('T')[0];
       await databaseService.updateCollectionDateOfValidity(collectionId, today);
       
-      // Mettre à jour l'état local
       setCollections(prev => 
         prev.map(collection => 
           collection.id === collectionId 
@@ -111,7 +111,7 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
         </Card>
       </div>
 
-      {/* Tableau des collections */}
+      {/* Tableau des collections avec nouvelles colonnes */}
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
@@ -150,55 +150,109 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
               Aucune collection trouvée pour ce filtre
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code Client</TableHead>
-                  <TableHead>Montant</TableHead>
-                  <TableHead>Date Rapport</TableHead>
-                  <TableHead>Banque</TableHead>
-                  <TableHead>Statut</TableHead>
-                  <TableHead>Date de Validité</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCollections.map((collection) => (
-                  <TableRow key={collection.id}>
-                    <TableCell className="font-medium">{collection.clientCode}</TableCell>
-                    <TableCell>{collection.collectionAmount.toLocaleString()} FCFA</TableCell>
-                    <TableCell>{new Date(collection.reportDate).toLocaleDateString('fr-FR')}</TableCell>
-                    <TableCell>{collection.bankName || 'N/A'}</TableCell>
-                    <TableCell>
-                      <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
-                        {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {collection.dateOfValidity 
-                        ? new Date(collection.dateOfValidity).toLocaleDateString('fr-FR')
-                        : 'Non définie'
-                      }
-                    </TableCell>
-                    <TableCell>
-                      {collection.status === 'pending' && (
-                        <Button
-                          size="sm"
-                          onClick={() => markAsProcessed(collection.id!)}
-                          className="flex items-center gap-1"
-                        >
-                          <CheckCircle className="h-4 w-4" />
-                          Marquer comme créditée
-                        </Button>
-                      )}
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Facture N°</TableHead>
+                    <TableHead>Montant</TableHead>
+                    <TableHead>Banque</TableHead>
+                    <TableHead>Date Validité</TableHead>
+                    <TableHead>N° Chq/BD</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredCollections.map((collection) => (
+                    <TableRow key={collection.id}>
+                      <TableCell className="font-medium">{collection.clientCode}</TableCell>
+                      <TableCell>{collection.factureNo || 'N/A'}</TableCell>
+                      <TableCell className="font-semibold">
+                        {collection.collectionAmount.toLocaleString()} FCFA
+                      </TableCell>
+                      <TableCell>{collection.bankNameDisplay || collection.bankName || 'N/A'}</TableCell>
+                      <TableCell>
+                        {collection.dateOfValidity 
+                          ? new Date(collection.dateOfValidity).toLocaleDateString('fr-FR')
+                          : <span className="text-red-500">Non définie ⚠️</span>
+                        }
+                      </TableCell>
+                      <TableCell>{collection.noChqBd || 'N/A'}</TableCell>
+                      <TableCell>
+                        <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
+                          {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelectedCollection(collection)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          {collection.status === 'pending' && (
+                            <Button
+                              size="sm"
+                              onClick={() => markAsProcessed(collection.id!)}
+                              className="flex items-center gap-1"
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                              Créditer
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Modal de détails */}
+      {selectedCollection && (
+        <Card className="fixed inset-0 z-50 bg-white/95 backdrop-blur-sm overflow-auto">
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <CardTitle>Détails Collection - {selectedCollection.factureNo}</CardTitle>
+              <Button 
+                variant="outline" 
+                onClick={() => setSelectedCollection(null)}
+              >
+                Fermer
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="font-semibold mb-3">Informations Générales</h3>
+              <div className="space-y-2 text-sm">
+                <div><span className="font-medium">Client:</span> {selectedCollection.clientCode}</div>
+                <div><span className="font-medium">Montant:</span> {selectedCollection.collectionAmount.toLocaleString()} FCFA</div>
+                <div><span className="font-medium">Banque:</span> {selectedCollection.bankNameDisplay || selectedCollection.bankName}</div>
+                <div><span className="font-medium">Date Rapport:</span> {new Date(selectedCollection.reportDate).toLocaleDateString('fr-FR')}</div>
+                <div><span className="font-medium">Date Validité:</span> {selectedCollection.dateOfValidity ? new Date(selectedCollection.dateOfValidity).toLocaleDateString('fr-FR') : 'Non définie'}</div>
+              </div>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-3">Détails Financiers</h3>
+              <div className="space-y-2 text-sm">
+                <div><span className="font-medium">Intérêt:</span> {selectedCollection.interet || 'N/A'}</div>
+                <div><span className="font-medium">Commission:</span> {selectedCollection.commission || 'N/A'}</div>
+                <div><span className="font-medium">TOB:</span> {selectedCollection.tob || 'N/A'}</div>
+                <div><span className="font-medium">Revenus:</span> {selectedCollection.income || 'N/A'}</div>
+                <div><span className="font-medium">Remarques:</span> {selectedCollection.remarques || 'Aucune'}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 };
