@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,10 +16,30 @@ const FileUpload = () => {
   const [processStep, setProcessStep] = useState(1);
 
   const steps = [
-    { id: 1, title: 'Upload Fichiers', description: 'Télécharger tous les fichiers requis', status: processStep > 1 ? 'completed' : 'current' as const },
-    { id: 2, title: 'Extraction', description: 'Extraction des données', status: processStep > 2 ? 'completed' : processStep === 2 ? 'current' : 'pending' as const },
-    { id: 3, title: 'Rapprochement', description: 'Analyse et rapprochement automatique', status: processStep > 3 ? 'completed' : processStep === 3 ? 'current' : 'pending' as const },
-    { id: 4, title: 'Résultats', description: 'Affichage des résultats et alertes', status: processStep === 4 ? 'current' : 'pending' as const }
+    { 
+      id: 1, 
+      title: 'Upload Fichiers', 
+      description: 'Télécharger tous les fichiers requis', 
+      status: (processStep > 1 ? 'completed' : 'current') as 'pending' | 'current' | 'completed'
+    },
+    { 
+      id: 2, 
+      title: 'Extraction', 
+      description: 'Extraction des données', 
+      status: (processStep > 2 ? 'completed' : processStep === 2 ? 'current' : 'pending') as 'pending' | 'current' | 'completed'
+    },
+    { 
+      id: 3, 
+      title: 'Rapprochement', 
+      description: 'Analyse et rapprochement automatique', 
+      status: (processStep > 3 ? 'completed' : processStep === 3 ? 'current' : 'pending') as 'pending' | 'current' | 'completed'
+    },
+    { 
+      id: 4, 
+      title: 'Résultats', 
+      description: 'Affichage des résultats et alertes', 
+      status: (processStep === 4 ? 'current' : 'pending') as 'pending' | 'current' | 'completed'
+    }
   ];
 
   const fileTypes = [
