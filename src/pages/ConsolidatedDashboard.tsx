@@ -20,8 +20,28 @@ const ConsolidatedDashboard = () => {
       setBankReports(reports);
       
       if (reports.length > 0) {
-        const analysis = crossBankAnalysisService.analyzeAllBanks(reports);
-        setConsolidatedAnalysis(analysis);
+        const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(reports);
+        const alerts = crossBankAnalysisService.generateCriticalAlerts(analysis);
+        
+        setConsolidatedAnalysis({
+          consolidatedPosition: analysis,
+          consolidatedFacilities: {
+            totalLimits: analysis.totalFacilityLimits,
+            totalUsed: analysis.totalFacilityUsed,
+            totalAvailable: analysis.totalFacilityAvailable,
+            utilizationRate: analysis.utilizationRate
+          },
+          crossBankClients: {
+            riskyClients: analysis.crossBankImpayes.map(impaye => ({
+              clientCode: impaye.clientCode,
+              bankCount: impaye.bankCount,
+              banks: impaye.banks.map(b => b.bankName),
+              totalRisk: impaye.totalAmount
+            }))
+          },
+          criticalAlerts: alerts
+        });
+        
         console.log('🏦 Vue consolidée chargée:', analysis);
       }
     } catch (error) {

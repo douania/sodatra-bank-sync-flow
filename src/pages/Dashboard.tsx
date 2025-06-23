@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -30,8 +29,32 @@ const Dashboard = () => {
       setFundPosition(position);
       
       if (reports.length > 0) {
-        const analysis = crossBankAnalysisService.analyzeAllBanks(reports);
-        setConsolidatedAnalysis(analysis);
+        const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(reports);
+        const alerts = crossBankAnalysisService.generateCriticalAlerts(analysis);
+        
+        setConsolidatedAnalysis({
+          consolidatedPosition: analysis,
+          consolidatedFacilities: {
+            totalLimits: analysis.totalFacilityLimits,
+            totalUsed: analysis.totalFacilityUsed,
+            totalAvailable: analysis.totalFacilityAvailable,
+            utilizationRate: analysis.utilizationRate
+          },
+          totalImpayes: {
+            totalAmount: analysis.totalImpayes,
+            totalCount: analysis.impayeCount
+          },
+          crossBankClients: {
+            riskyClients: analysis.crossBankImpayes.map(impaye => ({
+              clientCode: impaye.clientCode,
+              bankCount: impaye.bankCount,
+              banks: impaye.banks.map(b => b.bankName),
+              totalRisk: impaye.totalAmount
+            }))
+          },
+          criticalAlerts: alerts
+        });
+        
         console.log('🏦 Analyse consolidée:', analysis);
       }
     } catch (error) {
