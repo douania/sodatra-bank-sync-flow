@@ -87,7 +87,7 @@ export class FileProcessingService {
       
       const extractionResult = extractBankReport(mockPdfContent, bankName);
       if (extractionResult.success && extractionResult.data) {
-        reports.push(extractionResult.data as BankReport);
+        reports.push(extractionResult.data);
       }
     }
 
