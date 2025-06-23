@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '@/services/databaseService';
+import { dashboardMetricsService } from '@/services/dashboardMetricsService';
 import { crossBankAnalysisService } from '@/services/crossBankAnalysisService';
 import { BankReport } from '@/types/banking';
 import ConsolidatedBankView from '@/components/ConsolidatedBankView';
@@ -11,6 +12,7 @@ import CriticalAlertsPanel from '@/components/CriticalAlertsPanel';
 const ConsolidatedDashboard = () => {
   const [bankReports, setBankReports] = useState<BankReport[]>([]);
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<any>(null);
+  const [dashboardMetrics, setDashboardMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,9 +22,21 @@ const ConsolidatedDashboard = () => {
   const loadData = async () => {
     try {
       const reports = await databaseService.getLatestBankReports();
+      const collections = await databaseService.getCollectionReports();
+      const fundPosition = await databaseService.getLatestFundPosition();
+      
       setBankReports(reports);
       
       if (reports.length > 0) {
+        // Calcul des métriques du dashboard
+        const metrics = dashboardMetricsService.calculateDashboardMetrics(
+          reports,
+          collections,
+          fundPosition
+        );
+        setDashboardMetrics(metrics);
+
+        // Analyse consolidée cross-bank
         const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(reports);
         const alerts = crossBankAnalysisService.generateCriticalAlerts(analysis);
         
@@ -74,7 +88,7 @@ const ConsolidatedDashboard = () => {
       </div>
 
       {/* Métriques Consolidées */}
-      <ConsolidatedMetrics consolidatedAnalysis={consolidatedAnalysis} />
+      <ConsolidatedMetrics metrics={dashboardMetrics} />
 
       {/* Alertes Critiques */}
       {consolidatedAnalysis && (

@@ -1,5 +1,6 @@
+
 import { supabase } from '@/integrations/supabase/client';
-import { BankReport, Impaye, BankFacility, CollectionReport, FundPosition, DepositsNotCleared } from '@/types/banking';
+import { BankReport, Impaye, BankFacility, CollectionReport, FundPosition, DepositNotCleared } from '@/types/banking';
 
 export class DatabaseService {
   
@@ -325,7 +326,7 @@ export class DatabaseService {
         dateOfImpay: report.date_of_impay || '',
         reglementImpaye: report.reglement_impaye || '',
         remarques: report.remarques || '',
-        status: report.status || 'pending'
+        status: (report.status as 'pending' | 'processed' | 'failed') || 'pending'
       }));
 
       console.log(`✅ ${collectionReports.length} rapports de collection récupérés avec succès`);
@@ -511,12 +512,12 @@ export class DatabaseService {
 
         return {
           bank: report.bank_name,
-          reportDate: report.report_date,
+          date: report.report_date,
           openingBalance: report.opening_balance,
           closingBalance: report.closing_balance,
           impayes: reportImpayes,
           bankFacilities: reportFacilities,
-          checksNotCleared: reportDeposits
+          depositsNotCleared: reportDeposits
         };
       });
 
@@ -603,12 +604,12 @@ export class DatabaseService {
       // Transformer les données comme dans getLatestBankReports
       return data?.map(report => ({
         bank: report.bank_name,
-        reportDate: report.report_date,
+        date: report.report_date,
         openingBalance: report.opening_balance,
         closingBalance: report.closing_balance,
         impayes: [],
         bankFacilities: [],
-        checksNotCleared: []
+        depositsNotCleared: []
       })) || [];
 
     } catch (error) {
