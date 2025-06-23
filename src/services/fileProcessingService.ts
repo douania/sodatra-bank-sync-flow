@@ -12,6 +12,7 @@ export interface ProcessingResult {
     collectionReports?: CollectionReport[];
   };
   errors?: string[];
+  debugInfo?: any;
 }
 
 export class FileProcessingService {
@@ -28,37 +29,58 @@ export class FileProcessingService {
     };
 
     try {
-      console.log('🚀 Début du traitement des fichiers selon guide SODATRA');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Guide SODATRA');
 
       // 1. Traitement du Collection Report Excel (PRIORITÉ 1 - NOUVEAU)
       if (files.collectionReport) {
-        console.log('📊 Traitement Collection Report Excel...');
+        console.log('📊 === DÉBUT TRAITEMENT COLLECTION REPORT EXCEL ===');
+        console.log('📁 Fichier:', files.collectionReport.name, 'Taille:', files.collectionReport.size);
+        
         const collectionResult = await this.processCollectionReport(files.collectionReport);
-        results.data!.collectionReports = collectionResult;
+        results.data!.collectionReports = collectionResult.collections;
+        results.debugInfo = collectionResult.debugInfo;
         
-        console.log(`📊 ${collectionResult.length} collections extraites, début sauvegarde...`);
+        if (collectionResult.errors.length > 0) {
+          results.errors!.push(...collectionResult.errors);
+          console.error('❌ Erreurs lors du traitement Collection Report:', collectionResult.errors);
+        }
         
-        // Sauvegarder les collections en base avec logs détaillés
-        let savedCount = 0;
-        for (const collection of collectionResult) {
-          try {
-            console.log(`💾 Sauvegarde collection ${collection.clientCode} - ${collection.collectionAmount}...`);
-            const saveResult = await databaseService.saveCollectionReport(collection);
-            if (saveResult.success) {
-              savedCount++;
-              console.log(`✅ Collection ${collection.clientCode} sauvegardée`);
-            } else {
-              const errorMsg = `Erreur sauvegarde collection ${collection.clientCode}: ${saveResult.error}`;
-              console.error('❌', errorMsg);
+        console.log(`📊 Collections extraites: ${collectionResult.collections.length}`);
+        
+        if (collectionResult.collections.length > 0) {
+          console.log('💾 === DÉBUT SAUVEGARDE COLLECTIONS ===');
+          
+          // Sauvegarder les collections en base avec logs ultra-détaillés
+          let savedCount = 0;
+          for (const [index, collection] of collectionResult.collections.entries()) {
+            try {
+              console.log(`\n💾 [${index + 1}/${collectionResult.collections.length}] Sauvegarde collection:`, {
+                clientCode: collection.clientCode,
+                collectionAmount: collection.collectionAmount,
+                bankName: collection.bankName,
+                reportDate: collection.reportDate
+              });
+              
+              const saveResult = await databaseService.saveCollectionReport(collection);
+              if (saveResult.success) {
+                savedCount++;
+                console.log(`✅ [${index + 1}] Collection ${collection.clientCode} sauvegardée avec succès`);
+              } else {
+                const errorMsg = `❌ [${index + 1}] Erreur sauvegarde collection ${collection.clientCode}: ${saveResult.error}`;
+                console.error(errorMsg);
+                results.errors?.push(errorMsg);
+              }
+            } catch (error) {
+              const errorMsg = `❌ [${index + 1}] Exception sauvegarde collection ${collection.clientCode}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
+              console.error(errorMsg);
               results.errors?.push(errorMsg);
             }
-          } catch (error) {
-            const errorMsg = `Exception sauvegarde collection ${collection.clientCode}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
-            console.error('❌', errorMsg);
-            results.errors?.push(errorMsg);
           }
+          console.log(`💾 === FIN SAUVEGARDE: ${savedCount}/${collectionResult.collections.length} collections sauvegardées ===`);
+        } else {
+          console.warn('⚠️ Aucune collection à sauvegarder');
+          results.errors?.push('Aucune collection valide trouvée dans le fichier Excel');
         }
-        console.log(`💾 Sauvegarde terminée: ${savedCount}/${collectionResult.length} collections sauvegardées`);
       }
 
       // 2. Traitement des relevés bancaires multiples (Priorité 2)
@@ -104,35 +126,68 @@ export class FileProcessingService {
       }
 
       results.success = results.errors?.length === 0;
-      console.log(`✅ Traitement terminé - ${results.data!.bankReports.length} rapports bancaires, ${results.data!.collectionReports?.length || 0} collections traitées`);
+      
+      console.log(`\n🎯 === RÉSUMÉ FINAL ===`);
+      console.log(`✅ Succès: ${results.success}`);
+      console.log(`📊 Collections: ${results.data!.collectionReports?.length || 0}`);
+      console.log(`🏦 Rapports bancaires: ${results.data!.bankReports.length}`);
+      console.log(`❌ Erreurs: ${results.errors?.length || 0}`);
 
       return results;
 
     } catch (error) {
-      console.error('❌ Erreur générale de traitement:', error);
+      console.error('❌ ERREUR CRITIQUE GÉNÉRALE:', error);
       results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
       return results;
     }
   }
 
-  private async processCollectionReport(file: File): Promise<CollectionReport[]> {
-    console.log('📊 Traitement Collection Report Excel:', file.name);
+  private async processCollectionReport(file: File): Promise<{
+    collections: CollectionReport[];
+    errors: string[];
+    debugInfo?: any;
+  }> {
+    console.log('📊 === TRAITEMENT COLLECTION REPORT ===');
+    console.log('📁 Fichier:', file.name);
     
     try {
       const result = await excelProcessingService.processCollectionReportExcel(file);
       
-      if (!result.success) {
-        console.error('❌ Erreur traitement Collection Report:', result.errors);
-        return [];
+      console.log('📋 Résultat traitement Excel:', {
+        success: result.success,
+        totalRows: result.totalRows,
+        processedRows: result.processedRows,
+        errorsCount: result.errors?.length || 0
+      });
+
+      if (result.debugInfo) {
+        console.log('🔍 Informations de debug:', result.debugInfo);
       }
       
-      console.log(`✅ Collection Report traité: ${result.processedRows}/${result.totalRows} lignes`);
-      console.log('📋 Données extraites:', result.data);
+      if (!result.success || !result.data) {
+        console.error('❌ Échec traitement Collection Report:', result.errors);
+        return {
+          collections: [],
+          errors: result.errors || ['Erreur inconnue lors du traitement Excel'],
+          debugInfo: result.debugInfo
+        };
+      }
       
-      return result.data || [];
+      console.log(`✅ Collection Report traité avec succès: ${result.processedRows}/${result.totalRows} lignes`);
+      console.log('📋 Collections extraites:', result.data.length);
+      
+      return {
+        collections: result.data,
+        errors: result.errors || [],
+        debugInfo: result.debugInfo
+      };
     } catch (error) {
-      console.error('❌ Exception lors du traitement Collection Report:', error);
-      return [];
+      console.error('❌ EXCEPTION lors du traitement Collection Report:', error);
+      return {
+        collections: [],
+        errors: [error instanceof Error ? error.message : 'Erreur inconnue'],
+        debugInfo: undefined
+      };
     }
   }
 

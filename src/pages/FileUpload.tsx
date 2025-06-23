@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Upload, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertTriangle, Clock, Info } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { fileProcessingService } from '@/services/fileProcessingService';
 import Stepper from '@/components/Stepper';
@@ -149,13 +149,14 @@ const FileUpload = () => {
   const uploadedBankStatements = bankStatementTypes.filter(type => uploadedFiles[type.key] !== null).length;
 
   const handleProcessFiles = async () => {
-    if (!allRequiredFilesUploaded) return;
+    if (!allRequiredFilesUploaded || isProcessing) return;
 
     setIsProcessing(true);
     setProcessStep(2);
+    setProcessingResults(null);
 
     try {
-      console.log('🚀 Démarrage traitement selon guide SODATRA');
+      console.log('🚀 === DÉBUT TRAITEMENT INTERFACE UTILISATEUR ===');
       
       // Étape 2: Extraction (2 minutes selon guide)
       toast({
@@ -164,6 +165,8 @@ const FileUpload = () => {
       });
 
       const results = await fileProcessingService.processFiles(uploadedFiles);
+      
+      console.log('📋 Résultats reçus:', results);
       
       setProcessStep(3);
       
@@ -179,20 +182,24 @@ const FileUpload = () => {
       setProcessingResults(results);
 
       if (results.success) {
+        const collectionsCount = results.data?.collectionReports?.length || 0;
+        const bankReportsCount = results.data?.bankReports.length || 0;
+        
         toast({
           title: "✅ Traitement terminé !",
-          description: `${results.data?.bankReports.length || 0} rapports bancaires traités`,
+          description: `${collectionsCount} collections et ${bankReportsCount} rapports bancaires traités`,
         });
       } else {
+        const errorsCount = results.errors?.length || 0;
         toast({
           title: "⚠️ Traitement avec erreurs",
-          description: `${results.errors?.length || 0} erreurs détectées`,
+          description: `${errorsCount} erreurs détectées - Voir les détails ci-dessous`,
           variant: "destructive"
         });
       }
 
     } catch (error) {
-      console.error('Erreur traitement:', error);
+      console.error('❌ ERREUR INTERFACE TRAITEMENT:', error);
       toast({
         title: "❌ Erreur de traitement",
         description: error instanceof Error ? error.message : "Erreur inconnue",
@@ -345,18 +352,67 @@ const FileUpload = () => {
               )}
               
               {processStep === 4 && processingResults && (
-                <Alert className="border-green-200 bg-green-50">
-                  <CheckCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    ✅ Traitement terminé ! {processingResults.data?.bankReports.length || 0} rapports bancaires extraits.
-                    {processingResults.data?.fundPosition && " Fund Position validée."}
-                    {processingResults.errors?.length > 0 && ` ${processingResults.errors.length} alertes détectées.`}
-                  </AlertDescription>
-                </Alert>
+                <>
+                  <Alert className={processingResults.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
+                    {processingResults.success ? <CheckCircle className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                    <AlertDescription>
+                      {processingResults.success ? (
+                        <>
+                          ✅ Traitement terminé ! {processingResults.data?.collectionReports?.length || 0} collections extraites.
+                          {processingResults.data?.fundPosition && " Fund Position validée."}
+                        </>
+                      ) : (
+                        <>
+                          ❌ Traitement avec erreurs. {processingResults.errors?.length || 0} erreurs détectées.
+                        </>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+
+                  {/* Affichage des erreurs détaillées */}
+                  {processingResults.errors && processingResults.errors.length > 0 && (
+                    <Alert className="border-red-200 bg-red-50">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="font-semibold mb-2">Erreurs détectées :</div>
+                        <ul className="list-disc list-inside space-y-1 text-sm">
+                          {processingResults.errors.map((error: string, index: number) => (
+                            <li key={index}>{error}</li>
+                          ))}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Informations de debug pour le Collection Report */}
+                  {processingResults.debugInfo && (
+                    <Alert className="border-blue-200 bg-blue-50">
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="font-semibold mb-2">Informations de debug (Collection Report) :</div>
+                        <div className="text-sm space-y-1">
+                          <div>En-têtes détectés : {processingResults.debugInfo.detectedHeaders?.join(', ')}</div>
+                          {processingResults.debugInfo.mappingResults && (
+                            <div className="mt-2">
+                              <div className="font-medium">Mapping des colonnes :</div>
+                              <ul className="list-disc list-inside ml-4">
+                                {Object.entries(processingResults.debugInfo.mappingResults).map(([key, value]: [string, any]) => (
+                                  <li key={key} className={value.mapped ? 'text-green-700' : 'text-orange-700'}>
+                                    {key} → {value.mapped || 'Non mappé'}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </>
               )}
             </div>
 
-            {processStep === 4 && (
+            {processStep === 4 && processingResults?.success && (
               <div className="mt-6 flex justify-center">
                 <Button 
                   onClick={() => window.location.href = '/dashboard'}
