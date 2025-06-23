@@ -9,7 +9,243 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      bank_facilities: {
+        Row: {
+          available_amount: number
+          bank_report_id: string | null
+          created_at: string
+          facility_type: string
+          id: string
+          limit_amount: number
+          used_amount: number
+        }
+        Insert: {
+          available_amount: number
+          bank_report_id?: string | null
+          created_at?: string
+          facility_type: string
+          id?: string
+          limit_amount: number
+          used_amount: number
+        }
+        Update: {
+          available_amount?: number
+          bank_report_id?: string | null
+          created_at?: string
+          facility_type?: string
+          id?: string
+          limit_amount?: number
+          used_amount?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_facilities_bank_report_id_fkey"
+            columns: ["bank_report_id"]
+            isOneToOne: false
+            referencedRelation: "bank_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_reports: {
+        Row: {
+          bank_name: string
+          closing_balance: number
+          created_at: string
+          id: string
+          opening_balance: number
+          report_date: string
+          updated_at: string
+        }
+        Insert: {
+          bank_name: string
+          closing_balance: number
+          created_at?: string
+          id?: string
+          opening_balance: number
+          report_date: string
+          updated_at?: string
+        }
+        Update: {
+          bank_name?: string
+          closing_balance?: number
+          created_at?: string
+          id?: string
+          opening_balance?: number
+          report_date?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      client_reconciliation: {
+        Row: {
+          client_code: string
+          client_name: string | null
+          created_at: string
+          id: string
+          impayes_amount: number
+          report_date: string
+        }
+        Insert: {
+          client_code: string
+          client_name?: string | null
+          created_at?: string
+          id?: string
+          impayes_amount: number
+          report_date: string
+        }
+        Update: {
+          client_code?: string
+          client_name?: string | null
+          created_at?: string
+          id?: string
+          impayes_amount?: number
+          report_date?: string
+        }
+        Relationships: []
+      }
+      collection_report: {
+        Row: {
+          bank_name: string | null
+          client_code: string
+          collection_amount: number
+          created_at: string
+          id: string
+          report_date: string
+          status: string | null
+        }
+        Insert: {
+          bank_name?: string | null
+          client_code: string
+          collection_amount: number
+          created_at?: string
+          id?: string
+          report_date: string
+          status?: string | null
+        }
+        Update: {
+          bank_name?: string | null
+          client_code?: string
+          collection_amount?: number
+          created_at?: string
+          id?: string
+          report_date?: string
+          status?: string | null
+        }
+        Relationships: []
+      }
+      deposits_not_cleared: {
+        Row: {
+          bank_report_id: string | null
+          client_code: string | null
+          created_at: string
+          date_depot: string
+          date_valeur: string | null
+          id: string
+          montant: number
+          reference: string | null
+          type_reglement: string
+        }
+        Insert: {
+          bank_report_id?: string | null
+          client_code?: string | null
+          created_at?: string
+          date_depot: string
+          date_valeur?: string | null
+          id?: string
+          montant: number
+          reference?: string | null
+          type_reglement: string
+        }
+        Update: {
+          bank_report_id?: string | null
+          client_code?: string | null
+          created_at?: string
+          date_depot?: string
+          date_valeur?: string | null
+          id?: string
+          montant?: number
+          reference?: string | null
+          type_reglement?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deposits_not_cleared_bank_report_id_fkey"
+            columns: ["bank_report_id"]
+            isOneToOne: false
+            referencedRelation: "bank_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fund_position: {
+        Row: {
+          collections_not_deposited: number
+          created_at: string
+          grand_total: number
+          id: string
+          report_date: string
+          total_fund_available: number
+        }
+        Insert: {
+          collections_not_deposited: number
+          created_at?: string
+          grand_total: number
+          id?: string
+          report_date: string
+          total_fund_available: number
+        }
+        Update: {
+          collections_not_deposited?: number
+          created_at?: string
+          grand_total?: number
+          id?: string
+          report_date?: string
+          total_fund_available?: number
+        }
+        Relationships: []
+      }
+      impayes: {
+        Row: {
+          bank_report_id: string | null
+          client_code: string
+          created_at: string
+          date_echeance: string
+          date_retour: string | null
+          description: string | null
+          id: string
+          montant: number
+        }
+        Insert: {
+          bank_report_id?: string | null
+          client_code: string
+          created_at?: string
+          date_echeance: string
+          date_retour?: string | null
+          description?: string | null
+          id?: string
+          montant: number
+        }
+        Update: {
+          bank_report_id?: string | null
+          client_code?: string
+          created_at?: string
+          date_echeance?: string
+          date_retour?: string | null
+          description?: string | null
+          id?: string
+          montant?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "impayes_bank_report_id_fkey"
+            columns: ["bank_report_id"]
+            isOneToOne: false
+            referencedRelation: "bank_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
