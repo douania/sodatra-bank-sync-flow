@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Upload, FileText, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
+import { fileProcessingService } from '@/services/fileProcessingService';
 import Stepper from '@/components/Stepper';
 
 const FileUpload = () => {
@@ -14,6 +16,9 @@ const FileUpload = () => {
   });
 
   const [processStep, setProcessStep] = useState(1);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingResults, setProcessingResults] = useState<any>(null);
+  const { toast } = useToast();
 
   const steps = [
     { 
@@ -25,19 +30,19 @@ const FileUpload = () => {
     { 
       id: 2, 
       title: 'Extraction', 
-      description: 'Extraction des données', 
+      description: 'Extraction des données selon patterns SODATRA', 
       status: (processStep > 2 ? 'completed' : processStep === 2 ? 'current' : 'pending') as 'pending' | 'current' | 'completed'
     },
     { 
       id: 3, 
-      title: 'Rapprochement', 
-      description: 'Analyse et rapprochement automatique', 
+      title: 'Sauvegarde', 
+      description: 'Sauvegarde en base de données', 
       status: (processStep > 3 ? 'completed' : processStep === 3 ? 'current' : 'pending') as 'pending' | 'current' | 'completed'
     },
     { 
       id: 4, 
-      title: 'Résultats', 
-      description: 'Affichage des résultats et alertes', 
+      title: 'Dashboard Prêt', 
+      description: 'Données prêtes pour analyse', 
       status: (processStep === 4 ? 'current' : 'pending') as 'pending' | 'current' | 'completed'
     }
   ];
@@ -46,7 +51,7 @@ const FileUpload = () => {
     {
       key: 'bankStatements',
       label: 'Relevés Bancaires (PDF)',
-      description: 'Relevés PDF de toutes les banques',
+      description: 'BDK, SGS, BICIS, ATB, BIS, ORA selon guide',
       accept: '.pdf',
       required: true
     },
@@ -59,15 +64,15 @@ const FileUpload = () => {
     },
     {
       key: 'clientReconciliation',
-      label: 'Rapprochement Client (PDF)',
-      description: 'Rapport de rapprochement clients',
+      label: 'Client Reconciliation (PDF)',
+      description: 'Rapport de rapprochement clients avec impayés',
       accept: '.pdf',
       required: true
     },
     {
       key: 'fundsPosition',
-      label: 'Position de Fonds (PDF)',
-      description: 'Rapport de position de fonds par banque',
+      label: 'Fund Position (PDF)',
+      description: 'Position maître consolidée',
       accept: '.pdf',
       required: true
     }
@@ -80,6 +85,11 @@ const FileUpload = () => {
         ...prev,
         [fileType]: file
       }));
+      
+      toast({
+        title: "Fichier ajouté",
+        description: `${file.name} prêt pour traitement`,
+      });
     }
   };
 
@@ -87,21 +97,67 @@ const FileUpload = () => {
     !type.required || uploadedFiles[type.key] !== null
   );
 
-  const handleProcessFiles = () => {
-    if (allRequiredFilesUploaded) {
-      setProcessStep(2);
-      // Simuler le traitement
-      setTimeout(() => setProcessStep(3), 2000);
-      setTimeout(() => setProcessStep(4), 4000);
+  const handleProcessFiles = async () => {
+    if (!allRequiredFilesUploaded) return;
+
+    setIsProcessing(true);
+    setProcessStep(2);
+
+    try {
+      console.log('🚀 Démarrage traitement selon guide SODATRA');
+      
+      // Étape 2: Extraction (2 minutes selon guide)
+      toast({
+        title: "Extraction en cours",
+        description: "Traitement avec patterns validés SODATRA...",
+      });
+
+      const results = await fileProcessingService.processFiles(uploadedFiles);
+      
+      setProcessStep(3);
+      
+      // Étape 3: Validation et sauvegarde
+      toast({
+        title: "Sauvegarde en cours",
+        description: "Validation des données et sauvegarde...",
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setProcessStep(4);
+      setProcessingResults(results);
+
+      if (results.success) {
+        toast({
+          title: "✅ Traitement terminé !",
+          description: `${results.data?.bankReports.length || 0} rapports bancaires traités`,
+        });
+      } else {
+        toast({
+          title: "⚠️ Traitement avec erreurs",
+          description: `${results.errors?.length || 0} erreurs détectées`,
+          variant: "destructive"
+        });
+      }
+
+    } catch (error) {
+      console.error('Erreur traitement:', error);
+      toast({
+        title: "❌ Erreur de traitement",
+        description: error instanceof Error ? error.message : "Erreur inconnue",
+        variant: "destructive"
+      });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Upload et Traitement des Fichiers</h1>
+        <h1 className="text-3xl font-bold text-gray-900">SODATRA Bank Control - Upload</h1>
         <p className="mt-2 text-gray-600">
-          Téléchargez tous les fichiers requis pour démarrer le processus de rapprochement bancaire.
+          Téléchargez les fichiers selon le guide d'implémentation. Traitement automatique en ~8 minutes.
         </p>
       </div>
 
@@ -110,7 +166,7 @@ const FileUpload = () => {
       {processStep === 1 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {fileTypes.map((fileType) => (
-            <Card key={fileType.key}>
+            <Card key={fileType.key} className="hover:shadow-md transition-shadow">
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
                   <FileText className="h-5 w-5" />
@@ -121,7 +177,7 @@ const FileUpload = () => {
               <CardContent>
                 <p className="text-sm text-gray-600 mb-4">{fileType.description}</p>
                 
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
                   <input
                     type="file"
                     accept={fileType.accept}
@@ -160,18 +216,28 @@ const FileUpload = () => {
         <div className="flex justify-center">
           <Button
             onClick={handleProcessFiles}
-            disabled={!allRequiredFilesUploaded}
-            className="px-8 py-3 text-lg"
+            disabled={!allRequiredFilesUploaded || isProcessing}
+            className="px-8 py-3 text-lg bg-blue-600 hover:bg-blue-700"
           >
-            Démarrer le Traitement
+            {isProcessing ? (
+              <>
+                <Clock className="mr-2 h-4 w-4 animate-spin" />
+                Traitement en cours...
+              </>
+            ) : (
+              'Démarrer le Traitement SODATRA'
+            )}
           </Button>
         </div>
       )}
 
       {processStep > 1 && (
-        <Card>
+        <Card className="border-blue-200">
           <CardHeader>
-            <CardTitle>Traitement en Cours</CardTitle>
+            <CardTitle className="flex items-center space-x-2">
+              <Clock className="h-5 w-5 text-blue-600" />
+              <span>Traitement Automatique SODATRA</span>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -179,7 +245,7 @@ const FileUpload = () => {
                 <Alert className="border-blue-200 bg-blue-50">
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription>
-                    Extraction des données en cours... Analyse des formats PDF et Excel.
+                    Extraction avec patterns validés (BDK, SGS, BICIS, ATB, BIS, ORA)...
                   </AlertDescription>
                 </Alert>
               )}
@@ -188,20 +254,33 @@ const FileUpload = () => {
                 <Alert className="border-yellow-200 bg-yellow-50">
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription>
-                    Rapprochement automatique en cours... Comparaison des transactions.
+                    Sauvegarde des données bancaires et validation des rapprochements...
                   </AlertDescription>
                 </Alert>
               )}
               
-              {processStep === 4 && (
+              {processStep === 4 && processingResults && (
                 <Alert className="border-green-200 bg-green-50">
                   <CheckCircle className="h-4 w-4" />
                   <AlertDescription>
-                    Traitement terminé ! Consultez les résultats dans l'onglet Rapprochement.
+                    ✅ Traitement terminé ! {processingResults.data?.bankReports.length || 0} rapports bancaires extraits.
+                    {processingResults.data?.fundPosition && " Fund Position validée."}
+                    {processingResults.errors?.length > 0 && ` ${processingResults.errors.length} alertes détectées.`}
                   </AlertDescription>
                 </Alert>
               )}
             </div>
+
+            {processStep === 4 && (
+              <div className="mt-6 flex justify-center">
+                <Button 
+                  onClick={() => window.location.href = '/dashboard'}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  Voir le Dashboard →
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
