@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
@@ -18,6 +17,26 @@ export class DatabaseService {
     } catch (error) {
       console.error('❌ Test de connexion échoué:', error);
       return false;
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Compter les collections
+  async getCollectionCount(): Promise<number> {
+    try {
+      const { count, error } = await supabase
+        .from('collection_report')
+        .select('*', { count: 'exact', head: true });
+
+      if (error) {
+        console.error('❌ Erreur comptage collections:', error);
+        return 0;
+      }
+
+      console.log(`📊 Nombre de collections en base: ${count || 0}`);
+      return count || 0;
+    } catch (error) {
+      console.error('❌ Exception comptage collections:', error);
+      return 0;
     }
   }
 

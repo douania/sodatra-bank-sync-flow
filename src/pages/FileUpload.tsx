@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Upload, FileText, CheckCircle, AlertTriangle, Clock, Info } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertTriangle, Clock, Info, Database } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { fileProcessingService } from '@/services/fileProcessingService';
+import { databaseService } from '@/services/databaseService';
 import Stepper from '@/components/Stepper';
 
 const FileUpload = () => {
@@ -23,7 +24,27 @@ const FileUpload = () => {
   const [processStep, setProcessStep] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingResults, setProcessingResults] = useState<any>(null);
+  const [collectionCount, setCollectionCount] = useState<number | null>(null);
+  const [isLoadingCount, setIsLoadingCount] = useState(true);
   const { toast } = useToast();
+
+  // ⭐ CHARGER LE NOMBRE DE COLLECTIONS AU DÉMARRAGE
+  useEffect(() => {
+    const loadCollectionCount = async () => {
+      setIsLoadingCount(true);
+      try {
+        const count = await databaseService.getCollectionCount();
+        setCollectionCount(count);
+      } catch (error) {
+        console.error('❌ Erreur chargement compteur:', error);
+        setCollectionCount(0);
+      } finally {
+        setIsLoadingCount(false);
+      }
+    };
+
+    loadCollectionCount();
+  }, []);
 
   const steps = [
     { 
@@ -181,6 +202,10 @@ const FileUpload = () => {
       setProcessStep(4);
       setProcessingResults(results);
 
+      // ⭐ RECHARGER LE COMPTEUR APRÈS TRAITEMENT
+      const newCount = await databaseService.getCollectionCount();
+      setCollectionCount(newCount);
+
       if (results.success) {
         const collectionsCount = results.data?.collectionReports?.length || 0;
         const bankReportsCount = results.data?.bankReports.length || 0;
@@ -267,6 +292,31 @@ const FileUpload = () => {
         <p className="mt-2 text-gray-600">
           Téléchargez les fichiers selon le guide d'implémentation. Traitement automatique en ~8 minutes.
         </p>
+        
+        {/* ⭐ AFFICHAGE DU COMPTEUR DE COLLECTIONS */}
+        <div className="mt-4">
+          <Alert className="border-blue-200 bg-blue-50">
+            <Database className="h-4 w-4" />
+            <AlertDescription>
+              {isLoadingCount ? (
+                <div className="flex items-center space-x-2">
+                  <Clock className="h-4 w-4 animate-spin" />
+                  <span>Chargement du compteur...</span>
+                </div>
+              ) : (
+                <div>
+                  <span className="font-semibold">Collections en base de données :</span> 
+                  <span className="ml-2 text-blue-700 font-bold text-lg">
+                    {collectionCount?.toLocaleString() || 0}
+                  </span>
+                  <span className="ml-2 text-sm text-gray-600">
+                    entrées existantes dans Supabase
+                  </span>
+                </div>
+              )}
+            </AlertDescription>
+          </Alert>
+        </div>
       </div>
 
       <Stepper steps={steps} />
