@@ -2,6 +2,7 @@
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
+import { intelligentSyncService } from './intelligentSyncService';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
 export interface ProcessingResult {
@@ -11,6 +12,7 @@ export interface ProcessingResult {
     fundPosition?: FundPosition;
     clientReconciliation?: ClientReconciliation[];
     collectionReports?: CollectionReport[];
+    syncResult?: any;
   };
   errors?: string[];
   debugInfo?: any;
@@ -24,71 +26,66 @@ export class FileProcessingService {
         bankReports: [],
         fundPosition: undefined,
         clientReconciliation: [],
-        collectionReports: []
+        collectionReports: [],
+        syncResult: undefined
       },
       errors: []
     };
 
     try {
-      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Guide SODATRA');
-      console.log('🧹 === NETTOYAGE DES DONNÉES FICTIVES ===');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Enrichissement Intelligent');
 
-      // ⭐ ÉTAPE 0: NETTOYAGE COMPLET DES DONNÉES FICTIVES
-      await this.cleanFictitiousData();
-
-      // 1. Traitement du Collection Report Excel (PRIORITÉ 1)
+      // 1. Traitement INTELLIGENT du Collection Report Excel (PRIORITÉ 1)
       if (files.collectionReport) {
-        console.log('📊 === DÉBUT TRAITEMENT COLLECTION REPORT EXCEL ===');
+        console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT ===');
         console.log('📁 Fichier:', files.collectionReport.name, 'Taille:', files.collectionReport.size);
         
-        const collectionResult = await this.processCollectionReport(files.collectionReport);
-        results.data!.collectionReports = collectionResult.collections;
-        results.debugInfo = collectionResult.debugInfo;
+        // ⭐ ÉTAPE 1: Extraction des données Excel
+        const excelResult = await excelProcessingService.processCollectionReportExcel(files.collectionReport);
         
-        if (collectionResult.errors.length > 0) {
-          results.errors!.push(...collectionResult.errors);
-          console.error('❌ Erreurs lors du traitement Collection Report:', collectionResult.errors);
-        }
-        
-        console.log(`📊 Collections extraites: ${collectionResult.collections.length}`);
-        
-        if (collectionResult.collections.length > 0) {
-          console.log('💾 === DÉBUT SAUVEGARDE COLLECTIONS ===');
-          
-          // Sauvegarder les collections en base avec logs ultra-détaillés
-          let savedCount = 0;
-          for (const [index, collection] of collectionResult.collections.entries()) {
-            try {
-              console.log(`\n💾 [${index + 1}/${collectionResult.collections.length}] Sauvegarde collection:`, {
-                clientCode: collection.clientCode,
-                collectionAmount: collection.collectionAmount,
-                bankName: collection.bankName,
-                reportDate: collection.reportDate
-              });
-              
-              const saveResult = await databaseService.saveCollectionReport(collection);
-              if (saveResult.success) {
-                savedCount++;
-                console.log(`✅ [${index + 1}] Collection ${collection.clientCode} sauvegardée avec succès`);
-              } else {
-                const errorMsg = `❌ [${index + 1}] Erreur sauvegarde collection ${collection.clientCode}: ${saveResult.error}`;
-                console.error(errorMsg);
-                results.errors?.push(errorMsg);
-              }
-            } catch (error) {
-              const errorMsg = `❌ [${index + 1}] Exception sauvegarde collection ${collection.clientCode}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
-              console.error(errorMsg);
-              results.errors?.push(errorMsg);
-            }
-          }
-          console.log(`💾 === FIN SAUVEGARDE: ${savedCount}/${collectionResult.collections.length} collections sauvegardées ===`);
+        if (!excelResult.success || !excelResult.data) {
+          const errorMsg = 'Erreur traitement Excel: ' + (excelResult.errors?.join(', ') || 'Erreur inconnue');
+          console.error('❌', errorMsg);
+          results.errors?.push(errorMsg);
         } else {
-          console.warn('⚠️ Aucune collection à sauvegarder');
-          results.errors?.push('Aucune collection valide trouvée dans le fichier Excel');
+          console.log(`📊 ${excelResult.data.length} collections extraites du fichier Excel`);
+          
+          // ⭐ ÉTAPE 2: ANALYSE INTELLIGENTE
+          console.log('🧠 === DÉBUT ANALYSE INTELLIGENTE ===');
+          const analysisResult = await intelligentSyncService.analyzeExcelFile(excelResult.data);
+          
+          // ⭐ ÉTAPE 3: SYNCHRONISATION INTELLIGENTE
+          console.log('🔄 === DÉBUT SYNCHRONISATION INTELLIGENTE ===');
+          const syncResult = await intelligentSyncService.processIntelligentSync(analysisResult);
+          
+          // ⭐ STOCKAGE DES RÉSULTATS
+          results.data!.collectionReports = excelResult.data;
+          results.data!.syncResult = syncResult;
+          
+          console.log('✅ === RÉSUMÉ SYNCHRONISATION INTELLIGENTE ===');
+          console.log(`📊 Collections analysées: ${analysisResult.length}`);
+          console.log(`✅ Nouvelles ajoutées: ${syncResult.new_collections}`);
+          console.log(`⚡ Enrichies: ${syncResult.enriched_collections}`);
+          console.log(`🔒 Préservées: ${syncResult.ignored_collections}`);
+          console.log(`❌ Erreurs: ${syncResult.errors.length}`);
+          
+          // ⭐ ENRICHISSEMENTS DÉTAILLÉS
+          const enrichments = syncResult.summary.enrichments;
+          console.log('🔧 === DÉTAILS ENRICHISSEMENTS ===');
+          console.log(`📅 Dates validité ajoutées: ${enrichments.date_of_validity_added}`);
+          console.log(`💰 Commissions ajoutées: ${enrichments.bank_commissions_added}`);
+          console.log(`📋 Références mises à jour: ${enrichments.references_updated}`);
+          console.log(`📊 Statuts mis à jour: ${enrichments.statuses_updated}`);
+          
+          // ⭐ AJOUTER LES ERREURS AU RÉSULTAT GLOBAL
+          if (syncResult.errors.length > 0) {
+            const errorMessages = syncResult.errors.map(e => `${e.collection.clientCode}: ${e.error}`);
+            results.errors?.push(...errorMessages);
+          }
         }
       }
 
-      // 2. Traitement des relevés bancaires multiples (Priorité 2) - MAINTENANT SANS DONNÉES FICTIVES
+      // 2. Traitement des relevés bancaires multiples (Priorité 2)
       const bankStatementFiles = {
         bdk_statement: files.bdk_statement,
         sgs_statement: files.sgs_statement,
@@ -132,11 +129,15 @@ export class FileProcessingService {
 
       results.success = results.errors?.length === 0;
       
-      console.log(`\n🎯 === RÉSUMÉ FINAL APRÈS NETTOYAGE ===`);
+      console.log(`\n🎯 === RÉSUMÉ FINAL ENRICHISSEMENT INTELLIGENT ===`);
       console.log(`✅ Succès: ${results.success}`);
       console.log(`📊 Collections: ${results.data!.collectionReports?.length || 0}`);
       console.log(`🏦 Rapports bancaires: ${results.data!.bankReports.length}`);
       console.log(`❌ Erreurs: ${results.errors?.length || 0}`);
+      
+      if (results.data!.syncResult) {
+        console.log(`🧠 Enrichissement intelligent réussi !`);
+      }
 
       return results;
 
@@ -147,78 +148,9 @@ export class FileProcessingService {
     }
   }
 
-  // ⭐ NOUVELLE MÉTHODE: NETTOYAGE COMPLET DES DONNÉES FICTIVES
-  private async cleanFictitiousData(): Promise<void> {
-    console.log('🧹 === DÉBUT NETTOYAGE DONNÉES FICTIVES ===');
-    
-    try {
-      // Nettoyer toutes les tables de données de test
-      const cleanupResult = await databaseService.cleanAllTestData();
-      
-      if (cleanupResult.success) {
-        console.log('✅ Nettoyage terminé avec succès');
-        console.log('📊 Tables nettoyées:', cleanupResult.tablesCleared || []);
-      } else {
-        console.warn('⚠️ Erreur partielle lors du nettoyage:', cleanupResult.error);
-      }
-    } catch (error) {
-      console.error('❌ Erreur lors du nettoyage:', error);
-      // Ne pas arrêter le processus pour une erreur de nettoyage
-    }
-    
-    console.log('🧹 === FIN NETTOYAGE ===');
-  }
+  // ⭐ SUPPRESSION de processCollectionReport() - remplacée par l'analyse intelligente
 
-  private async processCollectionReport(file: File): Promise<{
-    collections: CollectionReport[];
-    errors: string[];
-    debugInfo?: any;
-  }> {
-    console.log('📊 === TRAITEMENT COLLECTION REPORT ===');
-    console.log('📁 Fichier:', file.name);
-    
-    try {
-      const result = await excelProcessingService.processCollectionReportExcel(file);
-      
-      console.log('📋 Résultat traitement Excel:', {
-        success: result.success,
-        totalRows: result.totalRows,
-        processedRows: result.processedRows,
-        errorsCount: result.errors?.length || 0
-      });
-
-      if (result.debugInfo) {
-        console.log('🔍 Informations de debug:', result.debugInfo);
-      }
-      
-      if (!result.success || !result.data) {
-        console.error('❌ Échec traitement Collection Report:', result.errors);
-        return {
-          collections: [],
-          errors: result.errors || ['Erreur inconnue lors du traitement Excel'],
-          debugInfo: result.debugInfo
-        };
-      }
-      
-      console.log(`✅ Collection Report traité avec succès: ${result.processedRows}/${result.totalRows} lignes`);
-      console.log('📋 Collections extraites:', result.data.length);
-      
-      return {
-        collections: result.data,
-        errors: result.errors || [],
-        debugInfo: result.debugInfo
-      };
-    } catch (error) {
-      console.error('❌ EXCEPTION lors du traitement Collection Report:', error);
-      return {
-        collections: [],
-        errors: [error instanceof Error ? error.message : 'Erreur inconnue'],
-        debugInfo: undefined
-      };
-    }
-  }
-
-  // ⭐ MISE À JOUR: Traitement réaliste des relevés bancaires (sans données fictives)
+  // ⭐ TRAITEMENT RÉALISTE DES RELEVÉS BANCAIRES (sans données fictives)
   private async processBankStatements(bankStatementFiles: { [key: string]: File }): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     
@@ -238,10 +170,7 @@ export class FileProcessingService {
         const bankName = bankMapping[fileKey as keyof typeof bankMapping];
         console.log(`🏦 Traitement relevé ${bankName}...`);
         
-        // ⭐ TRAITEMENT RÉEL DES PDF (au lieu de données fictives)
         try {
-          // Pour l'instant, créer des relevés basiques sans impayés fictifs
-          // En attendant l'intégration d'une vraie librairie PDF
           const realBankReport = await this.extractRealBankData(file, bankName);
           
           if (realBankReport) {
@@ -260,7 +189,7 @@ export class FileProcessingService {
     return reports;
   }
 
-  // ⭐ NOUVELLE MÉTHODE: Extraction réelle des données bancaires
+  // ⭐ EXTRACTION RÉELLE DES DONNÉES BANCAIRES
   private async extractRealBankData(file: File, bankName: string): Promise<BankReport | null> {
     try {
       console.log(`🔍 Extraction données réelles pour ${bankName}...`);
