@@ -1,7 +1,6 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { CollectionReport } from '@/types/banking';
-import { createHash } from 'crypto';
 
 export enum CollectionStatus {
   NEW = 'NEW',
@@ -55,6 +54,7 @@ export class IntelligentSyncService {
 
   // ⭐ GÉNÉRATION DE CLÉ UNIQUE POUR IDENTIFICATION
   static generateCollectionKey(row: any): string {
+    // Utiliser les propriétés de l'interface TypeScript
     const components = [
       row.reportDate || row.date || '',
       row.clientCode || row.client_name || '',
@@ -64,7 +64,14 @@ export class IntelligentSyncService {
     ];
     
     const key = components.join('|');
-    return createHash('md5').update(key).digest('hex');
+    // Utiliser une fonction de hash simple pour le navigateur
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      const char = key.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(16);
   }
 
   // ⭐ ANALYSE COMPLÈTE DU FICHIER EXCEL
@@ -371,12 +378,12 @@ export class IntelligentSyncService {
               if (['no_chq_bd', 'sg_or_fa_no', 'depo_ref'].includes(enrichment.field)) result.summary.enrichments.references_updated++;
             }
             
-            console.log(`⚡ Collection enrichie: ${comparison.existingRecord?.client_code}`, enrichmentResult.enrichments);
+            console.log(`⚡ Collection enrichie: ${comparison.existingRecord?.clientCode}`, enrichmentResult.enrichments);
             break;
             
           case CollectionStatus.EXISTS_COMPLETE:
             result.ignored_collections++;
-            console.log(`✅ Collection complète ignorée: ${comparison.existingRecord?.client_code}`);
+            console.log(`✅ Collection complète ignorée: ${comparison.existingRecord?.clientCode}`);
             break;
         }
       } catch (error) {
