@@ -13,6 +13,8 @@ import { Toaster, toast } from '@/components/ui/sonner';
 import { databaseService } from '@/services/databaseService';
 import ProcessingResultsDetailed from '@/components/ProcessingResultsDetailed';
 import QualityControlDashboard from '@/components/QualityControlDashboard';
+import ProgressIndicator from '@/components/ProgressIndicator';
+import { progressService } from '@/services/progressService';
 
 const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<{ [key: string]: File }>({});
@@ -22,9 +24,43 @@ const FileUpload = () => {
   const [collectionCount, setCollectionCount] = useState(0);
   const [pendingValidations, setPendingValidations] = useState<any[]>([]);
   const [showQualityValidation, setShowQualityValidation] = useState(false);
+  const [progressSteps, setProgressSteps] = useState<any[]>([]);
+  const [overallProgress, setOverallProgress] = useState(0);
+  const [showProgress, setShowProgress] = useState(false);
 
   useEffect(() => {
     loadCollectionCount();
+
+    // S'abonner aux événements de progression
+    const unsubscribe = progressService.subscribe((event) => {
+      console.log('📊 Événement progression:', event);
+      
+      setProgressSteps(prev => {
+        const existingIndex = prev.findIndex(step => step.id === event.stepId);
+        const newStep = {
+          id: event.stepId,
+          title: event.stepTitle,
+          description: event.stepDescription,
+          status: event.type === 'step_start' ? 'running' :
+                  event.type === 'step_complete' ? 'completed' :
+                  event.type === 'step_error' ? 'error' : 'running',
+          progress: event.progress,
+          details: event.details || event.error
+        };
+
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = newStep;
+          return updated;
+        } else {
+          return [...prev, newStep];
+        }
+      });
+
+      setOverallProgress(event.overallProgress);
+    });
+
+    return unsubscribe;
   }, []);
 
   const loadCollectionCount = async () => {
@@ -63,15 +99,21 @@ const FileUpload = () => {
 
     setIsProcessing(true);
     setProcessStep(2);
+    setShowProgress(true);
+    setProgressSteps([]);
+    setOverallProgress(0);
+    
+    // Réinitialiser le service de progression
+    progressService.reset();
 
     try {
       toast("🚀 Traitement en cours", {
         description: "Analyse intelligente avec contrôle qualité...",
       });
 
-      console.log('🚀 DÉBUT TRAITEMENT FICHIERS AVEC CONTRÔLE QUALITÉ INTÉGRÉ');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS AVEC INDICATEUR DE PROGRESSION');
       
-      // Traitement avec contrôle qualité intégré
+      // Traitement avec progression détaillée
       const results = await fileProcessingService.processFiles(selectedFiles);
       
       console.log('📊 RÉSULTAT TRAITEMENT:', results);
@@ -126,6 +168,9 @@ const FileUpload = () => {
       }
     } catch (error) {
       console.error('❌ ERREUR CRITIQUE:', error);
+      progressService.errorStep('error', 'Erreur Critique', 'Une erreur inattendue s\'est produite', 
+        error instanceof Error ? error.message : 'Erreur inconnue');
+      
       setProcessStep(4);
       setProcessingResults({
         success: false,
@@ -137,6 +182,7 @@ const FileUpload = () => {
       });
     } finally {
       setIsProcessing(false);
+      setOverallProgress(100);
     }
   };
 
@@ -500,24 +546,35 @@ const FileUpload = () => {
       )}
 
       {processStep === 2 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Clock className="h-6 w-6 animate-spin" />
-              <span>Traitement en Cours...</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center space-y-4">
-              <div className="text-lg text-gray-600">
-                Analyse intelligente des fichiers en cours...
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Clock className="h-6 w-6 animate-spin" />
+                <span>Traitement en Cours...</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-center space-y-4">
+                <div className="text-lg text-gray-600">
+                  Analyse intelligente des fichiers en cours...
+                </div>
+                <div className="text-sm text-gray-500">
+                  Extraction, enrichissement et synchronisation des données
+                </div>
               </div>
-              <div className="text-sm text-gray-500">
-                Extraction, enrichissement et synchronisation des données
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          {/* Nouvel indicateur de progression */}
+          {showProgress && (
+            <ProgressIndicator
+              steps={progressSteps}
+              overallProgress={overallProgress}
+              isProcessing={isProcessing}
+            />
+          )}
+        </div>
       )}
 
       {processStep === 3 && renderQualityValidation()}
