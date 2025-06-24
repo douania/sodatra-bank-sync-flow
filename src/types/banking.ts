@@ -1,4 +1,5 @@
 
+
 export interface BankFacility {
   facilityType: string;
   limitAmount: number;
@@ -95,3 +96,30 @@ export interface ProcessingResults {
   duplicatesPrevented?: number;
   sourceFile?: string;
 }
+
+// Types manquants ajoutés
+export interface Alert {
+  type: 'CRITICAL' | 'WARNING' | 'INFO';
+  title: string;
+  description: string;
+  action: string;
+  trigger: string;
+  value?: number;
+  threshold?: number;
+  createdAt: string;
+}
+
+export interface ExtractionResult {
+  success: boolean;
+  data?: any;
+  errors?: string[];
+}
+
+export interface CheckNotCleared {
+  id: string;
+  date: string;
+  reference: string;
+  amount: number;
+  clientCode?: string;
+}
+

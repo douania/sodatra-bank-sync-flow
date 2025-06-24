@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle, AlertTriangle, Clock, FileX, RefreshCw } from 'lucide-react';
@@ -249,11 +248,6 @@ const Dashboard = () => {
                     {hasImpayes && (
                       <div className="text-xs text-red-600">
                         ❌ {report.impayes.length} impayé(s) - {(report.impayes.reduce((sum, i) => sum + i.montant, 0) / 1000000).toFixed(1)}M
-                      </div>
-                    )}
-                    {report.checksNotCleared && report.checksNotCleared.length > 0 && (
-                      <div className="text-xs text-orange-600">
-                        📝 {report.checksNotCleared.length} chèque(s) non débité(s)
                       </div>
                     )}
                   </div>

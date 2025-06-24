@@ -1,4 +1,5 @@
 
+
 import * as XLSX from 'xlsx';
 import { excelMappingService } from './excelMappingService';
 import { ProcessingResults } from '@/types/banking';
@@ -61,11 +62,8 @@ class ExcelProcessingService {
           continue;
         }
 
-        // Déterminer le type de données
-        const dataType = excelMappingService.detectDataType(jsonData as any[][], sheetName);
-        console.log(`🔍 Type détecté: ${dataType}`);
-
-        if (dataType === 'collection') {
+        // Traitement spécifique pour les collections
+        if (sheetName.toLowerCase().includes('collection') || jsonData.length > 0) {
           const processedCollections = await this.processCollectionsWithTraceability(
             jsonData as any[][],
             options,
@@ -74,20 +72,6 @@ class ExcelProcessingService {
           
           results.collections.push(...processedCollections);
           totalProcessed += processedCollections.length;
-        } else {
-          // Traitement des autres types de données (sans traçabilité pour l'instant)
-          const processedData = excelMappingService.processSheetData(jsonData as any[][], dataType);
-          
-          if (dataType === 'bankReport' && processedData.bankReports) {
-            results.bankReports.push(...processedData.bankReports);
-            totalProcessed += processedData.bankReports.length;
-          } else if (dataType === 'fundPosition' && processedData.fundPosition) {
-            results.fundPosition = processedData.fundPosition;
-            totalProcessed += 1;
-          } else if (dataType === 'clientReconciliation' && processedData.clientReconciliations) {
-            results.clientReconciliations.push(...processedData.clientReconciliations);
-            totalProcessed += processedData.clientReconciliations.length;
-          }
         }
       }
 
@@ -112,6 +96,27 @@ class ExcelProcessingService {
         warnings: [],
         duplicatesPrevented: 0,
         sourceFile: options.filename
+      };
+    }
+  }
+
+  // Nouvelle méthode qui remplace processCollectionReportExcel
+  async processCollectionReportExcel(file: File): Promise<{ success: boolean; data?: any[]; errors?: string[] }> {
+    try {
+      const results = await this.processExcelFile(file, {
+        filename: file.name,
+        preventDuplicates: true
+      });
+      
+      return {
+        success: results.errors.length === 0,
+        data: results.collections,
+        errors: results.errors
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errors: [error instanceof Error ? error.message : 'Erreur inconnue']
       };
     }
   }
@@ -144,7 +149,7 @@ class ExcelProcessingService {
         }
 
         // Traiter la ligne normalement
-        const collection = excelMappingService.mapToCollectionReport(headers, row);
+        const collection = excelMappingService.mapCollectionFromRow(headers, row);
         
         if (collection) {
           // Ajouter les métadonnées de traçabilité
@@ -206,3 +211,4 @@ class ExcelProcessingService {
 }
 
 export const excelProcessingService = new ExcelProcessingService();
+
