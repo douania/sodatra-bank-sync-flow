@@ -1,3 +1,4 @@
+
 import * as XLSX from 'xlsx';
 import { excelMappingService } from './excelMappingService';
 import { ProcessingResults } from '@/types/banking';
@@ -146,8 +147,14 @@ class ExcelProcessingService {
           }
         }
 
+        // Convertir le tableau en objet avec les headers comme clés
+        const rowObject: any = {};
+        headers.forEach((header: string, index: number) => {
+          rowObject[header] = row[index];
+        });
+
         // Traiter la ligne normalement en utilisant la méthode correcte
-        const collection = excelMappingService.mapCollectionFromRow(headers, row);
+        const collection = excelMappingService.transformExcelRowToSupabase(rowObject, excelSourceRow);
         
         if (collection) {
           // Ajouter les métadonnées de traçabilité
