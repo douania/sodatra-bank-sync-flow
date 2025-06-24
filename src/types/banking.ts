@@ -1,5 +1,6 @@
 
 
+
 export interface BankFacility {
   facilityType: string;
   limitAmount: number;
@@ -24,6 +25,13 @@ export interface Impaye {
   montant: number;
 }
 
+export interface CheckNotCleared {
+  dateEmission: string;
+  numeroCheque: string;
+  beneficiaire?: string;
+  montant: number;
+}
+
 export interface BankReport {
   bank: string;
   date: string;
@@ -31,6 +39,7 @@ export interface BankReport {
   closingBalance: number;
   bankFacilities: BankFacility[];
   depositsNotCleared: DepositNotCleared[];
+  checksNotCleared?: CheckNotCleared[];
   impayes: Impaye[];
 }
 
@@ -115,11 +124,4 @@ export interface ExtractionResult {
   errors?: string[];
 }
 
-export interface CheckNotCleared {
-  id: string;
-  date: string;
-  reference: string;
-  amount: number;
-  clientCode?: string;
-}
 

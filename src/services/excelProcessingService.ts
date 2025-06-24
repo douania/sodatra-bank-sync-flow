@@ -1,5 +1,3 @@
-
-
 import * as XLSX from 'xlsx';
 import { excelMappingService } from './excelMappingService';
 import { ProcessingResults } from '@/types/banking';
@@ -148,7 +146,7 @@ class ExcelProcessingService {
           }
         }
 
-        // Traiter la ligne normalement
+        // Traiter la ligne normalement en utilisant la méthode correcte
         const collection = excelMappingService.mapCollectionFromRow(headers, row);
         
         if (collection) {
@@ -211,4 +209,3 @@ class ExcelProcessingService {
 }
 
 export const excelProcessingService = new ExcelProcessingService();
-
