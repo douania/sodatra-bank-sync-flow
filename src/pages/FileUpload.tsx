@@ -369,6 +369,112 @@ const FileUpload = () => {
                     </AlertDescription>
                   </Alert>
 
+                  {/* ⭐ DIAGNOSTIC ULTRA-DÉTAILLÉ DES COLLECTIONS */}
+                  {processingResults.debugInfo?.fullDiagnosis && (
+                    <Alert className="border-blue-200 bg-blue-50">
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="font-semibold mb-3">🔍 DIAGNOSTIC COMPLET DES COLLECTIONS :</div>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div className="space-y-2">
+                            <div className="font-medium text-blue-700">📊 Données Excel :</div>
+                            <div className="ml-4 space-y-1">
+                              <div>Total lignes : {processingResults.debugInfo.fullDiagnosis.totalExcelRows}</div>
+                              <div>Collections 2024 : {processingResults.debugInfo.fullDiagnosis.rows2024Count}</div>
+                              <div>Collections 2025 : {processingResults.debugInfo.fullDiagnosis.rows2025Count}</div>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <div className="font-medium text-green-700">✅ Collections Valides :</div>
+                            <div className="ml-4 space-y-1">
+                              <div>Valides 2024 : {processingResults.debugInfo.fullDiagnosis.validRows2024}</div>
+                              <div>Valides 2025 : {processingResults.debugInfo.fullDiagnosis.validRows2025}</div>
+                              <div className="font-semibold">TOTAL ATTENDU : {processingResults.debugInfo.fullDiagnosis.validRows2024 + processingResults.debugInfo.fullDiagnosis.validRows2025}</div>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <div className="font-medium text-purple-700">🔄 Collections Transformées :</div>
+                            <div className="ml-4 space-y-1">
+                              <div>Transformées 2024 : {processingResults.debugInfo.fullDiagnosis.transformedRows2024}</div>
+                              <div>Transformées 2025 : {processingResults.debugInfo.fullDiagnosis.transformedRows2025}</div>
+                              <div className="font-semibold text-purple-800">TOTAL EXTRAIT : {processingResults.debugInfo.fullDiagnosis.transformedRows2024 + processingResults.debugInfo.fullDiagnosis.transformedRows2025}</div>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <div className="font-medium text-red-700">❌ Efficacité d'Extraction :</div>
+                            <div className="ml-4 space-y-1">
+                              {(() => {
+                                const expected = processingResults.debugInfo.fullDiagnosis.validRows2024 + processingResults.debugInfo.fullDiagnosis.validRows2025;
+                                const extracted = processingResults.debugInfo.fullDiagnosis.transformedRows2024 + processingResults.debugInfo.fullDiagnosis.transformedRows2025;
+                                const missing = expected - extracted;
+                                const percentage = expected > 0 ? ((extracted / expected) * 100).toFixed(1) : '0.0';
+                                
+                                return (
+                                  <>
+                                    <div>Taux d'extraction : {percentage}%</div>
+                                    <div className={missing > 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
+                                      Collections manquantes : {missing}
+                                    </div>
+                                    {missing > 0 && (
+                                      <div className="text-red-500 text-xs">
+                                        🚨 {missing} collections perdues !
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ⭐ RAISONS DE REJET DÉTAILLÉES */}
+                        {processingResults.debugInfo.fullDiagnosis.rejectionReasons && Object.keys(processingResults.debugInfo.fullDiagnosis.rejectionReasons).length > 0 && (
+                          <div className="mt-4">
+                            <div className="font-medium text-orange-700 mb-2">📋 Raisons des rejets :</div>
+                            <div className="max-h-32 overflow-y-auto space-y-1">
+                              {Object.entries(processingResults.debugInfo.fullDiagnosis.rejectionReasons).map(([reason, count]) => (
+                                <div key={reason} className="flex justify-between text-xs bg-orange-100 p-1 rounded">
+                                  <span>{reason}</span>
+                                  <span className="font-semibold">{String(count)} lignes</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* ⭐ ÉCHANTILLONS POUR DEBUG */}
+                        {processingResults.debugInfo.fullDiagnosis.sampleValidCollections2024 && processingResults.debugInfo.fullDiagnosis.sampleValidCollections2024.length > 0 && (
+                          <div className="mt-4">
+                            <div className="font-medium text-blue-700 mb-2">📝 Échantillon Collections 2024 :</div>
+                            <div className="max-h-24 overflow-y-auto text-xs bg-blue-50 p-2 rounded">
+                              {processingResults.debugInfo.fullDiagnosis.sampleValidCollections2024.slice(0, 2).map((sample, idx) => (
+                                <div key={idx} className="mb-1">
+                                  {sample["CLIENT NAME"]} - {sample["AMOUNT "]} - {sample["BANK"]}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {processingResults.debugInfo.fullDiagnosis.sampleValidCollections2025 && processingResults.debugInfo.fullDiagnosis.sampleValidCollections2025.length > 0 && (
+                          <div className="mt-4">
+                            <div className="font-medium text-green-700 mb-2">📝 Échantillon Collections 2025 :</div>
+                            <div className="max-h-24 overflow-y-auto text-xs bg-green-50 p-2 rounded">
+                              {processingResults.debugInfo.fullDiagnosis.sampleValidCollections2025.slice(0, 2).map((sample, idx) => (
+                                <div key={idx} className="mb-1">
+                                  {sample["CLIENT NAME"]} - {sample["AMOUNT "]} - {sample["BANK"]}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   {/* ⭐ AFFICHAGE DÉTAILLÉ DES ERREURS AVEC EXEMPLES */}
                   {processingResults.errors && processingResults.errors.length > 0 && (
                     <Alert className="border-red-200 bg-red-50">

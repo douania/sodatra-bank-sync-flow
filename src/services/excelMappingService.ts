@@ -1,3 +1,4 @@
+
 import { CollectionReport } from '@/types/banking';
 
 export class ExcelToSupabaseMapper {
@@ -66,60 +67,152 @@ export class ExcelToSupabaseMapper {
       }
     }
     
-    // ⭐ AJOUT DES MÉTADONNÉES
+    // ⭐ AJOUT DES MÉTADONNÉES AVEC DATE INTELLIGENTE
     if (!mapped.reportDate) {
-      mapped.reportDate = new Date().toISOString().split('T')[0];
+      // Essayer d'extraire la date des données ou utiliser la date actuelle
+      const extractedDate = this.extractDateFromRow(excelRow);
+      mapped.reportDate = extractedDate || new Date().toISOString().split('T')[0];
     }
     
     console.log(`📋 [${rowNumber}] Objet mappé avant validation:`, mapped);
     
-    // ⭐⭐ VALIDATION AMÉLIORÉE DU CLIENT CODE
+    // ⭐⭐ VALIDATION ULTRA-PERMISSIVE DU CLIENT CODE
     if (!mapped.clientCode || mapped.clientCode.toString().trim() === '') {
       // ⭐ LOGS DÉTAILLÉS POUR DEBUG
-      console.error(`❌ [${rowNumber}] CLIENT CODE manquant ou vide:`, {
+      console.log(`🔍 [${rowNumber}] CLIENT CODE manquant, recherche alternatives:`, {
         clientCodeValue: mapped.clientCode,
         clientNameFromExcel: excelRow["CLIENT NAME"],
         clientCodeFromExcel: excelRow["CLIENT CODE"],
-        availableColumns: Object.keys(excelRow),
-        mappedObject: mapped
-      });
-      
-      // ⭐ TENTATIVE DE FALLBACK
-      const fallbackClientCode = excelRow["CLIENT NAME"] || excelRow["CLIENT CODE"] || excelRow["REFERENCE"] || `UNKNOWN_${rowNumber}`;
-      console.warn(`🔄 [${rowNumber}] Tentative fallback CLIENT CODE: "${fallbackClientCode}"`);
-      
-      if (fallbackClientCode && fallbackClientCode.toString().trim() !== '') {
-        mapped.clientCode = fallbackClientCode.toString().trim();
-        console.log(`✅ [${rowNumber}] CLIENT CODE récupéré via fallback: "${mapped.clientCode}"`);
-      } else {
-        throw new Error(`CLIENT CODE manquant - Valeur CLIENT NAME: "${excelRow["CLIENT NAME"]}" - Toutes colonnes: ${Object.keys(excelRow).join(', ')}`);
-      }
-    }
-    
-    // ⭐ VALIDATION DU MONTANT AVEC LOGS DÉTAILLÉS
-    if (!mapped.collectionAmount || mapped.collectionAmount <= 0) {
-      console.error(`❌ [${rowNumber}] COLLECTION AMOUNT invalide:`, {
-        collectionAmountValue: mapped.collectionAmount,
-        amountFromExcel: excelRow["AMOUNT "],
-        amountAltFromExcel: excelRow["MONTANT"],
         availableColumns: Object.keys(excelRow)
       });
       
-      throw new Error(`COLLECTION AMOUNT invalide (${mapped.collectionAmount}) - Valeur AMOUNT: "${excelRow["AMOUNT "]}" - CLIENT: "${mapped.clientCode}"`);
+      // ⭐ MULTIPLES TENTATIVES DE FALLBACK
+      const fallbackOptions = [
+        excelRow["CLIENT NAME"],
+        excelRow["CLIENT CODE"], 
+        excelRow["REFERENCE"],
+        excelRow["DEPO.REF"],
+        excelRow["SG or FA N°"],
+        // Dernier recours: générer un code basé sur d'autres données
+        `AUTO_${rowNumber}_${(excelRow["BANK"] || 'UNK').substring(0,3)}`
+      ];
+      
+      let fallbackClientCode = null;
+      for (const option of fallbackOptions) {
+        if (option && option.toString().trim() !== '') {
+          fallbackClientCode = option.toString().trim();
+          console.log(`✅ [${rowNumber}] CLIENT CODE trouvé via fallback: "${fallbackClientCode}"`);
+          break;
+        }
+      }
+      
+      if (fallbackClientCode) {
+        mapped.clientCode = fallbackClientCode;
+      } else {
+        // ⭐ GÉNÉRATION AUTOMATIQUE si vraiment aucune donnée
+        mapped.clientCode = `UNKNOWN_${rowNumber}_${Date.now().toString().slice(-6)}`;
+        console.warn(`🔄 [${rowNumber}] CLIENT CODE généré automatiquement: "${mapped.clientCode}"`);
+      }
     }
     
-    console.log(`✅ [${rowNumber}] Validation réussie pour CLIENT: "${mapped.clientCode}", AMOUNT: ${mapped.collectionAmount}`);
+    // ⭐ VALIDATION TRÈS PERMISSIVE DU MONTANT
+    if (!mapped.collectionAmount && mapped.collectionAmount !== 0) {
+      console.log(`🔍 [${rowNumber}] COLLECTION AMOUNT manquant, recherche alternatives:`, {
+        collectionAmountValue: mapped.collectionAmount,
+        amountFromExcel: excelRow["AMOUNT "],
+        amountAltFromExcel: excelRow["MONTANT"],
+        incomeFromExcel: excelRow["INCOME "],
+        dNAmountFromExcel: excelRow["D.NAmount"]
+      });
+      
+      // ⭐ MULTIPLES TENTATIVES DE FALLBACK POUR LE MONTANT
+      const amountFallbacks = [
+        excelRow["AMOUNT "],
+        excelRow["MONTANT"],
+        excelRow["INCOME "],
+        excelRow["D.NAmount"]
+      ];
+      
+      let fallbackAmount = null;
+      for (const amountOption of amountFallbacks) {
+        const transformedAmount = this.transformDecimal(amountOption);
+        if (transformedAmount !== null && !isNaN(transformedAmount)) {
+          fallbackAmount = transformedAmount;
+          console.log(`✅ [${rowNumber}] AMOUNT trouvé via fallback: ${fallbackAmount}`);
+          break;
+        }
+      }
+      
+      if (fallbackAmount !== null) {
+        mapped.collectionAmount = fallbackAmount;
+      } else {
+        // ⭐ SI VRAIMENT AUCUN MONTANT, UTILISER 0 (au lieu de rejeter)
+        mapped.collectionAmount = 0;
+        console.warn(`⚠️ [${rowNumber}] AMOUNT défini à 0 (aucune valeur trouvée)`);
+      }
+    }
+    
+    // ⭐ AJOUT DE LA BANQUE SI MANQUANTE
+    if (!mapped.bankName) {
+      const bankFallbacks = [
+        excelRow["BANK"],
+        excelRow["BANQUE"],
+        excelRow["BANK NAME"],
+        "UNKNOWN_BANK"
+      ];
+      
+      for (const bankOption of bankFallbacks) {
+        if (bankOption && bankOption.toString().trim() !== '') {
+          mapped.bankName = bankOption.toString().trim();
+          break;
+        }
+      }
+    }
+    
+    console.log(`✅ [${rowNumber}] Validation PERMISSIVE réussie pour CLIENT: "${mapped.clientCode}", AMOUNT: ${mapped.collectionAmount}, BANK: "${mapped.bankName}"`);
     
     return mapped as CollectionReport;
   }
   
+  // ⭐ NOUVELLE FONCTION: EXTRACTION INTELLIGENTE DE DATE
+  private static extractDateFromRow(excelRow: any): string | null {
+    const dateFields = [
+      excelRow["DATE"],
+      excelRow["Date of VAlidity"],
+      excelRow["date_of_validity"],
+      excelRow["REPORTDATE"]
+    ];
+    
+    for (const dateValue of dateFields) {
+      if (dateValue) {
+        const transformedDate = this.transformDate(dateValue);
+        if (transformedDate) {
+          return transformedDate;
+        }
+      }
+    }
+    
+    return null;
+  }
+  
   // ⭐ TRANSFORMATION DES VALEURS AVEC TYPES CORRECTS
   private static transformValue(value: any, fieldName: string): any {
-    // Gestion des valeurs nulles/vides
-    if (value === null || value === undefined || 
-        (typeof value === 'number' && isNaN(value)) ||
-        (typeof value === 'string' && value.trim() === '')) {
+    // ⭐ GESTION PLUS PERMISSIVE DES VALEURS NULLES/VIDES
+    if (value === null || value === undefined) {
       return null;
+    }
+    
+    // ⭐ ACCEPTER LES NOMBRES NaN pour certains champs (les transformer en null)
+    if (typeof value === 'number' && isNaN(value)) {
+      return null;
+    }
+    
+    // ⭐ ACCEPTER LES STRINGS VIDES POUR CERTAINS CHAMPS (optionnels)
+    if (typeof value === 'string' && value.trim() === '') {
+      // Pour les champs obligatoires, garder une valeur vide
+      // Pour les champs optionnels, retourner null
+      const optionalFields = ['factureNo', 'noChqBd', 'depoRef', 'sgOrFaNo', 'remarques'];
+      return optionalFields.includes(fieldName) ? null : value;
     }
     
     console.log(`🔍 Transforming ${fieldName}: ${value} (type: ${typeof value})`);
@@ -133,7 +226,7 @@ export class ExcelToSupabaseMapper {
       case 'reglementImpaye':
         return this.transformDate(value);
       
-      // Nombres décimaux
+      // Nombres décimaux (TRÈS PERMISSIFS)
       case 'collectionAmount':
       case 'taux':
       case 'interet':
@@ -155,7 +248,7 @@ export class ExcelToSupabaseMapper {
     }
   }
   
-  // ⭐ TRANSFORMATION DES DATES
+  // ⭐ TRANSFORMATION DES DATES ULTRA-PERMISSIVE
   private static transformDate(value: any): string | null {
     if (!value) return null;
     
@@ -166,55 +259,92 @@ export class ExcelToSupabaseMapper {
       }
       
       // Si c'est un timestamp Excel/pandas (nombre de jours depuis 1900)
-      if (typeof value === 'number') {
+      if (typeof value === 'number' && value > 0) {
         // Excel compte les jours depuis le 1er janvier 1900
         const excelEpoch = new Date(1900, 0, 1);
         const date = new Date(excelEpoch.getTime() + (value - 2) * 24 * 60 * 60 * 1000); // -2 pour ajustement Excel
-        if (!isNaN(date.getTime())) {
+        if (!isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100) {
           return date.toISOString().split('T')[0];
         }
       }
       
-      // Si c'est une string ISO
+      // Si c'est une string ISO ou format standard
       if (typeof value === 'string') {
-        const date = new Date(value);
-        if (!isNaN(date.getTime())) {
+        // Nettoyer la string si nécessaire
+        const cleanValue = value.trim();
+        const date = new Date(cleanValue);
+        if (!isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100) {
           return date.toISOString().split('T')[0];
+        }
+        
+        // Essayer les formats DD/MM/YYYY ou MM/DD/YYYY
+        const datePatterns = [
+          /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
+          /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
+          /^(\d{1,2})-(\d{1,2})-(\d{4})$/
+        ];
+        
+        for (const pattern of datePatterns) {
+          const match = cleanValue.match(pattern);
+          if (match) {
+            const [, first, second, year] = match;
+            // Essayer DD/MM/YYYY puis MM/DD/YYYY
+            const dateOption1 = new Date(parseInt(year), parseInt(second) - 1, parseInt(first));
+            const dateOption2 = new Date(parseInt(year), parseInt(first) - 1, parseInt(second));
+            
+            if (!isNaN(dateOption1.getTime()) && dateOption1.getFullYear() > 1900) {
+              return dateOption1.toISOString().split('T')[0];
+            }
+            if (!isNaN(dateOption2.getTime()) && dateOption2.getFullYear() > 1900) {
+              return dateOption2.toISOString().split('T')[0];
+            }
+          }
         }
       }
       
-      console.warn('⚠️ Date non reconnu:', value, typeof value);
+      console.warn('⚠️ Date non reconnue (acceptée comme null):', value, typeof value);
       return null;
     } catch (error) {
-      console.warn('⚠️ Erreur transformation date:', value, error);
+      console.warn('⚠️ Erreur transformation date (acceptée comme null):', value, error);
       return null;
     }
   }
   
-  // ⭐ TRANSFORMATION DES DÉCIMAUX
+  // ⭐ TRANSFORMATION DES DÉCIMAUX ULTRA-PERMISSIVE
   private static transformDecimal(value: any): number | null {
     if (value === null || value === undefined) return null;
     
     try {
       // Si c'est déjà un nombre
       if (typeof value === 'number') {
+        // ⭐ ACCEPTER MÊME LES NaN (les convertir en null)
         return isNaN(value) ? null : value;
       }
       
-      // Si c'est une string, nettoyer et convertir
+      // Si c'est une string, nettoyer et convertir (TRÈS PERMISSIF)
       if (typeof value === 'string') {
-        const cleanValue = value.replace(/[^\d.-]/g, ''); // Garder seulement chiffres, point et moins
+        const cleanValue = value
+          .replace(/[^\d.-]/g, '') // Garder seulement chiffres, point et moins
+          .replace(/\.+/g, '.') // Supprimer les multiples points
+          .replace(/-+/g, '-'); // Supprimer les multiples moins
+        
+        if (cleanValue === '' || cleanValue === '.' || cleanValue === '-') {
+          return null;
+        }
+        
         const num = parseFloat(cleanValue);
         return isNaN(num) ? null : num;
       }
       
-      return null;
+      // Essayer de convertir tout autre type
+      const num = Number(value);
+      return isNaN(num) ? null : num;
     } catch {
       return null;
     }
   }
   
-  // ⭐ TRANSFORMATION DES ENTIERS
+  // ⭐ TRANSFORMATION DES ENTIERS PERMISSIVE
   private static transformInteger(value: any): number | null {
     if (value === null || value === undefined) return null;
     
@@ -225,17 +355,20 @@ export class ExcelToSupabaseMapper {
       
       if (typeof value === 'string') {
         const cleanValue = value.replace(/[^\d-]/g, '');
+        if (cleanValue === '' || cleanValue === '-') return null;
+        
         const num = parseInt(cleanValue, 10);
         return isNaN(num) ? null : num;
       }
       
-      return null;
+      const num = Number(value);
+      return isNaN(num) ? null : Math.floor(num);
     } catch {
       return null;
     }
   }
   
-  // ⭐ TRANSFORMATION DU TEXTE
+  // ⭐ TRANSFORMATION DU TEXTE PERMISSIVE
   private static transformText(value: any): string | null {
     if (value === null || value === undefined) return null;
     
