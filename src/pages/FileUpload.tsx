@@ -28,11 +28,18 @@ const FileUpload = () => {
     setCollectionCount(count);
   };
 
+  // Helper function to get the correct status type
+  const getStepStatus = (stepId: number): 'pending' | 'current' | 'completed' => {
+    if (processStep === stepId) return 'current';
+    if (processStep > stepId) return 'completed';
+    return 'pending';
+  };
+
   const steps = [
-    { id: 1, title: 'Sélection des Fichiers', description: 'Choisir les fichiers à traiter', status: processStep === 1 ? 'current' : processStep > 1 ? 'completed' : 'pending' },
-    { id: 2, title: 'Traitement des Données', description: 'Analyse et extraction', status: processStep === 2 ? 'current' : processStep > 2 ? 'completed' : 'pending' },
-    { id: 3, title: 'Analyse des Résultats', description: 'Vérification des données', status: processStep === 3 ? 'current' : processStep > 3 ? 'completed' : 'pending' },
-    { id: 4, title: 'Finalisation', description: 'Traitement terminé', status: processStep === 4 ? 'current' : processStep > 4 ? 'completed' : 'pending' },
+    { id: 1, title: 'Sélection des Fichiers', description: 'Choisir les fichiers à traiter', status: getStepStatus(1) },
+    { id: 2, title: 'Traitement des Données', description: 'Analyse et extraction', status: getStepStatus(2) },
+    { id: 3, title: 'Analyse des Résultats', description: 'Vérification des données', status: getStepStatus(3) },
+    { id: 4, title: 'Finalisation', description: 'Traitement terminé', status: getStepStatus(4) },
   ];
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>, fileType: string) => {
