@@ -60,8 +60,8 @@ class ExcelProcessingService {
           continue;
         }
 
-        // ⭐ OPTIMISATION: Filtrer les lignes vides AVANT traitement
-        const validRows = this.filterValidRows(jsonData as any[][]);
+        // ⭐ AMÉLIORATION: Filtrer les lignes invalides avec détection renforcée
+        const validRows = this.filterValidRowsEnhanced(jsonData as any[][]);
         console.log(`📊 Lignes valides détectées: ${validRows.length} sur ${jsonData.length}`);
 
         // Traitement spécifique pour les collections
@@ -102,44 +102,143 @@ class ExcelProcessingService {
     }
   }
 
-  // ⭐ NOUVELLE MÉTHODE: Filtrer les lignes vides et invalides
-  private filterValidRows(jsonData: any[][]): any[][] {
+  // ⭐ NOUVELLE MÉTHODE AMÉLIORÉE: Filtrer les lignes invalides avec détection renforcée
+  private filterValidRowsEnhanced(jsonData: any[][]): any[][] {
     const headers = jsonData[0];
     const validRows = [headers]; // Garder les headers
     
     let consecutiveEmptyRows = 0;
-    const MAX_CONSECUTIVE_EMPTY = 5; // Arrêter après 5 lignes vides consécutives
+    let consecutiveInvalidRows = 0;
+    const MAX_CONSECUTIVE_EMPTY = 3; // ⭐ RÉDUIT de 5 à 3
+    const MAX_CONSECUTIVE_INVALID = 5; // Nouveau seuil pour les lignes avec données invalides
+    
+    console.log(`🔍 === DÉBUT FILTRAGE AVANCÉ ===`);
+    console.log(`📋 Headers détectés:`, headers?.slice(0, 5)); // Afficher les 5 premiers headers
     
     for (let i = 1; i < jsonData.length; i++) {
       const row = jsonData[i];
+      const rowNumber = i + 1; // +1 car Excel commence à 1
       
-      // Vérifier si la ligne est vide ou ne contient que des valeurs nulles/undefined
-      const isEmptyRow = !row || row.length === 0 || row.every(cell => 
+      // ⭐ AMÉLIORATION 1: Vérifier si la ligne est complètement vide
+      const isCompletelyEmpty = !row || row.length === 0 || row.every(cell => 
         cell === null || 
         cell === undefined || 
         cell === '' || 
         (typeof cell === 'string' && cell.trim() === '')
       );
       
-      if (isEmptyRow) {
+      // ⭐ AMÉLIORATION 2: Détecter les valeurs "undefined" (chaîne de caractères)
+      const hasUndefinedStrings = row && row.some(cell => 
+        cell === 'undefined' || 
+        (typeof cell === 'string' && cell.toLowerCase().includes('undefined'))
+      );
+      
+      // ⭐ AMÉLIORATION 3: Validation des données critiques (code client et montant)
+      const hasCriticalData = this.hasValidCriticalData(row, headers);
+      
+      // ⭐ AMÉLIORATION 4: Détection des lignes avec données partielles suspectes
+      const hasPartialInvalidData = row && row.filter(cell => 
+        cell !== null && 
+        cell !== undefined && 
+        cell !== '' && 
+        !(typeof cell === 'string' && cell.trim() === '')
+      ).length > 0 && !hasCriticalData;
+      
+      // Log détaillé pour le débogage
+      if (rowNumber % 50 === 0 || hasUndefinedStrings || hasPartialInvalidData) {
+        console.log(`🔍 Ligne ${rowNumber}:`, {
+          isEmpty: isCompletelyEmpty,
+          hasUndefined: hasUndefinedStrings,
+          hasCritical: hasCriticalData,
+          hasPartialInvalid: hasPartialInvalidData,
+          sampleData: row?.slice(0, 3)
+        });
+      }
+      
+      // ⭐ DÉCISION: Ignorer la ligne si elle est invalide
+      if (isCompletelyEmpty) {
         consecutiveEmptyRows++;
-        console.log(`⚠️ Ligne vide détectée: ${i + 1}, consécutives: ${consecutiveEmptyRows}`);
+        consecutiveInvalidRows = 0;
+        console.log(`⚠️ Ligne vide détectée: ${rowNumber}, consécutives: ${consecutiveEmptyRows}`);
         
-        // Arrêter si trop de lignes vides consécutives
         if (consecutiveEmptyRows >= MAX_CONSECUTIVE_EMPTY) {
-          console.log(`🛑 Arrêt du traitement: ${MAX_CONSECUTIVE_EMPTY} lignes vides consécutives atteintes à la ligne ${i + 1}`);
+          console.log(`🛑 Arrêt du traitement: ${MAX_CONSECUTIVE_EMPTY} lignes vides consécutives atteintes à la ligne ${rowNumber}`);
           break;
         }
         continue;
       }
       
-      // Réinitialiser le compteur si on trouve une ligne valide
+      if (hasUndefinedStrings || !hasCriticalData) {
+        consecutiveInvalidRows++;
+        consecutiveEmptyRows = 0;
+        console.log(`⚠️ Ligne invalide détectée: ${rowNumber}`, {
+          hasUndefined: hasUndefinedStrings,
+          lacksCritical: !hasCriticalData,
+          consecutive: consecutiveInvalidRows
+        });
+        
+        if (consecutiveInvalidRows >= MAX_CONSECUTIVE_INVALID) {
+          console.log(`🛑 Arrêt du traitement: ${MAX_CONSECUTIVE_INVALID} lignes invalides consécutives atteintes à la ligne ${rowNumber}`);
+          break;
+        }
+        continue;
+      }
+      
+      // ⭐ LIGNE VALIDE: Réinitialiser les compteurs et ajouter la ligne
       consecutiveEmptyRows = 0;
+      consecutiveInvalidRows = 0;
       validRows.push(row);
+      
+      if (validRows.length % 100 === 0) {
+        console.log(`✅ ${validRows.length - 1} lignes valides ajoutées jusqu'à la ligne ${rowNumber}`);
+      }
     }
     
-    console.log(`📊 Filtrage terminé: ${validRows.length - 1} lignes valides (headers exclus)`);
+    console.log(`📊 === FILTRAGE TERMINÉ ===`);
+    console.log(`✅ Lignes valides finales: ${validRows.length - 1} (headers exclus)`);
+    console.log(`🚫 Lignes ignorées: ${jsonData.length - validRows.length}`);
+    
     return validRows;
+  }
+  
+  // ⭐ NOUVELLE MÉTHODE: Valider les données critiques d'une ligne
+  private hasValidCriticalData(row: any[], headers: any[]): boolean {
+    if (!row || !headers) return false;
+    
+    // Chercher les colonnes critiques dans les headers
+    const clientCodeIndex = headers.findIndex(header => 
+      header && typeof header === 'string' && 
+      (header.toLowerCase().includes('client') || header.toLowerCase().includes('code'))
+    );
+    
+    const amountIndex = headers.findIndex(header => 
+      header && typeof header === 'string' && 
+      (header.toLowerCase().includes('montant') || 
+       header.toLowerCase().includes('amount') || 
+       header.toLowerCase().includes('collection'))
+    );
+    
+    // Vérifier si les données critiques sont présentes et valides
+    const hasValidClientCode = clientCodeIndex >= 0 && 
+      row[clientCodeIndex] && 
+      row[clientCodeIndex] !== 'undefined' &&
+      typeof row[clientCodeIndex] === 'string' &&
+      row[clientCodeIndex].trim().length > 0;
+    
+    const hasValidAmount = amountIndex >= 0 && 
+      row[amountIndex] && 
+      row[amountIndex] !== 'undefined' &&
+      (typeof row[amountIndex] === 'number' || 
+       (typeof row[amountIndex] === 'string' && !isNaN(parseFloat(row[amountIndex])))) &&
+      parseFloat(row[amountIndex].toString()) > 0;
+    
+    return hasValidClientCode && hasValidAmount;
+  }
+
+  // ⭐ MÉTHODE DÉPRÉCIÉE: Remplacée par filterValidRowsEnhanced
+  private filterValidRows(jsonData: any[][]): any[][] {
+    console.log('⚠️ Utilisation de l\'ancienne méthode filterValidRows - utilisez filterValidRowsEnhanced');
+    return this.filterValidRowsEnhanced(jsonData);
   }
 
   // Nouvelle méthode qui remplace processCollectionReportExcel
