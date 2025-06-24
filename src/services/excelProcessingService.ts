@@ -1,374 +1,222 @@
 
 import * as XLSX from 'xlsx';
+import { CollectionReport } from '@/types/banking';
 import { excelMappingService } from './excelMappingService';
-import { ProcessingResults } from '@/types/banking';
-import { databaseService } from './databaseService';
 
-export interface ExcelProcessingOptions {
-  filename: string;
-  preventDuplicates?: boolean;
-  forceReprocess?: boolean;
+export interface ExcelProcessingResult {
+  success: boolean;
+  data?: CollectionReport[];
+  errors?: string[];
+  warnings?: string[];
+  sourceFile?: string;
+  totalProcessed?: number;
 }
 
 class ExcelProcessingService {
-  async processExcelFile(
-    file: File, 
-    options: ExcelProcessingOptions = { filename: file.name, preventDuplicates: true }
-  ): Promise<ProcessingResults> {
-    console.log(`📊 === DÉBUT TRAITEMENT EXCEL: ${options.filename} ===`);
-    
+  async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      console.log('📊 DÉBUT TRAITEMENT EXCEL avec traçabilité:', file.name);
       
-      let totalProcessed = 0;
-      let duplicatesPrevented = 0;
-      const results: ProcessingResults = {
-        bankReports: [],
-        fundPosition: null,
-        collections: [],
-        clientReconciliations: [],
-        totalProcessed: 0,
-        errors: [],
-        warnings: [],
-        duplicatesPrevented: 0,
-        sourceFile: options.filename
-      };
-
-      // ⭐ CONTRÔLE STRICT: Vérification préalable des doublons par nom de fichier
-      if (options.preventDuplicates && !options.forceReprocess) {
-        const existingImports = await this.checkExistingImports(options.filename);
-        if (existingImports.length > 0) {
-          console.log(`🚫 FICHIER DÉJÀ TRAITÉ: ${existingImports.length} lignes trouvées`);
-          results.warnings.push(
-            `Ce fichier a déjà été traité le ${new Date(existingImports[0].excelProcessedAt || '').toLocaleString('fr-FR')}. ${existingImports.length} lignes détectées.`
-          );
-          results.errors.push('DUPLICATE_FILE_DETECTED');
-          return results;
-        }
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      
+      if (!workbook.SheetNames.length) {
+        return {
+          success: false,
+          errors: ['Aucune feuille trouvée dans le fichier Excel']
+        };
       }
-
-      for (const sheetName of workbook.SheetNames) {
-        console.log(`📋 Traitement feuille: ${sheetName}`);
+      
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      
+      console.log(`📊 Données brutes extraites: ${rawData.length} lignes`);
+      
+      if (rawData.length < 2) {
+        return {
+          success: false,
+          errors: ['Le fichier Excel doit contenir au moins un en-tête et une ligne de données']
+        };
+      }
+      
+      // Identifier la ligne d'en-tête
+      const headers = rawData[0] as string[];
+      console.log('📊 En-têtes détectés:', headers);
+      
+      // Traiter les données avec traçabilité obligatoire
+      const collections: CollectionReport[] = [];
+      const errors: string[] = [];
+      const warnings: string[] = [];
+      
+      for (let rowIndex = 1; rowIndex < rawData.length; rowIndex++) {
+        const row = rawData[rowIndex] as any[];
         
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        if (jsonData.length === 0) {
-          console.log(`⚠️ Feuille vide: ${sheetName}`);
+        // Ignorer les lignes complètement vides
+        if (!row || row.every(cell => !cell && cell !== 0)) {
+          console.log(`⚠️ Ligne ${rowIndex + 1} ignorée (vide)`);
           continue;
         }
-
-        // ⭐ FILTRAGE DRASTIQUE: S'arrêter exactement à la ligne 868 + headers
-        const validRows = this.filterValidRowsWithStrictLimit(jsonData as any[][], 868);
-        console.log(`📊 Lignes valides après filtrage strict: ${validRows.length - 1} (headers exclus)`);
-
-        // Traitement spécifique pour les collections avec traçabilité OBLIGATOIRE
-        if (sheetName.toLowerCase().includes('collection') || validRows.length > 1) {
-          const processedCollections = await this.processCollectionsWithMandatoryTraceability(
-            validRows,
-            options,
-            results
-          );
+        
+        try {
+          // ⭐ TRAÇABILITÉ OBLIGATOIRE - Ajouter systématiquement
+          const rowData = this.parseExcelRow(headers, row, rowIndex + 1);
           
-          results.collections.push(...processedCollections);
-          totalProcessed += processedCollections.length;
-        }
-      }
-
-      results.totalProcessed = totalProcessed;
-      results.duplicatesPrevented = duplicatesPrevented;
-      
-      console.log(`✅ === TRAITEMENT TERMINÉ ===`);
-      console.log(`📊 Total traité: ${totalProcessed}`);
-      console.log(`🚫 Doublons évités: ${duplicatesPrevented}`);
-      
-      return results;
-      
-    } catch (error) {
-      console.error('❌ Erreur traitement Excel:', error);
-      return {
-        bankReports: [],
-        fundPosition: null,
-        collections: [],
-        clientReconciliations: [],
-        totalProcessed: 0,
-        errors: [error instanceof Error ? error.message : 'Erreur inconnue'],
-        warnings: [],
-        duplicatesPrevented: 0,
-        sourceFile: options.filename
-      };
-    }
-  }
-
-  // ⭐ NOUVELLE MÉTHODE: Filtrage strict avec limite absolue à 868 lignes
-  private filterValidRowsWithStrictLimit(jsonData: any[][], maxDataRows: number = 868): any[][] {
-    const headers = jsonData[0];
-    const validRows = [headers]; // Garder les headers
-    
-    let processedDataRows = 0;
-    let consecutiveEmptyRows = 0;
-    let consecutiveInvalidRows = 0;
-    const MAX_CONSECUTIVE_EMPTY = 2; // Réduit drastiquement
-    const MAX_CONSECUTIVE_INVALID = 3; // Réduit drastiquement
-    
-    console.log(`🔍 === DÉBUT FILTRAGE STRICT (MAX: ${maxDataRows} lignes) ===`);
-    console.log(`📋 Headers détectés:`, headers?.slice(0, 5));
-    
-    for (let i = 1; i < jsonData.length; i++) {
-      const row = jsonData[i];
-      const rowNumber = i + 1;
-      
-      // ⭐ LIMITE ABSOLUE: Arrêter après maxDataRows lignes de données valides
-      if (processedDataRows >= maxDataRows) {
-        console.log(`🛑 LIMITE ABSOLUE ATTEINTE: ${maxDataRows} lignes de données traitées`);
-        break;
-      }
-      
-      // ⭐ DÉTECTION RENFORCÉE DES LIGNES VIDES
-      const isCompletelyEmpty = !row || row.length === 0 || row.every(cell => 
-        cell === null || 
-        cell === undefined || 
-        cell === '' || 
-        (typeof cell === 'string' && cell.trim() === '')
-      );
-      
-      // ⭐ DÉTECTION RENFORCÉE DES VALEURS "undefined"
-      const hasUndefinedStrings = row && row.some(cell => 
-        cell === 'undefined' || 
-        (typeof cell === 'string' && cell.toLowerCase().includes('undefined'))
-      );
-      
-      // ⭐ VALIDATION DES DONNÉES CRITIQUES STRICTE
-      const hasCriticalData = this.hasValidCriticalDataStrict(row, headers);
-      
-      // Log tous les 25 lignes pour suivi
-      if (rowNumber % 25 === 0 || hasUndefinedStrings || !hasCriticalData) {
-        console.log(`🔍 Ligne ${rowNumber}:`, {
-          isEmpty: isCompletelyEmpty,
-          hasUndefined: hasUndefinedStrings,
-          hasCritical: hasCriticalData,
-          processedSoFar: processedDataRows,
-          sampleData: row?.slice(0, 3)
-        });
-      }
-      
-      // ⭐ DÉCISION STRICTE: Ignorer les lignes invalides
-      if (isCompletelyEmpty) {
-        consecutiveEmptyRows++;
-        consecutiveInvalidRows = 0;
-        
-        if (consecutiveEmptyRows >= MAX_CONSECUTIVE_EMPTY) {
-          console.log(`🛑 ARRÊT: ${MAX_CONSECUTIVE_EMPTY} lignes vides consécutives à la ligne ${rowNumber}`);
-          break;
-        }
-        continue;
-      }
-      
-      if (hasUndefinedStrings || !hasCriticalData) {
-        consecutiveInvalidRows++;
-        consecutiveEmptyRows = 0;
-        
-        if (consecutiveInvalidRows >= MAX_CONSECUTIVE_INVALID) {
-          console.log(`🛑 ARRÊT: ${MAX_CONSECUTIVE_INVALID} lignes invalides consécutives à la ligne ${rowNumber}`);
-          break;
-        }
-        continue;
-      }
-      
-      // ⭐ LIGNE VALIDE: Réinitialiser compteurs et ajouter
-      consecutiveEmptyRows = 0;
-      consecutiveInvalidRows = 0;
-      validRows.push(row);
-      processedDataRows++;
-      
-      if (processedDataRows % 100 === 0) {
-        console.log(`✅ ${processedDataRows} lignes valides ajoutées (ligne Excel ${rowNumber})`);
-      }
-    }
-    
-    console.log(`📊 === FILTRAGE STRICT TERMINÉ ===`);
-    console.log(`✅ Lignes de données valides: ${processedDataRows}`);
-    console.log(`🎯 Objectif respecté: ${processedDataRows <= maxDataRows ? 'OUI' : 'NON'}`);
-    
-    return validRows;
-  }
-  
-  // ⭐ VALIDATION STRICTE DES DONNÉES CRITIQUES
-  private hasValidCriticalDataStrict(row: any[], headers: any[]): boolean {
-    if (!row || !headers) return false;
-    
-    // Chercher les colonnes critiques avec plus de variantes
-    const clientCodeIndex = headers.findIndex(header => 
-      header && typeof header === 'string' && 
-      (header.toLowerCase().includes('client') || 
-       header.toLowerCase().includes('code') ||
-       header.toLowerCase().includes('nom'))
-    );
-    
-    const amountIndex = headers.findIndex(header => 
-      header && typeof header === 'string' && 
-      (header.toLowerCase().includes('montant') || 
-       header.toLowerCase().includes('amount') || 
-       header.toLowerCase().includes('collection') ||
-       header.toLowerCase().includes('somme'))
-    );
-    
-    // Validation STRICTE du code client
-    const hasValidClientCode = clientCodeIndex >= 0 && 
-      row[clientCodeIndex] && 
-      row[clientCodeIndex] !== 'undefined' &&
-      typeof row[clientCodeIndex] === 'string' &&
-      row[clientCodeIndex].toString().trim().length > 0 &&
-      !row[clientCodeIndex].toString().toLowerCase().includes('undefined');
-    
-    // Validation STRICTE du montant
-    const hasValidAmount = amountIndex >= 0 && 
-      row[amountIndex] && 
-      row[amountIndex] !== 'undefined' &&
-      (typeof row[amountIndex] === 'number' || 
-       (typeof row[amountIndex] === 'string' && !isNaN(parseFloat(row[amountIndex])))) &&
-      parseFloat(row[amountIndex].toString()) > 0;
-    
-    return hasValidClientCode && hasValidAmount;
-  }
-
-  // ⭐ TRAITEMENT AVEC TRAÇABILITÉ OBLIGATOIRE
-  private async processCollectionsWithMandatoryTraceability(
-    jsonData: any[][],
-    options: ExcelProcessingOptions,
-    results: ProcessingResults
-  ) {
-    const collections = [];
-    const headers = jsonData[0];
-    let duplicatesPrevented = 0;
-    const totalRows = jsonData.length - 1; // Exclure les headers
-
-    console.log(`📋 Traitement de ${totalRows} lignes avec traçabilité OBLIGATOIRE`);
-
-    for (let rowIndex = 1; rowIndex < jsonData.length; rowIndex++) {
-      const row = jsonData[rowIndex];
-      const excelSourceRow = rowIndex + 1; // +1 car Excel commence à 1
-      
-      // Progress tous les 50 lignes
-      if (rowIndex % 50 === 0) {
-        const progressPercent = Math.floor((rowIndex / totalRows) * 100);
-        console.log(`📊 Progression: ${progressPercent}% (${rowIndex}/${totalRows})`);
-      }
-      
-      try {
-        // ⭐ VÉRIFICATION STRICTE DES DOUBLONS PAR TRAÇABILITÉ
-        if (options.preventDuplicates && !options.forceReprocess) {
-          const existingRow = await this.checkSpecificRowExistsStrict(options.filename, excelSourceRow);
-          if (existingRow) {
-            console.log(`🚫 Ligne ${excelSourceRow} déjà traitée, ignorée`);
-            duplicatesPrevented++;
-            results.warnings.push(`Ligne ${excelSourceRow} ignorée (déjà traitée)`);
-            continue;
-          }
-        }
-
-        // Convertir le tableau en objet avec les headers comme clés
-        const rowObject: any = {};
-        headers.forEach((header: string, index: number) => {
-          rowObject[header] = row[index];
-        });
-
-        // Traiter la ligne avec traçabilité OBLIGATOIRE
-        const collection = excelMappingService.transformExcelRowToSupabase(rowObject, excelSourceRow);
-        
-        if (collection) {
-          // ⭐ TRAÇABILITÉ OBLIGATOIRE: Ces champs sont maintenant REQUIS
-          collection.excelSourceRow = excelSourceRow;
-          collection.excelFilename = options.filename;
-          collection.excelProcessedAt = new Date().toISOString();
+          // ⭐ CRUCIAL: Assigner la traçabilité Excel AVANT le mapping
+          rowData.excel_filename = file.name;
+          rowData.excel_source_row = rowIndex + 1;
           
-          // Vérifications de sécurité
-          if (!collection.excelFilename || !collection.excelSourceRow) {
-            throw new Error(`Traçabilité manquante pour ligne ${excelSourceRow}`);
+          console.log(`📊 Ligne ${rowIndex + 1}: traçabilité assignée`, {
+            filename: rowData.excel_filename,
+            row: rowData.excel_source_row,
+            client: rowData.clientCode
+          });
+          
+          // Mapper vers le format CollectionReport
+          const mappedData = excelMappingService.mapExcelRowToCollection(rowData);
+          
+          // ⭐ VÉRIFICATION CRITIQUE: S'assurer que la traçabilité est préservée
+          if (!mappedData.excelFilename || !mappedData.excelSourceRow) {
+            console.error(`❌ TRAÇABILITÉ PERDUE pour ligne ${rowIndex + 1}:`, {
+              avant: { filename: rowData.excel_filename, row: rowData.excel_source_row },
+              après: { filename: mappedData.excelFilename, row: mappedData.excelSourceRow }
+            });
+            
+            // Forcer la traçabilité si elle a été perdue
+            mappedData.excelFilename = file.name;
+            mappedData.excelSourceRow = rowIndex + 1;
           }
           
-          collections.push(collection);
-          console.log(`✅ Ligne ${excelSourceRow}: ${collection.clientCode} - ${collection.collectionAmount} FCFA [TRACÉ]`);
+          collections.push(mappedData);
+          
+        } catch (error) {
+          const errorMsg = `Ligne ${rowIndex + 1}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
+          console.error('❌', errorMsg);
+          errors.push(errorMsg);
         }
-      } catch (error) {
-        console.error(`❌ Erreur ligne ${excelSourceRow}:`, error);
-        results.errors.push(`Ligne ${excelSourceRow}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
       }
-    }
-
-    results.duplicatesPrevented = (results.duplicatesPrevented || 0) + duplicatesPrevented;
-    console.log(`🚫 ${duplicatesPrevented} doublons évités par traçabilité`);
-    
-    return collections;
-  }
-
-  // ⭐ VÉRIFICATION STRICTE D'EXISTENCE DE LIGNE SPÉCIFIQUE
-  private async checkSpecificRowExistsStrict(filename: string, sourceRow: number) {
-    try {
-      const collection = await databaseService.getCollectionByFileAndRowStrict(filename, sourceRow);
-      return collection;
-    } catch (error) {
-      console.error('❌ Erreur vérification ligne spécifique stricte:', error);
-      return null;
-    }
-  }
-
-  private async checkExistingImports(filename: string) {
-    try {
-      const collections = await databaseService.getCollectionsByFilename(filename);
-      return collections;
-    } catch (error) {
-      console.error('❌ Erreur vérification imports existants:', error);
-      return [];
-    }
-  }
-
-  private async checkSpecificRowExists(filename: string, sourceRow: number) {
-    try {
-      const collection = await databaseService.getCollectionByFileAndRow(filename, sourceRow);
-      return collection;
-    } catch (error) {
-      console.error('❌ Erreur vérification ligne spécifique:', error);
-      return null;
-    }
-  }
-
-  async getFileImportHistory(filename: string) {
-    try {
-      const collections = await databaseService.getCollectionsByFilename(filename);
       
-      return {
-        filename,
-        totalRows: collections.length,
-        firstImport: collections.length > 0 ? collections[0].excelProcessedAt : null,
-        lastImport: collections.length > 0 ? collections[collections.length - 1].excelProcessedAt : null,
-        sourceRows: collections.map(c => c.excelSourceRow).filter(Boolean)
-      };
-    } catch (error) {
-      console.error('❌ Erreur historique import:', error);
-      return null;
-    }
-  }
-
-  async processCollectionReportExcel(file: File): Promise<{ success: boolean; data?: any[]; errors?: string[] }> {
-    try {
-      const results = await this.processExcelFile(file, {
-        filename: file.name,
-        preventDuplicates: true
+      console.log('📊 RÉSULTAT TRAITEMENT EXCEL:', {
+        totalLignes: rawData.length - 1,
+        collectionsTraitées: collections.length,
+        erreurs: errors.length,
+        avertissements: warnings.length
       });
       
+      // ⭐ VÉRIFICATION FINALE: Toutes les collections doivent avoir une traçabilité
+      const sansTracabilite = collections.filter(c => !c.excelFilename || !c.excelSourceRow);
+      if (sansTracabilite.length > 0) {
+        console.error(`❌ ${sansTracabilite.length} collections sans traçabilité détectées!`);
+        errors.push(`${sansTracabilite.length} collections n'ont pas de traçabilité Excel valide`);
+      }
+      
       return {
-        success: results.errors.length === 0,
-        data: results.collections,
-        errors: results.errors
+        success: errors.length === 0,
+        data: collections,
+        errors: errors.length > 0 ? errors : undefined,
+        warnings: warnings.length > 0 ? warnings : undefined,
+        sourceFile: file.name,
+        totalProcessed: collections.length
       };
+      
     } catch (error) {
+      console.error('❌ ERREUR CRITIQUE TRAITEMENT EXCEL:', error);
       return {
         success: false,
-        errors: [error instanceof Error ? error.message : 'Erreur inconnue']
+        errors: [`Erreur critique: ${error instanceof Error ? error.message : 'Erreur inconnue'}`]
       };
     }
+  }
+  
+  private parseExcelRow(headers: string[], row: any[], rowNumber: number): any {
+    const rowData: any = {
+      _sourceRowNumber: rowNumber // Pour debug
+    };
+    
+    for (let i = 0; i < headers.length && i < row.length; i++) {
+      const header = headers[i];
+      const value = row[i];
+      
+      if (header && value !== null && value !== undefined && value !== '') {
+        // Nettoyer et normaliser la valeur
+        let cleanValue = value;
+        
+        if (typeof value === 'string') {
+          cleanValue = value.trim();
+        }
+        
+        // Mapper les en-têtes vers les propriétés
+        const mappedProperty = this.mapHeaderToProperty(header);
+        if (mappedProperty) {
+          rowData[mappedProperty] = cleanValue;
+        }
+      }
+    }
+    
+    return rowData;
+  }
+  
+  private mapHeaderToProperty(header: string): string | null {
+    const headerMappings: { [key: string]: string } = {
+      'Date': 'reportDate',
+      'Report Date': 'reportDate',
+      'Client Code': 'clientCode',
+      'Client': 'clientCode',
+      'Code Client': 'clientCode',
+      'Amount': 'collectionAmount',
+      'Collection Amount': 'collectionAmount',
+      'Montant': 'collectionAmount',
+      'Bank': 'bankName',
+      'Banque': 'bankName',
+      'Bank Name': 'bankName',
+      'Date of Validity': 'dateOfValidity',
+      'Date Validité': 'dateOfValidity',
+      'Facture No': 'factureNo',
+      'Invoice No': 'factureNo',
+      'No Chèque/BD': 'noChqBd',
+      'Chèque BD': 'noChqBd',
+      'Bank Name Display': 'bankNameDisplay',
+      'Depot Ref': 'depoRef',
+      'Référence': 'depoRef',
+      'NJ': 'nj',
+      'Taux': 'taux',
+      'Rate': 'taux',
+      'Intérêt': 'interet',
+      'Interest': 'interet',
+      'Commission': 'commission',
+      'TOB': 'tob',
+      'Frais Escompte': 'fraisEscompte',
+      'Bank Commission': 'bankCommission',
+      'SG or FA No': 'sgOrFaNo',
+      'D/N Amount': 'dNAmount',
+      'Income': 'income',
+      'Revenus': 'income',
+      'Date of Impay': 'dateOfImpay',
+      'Règlement Impayé': 'reglementImpaye',
+      'Remarques': 'remarques',
+      'Comments': 'remarques'
+    };
+    
+    // Recherche exacte
+    if (headerMappings[header]) {
+      return headerMappings[header];
+    }
+    
+    // Recherche insensible à la casse
+    const lowerHeader = header.toLowerCase();
+    for (const [key, value] of Object.entries(headerMappings)) {
+      if (key.toLowerCase() === lowerHeader) {
+        return value;
+      }
+    }
+    
+    // Recherche partielle
+    for (const [key, value] of Object.entries(headerMappings)) {
+      if (lowerHeader.includes(key.toLowerCase()) || key.toLowerCase().includes(lowerHeader)) {
+        return value;
+      }
+    }
+    
+    return null;
   }
 }
 

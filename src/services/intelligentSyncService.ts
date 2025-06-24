@@ -60,8 +60,8 @@ export class IntelligentSyncService {
       row.collectionAmount || row.amount || '0',
       row.factureNo || row.facture_no || 'NO_FACTURE',
       // ⭐ AJOUT: Traçabilité Excel dans la clé
-      row.excel_filename || '',
-      row.excel_source_row || '0'
+      row.excelFilename || row.excel_filename || '',
+      row.excelSourceRow || row.excel_source_row || '0'
     ];
     
     const key = components.join('|');
@@ -79,6 +79,13 @@ export class IntelligentSyncService {
     console.log('🔍 DÉBUT ANALYSE INTELLIGENTE OPTIMISÉE - Collections:', excelData.length);
     
     const comparisons: CollectionComparison[] = [];
+    
+    // ⭐ VÉRIFICATION TRAÇABILITÉ PRÉALABLE
+    const sansTracabilite = excelData.filter(row => !row.excelFilename || !row.excelSourceRow);
+    if (sansTracabilite.length > 0) {
+      console.error(`❌ ${sansTracabilite.length} collections sans traçabilité détectées dans l'analyse!`);
+      console.error('Exemples:', sansTracabilite.slice(0, 3));
+    }
     
     // ⭐ OPTIMISATION: Requête groupée pour réduire les appels DB
     const clientCodes = excelData.map(row => row.clientCode).filter(Boolean);
@@ -102,7 +109,7 @@ export class IntelligentSyncService {
         const isStrictDuplicate = await this.checkStrictTraceabilityDuplicate(excelRow);
         
         if (isStrictDuplicate) {
-          console.log(`🚫 Doublon strict détecté: ${excelRow.clientCode} (ligne ${excelRow.excel_source_row})`);
+          console.log(`🚫 Doublon strict détecté: ${excelRow.clientCode} (ligne ${excelRow.excelSourceRow})`);
           comparisons.push({
             excelRow,
             status: CollectionStatus.EXISTS_COMPLETE,
@@ -140,7 +147,7 @@ export class IntelligentSyncService {
 
   // ⭐ NOUVELLE MÉTHODE: Vérification stricte de doublon par traçabilité
   private async checkStrictTraceabilityDuplicate(excelRow: any): Promise<boolean> {
-    if (!excelRow.excel_filename || !excelRow.excel_source_row) {
+    if (!excelRow.excelFilename || !excelRow.excelSourceRow) {
       return false; // Pas de traçabilité = pas de vérification possible
     }
     
@@ -148,8 +155,8 @@ export class IntelligentSyncService {
       const { data: existing } = await supabase
         .from('collection_report')
         .select('id')
-        .eq('excel_filename', excelRow.excel_filename)
-        .eq('excel_source_row', excelRow.excel_source_row)
+        .eq('excel_filename', excelRow.excelFilename)
+        .eq('excel_source_row', excelRow.excelSourceRow)
         .maybeSingle();
       
       return existing !== null;
@@ -343,6 +350,11 @@ export class IntelligentSyncService {
 
   // ⭐ INSERTION AVEC TRAÇABILITÉ OBLIGATOIRE
   private async insertNewCollectionWithTraceability(excelRow: any): Promise<void> {
+    // ⭐ VÉRIFICATION TRAÇABILITÉ AVANT INSERTION
+    if (!excelRow.excelFilename || !excelRow.excelSourceRow) {
+      throw new Error(`Traçabilité manquante: filename=${excelRow.excelFilename}, row=${excelRow.excelSourceRow}`);
+    }
+    
     const collectionData = {
       report_date: excelRow.reportDate,
       client_code: excelRow.clientCode,
@@ -351,8 +363,8 @@ export class IntelligentSyncService {
       status: excelRow.status || 'pending',
       
       // ⭐ TRAÇABILITÉ OBLIGATOIRE
-      excel_filename: excelRow.excel_filename,
-      excel_source_row: excelRow.excel_source_row,
+      excel_filename: excelRow.excelFilename,
+      excel_source_row: excelRow.excelSourceRow,
       excel_processed_at: new Date().toISOString(),
       
       // Toutes les autres colonnes
@@ -378,11 +390,6 @@ export class IntelligentSyncService {
       processing_status: 'NEW',
       processed_at: new Date().toISOString()
     };
-    
-    // ⭐ VÉRIFICATION TRAÇABILITÉ AVANT INSERTION
-    if (!collectionData.excel_filename || !collectionData.excel_source_row) {
-      throw new Error(`Traçabilité manquante: filename=${collectionData.excel_filename}, row=${collectionData.excel_source_row}`);
-    }
     
     const { error } = await supabase
       .from('collection_report')
