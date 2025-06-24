@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -55,25 +54,50 @@ export const AlertsManager: React.FC<AlertsManagerProps> = ({ bankReports, fundP
       });
     });
 
-    // Alerte 3: Impayés détectés
+    // Alerte 3: Impayés détectés avec informations précises
     bankReports.forEach(report => {
       if (report.impayes.length > 0) {
-        const totalImpayes = report.impayes.reduce((sum, impaye) => sum + impaye.montant, 0);
+        // Grouper les impayés par client pour éviter les doublons
+        const impayesByClient = new Map();
         
-        alerts.push({
-          type: totalImpayes > 50000000 ? 'CRITICAL' : 'WARNING', // 50M CFA
-          title: `Impayés détectés - ${report.bank}`,
-          description: `${report.impayes.length} impayé(s) pour ${(totalImpayes / 1000000).toFixed(1)}M CFA`,
-          action: 'Relancer les clients et analyser les causes',
-          trigger: 'Présence d\'impayés',
-          value: totalImpayes / 1000000,
-          createdAt: new Date().toISOString()
+        report.impayes.forEach(impaye => {
+          const clientKey = `${impaye.clientCode}-${report.bank}`;
+          if (!impayesByClient.has(clientKey)) {
+            impayesByClient.set(clientKey, []);
+          }
+          impayesByClient.get(clientKey).push(impaye);
+        });
+        
+        impayesByClient.forEach((clientImpayes, clientKey) => {
+          const totalAmount = clientImpayes.reduce((sum, impaye) => sum + impaye.montant, 0);
+          const [clientCode, bankName] = clientKey.split('-');
+          
+          // Créer des descriptions détaillées pour chaque impayé
+          const impayeDetails = clientImpayes.map(impaye => {
+            const details = [];
+            details.push(`Montant: ${(impaye.montant / 1000000).toFixed(1)}M CFA`);
+            details.push(`Échéance: ${impaye.dateEcheance}`);
+            if (impaye.description) {
+              details.push(`Réf: ${impaye.description}`);
+            }
+            return details.join(' | ');
+          }).join('\n');
+          
+          alerts.push({
+            type: totalAmount > 50000000 ? 'CRITICAL' : 'WARNING',
+            title: `Impayé ${clientCode} - ${bankName}`,
+            description: `${clientImpayes.length} impayé(s) pour ${(totalAmount / 1000000).toFixed(1)}M CFA\n${impayeDetails}`,
+            action: 'Identifier le chèque/effet et relancer le client',
+            trigger: 'Présence d\'impayés avec références précises',
+            value: totalAmount / 1000000,
+            createdAt: new Date().toISOString()
+          });
         });
       }
     });
 
     // Alerte 4: Fund Position - Collections importantes non déposées
-    if (fundPosition && fundPosition.collectionsNotDeposited > 200000000) { // 200M CFA
+    if (fundPosition && fundPosition.collectionsNotDeposited > 200000000) {
       alerts.push({
         type: 'WARNING',
         title: 'Collections importantes non déposées',
@@ -192,7 +216,7 @@ export const AlertsManager: React.FC<AlertsManagerProps> = ({ bankReports, fundP
                       </div>
                       <AlertDescription>
                         <div className="space-y-1">
-                          <p>{alert.description}</p>
+                          <div className="whitespace-pre-line">{alert.description}</div>
                           <p className="text-xs font-medium text-gray-700">
                             🎯 Action recommandée: {alert.action}
                           </p>
