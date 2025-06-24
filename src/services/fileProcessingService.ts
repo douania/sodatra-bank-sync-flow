@@ -157,7 +157,7 @@ export class FileProcessingService {
       
       if (cleanupResult.success) {
         console.log('✅ Nettoyage terminé avec succès');
-        console.log('📊 Tables nettoyées:', cleanupResult.tablesCleared);
+        console.log('📊 Tables nettoyées:', cleanupResult.tablesCleared || []);
       } else {
         console.warn('⚠️ Erreur partielle lors du nettoyage:', cleanupResult.error);
       }
@@ -269,7 +269,7 @@ export class FileProcessingService {
       // (en attendant l'intégration d'une vraie lib PDF comme pdf-parse)
       const basicReport: BankReport = {
         bank: bankName,
-        reportDate: '2025-06-24', // Date du jour
+        date: '2025-06-24', // Date du jour
         openingBalance: 0,
         closingBalance: 0,
         bankFacilities: [],

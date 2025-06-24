@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
@@ -5,9 +6,102 @@ export interface DatabaseResult<T = any> {
   success: boolean;
   data?: T;
   error?: string;
+  tablesCleared?: string[];
 }
 
 export class DatabaseService {
+  // ⭐ NOUVELLE MÉTHODE: Test de connexion
+  async testConnection(): Promise<boolean> {
+    try {
+      const { error } = await supabase.from('collection_report').select('count').limit(1);
+      return !error;
+    } catch (error) {
+      console.error('❌ Test de connexion échoué:', error);
+      return false;
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Récupérer les rapports de collection
+  async getCollectionReports(): Promise<CollectionReport[]> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Erreur récupération collections:', error);
+        return [];
+      }
+
+      return data?.map(item => ({
+        id: item.id,
+        reportDate: item.report_date,
+        clientCode: item.client_code,
+        collectionAmount: item.collection_amount,
+        bankName: item.bank_name,
+        status: item.status || 'pending',
+        dateOfValidity: item.date_of_validity,
+        factureNo: item.facture_no,
+        noChqBd: item.no_chq_bd,
+        bankNameDisplay: item.bank_name_display,
+        depoRef: item.depo_ref,
+        commission: item.commission,
+        nj: item.nj,
+        taux: item.taux,
+        interet: item.interet,
+        tob: item.tob,
+        fraisEscompte: item.frais_escompte,
+        bankCommission: item.bank_commission,
+        dNAmount: item.d_n_amount,
+        income: item.income,
+        dateOfImpay: item.date_of_impay,
+        reglementImpaye: item.reglement_impaye,
+        remarques: item.remarques,
+        creditedDate: item.credited_date,
+        processingStatus: item.processing_status,
+        matchedBankDepositId: item.matched_bank_deposit_id,
+        matchConfidence: item.match_confidence,
+        matchMethod: item.match_method,
+        sgOrFaNo: item.sg_or_fa_no,
+        processedAt: item.processed_at
+      })) || [];
+    } catch (error) {
+      console.error('❌ Exception récupération collections:', error);
+      return [];
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Mettre à jour la date de validité d'une collection
+  async updateCollectionDateOfValidity(collectionId: string, dateOfValidity: string): Promise<DatabaseResult> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .update({ 
+          date_of_validity: dateOfValidity,
+          status: 'processed',
+          credited_date: dateOfValidity
+        })
+        .eq('id', collectionId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('❌ Erreur mise à jour collection:', error);
+        return { success: false, error: error.message };
+      }
+
+      console.log('✅ Collection mise à jour avec succès:', collectionId);
+      return { success: true, data };
+    } catch (error) {
+      console.error('❌ Exception mise à jour collection:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Erreur inconnue' 
+      };
+    }
+  }
+
   // ⭐ NOUVELLE MÉTHODE: Nettoyage complet des données de test
   async cleanAllTestData(): Promise<DatabaseResult<{ tablesCleared: string[] }>> {
     console.log('🧹 === DÉBUT NETTOYAGE BASE DE DONNÉES ===');
@@ -103,7 +197,8 @@ export class DatabaseService {
       
       return {
         success: true,
-        data: { tablesCleared }
+        data: { tablesCleared },
+        tablesCleared
       };
     } catch (error) {
       console.error('❌ ERREUR CRITIQUE NETTOYAGE:', error);
@@ -171,7 +266,7 @@ export class DatabaseService {
         .from('bank_reports')
         .insert({
           bank_name: report.bank,
-          report_date: report.reportDate,
+          report_date: report.date,
           opening_balance: report.openingBalance,
           closing_balance: report.closingBalance
         })
@@ -354,7 +449,7 @@ export class DatabaseService {
 
       return reports?.map(report => ({
         bank: report.bank_name,
-        reportDate: report.report_date,
+        date: report.report_date,
         openingBalance: report.opening_balance,
         closingBalance: report.closing_balance,
         bankFacilities: report.bank_facilities?.map((facility: any) => ({
