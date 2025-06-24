@@ -251,21 +251,21 @@ const FileUpload = () => {
                 />
               </div>
               <div>
-                <Label htmlFor="fundsPosition">Fund Position Excel</Label>
+                <Label htmlFor="fundsPosition">Fund Position PDF</Label>
                 <Input
                   type="file"
                   id="fundsPosition"
-                  accept=".xlsx,.xls"
+                  accept=".pdf"
                   onChange={(e) => handleFileChange(e, 'fundsPosition')}
                   className="mt-1"
                 />
               </div>
               <div>
-                <Label htmlFor="clientReconciliation">Client Reconciliation Excel</Label>
+                <Label htmlFor="clientReconciliation">Client Reconciliation PDF</Label>
                 <Input
                   type="file"
                   id="clientReconciliation"
-                  accept=".xlsx,.xls"
+                  accept=".pdf"
                   onChange={(e) => handleFileChange(e, 'clientReconciliation')}
                   className="mt-1"
                 />
