@@ -4,9 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, CheckCircle, Clock, Filter, Eye, MapPin } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Calendar, CheckCircle, Clock, Filter, Eye, MapPin, Search } from 'lucide-react';
 import { databaseService } from '@/services/databaseService';
 import { CollectionReport } from '@/types/banking';
+import DuplicateAnalyzer from './DuplicateAnalyzer';
 
 interface CollectionsManagerProps {
   refreshTrigger?: number;
@@ -17,6 +19,7 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'processed'>('all');
   const [selectedCollection, setSelectedCollection] = useState<CollectionReport | null>(null);
+  const [activeTab, setActiveTab] = useState('collections');
 
   useEffect(() => {
     loadCollections();
@@ -111,109 +114,123 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
         </Card>
       </div>
 
-      {/* Tableau des collections avec nouvelles colonnes */}
-      <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5" />
-              Collections Détaillées
-            </CardTitle>
-            <div className="flex gap-2">
-              <Button
-                variant={filter === 'all' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setFilter('all')}
-              >
-                Toutes ({collections.length})
-              </Button>
-              <Button
-                variant={filter === 'pending' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setFilter('pending')}
-              >
-                En Attente ({pendingCount})
-              </Button>
-              <Button
-                variant={filter === 'processed' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setFilter('processed')}
-              >
-                Traitées ({processedCount})
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {filteredCollections.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Aucune collection trouvée pour ce filtre
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Facture N°</TableHead>
-                    <TableHead>Montant</TableHead>
-                    <TableHead>Banque</TableHead>
-                    <TableHead>Date Validité</TableHead>
-                    <TableHead>N° Chq/BD</TableHead>
-                    <TableHead>Statut</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredCollections.map((collection) => (
-                    <TableRow key={collection.id}>
-                      <TableCell className="font-medium">{collection.clientCode}</TableCell>
-                      <TableCell>{collection.factureNo || 'N/A'}</TableCell>
-                      <TableCell className="font-semibold">
-                        {collection.collectionAmount.toLocaleString()} FCFA
-                      </TableCell>
-                      <TableCell>{collection.bankNameDisplay || collection.bankName || 'N/A'}</TableCell>
-                      <TableCell>
-                        {collection.dateOfValidity 
-                          ? new Date(collection.dateOfValidity).toLocaleDateString('fr-FR')
-                          : <span className="text-red-500">Non définie ⚠️</span>
-                        }
-                      </TableCell>
-                      <TableCell>{collection.noChqBd || 'N/A'}</TableCell>
-                      <TableCell>
-                        <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
-                          {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setSelectedCollection(collection)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {collection.status === 'pending' && (
-                            <Button
-                              size="sm"
-                              onClick={() => markAsProcessed(collection.id!)}
-                              className="flex items-center gap-1"
-                            >
-                              <CheckCircle className="h-4 w-4" />
-                              Créditer
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Onglets principaux */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="collections">Collections</TabsTrigger>
+          <TabsTrigger value="duplicates">Analyse des Doublons</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="collections" className="space-y-6">
+          {/* Tableau des collections avec nouvelles colonnes */}
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5" />
+                  Collections Détaillées
+                </CardTitle>
+                <div className="flex gap-2">
+                  <Button
+                    variant={filter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilter('all')}
+                  >
+                    Toutes ({collections.length})
+                  </Button>
+                  <Button
+                    variant={filter === 'pending' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilter('pending')}
+                  >
+                    En Attente ({pendingCount})
+                  </Button>
+                  <Button
+                    variant={filter === 'processed' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilter('processed')}
+                  >
+                    Traitées ({processedCount})
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {filteredCollections.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  Aucune collection trouvée pour ce filtre
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Client</TableHead>
+                        <TableHead>Facture N°</TableHead>
+                        <TableHead>Montant</TableHead>
+                        <TableHead>Banque</TableHead>
+                        <TableHead>Date Validité</TableHead>
+                        <TableHead>N° Chq/BD</TableHead>
+                        <TableHead>Statut</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredCollections.map((collection) => (
+                        <TableRow key={collection.id}>
+                          <TableCell className="font-medium">{collection.clientCode}</TableCell>
+                          <TableCell>{collection.factureNo || 'N/A'}</TableCell>
+                          <TableCell className="font-semibold">
+                            {collection.collectionAmount.toLocaleString()} FCFA
+                          </TableCell>
+                          <TableCell>{collection.bankNameDisplay || collection.bankName || 'N/A'}</TableCell>
+                          <TableCell>
+                            {collection.dateOfValidity 
+                              ? new Date(collection.dateOfValidity).toLocaleDateString('fr-FR')
+                              : <span className="text-red-500">Non définie ⚠️</span>
+                            }
+                          </TableCell>
+                          <TableCell>{collection.noChqBd || 'N/A'}</TableCell>
+                          <TableCell>
+                            <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
+                              {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setSelectedCollection(collection)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              {collection.status === 'pending' && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => markAsProcessed(collection.id!)}
+                                  className="flex items-center gap-1"
+                                >
+                                  <CheckCircle className="h-4 w-4" />
+                                  Créditer
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="duplicates">
+          <DuplicateAnalyzer />
+        </TabsContent>
+      </Tabs>
 
       {/* Modal de détails */}
       {selectedCollection && (

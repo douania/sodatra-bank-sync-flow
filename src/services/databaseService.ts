@@ -8,6 +8,17 @@ export interface DatabaseResult<T = any> {
   tablesCleared?: string[];
 }
 
+export interface DuplicateReport {
+  totalCollections: number;
+  duplicateGroups: Array<{
+    duplicateKey: string;
+    count: number;
+    collections: CollectionReport[];
+  }>;
+  totalDuplicates: number;
+  uniqueCollections: number;
+}
+
 export class DatabaseService {
   // ⭐ NOUVELLE MÉTHODE: Test de connexion
   async testConnection(): Promise<boolean> {
@@ -90,6 +101,179 @@ export class DatabaseService {
     } catch (error) {
       console.error('❌ Exception récupération collections:', error);
       return [];
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Détection et analyse des doublons
+  async detectDuplicates(): Promise<DuplicateReport> {
+    try {
+      console.log('🔍 === DÉBUT DÉTECTION DES DOUBLONS ===');
+      
+      // Récupérer toutes les collections
+      const collections = await this.getCollectionReports();
+      console.log(`📊 ${collections.length} collections à analyser`);
+
+      if (collections.length === 0) {
+        return {
+          totalCollections: 0,
+          duplicateGroups: [],
+          totalDuplicates: 0,
+          uniqueCollections: 0
+        };
+      }
+
+      // Grouper par clé unique (toutes les colonnes importantes)
+      const groupMap = new Map<string, CollectionReport[]>();
+
+      collections.forEach(collection => {
+        // Créer une clé unique basée sur TOUTES les données importantes
+        const duplicateKey = this.createDuplicateKey(collection);
+        
+        if (!groupMap.has(duplicateKey)) {
+          groupMap.set(duplicateKey, []);
+        }
+        groupMap.get(duplicateKey)!.push(collection);
+      });
+
+      // Identifier les groupes de doublons (plus d'une collection par clé)
+      const duplicateGroups: Array<{
+        duplicateKey: string;
+        count: number;
+        collections: CollectionReport[];
+      }> = [];
+
+      let totalDuplicates = 0;
+
+      groupMap.forEach((collectionsGroup, key) => {
+        if (collectionsGroup.length > 1) {
+          duplicateGroups.push({
+            duplicateKey: key,
+            count: collectionsGroup.length,
+            collections: collectionsGroup
+          });
+          // Compter les doublons (n-1 pour chaque groupe)
+          totalDuplicates += collectionsGroup.length - 1;
+        }
+      });
+
+      const uniqueCollections = collections.length - totalDuplicates;
+
+      console.log('🔍 === RÉSULTAT ANALYSE DOUBLONS ===');
+      console.log(`📊 Collections totales: ${collections.length}`);
+      console.log(`👥 Groupes de doublons: ${duplicateGroups.length}`);
+      console.log(`🔁 Doublons détectés: ${totalDuplicates}`);
+      console.log(`✅ Collections uniques: ${uniqueCollections}`);
+
+      // Détails des doublons trouvés
+      duplicateGroups.forEach((group, index) => {
+        console.log(`\n🔍 Groupe ${index + 1}: ${group.count} doublons`);
+        console.log(`Client: ${group.collections[0].clientCode}`);
+        console.log(`Montant: ${group.collections[0].collectionAmount} FCFA`);
+        console.log(`Banque: ${group.collections[0].bankName}`);
+        console.log(`Date: ${group.collections[0].reportDate}`);
+        console.log(`IDs: ${group.collections.map(c => c.id).join(', ')}`);
+      });
+
+      return {
+        totalCollections: collections.length,
+        duplicateGroups,
+        totalDuplicates,
+        uniqueCollections
+      };
+
+    } catch (error) {
+      console.error('❌ Erreur détection doublons:', error);
+      throw error;
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Créer une clé unique pour détecter les doublons
+  private createDuplicateKey(collection: CollectionReport): string {
+    // Inclure TOUTES les données importantes pour détecter les vrais doublons
+    const keyParts = [
+      collection.clientCode || '',
+      collection.collectionAmount?.toString() || '',
+      collection.bankName || '',
+      collection.reportDate || '',
+      collection.factureNo || '',
+      collection.noChqBd || '',
+      collection.dateOfValidity || '',
+      collection.commission?.toString() || '',
+      collection.nj?.toString() || '',
+      collection.taux?.toString() || '',
+      collection.interet?.toString() || '',
+      collection.tob?.toString() || '',
+      collection.fraisEscompte?.toString() || '',
+      collection.bankCommission?.toString() || '',
+      collection.dNAmount?.toString() || '',
+      collection.income?.toString() || '',
+      collection.depoRef || '',
+      collection.bankNameDisplay || '',
+      collection.sgOrFaNo || ''
+    ];
+
+    // Joindre avec un séparateur pour créer la clé unique
+    return keyParts.join('|').toLowerCase().trim();
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Supprimer les doublons (garder le plus récent)
+  async removeDuplicates(duplicateGroups: Array<{
+    duplicateKey: string;
+    count: number;
+    collections: CollectionReport[];
+  }>): Promise<DatabaseResult<{ deletedCount: number }>> {
+    try {
+      console.log('🗑️ === DÉBUT SUPPRESSION DOUBLONS ===');
+      
+      let deletedCount = 0;
+
+      for (const group of duplicateGroups) {
+        if (group.collections.length <= 1) continue;
+
+        // Trier par date de création (garder le plus récent)
+        const sortedCollections = group.collections.sort((a, b) => {
+          const dateA = new Date(a.processingStatus || '1970-01-01');
+          const dateB = new Date(b.processingStatus || '1970-01-01');
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        // Garder le premier (plus récent), supprimer les autres
+        const toKeep = sortedCollections[0];
+        const toDelete = sortedCollections.slice(1);
+
+        console.log(`🗑️ Groupe ${group.duplicateKey.substring(0, 50)}...`);
+        console.log(`  ✅ Garder: ${toKeep.id} (${toKeep.clientCode})`);
+        console.log(`  🗑️ Supprimer: ${toDelete.length} doublons`);
+
+        // Supprimer les doublons
+        for (const duplicate of toDelete) {
+          const { error } = await supabase
+            .from('collection_report')
+            .delete()
+            .eq('id', duplicate.id);
+
+          if (error) {
+            console.error(`❌ Erreur suppression ${duplicate.id}:`, error);
+          } else {
+            deletedCount++;
+            console.log(`✅ Supprimé: ${duplicate.id}`);
+          }
+        }
+      }
+
+      console.log(`🗑️ === SUPPRESSION TERMINÉE: ${deletedCount} doublons supprimés ===`);
+
+      return {
+        success: true,
+        data: { deletedCount }
+      };
+
+    } catch (error) {
+      console.error('❌ Erreur suppression doublons:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Erreur inconnue'
+      };
     }
   }
 
