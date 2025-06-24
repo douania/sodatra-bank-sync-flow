@@ -34,6 +34,12 @@ export class FileProcessingService {
       errors: []
     };
 
+    // ⭐ TIMEOUT DE SÉCURITÉ
+    const processingTimeout = setTimeout(() => {
+      console.warn('⚠️ TIMEOUT: Le traitement prend trop de temps');
+      progressService.errorStep('timeout', 'Timeout', 'Le traitement a pris trop de temps', 'Timeout de 5 minutes atteint');
+    }, 5 * 60 * 1000); // 5 minutes
+
     try {
       console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Enrichissement Intelligent');
       progressService.updateOverallProgress(0);
@@ -41,12 +47,11 @@ export class FileProcessingService {
       // 1. Traitement INTELLIGENT du Collection Report Excel (PRIORITÉ 1)
       if (files.collectionReport) {
         progressService.startStep('excel_processing', 'Traitement Excel', 'Extraction des données du fichier Excel');
-        progressService.updateOverallProgress(10);
         
         console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT ===');
         console.log('📁 Fichier:', files.collectionReport.name, 'Taille:', files.collectionReport.size);
         
-        // ⭐ ÉTAPE 1: Extraction des données Excel
+        // ⭐ ÉTAPE 1: Extraction des données Excel avec progression détaillée
         progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Lecture et conversion du fichier', 25, 
           `Traitement de ${files.collectionReport.name}`);
         
@@ -57,29 +62,31 @@ export class FileProcessingService {
           console.error('❌', errorMsg);
           progressService.errorStep('excel_processing', 'Traitement Excel', 'Échec de l\'extraction', errorMsg);
           results.errors?.push(errorMsg);
+          clearTimeout(processingTimeout);
+          return results;
         } else {
-          progressService.completeStep('excel_processing', 'Traitement Excel', 'Extraction terminée', 
+          progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Extraction en cours', 60, 
             `${excelResult.data.length} collections extraites`);
-          progressService.updateOverallProgress(30);
           
           console.log(`📊 ${excelResult.data.length} collections extraites du fichier Excel`);
           
-          // ⭐ ÉTAPE 2: ANALYSE INTELLIGENTE
+          // ⭐ ÉTAPE 2: ANALYSE INTELLIGENTE avec progression
           progressService.startStep('intelligent_analysis', 'Analyse Intelligente', 'Comparaison avec la base de données');
-          progressService.updateOverallProgress(40);
           
           console.log('🧠 === DÉBUT ANALYSE INTELLIGENTE ===');
           const analysisResult = await intelligentSyncService.analyzeExcelFile(excelResult.data);
           
-          progressService.updateStepProgress('intelligent_analysis', 'Analyse Intelligente', 'Analyse des doublons et enrichissements', 60,
+          progressService.updateStepProgress('intelligent_analysis', 'Analyse Intelligente', 'Analyse des doublons et enrichissements', 80,
             `${analysisResult.length} collections analysées`);
           
-          // ⭐ ÉTAPE 3: SYNCHRONISATION INTELLIGENTE
+          // ⭐ ÉTAPE 3: SYNCHRONISATION INTELLIGENTE avec progression
           progressService.startStep('intelligent_sync', 'Synchronisation Intelligente', 'Application des enrichissements');
-          progressService.updateOverallProgress(70);
           
           console.log('🔄 === DÉBUT SYNCHRONISATION INTELLIGENTE ===');
           const syncResult = await intelligentSyncService.processIntelligentSync(analysisResult);
+          
+          progressService.completeStep('excel_processing', 'Traitement Excel', 'Extraction terminée', 
+            `${excelResult.data.length} collections extraites`);
           
           progressService.completeStep('intelligent_analysis', 'Analyse Intelligente', 'Analyse terminée', 
             `${analysisResult.filter(a => a.status === 'NEW').length} nouvelles, ${analysisResult.filter(a => a.status === 'EXISTS_INCOMPLETE').length} à enrichir`);
@@ -90,7 +97,6 @@ export class FileProcessingService {
           
           progressService.completeStep('intelligent_sync', 'Synchronisation Intelligente', 'Synchronisation terminée',
             `${syncResult.new_collections} nouvelles, ${syncResult.enriched_collections} enrichies`);
-          progressService.updateOverallProgress(80);
           
           console.log('✅ === RÉSUMÉ SYNCHRONISATION INTELLIGENTE ===');
           console.log(`📊 Collections analysées: ${analysisResult.length}`);
@@ -109,7 +115,6 @@ export class FileProcessingService {
 
       // 2. Traitement des relevés bancaires multiples (Priorité 2)
       progressService.startStep('bank_statements', 'Relevés Bancaires', 'Traitement des relevés bancaires');
-      progressService.updateOverallProgress(85);
       
       const bankStatementFiles = {
         bdk_statement: files.bdk_statement,
@@ -134,7 +139,6 @@ export class FileProcessingService {
 
       progressService.completeStep('bank_statements', 'Relevés Bancaires', 'Relevés traités',
         `${bankReports.length} relevés bancaires traités`);
-      progressService.updateOverallProgress(90);
 
       // 3. Traitement Fund Position (Priorité 3)
       if (files.fundsPosition) {
@@ -165,6 +169,7 @@ export class FileProcessingService {
           `${clientRecon.length} clients traités`);
       }
 
+      // ⭐ FINALISATION avec progression à 100%
       progressService.updateOverallProgress(100);
       results.success = results.errors?.length === 0;
       
@@ -178,6 +183,7 @@ export class FileProcessingService {
         console.log(`🧠 Enrichissement intelligent réussi !`);
       }
 
+      clearTimeout(processingTimeout);
       return results;
 
     } catch (error) {
@@ -185,6 +191,7 @@ export class FileProcessingService {
       progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', 
         error instanceof Error ? error.message : 'Erreur inconnue');
       results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
+      clearTimeout(processingTimeout);
       return results;
     }
   }

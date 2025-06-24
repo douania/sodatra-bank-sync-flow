@@ -1,4 +1,3 @@
-
 import * as XLSX from 'xlsx';
 import { excelMappingService } from './excelMappingService';
 import { ProcessingResults } from '@/types/banking';
@@ -61,10 +60,14 @@ class ExcelProcessingService {
           continue;
         }
 
+        // ⭐ OPTIMISATION: Filtrer les lignes vides AVANT traitement
+        const validRows = this.filterValidRows(jsonData as any[][]);
+        console.log(`📊 Lignes valides détectées: ${validRows.length} sur ${jsonData.length}`);
+
         // Traitement spécifique pour les collections
-        if (sheetName.toLowerCase().includes('collection') || jsonData.length > 0) {
+        if (sheetName.toLowerCase().includes('collection') || validRows.length > 0) {
           const processedCollections = await this.processCollectionsWithTraceability(
-            jsonData as any[][],
+            validRows,
             options,
             results
           );
@@ -99,6 +102,46 @@ class ExcelProcessingService {
     }
   }
 
+  // ⭐ NOUVELLE MÉTHODE: Filtrer les lignes vides et invalides
+  private filterValidRows(jsonData: any[][]): any[][] {
+    const headers = jsonData[0];
+    const validRows = [headers]; // Garder les headers
+    
+    let consecutiveEmptyRows = 0;
+    const MAX_CONSECUTIVE_EMPTY = 5; // Arrêter après 5 lignes vides consécutives
+    
+    for (let i = 1; i < jsonData.length; i++) {
+      const row = jsonData[i];
+      
+      // Vérifier si la ligne est vide ou ne contient que des valeurs nulles/undefined
+      const isEmptyRow = !row || row.length === 0 || row.every(cell => 
+        cell === null || 
+        cell === undefined || 
+        cell === '' || 
+        (typeof cell === 'string' && cell.trim() === '')
+      );
+      
+      if (isEmptyRow) {
+        consecutiveEmptyRows++;
+        console.log(`⚠️ Ligne vide détectée: ${i + 1}, consécutives: ${consecutiveEmptyRows}`);
+        
+        // Arrêter si trop de lignes vides consécutives
+        if (consecutiveEmptyRows >= MAX_CONSECUTIVE_EMPTY) {
+          console.log(`🛑 Arrêt du traitement: ${MAX_CONSECUTIVE_EMPTY} lignes vides consécutives atteintes à la ligne ${i + 1}`);
+          break;
+        }
+        continue;
+      }
+      
+      // Réinitialiser le compteur si on trouve une ligne valide
+      consecutiveEmptyRows = 0;
+      validRows.push(row);
+    }
+    
+    console.log(`📊 Filtrage terminé: ${validRows.length - 1} lignes valides (headers exclus)`);
+    return validRows;
+  }
+
   // Nouvelle méthode qui remplace processCollectionReportExcel
   async processCollectionReportExcel(file: File): Promise<{ success: boolean; data?: any[]; errors?: string[] }> {
     try {
@@ -128,12 +171,19 @@ class ExcelProcessingService {
     const collections = [];
     const headers = jsonData[0];
     let duplicatesPrevented = 0;
+    const totalRows = jsonData.length - 1; // Exclure les headers
 
-    console.log(`📋 Traitement de ${jsonData.length - 1} lignes de collections avec traçabilité`);
+    console.log(`📋 Traitement de ${totalRows} lignes de collections avec traçabilité`);
 
     for (let rowIndex = 1; rowIndex < jsonData.length; rowIndex++) {
       const row = jsonData[rowIndex];
       const excelSourceRow = rowIndex + 1; // +1 car Excel commence à 1, pas 0
+      
+      // ⭐ PROGRESSION GRANULAIRE: Mettre à jour tous les 10 lignes
+      if (rowIndex % 10 === 0) {
+        const progressPercent = Math.floor((rowIndex / totalRows) * 100);
+        console.log(`📊 Progression traitement: ${progressPercent}% (${rowIndex}/${totalRows})`);
+      }
       
       try {
         // Vérifier si cette ligne spécifique a déjà été traitée
