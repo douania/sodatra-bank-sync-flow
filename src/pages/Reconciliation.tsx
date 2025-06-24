@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import BankReconciliationEngine from '@/components/BankReconciliationEngine';
 import CollectionsManager from '@/components/CollectionsManager';
+import IntelligentSyncManager from '@/components/IntelligentSyncManager';
+import { SyncResult } from '@/services/intelligentSyncService';
 
 const Reconciliation = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -12,18 +14,28 @@ const Reconciliation = () => {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  const handleSyncComplete = (result: SyncResult) => {
+    console.log('✅ Synchronisation terminée:', result);
+    handleRefresh(); // Rafraîchir les autres composants
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900">Rapprochement Bancaire</h1>
       </div>
 
-      <Tabs defaultValue="engine" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
+      <Tabs defaultValue="sync" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="sync">Synchronisation Intelligente</TabsTrigger>
           <TabsTrigger value="engine">Moteur de Rapprochement</TabsTrigger>
           <TabsTrigger value="collections">Gestion Collections</TabsTrigger>
           <TabsTrigger value="statistics">Statistiques</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="sync" className="space-y-4">
+          <IntelligentSyncManager onSyncComplete={handleSyncComplete} />
+        </TabsContent>
 
         <TabsContent value="engine" className="space-y-4">
           <BankReconciliationEngine />
