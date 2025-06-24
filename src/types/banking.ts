@@ -1,6 +1,4 @@
 
-
-
 export interface BankFacility {
   facilityType: string;
   limitAmount: number;
@@ -33,6 +31,7 @@ export interface CheckNotCleared {
 }
 
 export interface BankReport {
+  id?: string;
   bank: string;
   date: string;
   openingBalance: number;
@@ -124,4 +123,23 @@ export interface ExtractionResult {
   errors?: string[];
 }
 
+// ⭐ NOUVELLE INTERFACE CORRIGÉE POUR DUPLICATE REPORT
+export interface DuplicateReport {
+  totalCollections: number;
+  totalDuplicates: number;
+  uniqueCollections: number;
+  duplicateGroups: DuplicateGroup[];
+}
 
+export interface DuplicateGroup {
+  count: number;
+  collections: CollectionReport[];
+}
+
+export interface DuplicateRemovalResult {
+  success: boolean;
+  data?: {
+    deletedCount: number;
+  };
+  error?: string;
+}

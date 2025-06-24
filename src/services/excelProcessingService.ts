@@ -1,3 +1,4 @@
+
 import * as XLSX from 'xlsx';
 import { excelMappingService } from './excelMappingService';
 import { ProcessingResults } from '@/types/banking';
@@ -40,7 +41,7 @@ class ExcelProcessingService {
         if (existingImports.length > 0) {
           console.log(`🚫 FICHIER DÉJÀ TRAITÉ: ${existingImports.length} lignes trouvées`);
           results.warnings.push(
-            `Ce fichier a déjà été traité le ${new Date(existingImports[0].excel_processed_at || '').toLocaleString('fr-FR')}. ${existingImports.length} lignes détectées.`
+            `Ce fichier a déjà été traité le ${new Date(existingImports[0].excelProcessedAt || '').toLocaleString('fr-FR')}. ${existingImports.length} lignes détectées.`
           );
           results.errors.push('DUPLICATE_FILE_DETECTED');
           return results;
@@ -278,17 +279,17 @@ class ExcelProcessingService {
         
         if (collection) {
           // ⭐ TRAÇABILITÉ OBLIGATOIRE: Ces champs sont maintenant REQUIS
-          collection.excel_source_row = excelSourceRow;
-          collection.excel_filename = options.filename;
-          collection.excel_processed_at = new Date().toISOString();
+          collection.excelSourceRow = excelSourceRow;
+          collection.excelFilename = options.filename;
+          collection.excelProcessedAt = new Date().toISOString();
           
           // Vérifications de sécurité
-          if (!collection.excel_filename || !collection.excel_source_row) {
+          if (!collection.excelFilename || !collection.excelSourceRow) {
             throw new Error(`Traçabilité manquante pour ligne ${excelSourceRow}`);
           }
           
           collections.push(collection);
-          console.log(`✅ Ligne ${excelSourceRow}: ${collection.client_code} - ${collection.collection_amount} FCFA [TRACÉ]`);
+          console.log(`✅ Ligne ${excelSourceRow}: ${collection.clientCode} - ${collection.collectionAmount} FCFA [TRACÉ]`);
         }
       } catch (error) {
         console.error(`❌ Erreur ligne ${excelSourceRow}:`, error);
@@ -340,9 +341,9 @@ class ExcelProcessingService {
       return {
         filename,
         totalRows: collections.length,
-        firstImport: collections.length > 0 ? collections[0].excel_processed_at : null,
-        lastImport: collections.length > 0 ? collections[collections.length - 1].excel_processed_at : null,
-        sourceRows: collections.map(c => c.excel_source_row).filter(Boolean)
+        firstImport: collections.length > 0 ? collections[0].excelProcessedAt : null,
+        lastImport: collections.length > 0 ? collections[collections.length - 1].excelProcessedAt : null,
+        sourceRows: collections.map(c => c.excelSourceRow).filter(Boolean)
       };
     } catch (error) {
       console.error('❌ Erreur historique import:', error);
