@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -5,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Upload, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 import { fileProcessingService } from '@/services/fileProcessingService';
-import { Stepper } from '@/components/Stepper';
+import Stepper from '@/components/Stepper';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Toaster, toast } from '@/components/ui/sonner';
 import { databaseService } from '@/services/databaseService';
@@ -28,10 +29,10 @@ const FileUpload = () => {
   };
 
   const steps = [
-    { id: 1, label: 'Sélection des Fichiers' },
-    { id: 2, label: 'Traitement des Données' },
-    { id: 3, label: 'Analyse des Résultats' },
-    { id: 4, label: 'Finalisation' },
+    { id: 1, title: 'Sélection des Fichiers', description: 'Choisir les fichiers à traiter', status: processStep === 1 ? 'current' : processStep > 1 ? 'completed' : 'pending' },
+    { id: 2, title: 'Traitement des Données', description: 'Analyse et extraction', status: processStep === 2 ? 'current' : processStep > 2 ? 'completed' : 'pending' },
+    { id: 3, title: 'Analyse des Résultats', description: 'Vérification des données', status: processStep === 3 ? 'current' : processStep > 3 ? 'completed' : 'pending' },
+    { id: 4, title: 'Finalisation', description: 'Traitement terminé', status: processStep === 4 ? 'current' : processStep > 4 ? 'completed' : 'pending' },
   ];
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>, fileType: string) => {
@@ -43,10 +44,8 @@ const FileUpload = () => {
 
   const processFiles = async () => {
     if (!selectedFiles.collectionReport) {
-      toast({
-        title: "Fichier manquant",
+      toast("Fichier manquant", {
         description: "Veuillez sélectionner au moins le fichier Collection Report.",
-        variant: "destructive"
       });
       return;
     }
@@ -55,8 +54,7 @@ const FileUpload = () => {
     setProcessStep(2);
 
     try {
-      toast({
-        title: "🚀 Traitement en cours",
+      toast("🚀 Traitement en cours", {
         description: "Analyse intelligente des fichiers démarrée...",
       });
 
@@ -90,16 +88,13 @@ const FileUpload = () => {
           errors: syncResult.errors?.length || 0
         } : { new: 0, enriched: 0, errors: 0 };
 
-        toast({
-          title: "✅ Traitement terminé avec succès !",
+        toast("✅ Traitement terminé avec succès !", {
           description: `${collectionsCount} collections analysées. ${syncSummary.new} nouvelles, ${syncSummary.enriched} enrichies.`,
         });
       } else {
         console.error('❌ ERREURS TRAITEMENT:', results.errors);
-        toast({
-          title: "⚠️ Traitement terminé avec erreurs",
+        toast("⚠️ Traitement terminé avec erreurs", {
           description: `${results.errors?.length || 0} erreurs détectées. Voir les détails ci-dessous.`,
-          variant: "destructive"
         });
       }
     } catch (error) {
@@ -110,10 +105,8 @@ const FileUpload = () => {
         errors: [error instanceof Error ? error.message : 'Erreur inconnue']
       });
       
-      toast({
-        title: "❌ Erreur critique",
+      toast("❌ Erreur critique", {
         description: "Une erreur inattendue s'est produite. Voir les détails.",
-        variant: "destructive"
       });
     } finally {
       setIsProcessing(false);
@@ -130,7 +123,7 @@ const FileUpload = () => {
         </CardHeader>
         <CardContent>
           {processingResults.success ? (
-            <Alert variant="success">
+            <Alert>
               <CheckCircle className="h-4 w-4" />
               <AlertDescription>
                 Traitement réussi !
