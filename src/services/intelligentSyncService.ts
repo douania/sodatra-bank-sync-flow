@@ -272,7 +272,7 @@ export class IntelligentSyncService {
       ignored_collections: 0,
       errors: [],
       summary: {
-        total_processed: number,
+        total_processed: 0,
         enrichments: {
           date_of_validity_added: 0,
           bank_commissions_added: 0,
@@ -328,6 +328,8 @@ export class IntelligentSyncService {
         }
       }
     }
+
+    result.summary.total_processed = result.new_collections + result.enriched_collections + result.ignored_collections;
     
     console.log('📊 SYNCHRONISATION OPTIMISÉE TERMINÉE:', {
       nouvelles: result.new_collections,
