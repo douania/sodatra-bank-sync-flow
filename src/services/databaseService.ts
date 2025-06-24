@@ -40,7 +40,9 @@ export class DatabaseService {
         clientCode: item.client_code,
         collectionAmount: item.collection_amount,
         bankName: item.bank_name,
-        status: item.status || 'pending',
+        status: (item.status === 'pending' || item.status === 'processed' || item.status === 'failed') 
+          ? item.status as 'pending' | 'processed' | 'failed'
+          : 'pending',
         dateOfValidity: item.date_of_validity,
         factureNo: item.facture_no,
         noChqBd: item.no_chq_bd,
