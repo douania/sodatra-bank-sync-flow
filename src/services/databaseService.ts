@@ -451,6 +451,62 @@ export class DatabaseService {
     }
   }
 
+  // ⭐ NOUVELLE MÉTHODE: Récupérer tous les rapports bancaires (requis par QualityControl)
+  async getAllBankReports(): Promise<BankReport[]> {
+    try {
+      console.log('🏦 Récupération de tous les rapports bancaires...');
+      
+      const { data: reports, error } = await supabase
+        .from('bank_reports')
+        .select(`
+          *,
+          bank_facilities(*),
+          deposits_not_cleared(*),
+          impayes(*)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Erreur récupération rapports bancaires:', error);
+        return [];
+      }
+
+      const bankReports: BankReport[] = reports?.map(report => ({
+        bank: report.bank_name,
+        date: report.report_date,
+        openingBalance: report.opening_balance,
+        closingBalance: report.closing_balance,
+        bankFacilities: report.bank_facilities?.map((facility: any) => ({
+          facilityType: facility.facility_type,
+          limitAmount: facility.limit_amount,
+          usedAmount: facility.used_amount,
+          availableAmount: facility.available_amount
+        })) || [],
+        depositsNotCleared: report.deposits_not_cleared?.map((deposit: any) => ({
+          dateDepot: deposit.date_depot,
+          dateValeur: deposit.date_valeur,
+          typeReglement: deposit.type_reglement,
+          reference: deposit.reference,
+          clientCode: deposit.client_code,
+          montant: deposit.montant
+        })) || [],
+        impayes: report.impayes?.map((impaye: any) => ({
+          dateRetour: impaye.date_retour,
+          dateEcheance: impaye.date_echeance,
+          clientCode: impaye.client_code,
+          description: impaye.description,
+          montant: impaye.montant
+        })) || []
+      })) || [];
+
+      console.log(`📊 ${bankReports.length} rapports bancaires récupérés pour analyse qualité`);
+      return bankReports;
+    } catch (error) {
+      console.error('❌ Exception récupération rapports bancaires:', error);
+      return [];
+    }
+  }
+
   async getLatestBankReports(): Promise<BankReport[]> {
     try {
       const { data: reports, error } = await supabase

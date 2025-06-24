@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,11 +5,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Upload, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 import { fileProcessingService } from '@/services/fileProcessingService';
+import { qualityControlEngine } from '@/services/qualityControlEngine';
+import { intelligentSyncService } from '@/services/intelligentSyncService';
 import Stepper from '@/components/Stepper';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Toaster, toast } from '@/components/ui/sonner';
 import { databaseService } from '@/services/databaseService';
 import ProcessingResultsDetailed from '@/components/ProcessingResultsDetailed';
+import QualityControlDashboard from '@/components/QualityControlDashboard';
 
 const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<{ [key: string]: File }>({});
@@ -18,6 +20,8 @@ const FileUpload = () => {
   const [processStep, setProcessStep] = useState(1);
   const [processingResults, setProcessingResults] = useState<any | null>(null);
   const [collectionCount, setCollectionCount] = useState(0);
+  const [pendingValidations, setPendingValidations] = useState<any[]>([]);
+  const [showQualityValidation, setShowQualityValidation] = useState(false);
 
   useEffect(() => {
     loadCollectionCount();
@@ -62,20 +66,37 @@ const FileUpload = () => {
 
     try {
       toast("🚀 Traitement en cours", {
-        description: "Analyse intelligente des fichiers démarrée...",
+        description: "Analyse intelligente avec contrôle qualité...",
       });
 
-      console.log('🚀 DÉBUT TRAITEMENT FICHIERS AVEC ENRICHISSEMENT INTELLIGENT');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS AVEC CONTRÔLE QUALITÉ INTÉGRÉ');
       
-      // Traitement avec enrichissement intelligent
+      // Traitement avec contrôle qualité intégré
       const results = await fileProcessingService.processFiles(selectedFiles);
       
       console.log('📊 RÉSULTAT TRAITEMENT:', results);
       
+      // ⚠️ VÉRIFIER SI VALIDATION QUALITÉ REQUISE
+      if (results.data?.syncResult?.quality_validation_required) {
+        console.log('⚠️ Validation qualité requise avant sauvegarde');
+        
+        setProcessStep(3); // Étape validation
+        setPendingValidations(results.data.syncResult.pending_validations || []);
+        setShowQualityValidation(true);
+        setProcessingResults(results);
+        
+        toast("⚠️ Validation requise", {
+          description: `${results.data.syncResult.pending_validations?.length || 0} changement(s) détecté(s) nécessitent votre validation.`,
+        });
+        
+        return; // ⚠️ ARRÊTER ICI - Attendre validation utilisateur
+      }
+      
+      // ✅ TRAITEMENT NORMAL - Aucune validation requise
       setProcessStep(4);
       setProcessingResults(results);
 
-      // ⭐ RECHARGER LE COMPTEUR APRÈS TRAITEMENT
+      // Recharger le compteur après traitement
       const newCount = await databaseService.getCollectionCount();
       setCollectionCount(newCount);
 
@@ -88,7 +109,6 @@ const FileUpload = () => {
         console.log(`📊 Collections: ${collectionsCount}`);
         console.log(`🏦 Rapports bancaires: ${bankReportsCount}`);
         
-        // Analyse des résultats du sync intelligent
         const syncSummary = syncResult ? {
           new: syncResult.new_collections || 0,
           enriched: syncResult.enriched_collections || 0,
@@ -117,6 +137,59 @@ const FileUpload = () => {
       });
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // ⭐ NOUVELLE MÉTHODE: Valider les changements de qualité
+  const handleValidateQualityChanges = async (validatedErrors: any[]) => {
+    try {
+      console.log('✅ Validation des changements qualité...');
+      
+      // Appliquer les corrections validées
+      for (const error of validatedErrors) {
+        if (error.status === 'VALIDATED') {
+          await qualityControlEngine.validateError(error.id);
+        } else if (error.status === 'REJECTED') {
+          await qualityControlEngine.rejectError(error.id, 'Rejeté par utilisateur');
+        }
+      }
+      
+      // Procéder au traitement normal après validation
+      setProcessStep(2);
+      setShowQualityValidation(false);
+      
+      toast("🔄 Reprise du traitement", {
+        description: "Application des validations en cours...",
+      });
+      
+      // Relancer le traitement avec les validations appliquées
+      const analysisResult = await intelligentSyncService.analyzeExcelFile(
+        processingResults?.data?.collectionReports || []
+      );
+      const syncResult = await intelligentSyncService.processIntelligentSync(analysisResult);
+      
+      setProcessStep(4);
+      setProcessingResults(prev => ({
+        ...prev,
+        data: {
+          ...prev.data,
+          syncResult
+        }
+      }));
+      
+      // Recharger le compteur
+      const newCount = await databaseService.getCollectionCount();
+      setCollectionCount(newCount);
+      
+      toast("✅ Traitement terminé avec validations !", {
+        description: "Toutes les corrections ont été appliquées avec succès.",
+      });
+      
+    } catch (error) {
+      console.error('❌ Erreur validation qualité:', error);
+      toast("❌ Erreur lors de la validation", {
+        description: "Impossible d'appliquer les validations.",
+      });
     }
   };
 
@@ -209,18 +282,105 @@ const FileUpload = () => {
     );
   };
 
+  // ⭐ NOUVELLE MÉTHODE: Rendu de l'interface de validation qualité
+  const renderQualityValidation = () => {
+    if (!showQualityValidation || !pendingValidations.length) return null;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <AlertTriangle className="h-6 w-6 text-yellow-600" />
+            <span>Validation des Changements Détectés</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Alert className="mb-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <div className="font-semibold mb-2">
+                {pendingValidations.length} changement(s) détecté(s) nécessitent votre validation
+              </div>
+              <div className="text-sm">
+                L'application a détecté des modifications suspectes en comparant avec les relevés bancaires.
+                Veuillez valider ou rejeter chaque changement avant de continuer.
+              </div>
+            </AlertDescription>
+          </Alert>
+          
+          <QualityControlDashboard
+            report={{
+              id: 'validation-' + Date.now(),
+              analysis_date: new Date().toISOString(),
+              summary: {
+                total_collections_analyzed: processingResults?.data?.collectionReports?.length || 0,
+                errors_detected: pendingValidations.length,
+                error_rate: ((pendingValidations.length / (processingResults?.data?.collectionReports?.length || 1)) * 100),
+                confidence_score: 85
+              },
+              errors_by_type: {
+                saisie_errors: pendingValidations.filter(e => e.type === 'SAISIE_ERROR').length,
+                omissions: pendingValidations.filter(e => e.type === 'OMISSION_ERROR').length,
+                incohérences: pendingValidations.filter(e => e.type === 'INCOHÉRENCE_ERROR').length
+              },
+              errors: pendingValidations,
+              pending_validations: pendingValidations,
+              validated_corrections: [],
+              rejected_suggestions: []
+            }}
+            onValidateError={async (errorId: string) => {
+              const updatedValidations = pendingValidations.map(v => 
+                v.id === errorId ? { ...v, status: 'VALIDATED' } : v
+              );
+              setPendingValidations(updatedValidations);
+            }}
+            onRejectError={async (errorId: string, reason: string) => {
+              const updatedValidations = pendingValidations.map(v => 
+                v.id === errorId ? { ...v, status: 'REJECTED' } : v
+              );
+              setPendingValidations(updatedValidations);
+            }}
+            onModifyCorrection={async (errorId: string, correction: any) => {
+              console.log('Modification correction:', errorId, correction);
+            }}
+          />
+          
+          <div className="mt-6 flex space-x-4">
+            <Button 
+              onClick={() => handleValidateQualityChanges(pendingValidations)}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              ✅ Appliquer les Validations
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => {
+                setShowQualityValidation(false);
+                setProcessStep(1);
+                toast("❌ Traitement annulé", {
+                  description: "Veuillez corriger les données et réessayer.",
+                });
+              }}
+            >
+              ❌ Annuler le Traitement
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <div className="container mx-auto px-4 py-8 space-y-8">
       <Toaster />
       <div className="text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">
-          Import de Données Bancaires
+          Import de Données Bancaires avec Contrôle Qualité
         </h1>
         <p className="mt-2 text-gray-600">
-          Téléchargez les fichiers selon le guide d'implémentation. Traitement automatique en ~8 minutes.
+          Téléchargez les fichiers avec contrôle qualité intégré. L'application détecte automatiquement les changements suspects.
         </p>
         
-        {/* ⭐ AFFICHAGE DU COMPTEUR DE COLLECTIONS */}
         <div className="mt-4">
           <span className="text-lg font-semibold text-blue-600">
             {collectionCount} Collections en base
@@ -359,6 +519,8 @@ const FileUpload = () => {
           </CardContent>
         </Card>
       )}
+
+      {processStep === 3 && renderQualityValidation()}
 
       {processStep === 4 && renderNewProcessingResults()}
     </div>

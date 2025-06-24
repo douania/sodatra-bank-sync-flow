@@ -3,6 +3,8 @@ import { extractBankReport, extractFundPosition, extractClientReconciliation } f
 import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
 import { intelligentSyncService } from './intelligentSyncService';
+import { qualityControlEngine } from './qualityControlEngine';
+import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
 export interface ProcessingResult {
