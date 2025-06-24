@@ -118,6 +118,9 @@ export type Database = {
           date_of_impay: string | null
           date_of_validity: string | null
           depo_ref: string | null
+          excel_filename: string | null
+          excel_processed_at: string | null
+          excel_source_row: number | null
           facture_no: string | null
           frais_escompte: number | null
           id: string
@@ -151,6 +154,9 @@ export type Database = {
           date_of_impay?: string | null
           date_of_validity?: string | null
           depo_ref?: string | null
+          excel_filename?: string | null
+          excel_processed_at?: string | null
+          excel_source_row?: number | null
           facture_no?: string | null
           frais_escompte?: number | null
           id?: string
@@ -184,6 +190,9 @@ export type Database = {
           date_of_impay?: string | null
           date_of_validity?: string | null
           depo_ref?: string | null
+          excel_filename?: string | null
+          excel_processed_at?: string | null
+          excel_source_row?: number | null
           facture_no?: string | null
           frais_escompte?: number | null
           id?: string

@@ -64,40 +64,7 @@ export class DatabaseService {
         return [];
       }
 
-      return data?.map(item => ({
-        id: item.id,
-        reportDate: item.report_date,
-        clientCode: item.client_code,
-        collectionAmount: item.collection_amount,
-        bankName: item.bank_name,
-        status: (item.status === 'pending' || item.status === 'processed' || item.status === 'failed') 
-          ? item.status as 'pending' | 'processed' | 'failed'
-          : 'pending',
-        dateOfValidity: item.date_of_validity,
-        factureNo: item.facture_no,
-        noChqBd: item.no_chq_bd,
-        bankNameDisplay: item.bank_name_display,
-        depoRef: item.depo_ref,
-        commission: item.commission,
-        nj: item.nj,
-        taux: item.taux,
-        interet: item.interet,
-        tob: item.tob,
-        fraisEscompte: item.frais_escompte,
-        bankCommission: item.bank_commission,
-        dNAmount: item.d_n_amount,
-        income: item.income,
-        dateOfImpay: item.date_of_impay,
-        reglementImpaye: item.reglement_impaye,
-        remarques: item.remarques,
-        creditedDate: item.credited_date,
-        processingStatus: item.processing_status,
-        matchedBankDepositId: item.matched_bank_deposit_id,
-        matchConfidence: item.match_confidence,
-        matchMethod: item.match_method,
-        sgOrFaNo: item.sg_or_fa_no,
-        processedAt: item.processed_at
-      })) || [];
+      return this.mapDatabaseToCollectionReports(data || []);
     } catch (error) {
       console.error('❌ Exception récupération collections:', error);
       return [];
@@ -617,12 +584,24 @@ export class DatabaseService {
           depo_ref: collection.depoRef,
           processing_status: collection.processingStatus,
           match_method: collection.matchMethod,
-          sg_or_fa_no: collection.sgOrFaNo
+          sg_or_fa_no: collection.sgOrFaNo,
+          // Nouveaux champs de traçabilité
+          excelSourceRow: collection.excelSourceRow,
+          excelFilename: collection.excelFilename,
+          excelProcessedAt: collection.excelProcessedAt
         })
         .select()
         .single();
 
       if (error) {
+        // Gérer spécifiquement les erreurs de doublons Excel
+        if (error.code === '23505' && error.message.includes('idx_collection_excel_source')) {
+          console.error('🚫 Doublon Excel détecté:', error);
+          return { 
+            success: false, 
+            error: `Cette ligne (${collection.excelSourceRow}) du fichier "${collection.excelFilename}" a déjà été traitée.` 
+          };
+        }
         return { success: false, error: error.message };
       }
 
@@ -633,6 +612,94 @@ export class DatabaseService {
         error: error instanceof Error ? error.message : 'Erreur inconnue' 
       };
     }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Récupérer les collections par nom de fichier
+  async getCollectionsByFilename(filename: string): Promise<CollectionReport[]> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('excel_filename', filename)
+        .order('excel_source_row', { ascending: true });
+
+      if (error) {
+        console.error('❌ Erreur récupération par fichier:', error);
+        return [];
+      }
+
+      return this.mapDatabaseToCollectionReports(data || []);
+    } catch (error) {
+      console.error('❌ Exception récupération par fichier:', error);
+      return [];
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Vérifier si une ligne spécifique existe
+  async getCollectionByFileAndRow(filename: string, sourceRow: number): Promise<CollectionReport | null> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('excel_filename', filename)
+        .eq('excel_source_row', sourceRow)
+        .maybeSingle();
+
+      if (error) {
+        console.error('❌ Erreur vérification ligne:', error);
+        return null;
+      }
+
+      if (!data) return null;
+
+      const collections = this.mapDatabaseToCollectionReports([data]);
+      return collections[0] || null;
+    } catch (error) {
+      console.error('❌ Exception vérification ligne:', error);
+      return null;
+    }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE: Mapper les données de la base vers CollectionReport
+  private mapDatabaseToCollectionReports(data: any[]): CollectionReport[] {
+    return data.map(item => ({
+      id: item.id,
+      reportDate: item.report_date,
+      clientCode: item.client_code,
+      collectionAmount: item.collection_amount,
+      bankName: item.bank_name,
+      status: (item.status === 'pending' || item.status === 'processed' || item.status === 'failed') 
+        ? item.status as 'pending' | 'processed' | 'failed'
+        : 'pending',
+      dateOfValidity: item.date_of_validity,
+      factureNo: item.facture_no,
+      noChqBd: item.no_chq_bd,
+      bankNameDisplay: item.bank_name_display,
+      depoRef: item.depo_ref,
+      commission: item.commission,
+      nj: item.nj,
+      taux: item.taux,
+      interet: item.interet,
+      tob: item.tob,
+      fraisEscompte: item.frais_escompte,
+      bankCommission: item.bank_commission,
+      dNAmount: item.d_n_amount,
+      income: item.income,
+      dateOfImpay: item.date_of_impay,
+      reglementImpaye: item.reglement_impaye,
+      remarques: item.remarques,
+      creditedDate: item.credited_date,
+      processingStatus: item.processing_status,
+      matchedBankDepositId: item.matched_bank_deposit_id,
+      matchConfidence: item.match_confidence,
+      matchMethod: item.match_method,
+      sgOrFaNo: item.sg_or_fa_no,
+      processedAt: item.processed_at,
+      // Nouveaux champs de traçabilité
+      excelSourceRow: item.excel_source_row,
+      excelFilename: item.excel_filename,
+      excelProcessedAt: item.excel_processed_at
+    }));
   }
 
   // ⭐ NOUVELLE MÉTHODE: Récupérer tous les rapports bancaires (requis par QualityControl)

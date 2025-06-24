@@ -193,6 +193,7 @@ const DuplicateAnalyzer: React.FC = () => {
                   <TableHead>Banque</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Facture N°</TableHead>
+                  <TableHead>Source Excel</TableHead>
                   <TableHead>Nombre</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -207,6 +208,18 @@ const DuplicateAnalyzer: React.FC = () => {
                       <TableCell>{sample.bankName}</TableCell>
                       <TableCell>{new Date(sample.reportDate).toLocaleDateString('fr-FR')}</TableCell>
                       <TableCell>{sample.factureNo || 'N/A'}</TableCell>
+                      <TableCell>
+                        {sample.excelFilename ? (
+                          <div className="text-xs">
+                            <div className="font-mono">{sample.excelFilename}</div>
+                            {sample.excelSourceRow && (
+                              <div className="text-muted-foreground">Ligne {sample.excelSourceRow}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">N/A</span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="destructive">{group.count} doublons</Badge>
                       </TableCell>
@@ -256,7 +269,8 @@ const DuplicateAnalyzer: React.FC = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>ID</TableHead>
-                    <TableHead>Date Ajout</TableHead>
+                    <TableHead>Source Excel</TableHead>
+                    <TableHead>Date Traitement</TableHead>
                     <TableHead>Statut</TableHead>
                     <TableHead>Action</TableHead>
                   </TableRow>
@@ -265,7 +279,29 @@ const DuplicateAnalyzer: React.FC = () => {
                   {selectedGroup.collections.map((collection: any, index: number) => (
                     <TableRow key={collection.id}>
                       <TableCell className="font-mono text-xs">{collection.id}</TableCell>
-                      <TableCell>{collection.processingStatus || 'N/A'}</TableCell>
+                      <TableCell>
+                        {collection.excelFilename ? (
+                          <div className="text-xs">
+                            <div className="font-mono">{collection.excelFilename}</div>
+                            {collection.excelSourceRow && (
+                              <div className="text-muted-foreground">Ligne {collection.excelSourceRow}</div>
+                            )}
+                            {collection.excelProcessedAt && (
+                              <div className="text-muted-foreground">
+                                {new Date(collection.excelProcessedAt).toLocaleString('fr-FR')}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">Source inconnue</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {collection.processingStatus || collection.excelProcessedAt ? 
+                          new Date(collection.excelProcessedAt || collection.processingStatus).toLocaleString('fr-FR') : 
+                          'N/A'
+                        }
+                      </TableCell>
                       <TableCell>
                         <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
                           {collection.status}
