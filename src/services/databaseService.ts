@@ -1,6 +1,7 @@
+
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, CollectionReport, FundPosition, ClientReconciliation } from '@/types/banking';
-import { DuplicateReport, DuplicateGroup, DuplicateRemovalResult } from '@/types/banking';
+import type { DuplicateReport, DuplicateGroup, DuplicateRemovalResult } from '@/types/banking';
 
 export class DatabaseService {
   
@@ -53,7 +54,7 @@ export class DatabaseService {
         return [];
       }
 
-      return data || [];
+      return (data || []).map(this.mapDbToCollectionReport);
     } catch (error) {
       console.error('Error fetching collection reports:', error);
       return [];
@@ -78,17 +79,7 @@ export class DatabaseService {
         return [];
       }
 
-      return (data || []).map(report => ({
-        id: report.id,
-        bank: report.bank_name,
-        date: report.report_date,
-        openingBalance: report.opening_balance,
-        closingBalance: report.closing_balance,
-        bankFacilities: report.bank_facilities || [],
-        depositsNotCleared: report.deposits_not_cleared || [],
-        checksNotCleared: [],
-        impayes: report.impayes || []
-      }));
+      return (data || []).map(this.mapDbToBankReport);
     } catch (error) {
       console.error('Error fetching bank reports:', error);
       return [];
@@ -112,17 +103,7 @@ export class DatabaseService {
         return [];
       }
 
-      return (data || []).map(report => ({
-        id: report.id,
-        bank: report.bank_name,
-        date: report.report_date,
-        openingBalance: report.opening_balance,
-        closingBalance: report.closing_balance,
-        bankFacilities: report.bank_facilities || [],
-        depositsNotCleared: report.deposits_not_cleared || [],
-        checksNotCleared: [],
-        impayes: report.impayes || []
-      }));
+      return (data || []).map(this.mapDbToBankReport);
     } catch (error) {
       console.error('Error fetching all bank reports:', error);
       return [];
@@ -350,6 +331,96 @@ export class DatabaseService {
     }
   }
 
+  // Missing methods for fileProcessingService
+  async saveBankReport(report: BankReport): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { error } = await supabase
+        .from('bank_reports')
+        .insert({
+          bank_name: report.bank,
+          report_date: report.date,
+          opening_balance: report.openingBalance,
+          closing_balance: report.closingBalance
+        });
+
+      if (error) {
+        console.error('Error saving bank report:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error saving bank report:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Erreur inconnue' };
+    }
+  }
+
+  async saveFundPosition(fundPosition: FundPosition): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { error } = await supabase
+        .from('fund_position')
+        .insert({
+          report_date: fundPosition.reportDate,
+          total_fund_available: fundPosition.totalFundAvailable,
+          collections_not_deposited: fundPosition.collectionsNotDeposited,
+          grand_total: fundPosition.grandTotal
+        });
+
+      if (error) {
+        console.error('Error saving fund position:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error saving fund position:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Erreur inconnue' };
+    }
+  }
+
+  async getTotalCollections(): Promise<number> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('collection_amount');
+
+      if (error) {
+        console.error('Error getting total collections:', error);
+        return 0;
+      }
+
+      return (data || []).reduce((total, item) => total + (item.collection_amount || 0), 0);
+    } catch (error) {
+      console.error('Error getting total collections:', error);
+      return 0;
+    }
+  }
+
+  async getClientsWithCollections(): Promise<{ clientCode: string; clientName?: string }[]> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('client_code')
+        .order('client_code');
+
+      if (error) {
+        console.error('Error getting clients with collections:', error);
+        return [];
+      }
+
+      // Get unique client codes
+      const uniqueClients = [...new Set((data || []).map(item => item.client_code))];
+      
+      return uniqueClients.map(clientCode => ({
+        clientCode,
+        clientName: `Client ${clientCode}`
+      }));
+    } catch (error) {
+      console.error('Error getting clients with collections:', error);
+      return [];
+    }
+  }
+
   private mapDbToCollectionReport(data: any): CollectionReport {
     return {
       id: data.id,
@@ -387,7 +458,39 @@ export class DatabaseService {
       excelProcessedAt: data.excel_processed_at
     };
   }
+
+  private mapDbToBankReport(data: any): BankReport {
+    return {
+      id: data.id,
+      bank: data.bank_name,
+      date: data.report_date,
+      openingBalance: data.opening_balance,
+      closingBalance: data.closing_balance,
+      bankFacilities: (data.bank_facilities || []).map((facility: any) => ({
+        facilityType: facility.facility_type,
+        limitAmount: facility.limit_amount,
+        usedAmount: facility.used_amount,
+        availableAmount: facility.available_amount
+      })),
+      depositsNotCleared: (data.deposits_not_cleared || []).map((deposit: any) => ({
+        dateDepot: deposit.date_depot,
+        dateValeur: deposit.date_valeur,
+        typeReglement: deposit.type_reglement,
+        reference: deposit.reference,
+        clientCode: deposit.client_code,
+        montant: deposit.montant
+      })),
+      checksNotCleared: [],
+      impayes: (data.impayes || []).map((impaye: any) => ({
+        dateRetour: impaye.date_retour,
+        dateEcheance: impaye.date_echeance,
+        clientCode: impaye.client_code,
+        description: impaye.description,
+        montant: impaye.montant
+      }))
+    };
+  }
 }
 
 export const databaseService = new DatabaseService();
-export { DuplicateReport, DuplicateGroup, DuplicateRemovalResult };
+export type { DuplicateReport, DuplicateGroup, DuplicateRemovalResult };
