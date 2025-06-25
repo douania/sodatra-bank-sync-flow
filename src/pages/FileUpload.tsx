@@ -205,6 +205,26 @@ const FileUpload = () => {
         </CardContent>
       </Card>
       
+      {/* Bouton de traitement */}
+      {selectedFiles.length > 0 && (
+        <div className="flex justify-center mb-8">
+          <Button 
+            onClick={handleSubmit} 
+            disabled={processing || selectedFiles.length === 0}
+            size="lg"
+            className="px-8 bg-blue-600 hover:bg-blue-700"
+          >
+            {processing ? (
+              <>
+                Traitement en cours...
+              </>
+            ) : (
+              `Traiter ${Object.keys(selectedFiles).length} fichier(s)`
+            )}
+          </Button>
+        </div>
+      )}
+      
       {/* Affichage des fichiers rejetés */}
       {rejectedFiles.length > 0 && (
         <Alert variant="destructive" className="mb-6">
@@ -267,6 +287,10 @@ const FileUpload = () => {
             </div>
           </CardContent>
         </Card>
+      )}
+      
+      {processingResults && (
+        <ProcessingResultsDetailed results={processingResults} />
       )}
     </div>
   );
