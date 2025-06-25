@@ -88,9 +88,35 @@ const Index = () => {
               <p className="text-gray-600 mb-4">
                 Upload et traitement automatique des rapports bancaires Excel
               </p>
-              <Link to="/upload">
-                <Button variant="outline" className="w-full border-orange-600 text-orange-600 hover:bg-orange-50">
-                  Importer des Fichiers
+              <div className="flex flex-col space-y-2">
+                <Link to="/upload">
+                  <Button variant="outline" className="w-full border-orange-600 text-orange-600 hover:bg-orange-50">
+                    Importer des Fichiers
+                  </Button>
+                </Link>
+                <Link to="/upload-bulk">
+                  <Button variant="outline" className="w-full border-blue-600 text-blue-600 hover:bg-blue-50">
+                    Importation en Masse
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow border-2 border-blue-200">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2 text-blue-600">
+                <Upload className="h-6 w-6" />
+                <span>Importation en Masse</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-600 mb-4">
+                Importation intelligente avec détection automatique des types de fichiers
+              </p>
+              <Link to="/upload-bulk">
+                <Button variant="outline" className="w-full border-blue-600 text-blue-600 hover:bg-blue-50">
+                  Nouvelle Interface
                 </Button>
               </Link>
             </CardContent>

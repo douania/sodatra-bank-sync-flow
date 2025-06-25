@@ -368,4 +368,3 @@ const FileUploadBulk = () => {
 };
 
 export default FileUploadBulk;
-

@@ -399,7 +399,7 @@ export class EnhancedFileProcessingService {
         console.log(`📄 Traitement du relevé bancaire ${statementType}:`, file.name);
         
         try {
-          const bankReport = await extractBankReport(file);
+          const bankReport = await this.extractBankReportFromFile(file);
           if (bankReport) {
             bankReports.push(bankReport);
             await databaseService.saveBankReport(bankReport);
@@ -418,7 +418,7 @@ export class EnhancedFileProcessingService {
       console.log('💰 Traitement Fund Position:', file.name);
       
       try {
-        const fundPosition = await extractFundPosition(file);
+        const fundPosition = await this.extractFundPositionFromFile(file);
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
           await databaseService.saveFundPosition(fundPosition);
@@ -434,13 +434,193 @@ export class EnhancedFileProcessingService {
       console.log('👥 Traitement Client Reconciliation:', file.name);
       
       try {
-        const clientRecon = await extractClientReconciliation(file);
+        const clientRecon = await this.extractClientReconciliationFromFile(file);
         if (clientRecon) {
           results.data!.clientReconciliation = clientRecon;
         }
       } catch (error) {
         results.errors?.push(`Erreur traitement Client Reconciliation: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
       }
+    }
+  }
+
+  /**
+   * Extrait les données d'un rapport bancaire à partir d'un fichier
+   */
+  private async extractBankReportFromFile(file: File): Promise<BankReport | null> {
+    try {
+      // Extraire le contenu du fichier
+      const buffer = await file.arrayBuffer();
+      let textContent = '';
+      
+      // Extraction du contenu selon le type de fichier
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        textContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        textContent = await this.extractTextFromExcel(buffer);
+      } else {
+        console.warn('⚠️ Format de fichier non supporté pour rapport bancaire');
+        return null;
+      }
+      
+      if (!textContent || textContent.length < 100) {
+        console.warn('⚠️ Contenu textuel insuffisant extrait du fichier');
+        return null;
+      }
+      
+      // Déterminer le type de banque à partir du nom de fichier
+      const bankType = this.detectBankTypeFromFilename(file.name);
+      
+      // Utiliser le service d'extraction pour analyser le contenu
+      const result = extractBankReport(textContent, bankType || 'UNKNOWN');
+      
+      if (!result.success || !result.data) {
+        console.error('❌ Échec de l\'extraction du rapport bancaire:', result.errors);
+        return null;
+      }
+      
+      return result.data;
+    } catch (error) {
+      console.error('❌ Erreur extraction rapport bancaire:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Extrait les données de Fund Position à partir d'un fichier
+   */
+  private async extractFundPositionFromFile(file: File): Promise<FundPosition | null> {
+    try {
+      // Extraire le contenu du fichier
+      const buffer = await file.arrayBuffer();
+      let textContent = '';
+      
+      // Extraction du contenu selon le type de fichier
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        textContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        textContent = await this.extractTextFromExcel(buffer);
+      } else {
+        console.warn('⚠️ Format de fichier non supporté pour Fund Position');
+        return null;
+      }
+      
+      if (!textContent || textContent.length < 100) {
+        console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Fund Position');
+        return null;
+      }
+      
+      // Utiliser le service d'extraction pour analyser le contenu
+      const result = extractFundPosition(textContent);
+      
+      if (!result.success || !result.data) {
+        console.error('❌ Échec de l\'extraction du Fund Position:', result.errors);
+        return null;
+      }
+      
+      return result.data;
+    } catch (error) {
+      console.error('❌ Erreur extraction Fund Position:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Extrait les données de Client Reconciliation à partir d'un fichier
+   */
+  private async extractClientReconciliationFromFile(file: File): Promise<ClientReconciliation[] | null> {
+    try {
+      // Extraire le contenu du fichier
+      const buffer = await file.arrayBuffer();
+      let textContent = '';
+      
+      // Extraction du contenu selon le type de fichier
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        textContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        textContent = await this.extractTextFromExcel(buffer);
+      } else {
+        console.warn('⚠️ Format de fichier non supporté pour Client Reconciliation');
+        return null;
+      }
+      
+      if (!textContent || textContent.length < 100) {
+        console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Client Reconciliation');
+        return null;
+      }
+      
+      // Utiliser le service d'extraction pour analyser le contenu
+      const result = extractClientReconciliation(textContent);
+      
+      if (!result.success || !result.data) {
+        console.error('❌ Échec de l\'extraction du Client Reconciliation:', result.errors);
+        return null;
+      }
+      
+      return result.data;
+    } catch (error) {
+      console.error('❌ Erreur extraction Client Reconciliation:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Détecte le type de banque à partir du nom de fichier
+   */
+  private detectBankTypeFromFilename(filename: string): string | null {
+    const upperFilename = filename.toUpperCase();
+    
+    const bankKeywords = {
+      'BDK': ['BDK', 'BANQUE DE DAKAR'],
+      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
+      'BICIS': ['BICIS', 'BIC'],
+      'ORA': ['ORA', 'ORABANK'],
+      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
+      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
+    };
+    
+    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
+      if (keywords.some(keyword => upperFilename.includes(keyword))) {
+        return bankCode;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Extrait le texte d'un fichier PDF
+   */
+  private async extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+    // Pour l'instant, retourner un texte vide
+    // TODO: Intégrer une bibliothèque PDF comme pdf-parse
+    console.warn('⚠️ Extraction PDF pas encore implémentée');
+    return '';
+  }
+
+  /**
+   * Extrait le texte d'un fichier Excel
+   */
+  private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {
+    try {
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      let allText = '';
+      
+      for (const sheetName of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[sheetName];
+        const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+        
+        for (const row of sheetData) {
+          if (Array.isArray(row)) {
+            allText += row.join(' ') + '\n';
+          }
+        }
+      }
+      
+      return allText;
+    } catch (error) {
+      console.error('❌ Erreur extraction Excel:', error);
+      return '';
     }
   }
 
@@ -456,4 +636,3 @@ export class EnhancedFileProcessingService {
 
 // Instance singleton
 export const enhancedFileProcessingService = new EnhancedFileProcessingService();
-

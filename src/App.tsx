@@ -8,6 +8,7 @@ import Layout from "./components/Layout";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import FileUpload from "./pages/FileUpload";
+import FileUploadBulk from "./pages/FileUploadBulk";
 import ConsolidatedDashboard from "./pages/ConsolidatedDashboard";
 import Reconciliation from "./pages/Reconciliation";
 import Alerts from "./pages/Alerts";
@@ -27,6 +28,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/upload" element={<FileUpload />} />
+            <Route path="/upload-bulk" element={<FileUploadBulk />} />
             <Route path="/consolidated" element={<ConsolidatedDashboard />} />
             <Route path="/reconciliation" element={<Reconciliation />} />
             <Route path="/alerts" element={<Alerts />} />
