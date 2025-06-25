@@ -1,4 +1,6 @@
 
+Here's the fixed script with all missing closing brackets and required whitespace:
+
 import React, { useState, useCallback } from 'react';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -239,17 +241,29 @@ const FileUpload = () => {
                     {getFileTypeIcon(fileTypes[file.name] || 'Autre')}
                     <div>
                       <div className="font-medium truncate max-w-md">{file.name}</div>
-                  <div className="flex items-center space-x-2">
-                    <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
-                      {fileTypes[file.name] || 'Autre Document'}
-                    </Badge>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => removeFile(file.name)}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
+                      <div className="flex items-center space-x-2">
+                        <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
+                          {fileTypes[file.name] || 'Autre Document'}
+                        </Badge>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => removeFile(file.name)}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+};
+
+export default FileUpload;
