@@ -1,4 +1,3 @@
-
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
@@ -35,15 +34,20 @@ export class FileProcessingService {
       errors: []
     };
 
-    // ⭐ TIMEOUT DE SÉCURITÉ
+    // ⭐ TIMEOUT DE SÉCURITÉ ÉTENDU - 15 minutes au lieu de 5
     const processingTimeout = setTimeout(() => {
-      console.warn('⚠️ TIMEOUT: Le traitement prend trop de temps');
-      progressService.errorStep('timeout', 'Timeout', 'Le traitement a pris trop de temps', 'Timeout de 5 minutes atteint');
-    }, 5 * 60 * 1000); // 5 minutes
+      console.warn('⚠️ TIMEOUT: Le traitement prend trop de temps (15 minutes)');
+      progressService.errorStep('timeout', 'Timeout', 'Le traitement a pris trop de temps', 'Timeout de 15 minutes atteint');
+    }, 15 * 60 * 1000); // 15 minutes
 
     try {
-      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Flexible avec Rapports Bancaires');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Optimisé avec Timeouts Étendus');
       console.log('📁 Fichiers reçus:', Object.keys(files));
+      
+      // ⭐ DÉMARRAGE DU HEARTBEAT
+      const { HeartbeatService } = await import('./supabaseClientService');
+      HeartbeatService.start();
+      
       progressService.updateOverallProgress(0);
 
       // ⭐ DÉTECTER LE TYPE DE TRAITEMENT
@@ -70,17 +74,23 @@ export class FileProcessingService {
       console.log(`  - Relevés bancaires: ${hasBankStatements ? '✅' : '❌'}`);
       console.log(`  - Rapports d'analyse bancaires: ${hasBankAnalysisReports ? '✅' : '❌'} (${bankAnalysisFiles.length} fichiers)`);
 
-      // 1. ⭐ TRAITEMENT CONDITIONNEL DU COLLECTION REPORT
+      // 1. ⭐ TRAITEMENT OPTIMISÉ DU COLLECTION REPORT
       if (hasCollectionReport) {
         progressService.startStep('excel_processing', 'Traitement Excel', 'Extraction des données du fichier Excel');
         
-        console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT ===');
+        console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT OPTIMISÉ ===');
         console.log('📁 Fichier:', files.collectionReport!.name, 'Taille:', files.collectionReport!.size);
         
         progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Lecture et conversion du fichier', 25, 
           `Traitement de ${files.collectionReport!.name}`);
         
-        const excelResult = await excelProcessingService.processCollectionReportExcel(files.collectionReport!);
+        // ⭐ EXTRACTION EXCEL AVEC RETRY
+        const { SupabaseRetryService } = await import('./supabaseClientService');
+        const excelResult = await SupabaseRetryService.executeWithRetry(
+          () => excelProcessingService.processCollectionReportExcel(files.collectionReport!),
+          { maxRetries: 3 },
+          'Extraction Excel'
+        );
         
         if (!excelResult.success || !excelResult.data) {
           const errorMsg = 'Erreur traitement Excel: ' + (excelResult.errors?.join(', ') || 'Erreur inconnue');
@@ -93,20 +103,45 @@ export class FileProcessingService {
           
           console.log(`📊 ${excelResult.data.length} collections extraites du fichier Excel`);
           
-          // ⭐ ANALYSE INTELLIGENTE
+          // ⭐ ANALYSE INTELLIGENTE AVEC RETRY
           progressService.startStep('intelligent_analysis', 'Analyse Intelligente', 'Comparaison avec la base de données');
           
           console.log('🧠 === DÉBUT ANALYSE INTELLIGENTE ===');
-          const analysisResult = await intelligentSyncService.analyzeExcelFile(excelResult.data);
+          const analysisResult = await SupabaseRetryService.executeWithRetry(
+            () => intelligentSyncService.analyzeExcelFile(excelResult.data!),
+            { maxRetries: 3 },
+            'Analyse Intelligente'
+          );
           
           progressService.updateStepProgress('intelligent_analysis', 'Analyse Intelligente', 'Analyse des doublons et enrichissements', 80,
             `${analysisResult.length} collections analysées`);
           
-          // ⭐ SYNCHRONISATION INTELLIGENTE
-          progressService.startStep('intelligent_sync', 'Synchronisation Intelligente', 'Application des enrichissements');
+          // ⭐ SYNCHRONISATION INTELLIGENTE PAR BATCH
+          progressService.startStep('intelligent_sync', 'Synchronisation Intelligente', 'Application des enrichissements par batch');
           
-          console.log('🔄 === DÉBUT SYNCHRONISATION INTELLIGENTE ===');
-          const syncResult = await intelligentSyncService.processIntelligentSync(analysisResult);
+          console.log('🔄 === DÉBUT SYNCHRONISATION INTELLIGENTE PAR BATCH ===');
+          
+          // Utiliser le traitement par batch pour la synchronisation
+          const { BatchProcessingService } = await import('./batchProcessingService');
+          
+          const batchSyncResult = await BatchProcessingService.processCollectionsBatch(
+            excelResult.data,
+            async (batch) => {
+              // Analyser le batch
+              const batchAnalysis = await intelligentSyncService.analyzeExcelFile(batch);
+              // Synchroniser le batch
+              return await intelligentSyncService.processIntelligentSync(batchAnalysis);
+            },
+            {
+              batchSize: 50,
+              pauseBetweenBatchesMs: 300,
+              enableProgressTracking: true
+            },
+            'intelligent_sync'
+          );
+          
+          // ⭐ AGRÉGATION DES RÉSULTATS BATCH
+          const syncResult = this.aggregateBatchResults(batchSyncResult.results);
           
           progressService.completeStep('excel_processing', 'Traitement Excel', 'Extraction terminée', 
             `${excelResult.data.length} collections extraites`);
@@ -118,15 +153,13 @@ export class FileProcessingService {
           results.data!.collectionReports = excelResult.data;
           results.data!.syncResult = syncResult;
           
-          progressService.completeStep('intelligent_sync', 'Synchronisation Intelligente', 'Synchronisation terminée',
-            `${syncResult.new_collections} nouvelles, ${syncResult.enriched_collections} enrichies`);
-          
-          console.log('✅ === RÉSUMÉ SYNCHRONISATION INTELLIGENTE ===');
-          console.log(`📊 Collections analysées: ${analysisResult.length}`);
+          console.log('✅ === RÉSUMÉ SYNCHRONISATION INTELLIGENTE PAR BATCH ===');
+          console.log(`📊 Collections analysées: ${excelResult.data.length}`);
           console.log(`✅ Nouvelles ajoutées: ${syncResult.new_collections}`);
           console.log(`⚡ Enrichies: ${syncResult.enriched_collections}`);
           console.log(`🔒 Préservées: ${syncResult.ignored_collections}`);
           console.log(`❌ Erreurs: ${syncResult.errors.length}`);
+          console.log(`⏱️ Temps de traitement: ${Math.round(batchSyncResult.processingTime/1000)}s`);
           
           // ⭐ AJOUTER LES ERREURS AU RÉSULTAT GLOBAL
           if (syncResult.errors.length > 0) {
@@ -215,11 +248,11 @@ export class FileProcessingService {
           `${clientRecon.length} clients traités`);
       }
 
-      // ⭐ FINALISATION FLEXIBLE
+      // ⭐ FINALISATION OPTIMISÉE
       progressService.updateOverallProgress(100);
       results.success = results.errors?.length === 0;
       
-      console.log(`\n🎯 === RÉSUMÉ FINAL TRAITEMENT AVEC RAPPORTS BANCAIRES ===`);
+      console.log(`\n🎯 === RÉSUMÉ FINAL TRAITEMENT OPTIMISÉ ===`);
       console.log(`✅ Succès: ${results.success}`);
       console.log(`📊 Collections: ${results.data!.collectionReports?.length || 0}`);
       console.log(`🏦 Rapports bancaires (total): ${results.data!.bankReports.length}`);
@@ -234,6 +267,8 @@ export class FileProcessingService {
         console.log(`🏦 Rapports d'analyse bancaires intégrés !`);
       }
 
+      // ⭐ ARRÊT DU HEARTBEAT
+      HeartbeatService.stop();
       clearTimeout(processingTimeout);
       return results;
 
@@ -242,9 +277,36 @@ export class FileProcessingService {
       progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', 
         error instanceof Error ? error.message : 'Erreur inconnue');
       results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
+      
+      // ⭐ NETTOYAGE EN CAS D'ERREUR
+      const { HeartbeatService } = await import('./supabaseClientService');
+      HeartbeatService.stop();
       clearTimeout(processingTimeout);
       return results;
     }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE : Agrégation des résultats de batch
+  private aggregateBatchResults(batchResults: any[]): any {
+    const aggregated = {
+      new_collections: 0,
+      enriched_collections: 0,
+      ignored_collections: 0,
+      errors: [] as any[]
+    };
+
+    batchResults.forEach(result => {
+      if (result) {
+        aggregated.new_collections += result.new_collections || 0;
+        aggregated.enriched_collections += result.enriched_collections || 0;
+        aggregated.ignored_collections += result.ignored_collections || 0;
+        if (result.errors) {
+          aggregated.errors.push(...result.errors);
+        }
+      }
+    });
+
+    return aggregated;
   }
 
   // ⭐ NOUVELLE MÉTHODE : Traitement des rapports d'analyse bancaires

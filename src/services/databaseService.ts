@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, CollectionReport, FundPosition, ClientReconciliation } from '@/types/banking';
 import type { DuplicateReport, DuplicateGroup, DuplicateRemovalResult } from '@/types/banking';
@@ -6,20 +5,27 @@ import type { DuplicateReport, DuplicateGroup, DuplicateRemovalResult } from '@/
 export class DatabaseService {
   
   async testConnection(): Promise<boolean> {
+    // ⭐ TEST DE CONNEXION AVEC RETRY
+    const { SupabaseRetryService } = await import('./supabaseClientService');
+    
     try {
-      const { data, error } = await supabase
-        .from('collection_report')
-        .select('id')
-        .limit(1);
-      
-      if (error) {
-        console.error('Database connection test failed:', error);
-        return false;
-      }
+      await SupabaseRetryService.executeWithRetry(
+        async () => {
+          const { data, error } = await supabase
+            .from('collection_report')
+            .select('id')
+            .limit(1);
+          
+          if (error) throw error;
+          return data;
+        },
+        { maxRetries: 3, baseDelay: 500 },
+        'Test de connexion'
+      );
       
       return true;
     } catch (error) {
-      console.error('Database connection test error:', error);
+      console.error('Database connection test failed:', error);
       return false;
     }
   }
@@ -333,20 +339,26 @@ export class DatabaseService {
 
   // Missing methods for fileProcessingService
   async saveBankReport(report: BankReport): Promise<{ success: boolean; error?: string }> {
+    // ⭐ SAUVEGARDE AVEC RETRY
+    const { SupabaseRetryService } = await import('./supabaseClientService');
+    
     try {
-      const { error } = await supabase
-        .from('bank_reports')
-        .insert({
-          bank_name: report.bank,
-          report_date: report.date,
-          opening_balance: report.openingBalance,
-          closing_balance: report.closingBalance
-        });
+      await SupabaseRetryService.executeWithRetry(
+        async () => {
+          const { error } = await supabase
+            .from('bank_reports')
+            .insert({
+              bank_name: report.bank,
+              report_date: report.date,
+              opening_balance: report.openingBalance,
+              closing_balance: report.closingBalance
+            });
 
-      if (error) {
-        console.error('Error saving bank report:', error);
-        return { success: false, error: error.message };
-      }
+          if (error) throw error;
+        },
+        { maxRetries: 3 },
+        `Sauvegarde rapport ${report.bank}`
+      );
 
       return { success: true };
     } catch (error) {
@@ -357,8 +369,11 @@ export class DatabaseService {
 
   // ⭐ CORRECTION FUND POSITION - Arrondir avant insertion
   async saveFundPosition(fundPosition: FundPosition): Promise<{ success: boolean; error?: string }> {
+    // ⭐ SAUVEGARDE FUND POSITION AVEC RETRY ET ARRONDISSEMENT
+    const { SupabaseRetryService } = await import('./supabaseClientService');
+    
     try {
-      console.log('💾 === SAUVEGARDE FUND POSITION (AVEC ARRONDISSEMENT) ===');
+      console.log('💾 === SAUVEGARDE FUND POSITION OPTIMISÉE ===');
       console.log('📊 Valeurs reçues:', {
         totalFundAvailable: fundPosition.totalFundAvailable,
         collectionsNotDeposited: fundPosition.collectionsNotDeposited,
@@ -375,16 +390,19 @@ export class DatabaseService {
       
       console.log('🔢 Valeurs arrondies pour insertion:', roundedFundPosition);
       
-      const { error } = await supabase
-        .from('fund_position')
-        .insert(roundedFundPosition);
+      await SupabaseRetryService.executeWithRetry(
+        async () => {
+          const { error } = await supabase
+            .from('fund_position')
+            .insert(roundedFundPosition);
 
-      if (error) {
-        console.error('❌ Erreur sauvegarde Fund Position:', error);
-        return { success: false, error: error.message };
-      }
+          if (error) throw error;
+        },
+        { maxRetries: 3 },
+        'Sauvegarde Fund Position'
+      );
 
-      console.log('✅ Fund Position sauvegardée avec succès (valeurs arrondies)');
+      console.log('✅ Fund Position sauvegardée avec succès (optimisée)');
       return { success: true };
     } catch (error) {
       console.error('❌ Erreur critique sauvegarde Fund Position:', error);
@@ -393,15 +411,22 @@ export class DatabaseService {
   }
 
   async getTotalCollections(): Promise<number> {
+    // ⭐ CALCUL TOTAL AVEC RETRY
+    const { SupabaseRetryService } = await import('./supabaseClientService');
+    
     try {
-      const { data, error } = await supabase
-        .from('collection_report')
-        .select('collection_amount');
+      const data = await SupabaseRetryService.executeWithRetry(
+        async () => {
+          const { data, error } = await supabase
+            .from('collection_report')
+            .select('collection_amount');
 
-      if (error) {
-        console.error('Error getting total collections:', error);
-        return 0;
-      }
+          if (error) throw error;
+          return data;
+        },
+        { maxRetries: 3 },
+        'Calcul total collections'
+      );
 
       // ⭐ ARRONDIR le total pour éviter les décimales
       const total = (data || []).reduce((sum, item) => sum + (item.collection_amount || 0), 0);

@@ -1,0 +1,195 @@
+
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from '@/integrations/supabase/types';
+
+const SUPABASE_URL = "https://leakcdbbawzysfqyqsnr.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxlYWtjZGJiYXd6eXNmcXlxc25yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0Njc1MDYsImV4cCI6MjA2NjA0MzUwNn0.zLVhHBNTovKRP0CZohIvpkxamA04kiPdL6qIQ7-ZemM";
+
+// ⭐ CLIENT SUPABASE OPTIMISÉ avec timeouts étendus et retry
+export const supabaseOptimized = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  db: {
+    schema: 'public',
+  },
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+  },
+  global: {
+    headers: {
+      'X-Client-Info': 'sodatra-optimized',
+    },
+  },
+  // ⭐ TIMEOUTS ÉTENDUS
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
+});
+
+// ⭐ SERVICE DE RETRY AUTOMATIQUE
+interface RetryConfig {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+  exponentialBase: number;
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 5,
+  baseDelay: 1000, // 1 seconde
+  maxDelay: 30000, // 30 secondes max
+  exponentialBase: 2,
+};
+
+export class SupabaseRetryService {
+  private static calculateDelay(attempt: number, config: RetryConfig): number {
+    const delay = config.baseDelay * Math.pow(config.exponentialBase, attempt);
+    return Math.min(delay, config.maxDelay);
+  }
+
+  static async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    config: Partial<RetryConfig> = {},
+    operationName = 'Supabase Operation'
+  ): Promise<T> {
+    const finalConfig = { ...DEFAULT_RETRY_CONFIG, ...config };
+    let lastError: Error;
+
+    console.log(`🔄 Début ${operationName} avec retry (max ${finalConfig.maxRetries} tentatives)`);
+
+    for (let attempt = 0; attempt <= finalConfig.maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delay = this.calculateDelay(attempt - 1, finalConfig);
+          console.log(`⏳ Tentative ${attempt}/${finalConfig.maxRetries} après ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        const result = await operation();
+        
+        if (attempt > 0) {
+          console.log(`✅ ${operationName} réussie après ${attempt} tentatives`);
+        }
+        
+        return result;
+      } catch (error) {
+        lastError = error as Error;
+        const isConnectionError = error instanceof Error && (
+          error.message.includes('timeout') ||
+          error.message.includes('connection') ||
+          error.message.includes('network') ||
+          error.message.includes('ECONNRESET') ||
+          error.message.includes('ETIMEDOUT')
+        );
+
+        if (!isConnectionError || attempt === finalConfig.maxRetries) {
+          console.error(`❌ ${operationName} échec définitif:`, error);
+          throw error;
+        }
+
+        console.warn(`⚠️ ${operationName} tentative ${attempt + 1} échouée:`, error.message);
+      }
+    }
+
+    throw lastError!;
+  }
+
+  // ⭐ MÉTHODES SPÉCIALISÉES POUR LES OPÉRATIONS COMMUNES
+  static async insertWithRetry<T>(
+    tableName: string,
+    data: any,
+    operationName?: string
+  ): Promise<T> {
+    return this.executeWithRetry(
+      () => supabaseOptimized.from(tableName).insert(data),
+      { maxRetries: 3 },
+      operationName || `Insert dans ${tableName}`
+    );
+  }
+
+  static async selectWithRetry<T>(
+    tableName: string,
+    query: any,
+    operationName?: string
+  ): Promise<T> {
+    return this.executeWithRetry(
+      () => query,
+      { maxRetries: 5, baseDelay: 500 },
+      operationName || `Select depuis ${tableName}`
+    );
+  }
+
+  static async batchInsertWithRetry<T>(
+    tableName: string,
+    dataArray: any[],
+    batchSize = 50,
+    operationName?: string
+  ): Promise<T[]> {
+    const results: T[] = [];
+    const totalBatches = Math.ceil(dataArray.length / batchSize);
+
+    console.log(`📦 Insertion par batch: ${dataArray.length} éléments en ${totalBatches} lots de ${batchSize}`);
+
+    for (let i = 0; i < dataArray.length; i += batchSize) {
+      const batch = dataArray.slice(i, i + batchSize);
+      const batchNumber = Math.floor(i / batchSize) + 1;
+
+      try {
+        const result = await this.executeWithRetry(
+          () => supabaseOptimized.from(tableName).insert(batch),
+          { maxRetries: 3 },
+          `${operationName || 'Batch Insert'} ${batchNumber}/${totalBatches}`
+        );
+
+        results.push(result as T);
+
+        // ⭐ PAUSE ENTRE LES LOTS pour éviter la surcharge
+        if (i + batchSize < dataArray.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+      } catch (error) {
+        console.error(`❌ Erreur batch ${batchNumber}:`, error);
+        throw error;
+      }
+    }
+
+    return results;
+  }
+}
+
+// ⭐ HEARTBEAT SERVICE pour maintenir la connexion
+export class HeartbeatService {
+  private static intervalId: NodeJS.Timeout | null = null;
+  private static isActive = false;
+
+  static start(intervalMs = 30000) { // 30 secondes
+    if (this.isActive) return;
+
+    console.log('💓 Démarrage du heartbeat Supabase');
+    this.isActive = true;
+
+    this.intervalId = setInterval(async () => {
+      try {
+        await supabaseOptimized
+          .from('collection_report')
+          .select('id')
+          .limit(1);
+        
+        console.log('💓 Heartbeat OK');
+      } catch (error) {
+        console.warn('💓 Heartbeat failed:', error);
+      }
+    }, intervalMs);
+  }
+
+  static stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+      this.isActive = false;
+      console.log('💓 Arrêt du heartbeat');
+    }
+  }
+}
