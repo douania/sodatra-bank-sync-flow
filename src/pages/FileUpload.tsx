@@ -103,7 +103,7 @@ const FileUpload = () => {
     // Détecter les rapports bancaires
     
     for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-      if (keywords.some(keyword => upperFilename.includes(keyword))) {
+      if (keywords.some(keyword => filename.includes(keyword))) {
         return bankCode;
       }
     }
