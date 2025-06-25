@@ -355,25 +355,39 @@ export class DatabaseService {
     }
   }
 
+  // ⭐ CORRECTION FUND POSITION - Arrondir avant insertion
   async saveFundPosition(fundPosition: FundPosition): Promise<{ success: boolean; error?: string }> {
     try {
+      console.log('💾 === SAUVEGARDE FUND POSITION (AVEC ARRONDISSEMENT) ===');
+      console.log('📊 Valeurs reçues:', {
+        totalFundAvailable: fundPosition.totalFundAvailable,
+        collectionsNotDeposited: fundPosition.collectionsNotDeposited,
+        grandTotal: fundPosition.grandTotal
+      });
+      
+      // ⭐ ARRONDIR AVANT INSERTION pour éviter l'erreur bigint
+      const roundedFundPosition = {
+        report_date: fundPosition.reportDate,
+        total_fund_available: Math.round(fundPosition.totalFundAvailable),
+        collections_not_deposited: Math.round(fundPosition.collectionsNotDeposited),
+        grand_total: Math.round(fundPosition.grandTotal)
+      };
+      
+      console.log('🔢 Valeurs arrondies pour insertion:', roundedFundPosition);
+      
       const { error } = await supabase
         .from('fund_position')
-        .insert({
-          report_date: fundPosition.reportDate,
-          total_fund_available: fundPosition.totalFundAvailable,
-          collections_not_deposited: fundPosition.collectionsNotDeposited,
-          grand_total: fundPosition.grandTotal
-        });
+        .insert(roundedFundPosition);
 
       if (error) {
-        console.error('Error saving fund position:', error);
+        console.error('❌ Erreur sauvegarde Fund Position:', error);
         return { success: false, error: error.message };
       }
 
+      console.log('✅ Fund Position sauvegardée avec succès (valeurs arrondies)');
       return { success: true };
     } catch (error) {
-      console.error('Error saving fund position:', error);
+      console.error('❌ Erreur critique sauvegarde Fund Position:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Erreur inconnue' };
     }
   }
@@ -389,7 +403,9 @@ export class DatabaseService {
         return 0;
       }
 
-      return (data || []).reduce((total, item) => total + (item.collection_amount || 0), 0);
+      // ⭐ ARRONDIR le total pour éviter les décimales
+      const total = (data || []).reduce((sum, item) => sum + (item.collection_amount || 0), 0);
+      return Math.round(total);
     } catch (error) {
       console.error('Error getting total collections:', error);
       return 0;
