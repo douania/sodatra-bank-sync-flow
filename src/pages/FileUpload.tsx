@@ -159,13 +159,7 @@ const FileUpload = () => {
     if (type.includes('Collection')) return 'bg-blue-100 text-blue-800';
     if (type.includes('Fund')) return 'bg-green-100 text-green-800';
     if (type.includes('Client')) return 'bg-purple-100 text-purple-800';
-    
-    // Différencier les relevés des rapports
-    if (type.includes('statement')) {
-      return 'bg-teal-100 text-teal-800';
-    }
-    
-    if (type.includes('analysis') || type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
+    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
         type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
       return 'bg-amber-100 text-amber-800';
     }
@@ -243,20 +237,10 @@ const FileUpload = () => {
                 <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
                   <div className="flex items-center space-x-3">
                     {getFileTypeIcon(fileTypes[file.name] || 'Autre')}
-                        <div className="font-medium truncate max-w-md">{file.name}</div>
-                      <div className="font-medium">{file.name}</div>
-                      <div className="text-sm text-gray-500">
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
-                      </div>
-                    </div>
-                  </div>
-                      <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
-                        {fileTypes[file.name]?.includes('statement') 
-                          ? fileTypes[file.name].split('_')[0].toUpperCase() + ' Relevé' 
-                          : fileTypes[file.name]?.includes('analysis')
-                            ? fileTypes[file.name].split('_')[0].toUpperCase() + ' Rapport'
-                            : fileTypes[file.name] || 'Autre Document'
-                        }
+                    <div>
+                      <div className="font-medium truncate max-w-md">{file.name}</div>
+                  <div className="flex items-center space-x-2">
+                    <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
                       {fileTypes[file.name] || 'Autre Document'}
                     </Badge>
                     <Button 
@@ -269,36 +253,3 @@ const FileUpload = () => {
                     </Button>
                   </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Button 
-        onClick={handleSubmit} 
-        disabled={processing || selectedFiles.length === 0} 
-        className="mt-4 w-full md:w-auto bg-blue-600 hover:bg-blue-700"
-        size="lg"
-      >
-        {processing ? (
-          <>
-            Traitement en cours...
-          </>
-        ) : (
-          `Traiter ${selectedFiles.length} Fichier(s)`
-        )}
-      </Button>
-
-      {processing && <ProgressDisplay />}
-      
-      {processingResults && !processing && (
-        <div className="mt-8">
-          <ProcessingResultsDetailed results={processingResults} />
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default FileUpload;
