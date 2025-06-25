@@ -1,3 +1,4 @@
+
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
@@ -41,36 +42,50 @@ export class FileProcessingService {
     }, 5 * 60 * 1000); // 5 minutes
 
     try {
-      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Enrichissement Intelligent');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Flexible');
+      console.log('📁 Fichiers reçus:', Object.keys(files));
       progressService.updateOverallProgress(0);
 
-      // 1. Traitement INTELLIGENT du Collection Report Excel (PRIORITÉ 1)
-      if (files.collectionReport) {
+      // ⭐ DÉTECTER LE TYPE DE TRAITEMENT
+      const hasCollectionReport = !!files.collectionReport;
+      const bankStatementFiles = {
+        bdk_statement: files.bdk_statement,
+        sgs_statement: files.sgs_statement,
+        bicis_statement: files.bicis_statement,
+        atb_statement: files.atb_statement,
+        bis_statement: files.bis_statement,
+        ora_statement: files.ora_statement
+      };
+      const hasBankStatements = Object.values(bankStatementFiles).some(file => !!file);
+
+      console.log('🔍 Type de traitement détecté:');
+      console.log(`  - Collection Report: ${hasCollectionReport ? '✅' : '❌'}`);
+      console.log(`  - Relevés bancaires: ${hasBankStatements ? '✅' : '❌'}`);
+
+      // 1. ⭐ TRAITEMENT CONDITIONNEL DU COLLECTION REPORT
+      if (hasCollectionReport) {
         progressService.startStep('excel_processing', 'Traitement Excel', 'Extraction des données du fichier Excel');
         
         console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT ===');
-        console.log('📁 Fichier:', files.collectionReport.name, 'Taille:', files.collectionReport.size);
+        console.log('📁 Fichier:', files.collectionReport!.name, 'Taille:', files.collectionReport!.size);
         
-        // ⭐ ÉTAPE 1: Extraction des données Excel avec progression détaillée
         progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Lecture et conversion du fichier', 25, 
-          `Traitement de ${files.collectionReport.name}`);
+          `Traitement de ${files.collectionReport!.name}`);
         
-        const excelResult = await excelProcessingService.processCollectionReportExcel(files.collectionReport);
+        const excelResult = await excelProcessingService.processCollectionReportExcel(files.collectionReport!);
         
         if (!excelResult.success || !excelResult.data) {
           const errorMsg = 'Erreur traitement Excel: ' + (excelResult.errors?.join(', ') || 'Erreur inconnue');
           console.error('❌', errorMsg);
           progressService.errorStep('excel_processing', 'Traitement Excel', 'Échec de l\'extraction', errorMsg);
           results.errors?.push(errorMsg);
-          clearTimeout(processingTimeout);
-          return results;
         } else {
           progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Extraction en cours', 60, 
             `${excelResult.data.length} collections extraites`);
           
           console.log(`📊 ${excelResult.data.length} collections extraites du fichier Excel`);
           
-          // ⭐ ÉTAPE 2: ANALYSE INTELLIGENTE avec progression
+          // ⭐ ANALYSE INTELLIGENTE
           progressService.startStep('intelligent_analysis', 'Analyse Intelligente', 'Comparaison avec la base de données');
           
           console.log('🧠 === DÉBUT ANALYSE INTELLIGENTE ===');
@@ -79,7 +94,7 @@ export class FileProcessingService {
           progressService.updateStepProgress('intelligent_analysis', 'Analyse Intelligente', 'Analyse des doublons et enrichissements', 80,
             `${analysisResult.length} collections analysées`);
           
-          // ⭐ ÉTAPE 3: SYNCHRONISATION INTELLIGENTE avec progression
+          // ⭐ SYNCHRONISATION INTELLIGENTE
           progressService.startStep('intelligent_sync', 'Synchronisation Intelligente', 'Application des enrichissements');
           
           console.log('🔄 === DÉBUT SYNCHRONISATION INTELLIGENTE ===');
@@ -111,36 +126,33 @@ export class FileProcessingService {
             results.errors?.push(...errorMessages);
           }
         }
+      } else {
+        console.log('ℹ️ Aucun Collection Report fourni, traitement des autres documents uniquement');
       }
 
-      // 2. Traitement des relevés bancaires multiples (Priorité 2)
-      progressService.startStep('bank_statements', 'Relevés Bancaires', 'Traitement des relevés bancaires');
-      
-      const bankStatementFiles = {
-        bdk_statement: files.bdk_statement,
-        sgs_statement: files.sgs_statement,
-        bicis_statement: files.bicis_statement,
-        atb_statement: files.atb_statement,
-        bis_statement: files.bis_statement,
-        ora_statement: files.ora_statement
-      };
+      // 2. ⭐ TRAITEMENT CONDITIONNEL DES RELEVÉS BANCAIRES
+      if (hasBankStatements) {
+        progressService.startStep('bank_statements', 'Relevés Bancaires', 'Traitement des relevés bancaires');
+        
+        console.log('📄 Extraction des relevés bancaires...');
+        const bankReports = await this.processBankStatements(bankStatementFiles);
+        results.data!.bankReports = bankReports;
 
-      console.log('📄 Extraction des relevés bancaires multiples...');
-      const bankReports = await this.processBankStatements(bankStatementFiles);
-      results.data!.bankReports = bankReports;
-
-      // Sauvegarde en base
-      for (const report of bankReports) {
-        const saveResult = await databaseService.saveBankReport(report);
-        if (!saveResult.success) {
-          results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
+        // Sauvegarde en base
+        for (const report of bankReports) {
+          const saveResult = await databaseService.saveBankReport(report);
+          if (!saveResult.success) {
+            results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
+          }
         }
+
+        progressService.completeStep('bank_statements', 'Relevés Bancaires', 'Relevés traités',
+          `${bankReports.length} relevés bancaires traités`);
+      } else {
+        console.log('ℹ️ Aucun relevé bancaire fourni');
       }
 
-      progressService.completeStep('bank_statements', 'Relevés Bancaires', 'Relevés traités',
-        `${bankReports.length} relevés bancaires traités`);
-
-      // 3. Traitement Fund Position (Priorité 3)
+      // 3. ⭐ TRAITEMENT CONDITIONNEL FUND POSITION
       if (files.fundsPosition) {
         progressService.startStep('fund_position', 'Fund Position', 'Calcul de la position des fonds');
         
@@ -157,7 +169,7 @@ export class FileProcessingService {
         progressService.completeStep('fund_position', 'Fund Position', 'Position calculée');
       }
 
-      // 4. Traitement Client Reconciliation
+      // 4. ⭐ TRAITEMENT CONDITIONNEL CLIENT RECONCILIATION
       if (files.clientReconciliation) {
         progressService.startStep('client_reconciliation', 'Réconciliation Client', 'Calcul des réconciliations clients');
         
@@ -169,17 +181,19 @@ export class FileProcessingService {
           `${clientRecon.length} clients traités`);
       }
 
-      // ⭐ FINALISATION avec progression à 100%
+      // ⭐ FINALISATION FLEXIBLE
       progressService.updateOverallProgress(100);
       results.success = results.errors?.length === 0;
       
-      console.log(`\n🎯 === RÉSUMÉ FINAL ENRICHISSEMENT INTELLIGENT ===`);
+      console.log(`\n🎯 === RÉSUMÉ FINAL TRAITEMENT FLEXIBLE ===`);
       console.log(`✅ Succès: ${results.success}`);
       console.log(`📊 Collections: ${results.data!.collectionReports?.length || 0}`);
       console.log(`🏦 Rapports bancaires: ${results.data!.bankReports.length}`);
+      console.log(`💰 Fund Position: ${results.data!.fundPosition ? '✅' : '❌'}`);
+      console.log(`👥 Client Reconciliation: ${results.data!.clientReconciliation?.length || 0}`);
       console.log(`❌ Erreurs: ${results.errors?.length || 0}`);
       
-      if (results.data!.syncResult) {
+      if (hasCollectionReport && results.data!.syncResult) {
         console.log(`🧠 Enrichissement intelligent réussi !`);
       }
 
