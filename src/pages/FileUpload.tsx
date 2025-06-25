@@ -70,7 +70,13 @@ const FileUpload = () => {
 
   // Helper function to get the correct status type
   const getStepStatus = (stepId: number): 'pending' | 'current' | 'completed' => {
-    if (processStep === stepId) return 'current';
+    if (processStep === stepId) {
+      // ⭐ CAS SPÉCIAL: Étape 4 (Finalisation) - marquer comme 'completed' si traitement terminé
+      if (stepId === 4 && !isProcessing) {
+        return 'completed';
+      }
+      return 'current';
+    }
     if (processStep > stepId) return 'completed';
     return 'pending';
   };
