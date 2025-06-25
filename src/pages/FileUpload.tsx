@@ -115,6 +115,7 @@ const FileUpload = () => {
     setProcessing(true);
     setProcessingResults(null);
     progressService.reset();
+
     try {
       const result = await fileProcessingService.processFiles(selectedFiles);
 
@@ -207,12 +208,12 @@ const FileUpload = () => {
       
       {/* Bouton de traitement */}
       {selectedFiles.length > 0 && (
-        <div className="flex justify-center mb-8">
+        <div className="flex justify-center my-8">
           <Button 
             onClick={handleSubmit} 
             disabled={processing || selectedFiles.length === 0}
             size="lg"
-            className="px-8 bg-blue-600 hover:bg-blue-700"
+            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium"
           >
             {processing ? (
               <>
@@ -245,6 +246,10 @@ const FileUpload = () => {
             </div>
           </AlertDescription>
         </Alert>
+      )}
+      
+      {processingResults && (
+        <ProcessingResultsDetailed results={processingResults} />
       )}
       
       {/* Liste des fichiers sélectionnés */}
