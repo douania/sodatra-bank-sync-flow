@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 import { CollectionReport } from '@/types/banking';
 
@@ -58,10 +59,7 @@ export class IntelligentSyncService {
       row.clientCode || row.client_name || '',
       row.bankName || row.bank || '',
       row.collectionAmount || row.amount || '0',
-      row.factureNo || row.facture_no || 'NO_FACTURE',
-      // ⭐ AJOUT: Traçabilité Excel dans la clé
-      row.excelFilename || row.excel_filename || '',
-      row.excelSourceRow || row.excel_source_row || '0'
+      row.factureNo || row.facture_no || 'NO_FACTURE'
     ];
     
     const key = components.join('|');
@@ -74,21 +72,37 @@ export class IntelligentSyncService {
     return Math.abs(hash).toString(16);
   }
 
-  // ⭐ ANALYSE OPTIMISÉE avec vérification de traçabilité stricte
+  // ⭐ NOUVELLE APPROCHE: Vérification pour enrichissement au lieu de blocage
+  private async checkExistingForEnrichment(excelRow: any): Promise<CollectionReport | null> {
+    try {
+      // Recherche par données métier (pas par traçabilité Excel)
+      const { data: existing } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('client_code', excelRow.clientCode)
+        .eq('report_date', excelRow.reportDate)
+        .eq('collection_amount', excelRow.collectionAmount)
+        .maybeSingle();
+      
+      if (existing) {
+        console.log(`🔍 Collection existante trouvée pour enrichissement: ${excelRow.clientCode}`);
+      }
+      
+      return existing;
+    } catch (error) {
+      console.warn('⚠️ Erreur vérification enrichissement:', error);
+      return null;
+    }
+  }
+
+  // ⭐ ANALYSE OPTIMISÉE pour gestion quotidienne
   async analyzeExcelFile(excelData: any[]): Promise<CollectionComparison[]> {
-    console.log('🔍 DÉBUT ANALYSE INTELLIGENTE OPTIMISÉE - Collections:', excelData.length);
+    console.log('🔍 DÉBUT ANALYSE QUOTIDIENNE OPTIMISÉE - Collections:', excelData.length);
     
     const comparisons: CollectionComparison[] = [];
     
-    // ⭐ VÉRIFICATION TRAÇABILITÉ PRÉALABLE
-    const sansTracabilite = excelData.filter(row => !row.excelFilename || !row.excelSourceRow);
-    if (sansTracabilite.length > 0) {
-      console.error(`❌ ${sansTracabilite.length} collections sans traçabilité détectées dans l'analyse!`);
-      console.error('Exemples:', sansTracabilite.slice(0, 3));
-    }
-    
     // ⭐ OPTIMISATION: Requête groupée pour réduire les appels DB
-    const clientCodes = excelData.map(row => row.clientCode).filter(Boolean);
+    const clientCodes = [...new Set(excelData.map(row => row.clientCode).filter(Boolean))];
     const reportDates = [...new Set(excelData.map(row => row.reportDate).filter(Boolean))];
     
     console.log(`🔍 Chargement optimisé: ${clientCodes.length} codes clients, ${reportDates.length} dates`);
@@ -104,21 +118,6 @@ export class IntelligentSyncService {
         
         // ⭐ RECHERCHE OPTIMISÉE dans les collections pré-chargées
         const existingRecord = this.findExistingInBatch(excelRow, existingCollections);
-        
-        // ⭐ VÉRIFICATION STRICTE DE TRAÇABILITÉ
-        const isStrictDuplicate = await this.checkStrictTraceabilityDuplicate(excelRow);
-        
-        if (isStrictDuplicate) {
-          console.log(`🚫 Doublon strict détecté: ${excelRow.clientCode} (ligne ${excelRow.excelSourceRow})`);
-          comparisons.push({
-            excelRow,
-            status: CollectionStatus.EXISTS_COMPLETE,
-            missingFields: [],
-            enrichmentOpportunities: [],
-            collectionKey: 'STRICT_DUPLICATE'
-          });
-          continue;
-        }
         
         const comparison = await this.determineCollectionStatusOptimized(excelRow, existingRecord, collectionKey);
         comparisons.push(comparison);
@@ -140,33 +139,12 @@ export class IntelligentSyncService {
     }
     
     const summary = this.generateAnalysisSummary(comparisons);
-    console.log('📊 RÉSUMÉ ANALYSE OPTIMISÉE:', summary);
+    console.log('📊 RÉSUMÉ ANALYSE QUOTIDIENNE:', summary);
     
     return comparisons;
   }
 
-  // ⭐ NOUVELLE MÉTHODE: Vérification stricte de doublon par traçabilité
-  private async checkStrictTraceabilityDuplicate(excelRow: any): Promise<boolean> {
-    if (!excelRow.excelFilename || !excelRow.excelSourceRow) {
-      return false; // Pas de traçabilité = pas de vérification possible
-    }
-    
-    try {
-      const { data: existing } = await supabase
-        .from('collection_report')
-        .select('id')
-        .eq('excel_filename', excelRow.excelFilename)
-        .eq('excel_source_row', excelRow.excelSourceRow)
-        .maybeSingle();
-      
-      return existing !== null;
-    } catch (error) {
-      console.warn('⚠️ Erreur vérification traçabilité stricte:', error);
-      return false;
-    }
-  }
-
-  // ⭐ NOUVELLE MÉTHODE: Chargement par lot des collections existantes
+  // ⭐ CHARGEMENT PAR LOT des collections existantes
   private async batchLoadExistingCollections(clientCodes: string[], reportDates: string[]): Promise<any[]> {
     try {
       const { data: collections } = await supabase
@@ -183,16 +161,16 @@ export class IntelligentSyncService {
     }
   }
 
-  // ⭐ NOUVELLE MÉTHODE: Recherche dans le lot pré-chargé
+  // ⭐ RECHERCHE dans le lot pré-chargé
   private findExistingInBatch(excelRow: any, existingCollections: any[]): any | null {
     return existingCollections.find(existing => 
       existing.client_code === excelRow.clientCode &&
       existing.report_date === excelRow.reportDate &&
-      existing.collection_amount === excelRow.collectionAmount
+      Math.abs(existing.collection_amount - excelRow.collectionAmount) < 0.01 // Tolérance pour les décimales
     ) || null;
   }
 
-  // ⭐ DÉTERMINATION OPTIMISÉE DU STATUT
+  // ⭐ DÉTERMINATION INTELLIGENTE DU STATUT
   private async determineCollectionStatusOptimized(
     excelRow: any, 
     existingRecord: any,
@@ -209,6 +187,7 @@ export class IntelligentSyncService {
       };
     }
     
+    // ⭐ ANALYSE D'ENRICHISSEMENT
     const missingFields = this.identifyMissingFields(existingRecord);
     const enrichmentOpportunities = await this.identifyEnrichmentOpportunitiesOptimized(excelRow, existingRecord);
     
@@ -233,7 +212,7 @@ export class IntelligentSyncService {
     }
   }
 
-  // ⭐ OPTIMISATION: Enrichissement sans requêtes supplémentaires
+  // ⭐ IDENTIFICATION DES OPPORTUNITÉS D'ENRICHISSEMENT
   private async identifyEnrichmentOpportunitiesOptimized(
     excelRow: any, 
     existingRecord: any
@@ -241,7 +220,7 @@ export class IntelligentSyncService {
     
     const opportunities: EnrichmentOpportunity[] = [];
     
-    // ⭐ ENRICHISSEMENT DIRECT (sans requêtes DB supplémentaires)
+    // ⭐ ENRICHISSEMENT INTELLIGENT champ par champ
     const enrichmentFields = [
       { excel: 'dateOfValidity', db: 'date_of_validity', type: 'BANK_CREDIT', confidence: 0.95 },
       { excel: 'bankCommission', db: 'bank_commission', type: 'BANK_COMMISSION', confidence: 0.90 },
@@ -251,15 +230,20 @@ export class IntelligentSyncService {
       { excel: 'income', db: 'income', type: 'BANK_COMMISSION', confidence: 0.85 },
       { excel: 'noChqBd', db: 'no_chq_bd', type: 'REFERENCE_UPDATE', confidence: 0.80 },
       { excel: 'sgOrFaNo', db: 'sg_or_fa_no', type: 'REFERENCE_UPDATE', confidence: 0.80 },
-      { excel: 'depoRef', db: 'depo_ref', type: 'REFERENCE_UPDATE', confidence: 0.80 }
+      { excel: 'depoRef', db: 'depo_ref', type: 'REFERENCE_UPDATE', confidence: 0.80 },
+      { excel: 'remarques', db: 'remarques', type: 'REFERENCE_UPDATE', confidence: 0.75 }
     ];
     
     for (const field of enrichmentFields) {
-      if (!existingRecord[field.db] && excelRow[field.excel]) {
+      const excelValue = excelRow[field.excel];
+      const dbValue = existingRecord[field.db];
+      
+      // ⭐ LOGIQUE D'ENRICHISSEMENT INTELLIGENT
+      if (this.shouldEnrichField(excelValue, dbValue)) {
         opportunities.push({
           type: field.type as any,
           field: field.db,
-          newValue: excelRow[field.excel],
+          newValue: excelValue,
           source: 'EXCEL_UPDATE',
           confidence: field.confidence
         });
@@ -269,9 +253,38 @@ export class IntelligentSyncService {
     return opportunities;
   }
 
-  // ⭐ SYNCHRONISATION AVEC GESTION D'ERREURS STRICTE
+  // ⭐ LOGIQUE DÉCISION D'ENRICHISSEMENT
+  private shouldEnrichField(excelValue: any, dbValue: any): boolean {
+    // Valeur Excel existe et DB est vide/null
+    if (excelValue && (!dbValue || dbValue === null || dbValue === '')) {
+      return true;
+    }
+    
+    // Valeur Excel plus récente/complète que DB
+    if (excelValue && dbValue && excelValue !== dbValue) {
+      // Pour les dates, prendre la plus récente
+      if (typeof excelValue === 'string' && excelValue.includes('-') && 
+          typeof dbValue === 'string' && dbValue.includes('-')) {
+        return new Date(excelValue) > new Date(dbValue);
+      }
+      
+      // Pour les montants, prendre la valeur non-zéro
+      if (typeof excelValue === 'number' && typeof dbValue === 'number') {
+        return excelValue > 0 && dbValue === 0;
+      }
+      
+      // Pour les textes, prendre la valeur plus longue (plus d'info)
+      if (typeof excelValue === 'string' && typeof dbValue === 'string') {
+        return excelValue.length > dbValue.length;
+      }
+    }
+    
+    return false;
+  }
+
+  // ⭐ SYNCHRONISATION QUOTIDIENNE OPTIMISÉE
   async processIntelligentSync(comparisons: CollectionComparison[]): Promise<SyncResult> {
-    console.log('🔄 DÉBUT SYNCHRONISATION INTELLIGENTE OPTIMISÉE');
+    console.log('🔄 DÉBUT SYNCHRONISATION QUOTIDIENNE OPTIMISÉE');
     
     const result: SyncResult = {
       new_collections: 0,
@@ -306,7 +319,7 @@ export class IntelligentSyncService {
         try {
           switch (comparison.status) {
             case CollectionStatus.NEW:
-              await this.insertNewCollectionWithTraceability(comparison.excelRow);
+              await this.insertNewCollection(comparison.excelRow);
               result.new_collections++;
               break;
               
@@ -314,10 +327,15 @@ export class IntelligentSyncService {
               const enrichmentResult = await this.enrichExistingCollection(comparison);
               result.enriched_collections++;
               
+              // ⭐ COMPTABILISATION DES ENRICHISSEMENTS
               for (const enrichment of enrichmentResult.enrichments) {
                 if (enrichment.field === 'date_of_validity') result.summary.enrichments.date_of_validity_added++;
-                if (enrichment.field.includes('commission')) result.summary.enrichments.bank_commissions_added++;
-                if (['no_chq_bd', 'sg_or_fa_no', 'depo_ref'].includes(enrichment.field)) result.summary.enrichments.references_updated++;
+                if (['bank_commission', 'interet', 'tob', 'frais_escompte', 'income'].includes(enrichment.field)) {
+                  result.summary.enrichments.bank_commissions_added++;
+                }
+                if (['no_chq_bd', 'sg_or_fa_no', 'depo_ref'].includes(enrichment.field)) {
+                  result.summary.enrichments.references_updated++;
+                }
               }
               break;
               
@@ -338,7 +356,7 @@ export class IntelligentSyncService {
 
     result.summary.total_processed = result.new_collections + result.enriched_collections + result.ignored_collections;
     
-    console.log('📊 SYNCHRONISATION OPTIMISÉE TERMINÉE:', {
+    console.log('📊 SYNCHRONISATION QUOTIDIENNE TERMINÉE:', {
       nouvelles: result.new_collections,
       enrichies: result.enriched_collections,
       ignorées: result.ignored_collections,
@@ -348,13 +366,8 @@ export class IntelligentSyncService {
     return result;
   }
 
-  // ⭐ INSERTION AVEC TRAÇABILITÉ OBLIGATOIRE
-  private async insertNewCollectionWithTraceability(excelRow: any): Promise<void> {
-    // ⭐ VÉRIFICATION TRAÇABILITÉ AVANT INSERTION
-    if (!excelRow.excelFilename || !excelRow.excelSourceRow) {
-      throw new Error(`Traçabilité manquante: filename=${excelRow.excelFilename}, row=${excelRow.excelSourceRow}`);
-    }
-    
+  // ⭐ INSERTION NOUVELLE COLLECTION
+  private async insertNewCollection(excelRow: any): Promise<void> {
     const collectionData = {
       report_date: excelRow.reportDate,
       client_code: excelRow.clientCode,
@@ -362,12 +375,12 @@ export class IntelligentSyncService {
       bank_name: excelRow.bankName || '',
       status: excelRow.status || 'pending',
       
-      // ⭐ TRAÇABILITÉ OBLIGATOIRE
-      excel_filename: excelRow.excelFilename,
-      excel_source_row: excelRow.excelSourceRow,
+      // ⭐ TRAÇABILITÉ AMÉLIORÉE
+      excel_filename: excelRow.excelFilename || 'DAILY_IMPORT',
+      excel_source_row: excelRow.excelSourceRow || 0,
       excel_processed_at: new Date().toISOString(),
       
-      // Toutes les autres colonnes
+      // Tous les champs disponibles
       date_of_validity: excelRow.dateOfValidity || null,
       facture_no: excelRow.factureNo || null,
       no_chq_bd: excelRow.noChqBd || null,
@@ -396,10 +409,6 @@ export class IntelligentSyncService {
       .insert(collectionData);
     
     if (error) {
-      // ⭐ GESTION SPÉCIALE DES ERREURS DE CONTRAINTE UNIQUE
-      if (error.code === '23505' && error.message.includes('unique_excel_traceability')) {
-        throw new Error(`Doublon détecté par contrainte: ${collectionData.excel_filename}:${collectionData.excel_source_row}`);
-      }
       throw new Error(`Erreur insertion: ${error.message}`);
     }
   }
@@ -413,10 +422,7 @@ export class IntelligentSyncService {
       'income',
       'no_chq_bd',
       'sg_or_fa_no',
-      'depo_ref',
-      'interet',
-      'tob',
-      'frais_escompte'
+      'depo_ref'
     ];
     
     for (const field of criticalFields) {
@@ -436,7 +442,7 @@ export class IntelligentSyncService {
     const enrichments: Array<{ field: string; oldValue: any; newValue: any; source: string }> = [];
     
     for (const opportunity of comparison.enrichmentOpportunities) {
-      if (opportunity.confidence > 0.8) {
+      if (opportunity.confidence > 0.7) { // Seuil plus bas pour permettre plus d'enrichissements
         const oldValue = comparison.existingRecord![opportunity.field];
         updates[opportunity.field] = opportunity.newValue;
         
@@ -451,10 +457,7 @@ export class IntelligentSyncService {
     
     if (Object.keys(updates).length > 0) {
       updates.last_enriched_at = new Date().toISOString();
-      updates.enrichment_source = comparison.enrichmentOpportunities
-        .filter(o => o.confidence > 0.8)
-        .map(o => o.source)
-        .join(',');
+      updates.enrichment_source = 'DAILY_EXCEL_UPDATE';
       
       const { error } = await supabase
         .from('collection_report')
@@ -480,12 +483,6 @@ export class IntelligentSyncService {
     };
     
     return summary;
-  }
-
-  private addDays(dateString: string, days: number): string {
-    const date = new Date(dateString);
-    date.setDate(date.getDate() + days);
-    return date.toISOString().split('T')[0];
   }
 }
 

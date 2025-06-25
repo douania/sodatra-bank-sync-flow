@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { CheckCircle, Clock, AlertCircle, Loader, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { ProgressPersistenceService } from '@/services/progressPersistenceService';
-import { progressService } from '@/services/progressService';
 
 interface ProgressStep {
   id: string;
@@ -154,15 +153,17 @@ export const EnhancedProgressDisplay: React.FC<EnhancedProgressDisplayProps> = (
             {isProcessing && <Loader className="h-5 w-5 animate-spin" />}
             
             {/* ⭐ INDICATEUR DE CONNEXION */}
-            {connectionStatus === 'connected' && (
-              <Wifi className="h-4 w-4 text-green-600" title="Connecté" />
-            )}
-            {connectionStatus === 'disconnected' && (
-              <WifiOff className="h-4 w-4 text-red-600" title="Connexion perdue" />
-            )}
-            {connectionStatus === 'reconnecting' && (
-              <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" title="Reconnexion..." />
-            )}
+            <div className="flex items-center">
+              {connectionStatus === 'connected' && (
+                <Wifi className="h-4 w-4 text-green-600" />
+              )}
+              {connectionStatus === 'disconnected' && (
+                <WifiOff className="h-4 w-4 text-red-600" />
+              )}
+              {connectionStatus === 'reconnecting' && (
+                <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />
+              )}
+            </div>
           </div>
 
           {/* ⭐ TEMPS ÉCOULÉ */}

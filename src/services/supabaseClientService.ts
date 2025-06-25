@@ -97,31 +97,28 @@ export class SupabaseRetryService {
 
   // ⭐ MÉTHODES SPÉCIALISÉES POUR LES OPÉRATIONS COMMUNES
   static async insertWithRetry<T>(
-    tableName: string,
     data: any,
     operationName?: string
   ): Promise<T> {
     return this.executeWithRetry(
-      () => supabaseOptimized.from(tableName).insert(data),
+      () => supabaseOptimized.from('collection_report').insert(data),
       { maxRetries: 3 },
-      operationName || `Insert dans ${tableName}`
+      operationName || 'Insert dans collection_report'
     );
   }
 
   static async selectWithRetry<T>(
-    tableName: string,
     query: any,
     operationName?: string
   ): Promise<T> {
     return this.executeWithRetry(
       () => query,
       { maxRetries: 5, baseDelay: 500 },
-      operationName || `Select depuis ${tableName}`
+      operationName || 'Select query'
     );
   }
 
   static async batchInsertWithRetry<T>(
-    tableName: string,
     dataArray: any[],
     batchSize = 50,
     operationName?: string
@@ -137,7 +134,7 @@ export class SupabaseRetryService {
 
       try {
         const result = await this.executeWithRetry(
-          () => supabaseOptimized.from(tableName).insert(batch),
+          () => supabaseOptimized.from('collection_report').insert(batch),
           { maxRetries: 3 },
           `${operationName || 'Batch Insert'} ${batchNumber}/${totalBatches}`
         );
