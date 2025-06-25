@@ -1,97 +1,96 @@
 
 import React, { useState, useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { FileSpreadsheet, FileText, Upload, Building2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { FileSpreadsheet, FileText, Upload, Building2, X, AlertTriangle, CheckCircle, FileUp } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { fileProcessingService } from '@/services/fileProcessingService';
 import { progressService } from '@/services/progressService';
 import { ProgressDisplay } from '@/components/ProgressDisplay';
+import ProcessingResultsDetailed from '@/components/ProcessingResultsDetailed';
 
 const FileUpload = () => {
-  const [selectedFiles, setSelectedFiles] = useState<{ [key: string]: File }>({});
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [fileTypes, setFileTypes] = useState<{ [key: string]: string }>({});
   const [processing, setProcessing] = useState(false);
+  const [processingResults, setProcessingResults] = useState<any>(null);
+  const [rejectedFiles, setRejectedFiles] = useState<FileRejection[]>([]);
   const { toast } = useToast();
 
-  const handleFileSelect = useCallback((category: string, file: File | null) => {
-    if (file) {
-      setSelectedFiles(prev => ({
-        ...prev,
-        [category]: file
-      }));
-      
-      // Détection automatique des rapports bancaires
-      if (category === 'other' && file) {
-        const bankType = detectBankReportType(file.name);
-        if (bankType) {
-          console.log(`🏦 Rapport bancaire ${bankType} détecté automatiquement`);
-          setSelectedFiles(prev => {
-            const newFiles = { ...prev };
-            newFiles[`${bankType.toLowerCase()}_analysis`] = file;
-            delete newFiles.other;
-            return newFiles;
-          });
-        }
-      }
-    } else {
-      setSelectedFiles(prev => {
-        const newFiles = { ...prev };
-        delete newFiles[category];
-        return newFiles;
+  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
+    // Ajouter les nouveaux fichiers à la liste existante
+    setSelectedFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
+    
+    // Détecter automatiquement le type de chaque fichier
+    const newFileTypes: { [key: string]: string } = {};
+    
+    acceptedFiles.forEach(file => {
+      const detectedType = detectFileType(file);
+      newFileTypes[file.name] = detectedType;
+      console.log(`🔍 Fichier détecté: ${file.name} => ${detectedType}`);
+    });
+    
+    setFileTypes(prev => ({ ...prev, ...newFileTypes }));
+    
+    // Gérer les fichiers rejetés
+    if (rejectedFiles.length > 0) {
+      setRejectedFiles(rejectedFiles);
+      toast({
+        variant: "destructive",
+        title: "Fichiers non acceptés",
+        description: `${rejectedFiles.length} fichier(s) n'ont pas pu être acceptés.`,
       });
     }
-  }, []);
-
-  const onDrop = useCallback((acceptedFiles: File[], category: string) => {
-    if (acceptedFiles.length > 0) {
-      handleFileSelect(category, acceptedFiles[0]);
-    }
-  }, [handleFileSelect]);
-
-  const { getRootProps: getCollectionRootProps, getInputProps: getCollectionInputProps } = useDropzone({
-    onDrop: (acceptedFiles) => onDrop(acceptedFiles, 'collectionReport'),
+  }, [toast]);
+  
+  const { getRootProps, getInputProps } = useDropzone({
+    onDrop,
     accept: {
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'text/csv': ['.csv']
+      'text/csv': ['.csv'],
+      'application/pdf': ['.pdf']
     },
-    multiple: false
+    multiple: true
   });
+  
+  const removeFile = (fileName: string) => {
+    setSelectedFiles(prevFiles => prevFiles.filter(file => file.name !== fileName));
+    
+    // Supprimer également le type de fichier
+    setFileTypes(prev => {
+      const newTypes = { ...prev };
+      delete newTypes[fileName];
+      return newTypes;
+    });
+  };
+  
+  const clearRejectedFiles = () => {
+    setRejectedFiles([]);
+  };
 
-  const { getRootProps: getBdkStatementRootProps, getInputProps: getBdkStatementInputProps } = useDropzone({
-    onDrop: (acceptedFiles) => onDrop(acceptedFiles, 'bdk_statement'),
-    accept: {
-      'application/pdf': ['.pdf'],
-      'application/vnd.ms-excel': ['.xls'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-    },
-    multiple: false
-  });
-
-  const { getRootProps: getFundsPositionRootProps, getInputProps: getFundsPositionInputProps } = useDropzone({
-    onDrop: (acceptedFiles) => onDrop(acceptedFiles, 'fundsPosition'),
-    accept: {
-      'application/pdf': ['.pdf'],
-      'application/vnd.ms-excel': ['.xls'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-    },
-    multiple: false
-  });
-
-  const { getRootProps: getClientReconciliationRootProps, getInputProps: getClientReconciliationInputProps } = useDropzone({
-    onDrop: (acceptedFiles) => onDrop(acceptedFiles, 'clientReconciliation'),
-    accept: {
-      'application/pdf': ['.pdf'],
-      'application/vnd.ms-excel': ['.xls'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
-    },
-    multiple: false
-  });
-
-  const detectBankReportType = (filename: string): string | null => {
+  const detectFileType = (file: File): string => {
+    const filename = file.name.toUpperCase();
+    
+    // Détecter les rapports de collection
+    if (filename.includes('COLLECTION') || filename.includes('COLLECT')) {
+      return 'Collection Report';
+    }
+    
+    // Détecter les rapports de position de fonds
+    if (filename.includes('FUND') || filename.includes('POSITION') || 
+        filename.includes('FP') || filename.includes('FUND_POSITION')) {
+      return 'Fund Position';
+    }
+    
+    // Détecter les rapports de réconciliation client
+    if (filename.includes('CLIENT') && filename.includes('RECON')) {
+      return 'Client Reconciliation';
+    }
+    
     const bankKeywords = {
       'BDK': ['BDK', 'BANQUE DE DAKAR'],
       'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
@@ -101,7 +100,7 @@ const FileUpload = () => {
       'BIS': ['BIS', 'BANQUE ISLAMIQUE']
     };
     
-    const upperFilename = filename.toUpperCase();
+    // Détecter les rapports bancaires
     
     for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
       if (keywords.some(keyword => upperFilename.includes(keyword))) {
@@ -109,13 +108,14 @@ const FileUpload = () => {
       }
     }
     
-    return null;
+    // Si aucun type spécifique n'est détecté
+    return 'Autre Document';
   };
 
   const handleSubmit = async () => {
     setProcessing(true);
+    setProcessingResults(null);
     progressService.reset();
-
     try {
       const result = await fileProcessingService.processFiles(selectedFiles);
 
@@ -124,6 +124,8 @@ const FileUpload = () => {
           title: "Succès",
           description: "Fichiers traités avec succès.",
         });
+        
+        setProcessingResults(result);
       } else {
         toast({
           variant: "destructive",
@@ -142,225 +144,149 @@ const FileUpload = () => {
       setProcessing(false);
     }
   };
-
-  const uploadCategories = [
-    {
-      id: 'collectionReport',
-      title: 'Collection Report',
-      description: 'Fichier Excel principal avec les collections',
-      icon: FileSpreadsheet,
-      required: false,
-      accept: '.xlsx,.xls,.csv'
-    },
-    // Rapports d'analyse bancaires
-    {
-      id: 'bdk_analysis',
-      title: 'Rapport BDK',
-      description: 'Rapport d\'analyse bancaire BDK',
-      icon: Building2,
-      required: false,
-      accept: '.xlsx,.xls,.pdf'
-    },
-    {
-      id: 'atb_analysis',
-      title: 'Rapport ATB',
-      description: 'Rapport d\'analyse bancaire ATB',
-      icon: Building2,
-      required: false,
-      accept: '.xlsx,.xls,.pdf'
-    },
-    {
-      id: 'bicis_analysis',
-      title: 'Rapport BICIS',
-      description: 'Rapport d\'analyse bancaire BICIS',
-      icon: Building2,
-      required: false,
-      accept: '.xlsx,.xls,.pdf'
-    },
-    {
-      id: 'ora_analysis',
-      title: 'Rapport ORA',
-      description: 'Rapport d\'analyse bancaire ORA',
-      icon: Building2,
-      required: false,
-      accept: '.xlsx,.xls,.pdf'
-    },
-    {
-      id: 'sgbs_analysis',
-      title: 'Rapport SGBS',
-      description: 'Rapport d\'analyse bancaire SGBS',
-      icon: Building2,
-      required: false,
-      accept: '.xlsx,.xls,.pdf'
-    },
-    {
-      id: 'bis_analysis',
-      title: 'Rapport BIS',
-      description: 'Rapport d\'analyse bancaire BIS',
-      icon: Building2,
-      required: false,
-      accept: '.xlsx,.xls,.pdf'
-    },
-    // Relevés bancaires existants
-    {
-      id: 'bdk_statement',
-      title: 'Relevé BDK',
-      description: 'Relevé bancaire BDK (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'sgs_statement',
-      title: 'Relevé SGS',
-      description: 'Relevé bancaire SGS (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'bicis_statement',
-      title: 'Relevé BICIS',
-      description: 'Relevé bancaire BICIS (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'atb_statement',
-      title: 'Relevé ATB',
-      description: 'Relevé bancaire ATB (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'bis_statement',
-      title: 'Relevé BIS',
-      description: 'Relevé bancaire BIS (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'ora_statement',
-      title: 'Relevé ORA',
-      description: 'Relevé bancaire ORA (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'fundsPosition',
-      title: 'Fund Position',
-      description: 'Position des fonds (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'clientReconciliation',
-      title: 'Réconciliation Client',
-      description: 'Réconciliation client (optionnel)',
-      icon: FileText,
-      required: false,
-      accept: '.pdf,.xlsx,.xls'
-    },
-    {
-      id: 'other',
-      title: 'Autre Document',
-      description: 'Fichier non catégorisé (détection automatique)',
-      icon: Upload,
-      required: false,
-      accept: '.xlsx,.xls,.pdf,.csv'
+  
+  const getFileTypeIcon = (type: string) => {
+    if (type.includes('Collection')) return <FileSpreadsheet className="h-5 w-5 text-blue-500" />;
+    if (type.includes('Fund')) return <FileText className="h-5 w-5 text-green-500" />;
+    if (type.includes('Client')) return <FileText className="h-5 w-5 text-purple-500" />;
+    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
+        type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
+      return <Building2 className="h-5 w-5 text-orange-500" />;
     }
-  ];
+    return <FileText className="h-5 w-5 text-gray-500" />;
+  };
+
+  const getFileTypeColor = (type: string) => {
+    if (type.includes('Collection')) return 'bg-blue-100 text-blue-800';
+    if (type.includes('Fund')) return 'bg-green-100 text-green-800';
+    if (type.includes('Client')) return 'bg-purple-100 text-purple-800';
+    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
+        type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
+      return 'bg-orange-100 text-orange-800';
+    }
+    return 'bg-gray-100 text-gray-800';
+  };
 
   return (
     <div className="container mx-auto py-10">
-      <h1 className="text-3xl font-bold text-gray-900 mb-6">Importation des Données</h1>
-      <p className="text-gray-600 mb-8">
-        Sélectionnez les fichiers à importer. Les fichiers seront traités et les données seront intégrées dans le dashboard.
-      </p>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {uploadCategories.map(category => (
-          <Card key={category.id}>
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold flex items-center space-x-2">
-                {category.icon && <category.icon className="h-5 w-5" />}
-                <span>{category.title}</span>
-              </CardTitle>
-              <CardDescription className="text-gray-500">{category.description}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Label htmlFor={category.id} className="text-sm font-medium text-gray-700">
-                Fichier {category.required ? '(Requis)' : '(Optionnel)'}
-              </Label>
-              {category.id === 'collectionReport' ? (
-                <div {...getCollectionRootProps({ className: 'dropzone' })}>
-                  <Input {...getCollectionInputProps({ id: category.id })} type="file" className="hidden" />
-                  <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
-                    <Upload className="h-6 w-6 text-gray-400 mb-2" />
-                    <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
-                  </div>
-                </div>
-              ) : category.id === 'bdk_statement' ? (
-                <div {...getBdkStatementRootProps({ className: 'dropzone' })}>
-                  <Input {...getBdkStatementInputProps({ id: category.id })} type="file" className="hidden" />
-                  <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
-                    <Upload className="h-6 w-6 text-gray-400 mb-2" />
-                    <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
-                  </div>
-                </div>
-              ) : category.id === 'fundsPosition' ? (
-                <div {...getFundsPositionRootProps({ className: 'dropzone' })}>
-                  <Input {...getFundsPositionInputProps({ id: category.id })} type="file" className="hidden" />
-                  <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
-                    <Upload className="h-6 w-6 text-gray-400 mb-2" />
-                    <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
-                  </div>
-                </div>
-              ) : category.id === 'clientReconciliation' ? (
-                <div {...getClientReconciliationRootProps({ className: 'dropzone' })}>
-                  <Input {...getClientReconciliationInputProps({ id: category.id })} type="file" className="hidden" />
-                  <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
-                    <Upload className="h-6 w-6 text-gray-400 mb-2" />
-                    <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <Input
-                    type="file"
-                    id={category.id}
-                    accept={category.accept}
-                    className="mt-2 w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                    onChange={(e: any) => handleFileSelect(category.id, e.target.files?.[0] || null)}
-                  />
-                </>
-              )}
-              {selectedFiles[category.id] && (
-                <div className="mt-2 text-green-500 text-sm">
-                  Fichier sélectionné: {selectedFiles[category.id].name}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Importation des Données</h1>
+          <p className="text-gray-600 mt-2">
+            Déposez tous vos fichiers en une seule fois. Le système les identifiera et les traitera automatiquement.
+          </p>
+        </div>
+        <Badge className="text-lg px-4 py-2 bg-blue-100 text-blue-800">
+          Importation Intelligente
+        </Badge>
       </div>
+      
+      {/* Zone de dépôt principale */}
+      <Card className="mb-8">
+        <CardContent className="p-6">
+          <div {...getRootProps({ className: 'dropzone' })}>
+            <input {...getInputProps()} />
+            <div className="flex flex-col items-center justify-center w-full h-48 bg-blue-50 border-2 border-blue-300 border-dashed rounded-lg cursor-pointer hover:bg-blue-100 transition-colors">
+              <FileUp className="h-12 w-12 text-blue-500 mb-4" />
+              <h3 className="text-lg font-semibold text-blue-700 mb-2">Déposez tous vos fichiers ici</h3>
+              <p className="text-blue-600 text-center max-w-md">
+                Glissez-déposez tous vos fichiers Excel et PDF en une seule fois. 
+                Le système détectera automatiquement leur type.
+              </p>
+              <p className="text-sm text-blue-500 mt-2">
+                Formats acceptés: .xlsx, .xls, .csv, .pdf
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Affichage des fichiers rejetés */}
+      {rejectedFiles.length > 0 && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            <div className="flex justify-between items-center">
+              <span>{rejectedFiles.length} fichier(s) non accepté(s)</span>
+              <Button variant="outline" size="sm" onClick={clearRejectedFiles}>
+                Effacer
+              </Button>
+            </div>
+            <div className="mt-2 space-y-1">
+              {rejectedFiles.map((rejection, index) => (
+                <div key={index} className="text-sm">
+                  {rejection.file.name} - {rejection.errors.map(e => e.message).join(', ')}
+                </div>
+              ))}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {/* Liste des fichiers sélectionnés */}
+      {selectedFiles.length > 0 && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <CheckCircle className="h-5 w-5 text-green-500" />
+              <span>{selectedFiles.length} Fichier(s) Prêt(s) pour Traitement</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {selectedFiles.map((file, index) => (
+                <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                  <div className="flex items-center space-x-3">
+                    {getFileTypeIcon(fileTypes[file.name] || 'Autre')}
+                    <div>
+                      <div className="font-medium">{file.name}</div>
+                      <div className="text-sm text-gray-500">
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Badge className={getFileTypeColor(fileTypes[file.name] || 'Autre')}>
+                      {fileTypes[file.name] || 'Autre Document'}
+                    </Badge>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => removeFile(file.name)}
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      <Button onClick={handleSubmit} disabled={processing} className="mt-8 w-full md:w-auto">
+      <Button 
+        onClick={handleSubmit} 
+        disabled={processing || selectedFiles.length === 0} 
+        className="mt-4 w-full md:w-auto bg-blue-600 hover:bg-blue-700"
+        size="lg"
+      >
         {processing ? (
           <>
             Traitement en cours...
           </>
         ) : (
-          "Traiter les Fichiers"
+          `Traiter ${selectedFiles.length} Fichier(s)`
         )}
       </Button>
 
       {processing && <ProgressDisplay />}
+      
+      {processingResults && !processing && (
+        <div className="mt-8">
+          <ProcessingResultsDetailed results={processingResults} />
+        </div>
+      )}
     </div>
   );
 };
