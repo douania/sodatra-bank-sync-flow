@@ -115,6 +115,8 @@ const FileUploadBulk = () => {
   }, []);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
+    console.log('onDrop called in FileUploadBulk.tsx');
+    console.log('Accepted files:', acceptedFiles.length, acceptedFiles.map(f => f.name));
     const newDetectedFiles: DetectedFile[] = acceptedFiles.map(file => {
       const detection = detectFileType(file);
       return {
@@ -126,7 +128,11 @@ const FileUploadBulk = () => {
       };
     });
 
-    setDetectedFiles(prev => [...prev, ...newDetectedFiles]);
+    setDetectedFiles(prev => {
+      const updatedFiles = [...prev, ...newDetectedFiles];
+      console.log('Detected files state after update:', updatedFiles.length, updatedFiles.map(f => f.file.name));
+      return updatedFiles;
+    });
   }, [detectFileType]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
