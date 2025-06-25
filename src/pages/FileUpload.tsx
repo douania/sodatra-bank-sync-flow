@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -5,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FileSpreadsheet, FileText, Upload, Building2 } from 'lucide-react';
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { fileProcessingService } from '@/services/fileProcessingService';
 import { progressService } from '@/services/progressService';
 import { ProgressDisplay } from '@/components/ProgressDisplay';
@@ -14,6 +15,35 @@ const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<{ [key: string]: File }>({});
   const [processing, setProcessing] = useState(false);
   const { toast } = useToast();
+
+  const handleFileSelect = useCallback((category: string, file: File | null) => {
+    if (file) {
+      setSelectedFiles(prev => ({
+        ...prev,
+        [category]: file
+      }));
+      
+      // Détection automatique des rapports bancaires
+      if (category === 'other' && file) {
+        const bankType = detectBankReportType(file.name);
+        if (bankType) {
+          console.log(`🏦 Rapport bancaire ${bankType} détecté automatiquement`);
+          setSelectedFiles(prev => {
+            const newFiles = { ...prev };
+            newFiles[`${bankType.toLowerCase()}_analysis`] = file;
+            delete newFiles.other;
+            return newFiles;
+          });
+        }
+      }
+    } else {
+      setSelectedFiles(prev => {
+        const newFiles = { ...prev };
+        delete newFiles[category];
+        return newFiles;
+      });
+    }
+  }, []);
 
   const onDrop = useCallback((acceptedFiles: File[], category: string) => {
     if (acceptedFiles.length > 0) {
@@ -61,39 +91,10 @@ const FileUpload = () => {
     multiple: false
   });
 
-  const handleFileSelect = (category: string, file: File | null) => {
-    if (file) {
-      setSelectedFiles(prev => ({
-        ...prev,
-        [category]: file
-      }));
-      
-      // ⭐ NOUVEAU : Détection automatique des rapports bancaires
-      if (category === 'other' && file) {
-        const bankType = detectBankReportType(file.name);
-        if (bankType) {
-          console.log(`🏦 Rapport bancaire ${bankType} détecté automatiquement`);
-          setSelectedFiles(prev => ({
-            ...prev,
-            [`${bankType.toLowerCase()}_analysis`]: file
-          }));
-          delete prev.other; // Supprimer de la catégorie "other"
-        }
-      }
-    } else {
-      setSelectedFiles(prev => {
-        const newFiles = { ...prev };
-        delete newFiles[category];
-        return newFiles;
-      });
-    }
-  };
-
-  // ⭐ NOUVELLE FONCTION : Détecter le type de rapport bancaire depuis le nom de fichier
   const detectBankReportType = (filename: string): string | null => {
     const bankKeywords = {
       'BDK': ['BDK', 'BANQUE DE DAKAR'],
-      'ATB': ['ATB', 'ARAB TUNISIAN'],
+      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
       'BICIS': ['BICIS', 'BIC'],
       'ORA': ['ORA', 'ORABANK'],
       'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
@@ -151,7 +152,7 @@ const FileUpload = () => {
       required: false,
       accept: '.xlsx,.xls,.csv'
     },
-    // ⭐ NOUVELLES CATÉGORIES : Rapports d'analyse bancaires
+    // Rapports d'analyse bancaires
     {
       id: 'bdk_analysis',
       title: 'Rapport BDK',
@@ -200,7 +201,7 @@ const FileUpload = () => {
       required: false,
       accept: '.xlsx,.xls,.pdf'
     },
-    // ⭐ Catégories existantes
+    // Relevés bancaires existants
     {
       id: 'bdk_statement',
       title: 'Relevé BDK',
@@ -298,7 +299,7 @@ const FileUpload = () => {
               </Label>
               {category.id === 'collectionReport' ? (
                 <div {...getCollectionRootProps({ className: 'dropzone' })}>
-                  <Input {...getCollectionInputProps({ id: category.id })} type="file" className="hidden" onChange={(e: any) => handleFileSelect(category.id, e.target.files?.[0] || null)} />
+                  <Input {...getCollectionInputProps({ id: category.id })} type="file" className="hidden" />
                   <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
                     <Upload className="h-6 w-6 text-gray-400 mb-2" />
                     <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
@@ -306,7 +307,7 @@ const FileUpload = () => {
                 </div>
               ) : category.id === 'bdk_statement' ? (
                 <div {...getBdkStatementRootProps({ className: 'dropzone' })}>
-                  <Input {...getBdkStatementInputProps({ id: category.id })} type="file" className="hidden" onChange={(e: any) => handleFileSelect(category.id, e.target.files?.[0] || null)} />
+                  <Input {...getBdkStatementInputProps({ id: category.id })} type="file" className="hidden" />
                   <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
                     <Upload className="h-6 w-6 text-gray-400 mb-2" />
                     <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
@@ -314,7 +315,7 @@ const FileUpload = () => {
                 </div>
               ) : category.id === 'fundsPosition' ? (
                 <div {...getFundsPositionRootProps({ className: 'dropzone' })}>
-                  <Input {...getFundsPositionInputProps({ id: category.id })} type="file" className="hidden" onChange={(e: any) => handleFileSelect(category.id, e.target.files?.[0] || null)} />
+                  <Input {...getFundsPositionInputProps({ id: category.id })} type="file" className="hidden" />
                   <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
                     <Upload className="h-6 w-6 text-gray-400 mb-2" />
                     <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>
@@ -322,7 +323,7 @@ const FileUpload = () => {
                 </div>
               ) : category.id === 'clientReconciliation' ? (
                 <div {...getClientReconciliationRootProps({ className: 'dropzone' })}>
-                  <Input {...getClientReconciliationInputProps({ id: category.id })} type="file" className="hidden" onChange={(e: any) => handleFileSelect(category.id, e.target.files?.[0] || null)} />
+                  <Input {...getClientReconciliationInputProps({ id: category.id })} type="file" className="hidden" />
                   <div className="flex flex-col items-center justify-center w-full h-32 bg-gray-100 border-2 border-gray-300 border-dashed rounded-md cursor-pointer">
                     <Upload className="h-6 w-6 text-gray-400 mb-2" />
                     <p className="text-gray-500 text-sm">Cliquez ou glissez-déposez votre fichier ici</p>

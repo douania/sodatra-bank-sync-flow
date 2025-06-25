@@ -87,7 +87,6 @@ export interface CollectionReport {
   matchMethod?: string;
   sgOrFaNo?: string;
   processedAt?: string;
-  // Nouveaux champs pour la traçabilité Excel
   excelSourceRow?: number;
   excelFilename?: string;
   excelProcessedAt?: string;
@@ -105,7 +104,6 @@ export interface ProcessingResults {
   sourceFile?: string;
 }
 
-// Types manquants ajoutés
 export interface Alert {
   type: 'CRITICAL' | 'WARNING' | 'INFO';
   title: string;
@@ -123,7 +121,6 @@ export interface ExtractionResult {
   errors?: string[];
 }
 
-// ⭐ NOUVELLE INTERFACE CORRIGÉE POUR DUPLICATE REPORT
 export interface DuplicateReport {
   totalCollections: number;
   totalDuplicates: number;

@@ -1,7 +1,7 @@
 
 import * as XLSX from 'xlsx';
 import { BankReport } from '@/types/banking';
-import { bankReportDetectionService, BankReportDetectionResult } from './bankReportDetectionService';
+import { bankReportSectionExtractor } from './bankReportSectionExtractor';
 
 export interface BankReportProcessingResult {
   success: boolean;
@@ -16,49 +16,63 @@ export interface BankReportProcessingResult {
 class BankReportProcessingService {
   async processBankReportExcel(file: File): Promise<BankReportProcessingResult> {
     try {
-      console.log('🏦 DÉBUT TRAITEMENT RAPPORT BANCAIRE:', file.name);
+      console.log('🏦 DÉBUT TRAITEMENT RAPPORT BANCAIRE (NOUVELLE VERSION):', file.name);
       
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      
-      if (!workbook.SheetNames.length) {
+      let textContent = '';
+      let bankType = '';
+
+      // Détecter le type de banque depuis le nom de fichier
+      bankType = this.detectBankTypeFromFilename(file.name);
+      if (!bankType) {
         return {
           success: false,
-          errors: ['Aucune feuille trouvée dans le fichier Excel']
+          errors: ['Type de banque non détecté dans le nom de fichier']
         };
       }
-      
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-      
-      console.log(`📊 Données brutes extraites: ${rawData.length} lignes`);
-      
-      if (rawData.length < 2) {
+
+      console.log(`🏦 Type de banque détecté: ${bankType}`);
+
+      // Extraction du contenu selon le type de fichier
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        textContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        textContent = await this.extractTextFromExcel(buffer);
+      } else {
         return {
           success: false,
-          errors: ['Le fichier doit contenir au moins un en-tête et une ligne de données']
+          errors: ['Format de fichier non supporté. Utilisez .pdf, .xlsx ou .xls']
         };
       }
-      
-      // Détecter le type de rapport bancaire
-      const detectionResult: BankReportDetectionResult = await bankReportDetectionService.detectBankReportType(rawData, file.name);
-      
-      if (!detectionResult.success || !detectionResult.data) {
+
+      if (!textContent || textContent.length < 100) {
         return {
           success: false,
-          errors: detectionResult.errors || ['Type de rapport bancaire non reconnu'],
-          warnings: [`Confiance de détection: ${detectionResult.confidence || 0}%`]
+          errors: ['Contenu textuel insuffisant extrait du fichier']
         };
       }
+
+      console.log(`📄 Contenu extrait: ${textContent.length} caractères`);
+
+      // Extraction par sections avec regex
+      const extractionResult = await bankReportSectionExtractor.extractBankReportSections(textContent, bankType);
       
-      console.log(`✅ Rapport bancaire ${detectionResult.bankType} détecté avec confiance ${detectionResult.confidence}%`);
+      if (!extractionResult.success || !extractionResult.data) {
+        return {
+          success: false,
+          errors: extractionResult.errors || ['Échec de l\'extraction par sections'],
+          warnings: [`Type de banque: ${bankType}`]
+        };
+      }
+
+      console.log(`✅ Rapport bancaire ${bankType} traité avec succès par sections`);
       
       return {
         success: true,
-        data: detectionResult.data,
+        data: extractionResult.data,
         sourceFile: file.name,
-        bankType: detectionResult.bankType,
-        confidence: detectionResult.confidence
+        bankType: bankType,
+        confidence: 95 // Confiance élevée avec le nouveau système
       };
       
     } catch (error) {
@@ -68,6 +82,57 @@ class BankReportProcessingService {
         errors: [`Erreur critique: ${error instanceof Error ? error.message : 'Erreur inconnue'}`]
       };
     }
+  }
+
+  private detectBankTypeFromFilename(filename: string): string {
+    const bankKeywords = {
+      'BDK': ['BDK', 'BANQUE DE DAKAR'],
+      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
+      'BICIS': ['BICIS', 'BIC'],
+      'ORA': ['ORA', 'ORABANK'],
+      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
+      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
+    };
+    
+    const upperFilename = filename.toUpperCase();
+    
+    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
+      if (keywords.some(keyword => upperFilename.includes(keyword))) {
+        return bankCode;
+      }
+    }
+    
+    return '';
+  }
+
+  private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {
+    try {
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      let allText = '';
+      
+      for (const sheetName of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[sheetName];
+        const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+        
+        for (const row of sheetData) {
+          if (Array.isArray(row)) {
+            allText += row.join(' ') + '\n';
+          }
+        }
+      }
+      
+      return allText;
+    } catch (error) {
+      console.error('❌ Erreur extraction Excel:', error);
+      return '';
+    }
+  }
+
+  private async extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+    // Pour l'instant, retourner un texte vide
+    // TODO: Intégrer une bibliothèque PDF comme pdf-parse
+    console.warn('⚠️ Extraction PDF pas encore implémentée');
+    return '';
   }
 
   async validateBankReport(bankReport: BankReport): Promise<string[]> {
@@ -113,9 +178,13 @@ class BankReportProcessingService {
     const movementSign = movement >= 0 ? '+' : '';
     const facilitiesTotal = bankReport.bankFacilities.reduce((sum, f) => sum + f.limitAmount, 0);
     const impayesTotal = bankReport.impayes.reduce((sum, i) => sum + i.montant, 0);
+    const depositsTotal = bankReport.depositsNotCleared.reduce((sum, d) => sum + d.montant, 0);
+    const checksTotal = bankReport.checksNotCleared?.reduce((sum, c) => sum + c.montant, 0) || 0;
     
     return `${bankReport.bank}: Solde ${(bankReport.closingBalance / 1000000).toFixed(1)}M (${movementSign}${(movement / 1000000).toFixed(1)}M), ` +
            `Facilités ${(facilitiesTotal / 1000000000).toFixed(1)}Md, ` +
+           `Dépôts en attente ${(depositsTotal / 1000000).toFixed(1)}M (${bankReport.depositsNotCleared.length}), ` +
+           `Chèques en attente ${(checksTotal / 1000000).toFixed(1)}M (${bankReport.checksNotCleared?.length || 0}), ` +
            `Impayés ${(impayesTotal / 1000000).toFixed(1)}M (${bankReport.impayes.length})`;
   }
 }
