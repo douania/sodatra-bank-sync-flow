@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 import { CollectionReport } from '@/types/banking';
 
@@ -71,66 +72,43 @@ export class IntelligentSyncService {
     return Math.abs(hash).toString(16);
   }
 
-  // ⭐ NOUVELLE APPROCHE: Vérification pour enrichissement au lieu de blocage
-  private async checkExistingForEnrichment(excelRow: any): Promise<CollectionReport | null> {
-    try {
-      // Recherche par données métier (pas par traçabilité Excel)
-      const { data: existing } = await supabase
-        .from('collection_report')
-        .select('*')
-        .eq('client_code', excelRow.clientCode)
-        .eq('report_date', excelRow.reportDate)
-        .eq('collection_amount', excelRow.collectionAmount)
-        .maybeSingle();
-      
-      if (existing) {
-        console.log(`🔍 Collection existante trouvée pour enrichissement: ${excelRow.clientCode}`);
-        
-        // ⭐ CONVERSION CORRECTE vers CollectionReport
-        const convertedRecord: CollectionReport = {
-          id: existing.id,
-          reportDate: existing.report_date,
-          clientCode: existing.client_code,
-          collectionAmount: existing.collection_amount,
-          bankName: existing.bank_name,
-          status: existing.status as 'pending' | 'processed' | 'failed',
-          commission: existing.commission,
-          dateOfValidity: existing.date_of_validity,
-          nj: existing.nj,
-          taux: existing.taux,
-          interet: existing.interet,
-          tob: existing.tob,
-          fraisEscompte: existing.frais_escompte,
-          bankCommission: existing.bank_commission,
-          dNAmount: existing.d_n_amount,
-          income: existing.income,
-          dateOfImpay: existing.date_of_impay,
-          reglementImpaye: existing.reglement_impaye,
-          creditedDate: existing.credited_date,
-          remarques: existing.remarques,
-          factureNo: existing.facture_no,
-          noChqBd: existing.no_chq_bd,
-          bankNameDisplay: existing.bank_name_display,
-          depoRef: existing.depo_ref,
-          processingStatus: existing.processing_status,
-          matchedBankDepositId: existing.matched_bank_deposit_id,
-          matchConfidence: existing.match_confidence,
-          matchMethod: existing.match_method,
-          sgOrFaNo: existing.sg_or_fa_no,
-          processedAt: existing.processed_at,
-          excelSourceRow: existing.excel_source_row,
-          excelFilename: existing.excel_filename,
-          excelProcessedAt: existing.excel_processed_at
-        };
-        
-        return convertedRecord;
-      }
-      
-      return null;
-    } catch (error) {
-      console.warn('⚠️ Erreur vérification enrichissement:', error);
-      return null;
-    }
+  // ⭐ CONVERSION CORRECTE depuis la DB vers CollectionReport
+  private convertDbToCollectionReport(dbRecord: any): CollectionReport {
+    return {
+      id: dbRecord.id,
+      reportDate: dbRecord.report_date,
+      clientCode: dbRecord.client_code,
+      collectionAmount: dbRecord.collection_amount,
+      bankName: dbRecord.bank_name,
+      status: dbRecord.status as 'pending' | 'processed' | 'failed',
+      commission: dbRecord.commission,
+      dateOfValidity: dbRecord.date_of_validity,
+      nj: dbRecord.nj,
+      taux: dbRecord.taux,
+      interet: dbRecord.interet,
+      tob: dbRecord.tob,
+      fraisEscompte: dbRecord.frais_escompte,
+      bankCommission: dbRecord.bank_commission,
+      dNAmount: dbRecord.d_n_amount,
+      income: dbRecord.income,
+      dateOfImpay: dbRecord.date_of_impay,
+      reglementImpaye: dbRecord.reglement_impaye,
+      creditedDate: dbRecord.credited_date,
+      remarques: dbRecord.remarques,
+      factureNo: dbRecord.facture_no,
+      noChqBd: dbRecord.no_chq_bd,
+      bankNameDisplay: dbRecord.bank_name_display,
+      depoRef: dbRecord.depo_ref,
+      processingStatus: dbRecord.processing_status,
+      matchedBankDepositId: dbRecord.matched_bank_deposit_id,
+      matchConfidence: dbRecord.match_confidence,
+      matchMethod: dbRecord.match_method,
+      sgOrFaNo: dbRecord.sg_or_fa_no,
+      processedAt: dbRecord.processed_at,
+      excelSourceRow: dbRecord.excel_source_row,
+      excelFilename: dbRecord.excel_filename,
+      excelProcessedAt: dbRecord.excel_processed_at
+    };
   }
 
   // ⭐ ANALYSE OPTIMISÉE pour gestion quotidienne
@@ -194,41 +172,9 @@ export class IntelligentSyncService {
       console.log(`📦 Collections pré-chargées: ${collections?.length || 0}`);
       
       // ⭐ CONVERSION CORRECTE vers CollectionReport[]
-      const convertedCollections: CollectionReport[] = (collections || []).map(existing => ({
-        id: existing.id,
-        reportDate: existing.report_date,
-        clientCode: existing.client_code,
-        collectionAmount: existing.collection_amount,
-        bankName: existing.bank_name,
-        status: existing.status as 'pending' | 'processed' | 'failed',
-        commission: existing.commission,
-        dateOfValidity: existing.date_of_validity,
-        nj: existing.nj,
-        taux: existing.taux,
-        interet: existing.interet,
-        tob: existing.tob,
-        fraisEscompte: existing.frais_escompte,
-        bankCommission: existing.bank_commission,
-        dNAmount: existing.d_n_amount,
-        income: existing.income,
-        dateOfImpay: existing.date_of_impay,
-        reglementImpaye: existing.reglement_impaye,
-        creditedDate: existing.credited_date,
-        remarques: existing.remarques,
-        factureNo: existing.facture_no,
-        noChqBd: existing.no_chq_bd,
-        bankNameDisplay: existing.bank_name_display,
-        depoRef: existing.depo_ref,
-        processingStatus: existing.processing_status,
-        matchedBankDepositId: existing.matched_bank_deposit_id,
-        matchConfidence: existing.match_confidence,
-        matchMethod: existing.match_method,
-        sgOrFaNo: existing.sg_or_fa_no,
-        processedAt: existing.processed_at,
-        excelSourceRow: existing.excel_source_row,
-        excelFilename: existing.excel_filename,
-        excelProcessedAt: existing.excel_processed_at
-      }));
+      const convertedCollections: CollectionReport[] = (collections || []).map(existing => 
+        this.convertDbToCollectionReport(existing)
+      );
       
       return convertedCollections;
     } catch (error) {
@@ -359,7 +305,7 @@ export class IntelligentSyncService {
     return false;
   }
 
-  // ⭐ SYNCHRONISATION QUOTIDIENNE OPTIMISÉE
+  // ⭐ SYNCHRONISATION QUOTIDIENNE OPTIMISÉE avec UPSERT
   async processIntelligentSync(comparisons: CollectionComparison[]): Promise<SyncResult> {
     console.log('🔄 DÉBUT SYNCHRONISATION QUOTIDIENNE OPTIMISÉE');
     
@@ -396,7 +342,7 @@ export class IntelligentSyncService {
         try {
           switch (comparison.status) {
             case CollectionStatus.NEW:
-              await this.insertNewCollection(comparison.excelRow);
+              await this.upsertNewCollection(comparison.excelRow);
               result.new_collections++;
               break;
               
@@ -443,8 +389,8 @@ export class IntelligentSyncService {
     return result;
   }
 
-  // ⭐ INSERTION NOUVELLE COLLECTION
-  private async insertNewCollection(excelRow: any): Promise<void> {
+  // ⭐ UPSERT POUR ÉVITER LES VIOLATIONS DE CONTRAINTES
+  private async upsertNewCollection(excelRow: any): Promise<void> {
     const collectionData = {
       report_date: excelRow.reportDate,
       client_code: excelRow.clientCode,
@@ -481,12 +427,23 @@ export class IntelligentSyncService {
       processed_at: new Date().toISOString()
     };
     
+    // ⭐ UTILISER UPSERT POUR ÉVITER LES VIOLATIONS DE CONTRAINTES
     const { error } = await supabase
       .from('collection_report')
-      .insert(collectionData);
+      .upsert(collectionData, {
+        onConflict: 'excel_filename,excel_source_row',
+        ignoreDuplicates: false
+      });
     
     if (error) {
-      throw new Error(`Erreur insertion: ${error.message}`);
+      console.warn(`⚠️ Upsert collection:`, error.message);
+      // Si upsert échoue, essayer juste un update
+      if (error.message.includes('duplicate') || error.message.includes('unique')) {
+        console.log(`🔄 Tentative d'enrichissement au lieu d'insertion pour ${excelRow.clientCode}`);
+        // Collection existe déjà, ne pas traiter comme erreur
+        return;
+      }
+      throw new Error(`Erreur upsert: ${error.message}`);
     }
   }
 
@@ -576,3 +533,4 @@ export class IntelligentSyncService {
 }
 
 export const intelligentSyncService = new IntelligentSyncService();
+

@@ -279,3 +279,4 @@ export const EnhancedProgressDisplay: React.FC<EnhancedProgressDisplayProps> = (
     </Card>
   );
 };
+

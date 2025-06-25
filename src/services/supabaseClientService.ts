@@ -112,12 +112,12 @@ export class SupabaseRetryService {
   }
 
   static async selectWithRetry<T>(
-    query: any,
+    queryBuilder: any,
     operationName?: string
   ): Promise<T> {
     return this.executeWithRetry(
       async () => {
-        const { data, error } = await query;
+        const { data, error } = await queryBuilder;
         if (error) throw error;
         return data as T;
       },
@@ -202,3 +202,4 @@ export class HeartbeatService {
     }
   }
 }
+
