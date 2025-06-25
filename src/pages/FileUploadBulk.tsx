@@ -29,7 +29,7 @@ const FileUploadBulk = () => {
   const detectFileType = useCallback((file: File): { type: string; confidence: 'high' | 'medium' | 'low'; description: string; icon: React.ComponentType<any> } => {
     const filename = file.name.toUpperCase();
     const extension = file.name.toLowerCase().split('.').pop();
-
+    
     // Détection du Collection Report
     if (filename.includes('COLLECTION') && filename.includes('REPORT') && (extension === 'xlsx' || extension === 'xls')) {
       return {
@@ -43,11 +43,11 @@ const FileUploadBulk = () => {
     // Détection des rapports d'analyse bancaires
     const bankAnalysisPatterns = [
       { keywords: ['BDK'], type: 'bdk_analysis', bank: 'BDK' },
-      { keywords: ['ATB', 'ATLANTIQUE'], type: 'atb_analysis', bank: 'ATB' },
-      { keywords: ['BICIS', 'BIC'], type: 'bicis_analysis', bank: 'BICIS' },
-      { keywords: ['ORA', 'ORABANK'], type: 'ora_analysis', bank: 'ORA' },
-      { keywords: ['SGS', 'SOCIETE GENERALE', 'SGBS'], type: 'sgbs_analysis', bank: 'SGBS' },
-      { keywords: ['BIS', 'BANQUE ISLAMIQUE'], type: 'bis_analysis', bank: 'BIS' }
+      { keywords: ['ATB', 'ATLANTIQUE'], type: 'atb_analysis', bank: 'ATB' }, 
+      { keywords: ['BICIS', 'BIC'], type: 'bicis_analysis', bank: 'BICIS' }, 
+      { keywords: ['ORA', 'ORABANK'], type: 'ora_analysis', bank: 'ORA' }, 
+      { keywords: ['SGS', 'SOCIETE GENERALE', 'SGBS'], type: 'sgbs_analysis', bank: 'SGBS' }, 
+      { keywords: ['BIS', 'BANQUE ISLAMIQUE'], type: 'bis_analysis', bank: 'BIS' } 
     ];
 
     for (const pattern of bankAnalysisPatterns) {
@@ -57,14 +57,14 @@ const FileUploadBulk = () => {
           return {
             type: `${pattern.type.replace('_analysis', '_statement')}`,
             confidence: 'high',
-            description: `${pattern.bank} relevé`,
+            description: `${pattern.bank} Relevé Bancaire`,
             icon: FileText
           };
         } else {
           return {
             type: pattern.type,
             confidence: 'high',
-            description: `${pattern.bank} rapport`,
+            description: `${pattern.bank} Rapport Analytique`,
             icon: Building2
           };
         }
@@ -277,12 +277,12 @@ const FileUploadBulk = () => {
                       <div className="flex-1">
                         <p className="font-medium text-gray-900">{detectedFile.file.name}</p>
                         <p className="text-sm text-gray-500">{detectedFile.description}</p>
-                        <p className="text-xs text-gray-400">
+                        <p className="text-xs text-gray-400 mt-1">
                           Taille: {(detectedFile.file.size / 1024 / 1024).toFixed(2)} MB
                         </p>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <Badge className={getConfidenceColor(detectedFile.confidence)}>
+                        <Badge className={`${getConfidenceColor(detectedFile.confidence)} px-3 py-1`}>
                           <ConfidenceIcon className="h-3 w-3 mr-1" />
                           {detectedFile.confidence === 'high' ? 'Sûr' : 
                            detectedFile.confidence === 'medium' ? 'Probable' : 'Incertain'}

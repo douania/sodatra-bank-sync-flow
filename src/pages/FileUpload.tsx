@@ -149,8 +149,7 @@ const FileUpload = () => {
     if (type.includes('Collection')) return <FileSpreadsheet className="h-5 w-5 text-blue-500" />;
     if (type.includes('Fund')) return <FileText className="h-5 w-5 text-green-500" />;
     if (type.includes('Client')) return <FileText className="h-5 w-5 text-purple-500" />;
-    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
-        type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
+    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
       return <Building2 className="h-5 w-5 text-orange-500" />;
     }
     return <FileText className="h-5 w-5 text-gray-500" />;
@@ -160,9 +159,15 @@ const FileUpload = () => {
     if (type.includes('Collection')) return 'bg-blue-100 text-blue-800';
     if (type.includes('Fund')) return 'bg-green-100 text-green-800';
     if (type.includes('Client')) return 'bg-purple-100 text-purple-800';
-    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
+    
+    // Différencier les relevés des rapports
+    if (type.includes('statement')) {
+      return 'bg-teal-100 text-teal-800';
+    }
+    
+    if (type.includes('analysis') || type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
         type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
-      return 'bg-orange-100 text-orange-800';
+      return 'bg-amber-100 text-amber-800';
     }
     return 'bg-gray-100 text-gray-800';
   };
@@ -238,15 +243,20 @@ const FileUpload = () => {
                 <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
                   <div className="flex items-center space-x-3">
                     {getFileTypeIcon(fileTypes[file.name] || 'Autre')}
-                    <div>
+                        <div className="font-medium truncate max-w-md">{file.name}</div>
                       <div className="font-medium">{file.name}</div>
                       <div className="text-sm text-gray-500">
                         {(file.size / 1024 / 1024).toFixed(2)} MB
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <Badge className={getFileTypeColor(fileTypes[file.name] || 'Autre')}>
+                      <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
+                        {fileTypes[file.name]?.includes('statement') 
+                          ? fileTypes[file.name].split('_')[0].toUpperCase() + ' Relevé' 
+                          : fileTypes[file.name]?.includes('analysis')
+                            ? fileTypes[file.name].split('_')[0].toUpperCase() + ' Rapport'
+                            : fileTypes[file.name] || 'Autre Document'
+                        }
                       {fileTypes[file.name] || 'Autre Document'}
                     </Badge>
                     <Button 

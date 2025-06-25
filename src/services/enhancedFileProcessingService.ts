@@ -49,11 +49,11 @@ export class EnhancedFileProcessingService {
     // Détection des banques
     const bankPatterns = [
       { keywords: ['BDK', 'BANQUE DE DAKAR'], code: 'BDK' },
-      { keywords: ['ATB', 'ATLANTIQUE', 'ARAB TUNISIAN'], code: 'ATB' },
-      { keywords: ['BICIS', 'BIC'], code: 'BICIS' },
-      { keywords: ['ORA', 'ORABANK'], code: 'ORA' },
-      { keywords: ['SGS', 'SOCIETE GENERALE', 'SGBS'], code: 'SGS' },
-      { keywords: ['BIS', 'BANQUE ISLAMIQUE'], code: 'BIS' }
+      { keywords: ['ATB', 'ATLANTIQUE', 'ARAB TUNISIAN'], code: 'ATB' }, 
+      { keywords: ['BICIS', 'BIC'], code: 'BICIS' }, 
+      { keywords: ['ORA', 'ORABANK'], code: 'ORA' }, 
+      { keywords: ['SGS', 'SOCIETE GENERALE', 'SGBS'], code: 'SGS' }, 
+      { keywords: ['BIS', 'BANQUE ISLAMIQUE'], code: 'BIS' } 
     ];
 
     for (const pattern of bankPatterns) {
@@ -64,14 +64,14 @@ export class EnhancedFileProcessingService {
             file,
             detectedType: 'bankStatement',
             confidence: 'high',
-            bankType: pattern.code
+            bankType: `${pattern.code} Relevé`
           };
         } else {
           return {
             file,
             detectedType: 'bankAnalysis',
             confidence: 'high',
-            bankType: pattern.code
+            bankType: `${pattern.code} Rapport`
           };
         }
       }
