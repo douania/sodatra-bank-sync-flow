@@ -1,6 +1,3 @@
-
-Here's the fixed script with added closing brackets:
-
 import React, { useState, useCallback } from 'react';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
