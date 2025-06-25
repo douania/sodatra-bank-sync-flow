@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CheckCircle, AlertTriangle, Clock, FileX, RefreshCw } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Clock, FileX, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { databaseService } from '@/services/databaseService';
 import { dashboardMetricsService, DashboardMetrics } from '@/services/dashboardMetricsService';
 import { crossBankAnalysisService } from '@/services/crossBankAnalysisService';
@@ -19,10 +20,17 @@ const Dashboard = () => {
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showZeroPositions, setShowZeroPositions] = useState(() => {
+    return localStorage.getItem('dashboard-show-zero-positions') === 'true';
+  });
 
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('dashboard-show-zero-positions', showZeroPositions.toString());
+  }, [showZeroPositions]);
 
   const loadDashboardData = async () => {
     try {
@@ -45,31 +53,25 @@ const Dashboard = () => {
       
       console.log(`📊 Données récupérées: ${reports.length} rapports bancaires, ${collections.length} collections, Fund Position: ${position ? 'Oui' : 'Non'}`);
       
-      // ⭐ DÉDOUBLONNER LES RAPPORTS BANCAIRES
-      const uniqueBankReports = reports.filter((report, index, self) => {
-        // Filtrer les rapports sans valeurs significatives
-        if (report.openingBalance === 0 && report.closingBalance === 0 && 
-            report.bankFacilities.length === 0 && report.impayes.length === 0) {
-          return false;
-        }
-        
+      // ⭐ AMÉLIORATION: Ne plus filtrer complètement les rapports à zéro
+      const processedBankReports = reports.filter((report, index, self) => {
         // Garder seulement le premier rapport par banque (le plus récent)
         return index === self.findIndex(r => r.bank === report.bank);
       });
       
-      console.log(`🔧 Rapports dédoublonnés: ${reports.length} → ${uniqueBankReports.length}`);
+      console.log(`🔧 Rapports dédoublonnés: ${reports.length} → ${processedBankReports.length}`);
       
-      setBankReports(uniqueBankReports);
+      setBankReports(processedBankReports);
       setCollectionReports(collections);
       setFundPosition(position);
       
-      // Calculer les métriques du dashboard
-      const metrics = dashboardMetricsService.calculateDashboardMetrics(uniqueBankReports, collections, position);
+      // Calculer les métriques du dashboard avec tous les rapports
+      const metrics = dashboardMetricsService.calculateDashboardMetrics(processedBankReports, collections, position);
       setDashboardMetrics(metrics);
       
-      if (uniqueBankReports.length > 0) {
+      if (processedBankReports.length > 0) {
         // Analyse consolidée pour les alertes
-        const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(uniqueBankReports);
+        const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(processedBankReports);
         const alerts = crossBankAnalysisService.generateCriticalAlerts(analysis);
         
         setConsolidatedAnalysis({
@@ -127,7 +129,35 @@ const Dashboard = () => {
     return Array.from(uniqueCollections.values()).slice(0, 5);
   };
 
+  // ⭐ NOUVELLE FONCTION: Filtrer les rapports bancaires selon les préférences utilisateur
+  const getFilteredBankReports = () => {
+    if (showZeroPositions) {
+      return bankReports;
+    }
+    
+    // Filtrer seulement les rapports avec activité significative
+    return bankReports.filter(report => {
+      return report.openingBalance !== 0 || 
+             report.closingBalance !== 0 || 
+             report.bankFacilities.length > 0 || 
+             report.impayes.length > 0;
+    });
+  };
+
+  // ⭐ NOUVELLE FONCTION: Déterminer le type de position bancaire
+  const getBankPositionType = (report: BankReport) => {
+    const hasActivity = report.openingBalance !== 0 || 
+                       report.closingBalance !== 0 || 
+                       report.bankFacilities.length > 0 || 
+                       report.impayes.length > 0;
+    
+    if (!hasActivity) return 'zero';
+    if (report.closingBalance === 0 && report.openingBalance === 0) return 'balanced';
+    return 'active';
+  };
+
   const recentCollections = getRecentCollections();
+  const filteredBankReports = getFilteredBankReports();
 
   if (loading) {
     return (
@@ -271,24 +301,79 @@ const Dashboard = () => {
         </Card>
       )}
 
-      {/* Statut Détaillé par Banque avec données réelles - AMÉLIORÉ */}
+      {/* ⭐ STATUT DÉTAILLÉ PAR BANQUE AMÉLIORÉ */}
       <Card>
         <CardHeader>
-          <CardTitle>🏦 Position Détaillée par Banque (Données Réelles - Dédoublonnées)</CardTitle>
+          <div className="flex justify-between items-center">
+            <CardTitle>🏦 Position Détaillée par Banque (Données Réelles)</CardTitle>
+            <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="show-zero-positions"
+                  checked={showZeroPositions}
+                  onCheckedChange={setShowZeroPositions}
+                />
+                <label 
+                  htmlFor="show-zero-positions" 
+                  className="text-sm text-gray-600 cursor-pointer flex items-center gap-1"
+                >
+                  {showZeroPositions ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                  Afficher positions à zéro
+                </label>
+              </div>
+              <div className="text-xs text-gray-500">
+                {filteredBankReports.length} / {bankReports.length} banques affichées
+              </div>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {bankReports.length === 0 ? (
+            {filteredBankReports.length === 0 ? (
               <div className="text-center text-gray-500 py-8">
-                Aucune position bancaire significative trouvée
+                <div className="mb-2">
+                  {bankReports.length === 0 
+                    ? "Aucune donnée bancaire trouvée" 
+                    : "Toutes les positions sont à zéro"
+                  }
+                </div>
+                {bankReports.length > 0 && (
+                  <div className="text-sm">
+                    Activez l'option "Afficher positions à zéro" pour voir toutes les banques
+                  </div>
+                )}
               </div>
             ) : (
-              bankReports.map((report, index) => {
+              filteredBankReports.map((report, index) => {
                 const variation = report.closingBalance - report.openingBalance;
                 const variationPercent = report.openingBalance > 0 ? (variation / report.openingBalance) * 100 : 0;
                 const hasImpayes = report.impayes.length > 0;
                 const hasCriticalMovement = Math.abs(variation) > 50000000; // >50M
-                const status = hasImpayes || hasCriticalMovement ? 'error' : Math.abs(variationPercent) > 10 ? 'warning' : 'success';
+                const positionType = getBankPositionType(report);
+                
+                // ⭐ LOGIQUE DE STATUT AMÉLIORÉE
+                let status: 'success' | 'warning' | 'error' = 'success';
+                let statusLabel = '';
+                
+                if (hasImpayes) {
+                  status = 'error';
+                  statusLabel = 'Impayés détectés';
+                } else if (hasCriticalMovement) {
+                  status = 'warning';
+                  statusLabel = 'Mouvement important';
+                } else if (positionType === 'zero') {
+                  status = 'success';
+                  statusLabel = 'Position nulle';
+                } else if (positionType === 'balanced') {
+                  status = 'success';
+                  statusLabel = 'Position équilibrée';
+                } else if (Math.abs(variationPercent) > 10) {
+                  status = 'warning';
+                  statusLabel = 'Variation significative';
+                } else {
+                  status = 'success';
+                  statusLabel = 'Position normale';
+                }
                 
                 const totalFacilityLimit = report.bankFacilities.reduce((sum, f) => sum + f.limitAmount, 0);
                 const totalFacilityUsed = report.bankFacilities.reduce((sum, f) => sum + f.usedAmount, 0);
@@ -302,20 +387,38 @@ const Dashboard = () => {
                         status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
                       }`} />
                       <div>
-                        <span className="font-medium text-lg">{report.bank}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-lg">{report.bank}</span>
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            positionType === 'zero' ? 'bg-gray-100 text-gray-600' :
+                            positionType === 'balanced' ? 'bg-blue-100 text-blue-600' :
+                            'bg-green-100 text-green-600'
+                          }`}>
+                            {statusLabel}
+                          </span>
+                        </div>
                         <div className="text-xs text-gray-500">
-                          💳 Facilités: {facilityRate.toFixed(1)}% utilisé 
-                          ({(totalFacilityUsed / 1000000).toFixed(0)}M / {(totalFacilityLimit / 1000000).toFixed(0)}M)
+                          {totalFacilityLimit > 0 ? (
+                            <>💳 Facilités: {facilityRate.toFixed(1)}% utilisé 
+                            ({(totalFacilityUsed / 1000000).toFixed(0)}M / {(totalFacilityLimit / 1000000).toFixed(0)}M)</>
+                          ) : (
+                            <>💳 Aucune facilité configurée</>
+                          )}
                         </div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-medium">
+                      <div className={`text-lg font-medium ${
+                        positionType === 'zero' ? 'text-gray-500' :
+                        report.closingBalance >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
                         {(report.closingBalance / 1000000).toFixed(1)}M FCFA
                       </div>
-                      <div className="text-xs text-gray-500">
-                        {variation >= 0 ? '+' : ''}{(variation / 1000000).toFixed(1)}M ({variationPercent.toFixed(1)}%)
-                      </div>
+                      {positionType !== 'zero' && (
+                        <div className="text-xs text-gray-500">
+                          {variation >= 0 ? '+' : ''}{(variation / 1000000).toFixed(1)}M ({variationPercent.toFixed(1)}%)
+                        </div>
+                      )}
                       {hasImpayes && (
                         <div className="text-xs text-red-600">
                           ❌ {report.impayes.length} impayé(s) - {(report.impayes.reduce((sum, i) => sum + i.montant, 0) / 1000000).toFixed(1)}M
