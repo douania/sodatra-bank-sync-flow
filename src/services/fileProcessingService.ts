@@ -404,6 +404,38 @@ export class FileProcessingService {
     try {
       console.log(`🔍 Extraction données réelles pour ${bankName}...`);
       
+      // Extraire le contenu du fichier
+      const buffer = await file.arrayBuffer();
+      let textContent = '';
+      
+      // Extraction du contenu selon le type de fichier
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        textContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        textContent = await this.extractTextFromExcel(buffer);
+      } else {
+        console.warn(`⚠️ Format de fichier non supporté pour ${bankName}`);
+        return null;
+      }
+      
+      if (!textContent || textContent.length < 100) {
+        console.warn(`⚠️ Contenu textuel insuffisant extrait du fichier ${bankName}`);
+        return null;
+      }
+      
+      console.log(`📄 Contenu extrait: ${textContent.length} caractères`);
+      
+      // Utiliser le service d'extraction pour analyser le contenu
+      const { extractBankReport } = await import('./extractionService');
+      const extractionResult = extractBankReport(textContent, bankName);
+      
+      if (!extractionResult.success || !extractionResult.data) {
+        console.error(`❌ Échec de l'extraction pour ${bankName}:`, extractionResult.errors);
+        return null;
+      }
+      
+      return extractionResult.data;
+      
       // Pour l'instant, créer un rapport basique sans impayés
       // (en attendant l'intégration d'une vraie lib PDF comme pdf-parse)
       const basicReport: BankReport = {
@@ -428,43 +460,47 @@ export class FileProcessingService {
   // ⭐ CORRECTION FUND POSITION - Utiliser des valeurs réalistes et arrondies
   private async processFundPosition(file: File, currentCollections?: CollectionReport[]): Promise<FundPosition | null> {
     try {
-      console.log('💰 === CORRECTION FUND POSITION - Calcul avec valeurs réalistes ===');
+      console.log('💰 === TRAITEMENT DÉTAILLÉ FUND POSITION ===');
       
-      // ⭐ CALCULER sur les collections du traitement ACTUEL uniquement
-      let collectionsTotal = 0;
+      // Extraire le contenu du fichier
+      const buffer = await file.arrayBuffer();
+      let textContent = '';
       
-      if (currentCollections && currentCollections.length > 0) {
-        // Utiliser les collections du traitement actuel
-        collectionsTotal = currentCollections.reduce((sum, collection) => {
-          return sum + (collection.collectionAmount || 0);
-        }, 0);
-        
-        console.log(`📊 Collections du traitement actuel: ${currentCollections.length} collections`);
-        console.log(`💰 Total collections actuelles: ${collectionsTotal}`);
+      // Extraction du contenu selon le type de fichier
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        textContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        textContent = await this.extractTextFromExcel(buffer);
       } else {
-        // Si pas de collections actuelles, utiliser une valeur par défaut raisonnable
-        collectionsTotal = 1000000; // 1 million par défaut
-        console.log('💰 Aucune collection actuelle, utilisation valeur par défaut: 1,000,000');
+        console.warn('⚠️ Format de fichier non supporté pour Fund Position');
+        return null;
       }
       
-      // ⭐ ARRONDIR TOUS LES MONTANTS pour éviter l'erreur bigint
-      const totalFundAvailable = Math.round(collectionsTotal);
-      const collectionsNotDeposited = Math.round(collectionsTotal * 0.1); // 10% non déposées
-      const grandTotal = Math.round(collectionsTotal);
+      if (!textContent || textContent.length < 100) {
+        console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Fund Position');
+        return null;
+      }
       
-      const fundPosition: FundPosition = {
-        reportDate: '2025-06-25',
-        totalFundAvailable,
-        collectionsNotDeposited,
-        grandTotal
-      };
+      console.log(`📄 Contenu extrait: ${textContent.length} caractères`);
       
-      console.log('📊 === FUND POSITION CALCULÉE (ARRONDIES) ===');
-      console.log(`📅 Date rapport: ${fundPosition.reportDate}`);
+      // Utiliser le service d'extraction pour analyser le contenu
+      const { extractFundPosition } = await import('./extractionService');
+      const extractionResult = extractFundPosition(textContent);
+
+      if (!extractionResult.success || !extractionResult.data) {
+        console.error('❌ Échec de l\'extraction du Fund Position:', extractionResult.errors);
+        return null;
+      }
+      
+      const fundPosition = extractionResult.data;
+      
+      console.log('📊 === FUND POSITION EXTRAITE ===');
+      console.log(`📅 Date: ${fundPosition.reportDate}`);
       console.log(`💰 Total fonds disponibles: ${fundPosition.totalFundAvailable.toLocaleString()}`);
       console.log(`📤 Collections non déposées: ${fundPosition.collectionsNotDeposited.toLocaleString()}`);
       console.log(`🎯 Grand total: ${fundPosition.grandTotal.toLocaleString()}`);
-      console.log('✅ Tous les montants sont arrondis (entiers pour bigint)');
+      console.log(`📊 Détails par banque: ${fundPosition.details?.length || 0} banques`);
+      console.log(`📋 Collections en attente: ${fundPosition.holdCollections?.length || 0} items`);
       
       return fundPosition;
       
@@ -494,6 +530,38 @@ export class FileProcessingService {
     } catch (error) {
       console.error('❌ Erreur calcul Client Reconciliation:', error);
       return [];
+    }
+  }
+  
+  // Méthodes d'extraction de contenu à partir de fichiers
+  private async extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+    // Pour l'instant, retourner un texte vide
+    // TODO: Intégrer une bibliothèque PDF comme pdf-parse
+    console.warn('⚠️ Extraction PDF pas encore implémentée');
+    return '';
+  }
+  
+  private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      let allText = '';
+      
+      for (const sheetName of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[sheetName];
+        const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+        
+        for (const row of sheetData) {
+          if (Array.isArray(row)) {
+            allText += row.join(' ') + '\n';
+          }
+        }
+      }
+      
+      return allText;
+    } catch (error) {
+      console.error('❌ Erreur extraction Excel:', error);
+      return '';
     }
   }
 }

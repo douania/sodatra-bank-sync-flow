@@ -373,11 +373,15 @@ export class DatabaseService {
     const { SupabaseRetryService } = await import('./supabaseClientService');
     
     try {
-      console.log('💾 === SAUVEGARDE FUND POSITION OPTIMISÉE ===');
+      console.log('💾 === SAUVEGARDE FUND POSITION DÉTAILLÉE ===');
       console.log('📊 Valeurs reçues:', {
         totalFundAvailable: fundPosition.totalFundAvailable,
         collectionsNotDeposited: fundPosition.collectionsNotDeposited,
-        grandTotal: fundPosition.grandTotal
+        grandTotal: fundPosition.grandTotal,
+        depositForDay: fundPosition.depositForDay,
+        paymentForDay: fundPosition.paymentForDay,
+        details: fundPosition.details?.length || 0,
+        holdCollections: fundPosition.holdCollections?.length || 0
       });
       
       // ⭐ ARRONDIR AVANT INSERTION pour éviter l'erreur bigint
@@ -385,24 +389,96 @@ export class DatabaseService {
         report_date: fundPosition.reportDate,
         total_fund_available: Math.round(fundPosition.totalFundAvailable),
         collections_not_deposited: Math.round(fundPosition.collectionsNotDeposited),
-        grand_total: Math.round(fundPosition.grandTotal)
+        grand_total: Math.round(fundPosition.grandTotal),
+        deposit_for_day: fundPosition.depositForDay ? Math.round(fundPosition.depositForDay) : null,
+        payment_for_day: fundPosition.paymentForDay ? Math.round(fundPosition.paymentForDay) : null
       };
       
       console.log('🔢 Valeurs arrondies pour insertion:', roundedFundPosition);
       
-      await SupabaseRetryService.executeWithRetry(
+      const { data: fundPositionData, error: fundPositionError } = await SupabaseRetryService.executeWithRetry(
         async () => {
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from('fund_position')
-            .insert(roundedFundPosition);
+            .insert(roundedFundPosition)
+            .select('id')
+            .single();
 
           if (error) throw error;
+          return { data, error };
         },
         { maxRetries: 3 },
         'Sauvegarde Fund Position'
       );
+      
+      if (fundPositionError) {
+        throw fundPositionError;
+      }
+      
+      const fundPositionId = fundPositionData.id;
+      console.log(`✅ Fund Position principale sauvegardée avec ID: ${fundPositionId}`);
+      
+      // Sauvegarder les détails par banque si disponibles
+      if (fundPosition.details && fundPosition.details.length > 0) {
+        console.log(`💾 Sauvegarde de ${fundPosition.details.length} détails bancaires...`);
+        
+        const detailsToInsert = fundPosition.details.map(detail => ({
+          fund_position_id: fundPositionId,
+          bank_name: detail.bankName,
+          balance: Math.round(detail.balance),
+          fund_applied: Math.round(detail.fundApplied),
+          net_balance: Math.round(detail.netBalance),
+          non_validated_deposit: Math.round(detail.nonValidatedDeposit),
+          grand_balance: Math.round(detail.grandBalance)
+        }));
+        
+        await SupabaseRetryService.executeWithRetry(
+          async () => {
+            const { error } = await supabase
+              .from('fund_position_detail')
+              .insert(detailsToInsert);
+            
+            if (error) throw error;
+          },
+          { maxRetries: 3 },
+          'Sauvegarde détails Fund Position'
+        );
+        
+        console.log('✅ Détails bancaires sauvegardés');
+      }
+      
+      // Sauvegarder les collections en attente (HOLD) si disponibles
+      if (fundPosition.holdCollections && fundPosition.holdCollections.length > 0) {
+        console.log(`💾 Sauvegarde de ${fundPosition.holdCollections.length} collections en attente...`);
+        
+        const holdsToInsert = fundPosition.holdCollections.map(hold => ({
+          fund_position_id: fundPositionId,
+          hold_date: hold.holdDate,
+          cheque_number: hold.chequeNumber,
+          client_bank: hold.clientBank,
+          client_name: hold.clientName,
+          facture_reference: hold.factureReference,
+          amount: Math.round(hold.amount),
+          deposit_date: hold.depositDate,
+          days_remaining: hold.daysRemaining
+        }));
+        
+        await SupabaseRetryService.executeWithRetry(
+          async () => {
+            const { error } = await supabase
+              .from('fund_position_hold')
+              .insert(holdsToInsert);
+            
+            if (error) throw error;
+          },
+          { maxRetries: 3 },
+          'Sauvegarde collections HOLD'
+        );
+        
+        console.log('✅ Collections en attente sauvegardées');
+      }
 
-      console.log('✅ Fund Position sauvegardée avec succès (optimisée)');
+      console.log('✅ Fund Position complète sauvegardée avec succès');
       return { success: true };
     } catch (error) {
       console.error('❌ Erreur critique sauvegarde Fund Position:', error);

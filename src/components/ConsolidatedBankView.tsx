@@ -24,7 +24,7 @@ const ConsolidatedBankView: React.FC<ConsolidatedBankViewProps> = ({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
-            <Building2 className="h-5 w-5" />
+            <Users className="h-5 w-5 text-red-600" />
             <span>Vue Exécutive Multi-Banques</span>
           </CardTitle>
         </CardHeader>
@@ -33,6 +33,7 @@ const ConsolidatedBankView: React.FC<ConsolidatedBankViewProps> = ({
             <div className="text-center p-4 bg-blue-50 rounded-lg">
               <div className="text-2xl font-bold text-blue-600">
                 {bankReports.length}
+                <span className="text-sm font-normal ml-1">/ {consolidatedAnalysis.consolidatedPosition.bankCount || bankReports.length}</span>
               </div>
               <div className="text-sm text-gray-600">Banques Surveillées</div>
             </div>

@@ -33,13 +33,13 @@ const ConsolidatedMetrics: React.FC<ConsolidatedMetricsProps> = ({ metrics }) =>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Position Consolidée</CardTitle>
-          <DollarSign className="h-4 w-4 text-muted-foreground" />
+          <DollarSign className="h-4 w-4 text-blue-500" />
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">
             {(metrics.totalBalance / 1000000).toFixed(1)}M
           </div>
-          <div className="flex items-center text-xs text-muted-foreground">
+          <div className="flex items-center text-xs text-gray-600">
             {metrics.totalMovement >= 0 ? (
               <TrendingUp className="h-3 w-3 text-green-500 mr-1" />
             ) : (
@@ -57,7 +57,7 @@ const ConsolidatedMetrics: React.FC<ConsolidatedMetricsProps> = ({ metrics }) =>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Facilités Consolidées</CardTitle>
-          <Building2 className="h-4 w-4 text-muted-foreground" />
+          <Building2 className="h-4 w-4 text-green-500" />
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">
@@ -75,7 +75,7 @@ const ConsolidatedMetrics: React.FC<ConsolidatedMetricsProps> = ({ metrics }) =>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Impayés Cross-Bank</CardTitle>
-          <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+          <AlertTriangle className="h-4 w-4 text-red-500" />
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold text-red-600">
@@ -93,7 +93,7 @@ const ConsolidatedMetrics: React.FC<ConsolidatedMetricsProps> = ({ metrics }) =>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Alertes Critiques</CardTitle>
-          <Clock className="h-4 w-4 text-muted-foreground" />
+          <Clock className="h-4 w-4 text-orange-500" />
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold text-orange-600">

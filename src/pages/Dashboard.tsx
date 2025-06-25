@@ -221,7 +221,7 @@ const Dashboard = () => {
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900">Dashboard Consolidé Multi-Banques SODATRA</h1>
         <div className="flex items-center space-x-4">
-          <Button variant="outline" onClick={loadDashboardData}>
+          <Button variant="outline" onClick={loadDashboardData} className="bg-blue-50 hover:bg-blue-100 border-blue-200">
             <RefreshCw className="h-4 w-4 mr-2" />
             Actualiser
           </Button>
