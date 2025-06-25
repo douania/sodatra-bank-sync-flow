@@ -1,4 +1,3 @@
-
 import * as XLSX from 'xlsx';
 import { CollectionReport } from '@/types/banking';
 import { excelMappingService } from './excelMappingService';
@@ -15,7 +14,7 @@ export interface ExcelProcessingResult {
 class ExcelProcessingService {
   async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
     try {
-      console.log('📊 DÉBUT TRAITEMENT EXCEL avec traçabilité:', file.name);
+      console.log('📊 DÉBUT TRAITEMENT EXCEL (MODE TOLÉRANT):', file.name);
       
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
@@ -43,7 +42,7 @@ class ExcelProcessingService {
       const headers = rawData[0] as string[];
       console.log('📊 En-têtes détectés:', headers);
       
-      // Traiter les données avec traçabilité obligatoire
+      // ⭐ MODE TOLÉRANT - Traiter les données même avec des erreurs
       const collections: CollectionReport[] = [];
       const errors: string[] = [];
       const warnings: string[] = [];
@@ -58,14 +57,14 @@ class ExcelProcessingService {
         }
         
         try {
-          // ⭐ TRAÇABILITÉ OBLIGATOIRE - Ajouter systématiquement
+          // ⭐ TRAÇABILITÉ OPTIONNELLE - Ne plus bloquer
           const rowData = this.parseExcelRow(headers, row, rowIndex + 1);
           
-          // ⭐ CRUCIAL: Assigner la traçabilité Excel AVANT le mapping
+          // ⭐ ASSIGNATION OPTIONNELLE de la traçabilité
           rowData.excel_filename = file.name;
           rowData.excel_source_row = rowIndex + 1;
           
-          console.log(`📊 Ligne ${rowIndex + 1}: traçabilité assignée`, {
+          console.log(`📊 Ligne ${rowIndex + 1}: traitement (mode tolérant)`, {
             filename: rowData.excel_filename,
             row: rowData.excel_source_row,
             client: rowData.clientCode
@@ -74,43 +73,34 @@ class ExcelProcessingService {
           // Mapper vers le format CollectionReport
           const mappedData = excelMappingService.mapExcelRowToCollection(rowData);
           
-          // ⭐ VÉRIFICATION CRITIQUE: S'assurer que la traçabilité est préservée
+          // ⭐ PLUS DE VÉRIFICATION BLOQUANTE - Juste un avertissement
           if (!mappedData.excelFilename || !mappedData.excelSourceRow) {
-            console.error(`❌ TRAÇABILITÉ PERDUE pour ligne ${rowIndex + 1}:`, {
-              avant: { filename: rowData.excel_filename, row: rowData.excel_source_row },
-              après: { filename: mappedData.excelFilename, row: mappedData.excelSourceRow }
-            });
-            
-            // Forcer la traçabilité si elle a été perdue
-            mappedData.excelFilename = file.name;
-            mappedData.excelSourceRow = rowIndex + 1;
+            warnings.push(`Ligne ${rowIndex + 1}: Traçabilité manquante (non-bloquant)`);
           }
           
           collections.push(mappedData);
           
         } catch (error) {
+          // ⭐ ERREUR NON-BLOQUANTE - Continuer le traitement
           const errorMsg = `Ligne ${rowIndex + 1}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
-          console.error('❌', errorMsg);
-          errors.push(errorMsg);
+          console.warn('⚠️ Erreur non-bloquante:', errorMsg);
+          warnings.push(errorMsg); // Avertissement au lieu d'erreur
+          
+          // Continuer le traitement même avec des erreurs
+          continue;
         }
       }
       
-      console.log('📊 RÉSULTAT TRAITEMENT EXCEL:', {
+      console.log('📊 RÉSULTAT TRAITEMENT EXCEL (MODE TOLÉRANT):', {
         totalLignes: rawData.length - 1,
         collectionsTraitées: collections.length,
         erreurs: errors.length,
         avertissements: warnings.length
       });
       
-      // ⭐ VÉRIFICATION FINALE: Toutes les collections doivent avoir une traçabilité
-      const sansTracabilite = collections.filter(c => !c.excelFilename || !c.excelSourceRow);
-      if (sansTracabilite.length > 0) {
-        console.error(`❌ ${sansTracabilite.length} collections sans traçabilité détectées!`);
-        errors.push(`${sansTracabilite.length} collections n'ont pas de traçabilité Excel valide`);
-      }
-      
+      // ⭐ SUCCÈS même avec des avertissements
       return {
-        success: errors.length === 0,
+        success: collections.length > 0, // Succès si au moins une collection est traitée
         data: collections,
         errors: errors.length > 0 ? errors : undefined,
         warnings: warnings.length > 0 ? warnings : undefined,

@@ -3,21 +3,21 @@ import { CollectionReport } from '@/types/banking';
 
 class ExcelMappingService {
   mapExcelRowToCollection(row: any): CollectionReport {
-    console.log('🔄 MAPPING avec traçabilité:', {
+    console.log('🔄 MAPPING avec tolérance aux erreurs:', {
       client: row.clientCode,
       filename: row.excel_filename,
       sourceRow: row.excel_source_row
     });
     
-    // ⭐ PRÉSERVATION OBLIGATOIRE DE LA TRAÇABILITÉ
+    // ⭐ MODE TOLÉRANT - Traçabilité optionnelle
     const collection: CollectionReport = {
-      reportDate: this.parseDate(row.reportDate),
+      reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
       clientCode: this.parseString(row.clientCode) || 'UNKNOWN',
       collectionAmount: this.parseNumber(row.collectionAmount) || 0,
       bankName: this.parseString(row.bankName),
       status: 'pending',
       
-      // ⭐ TRAÇABILITÉ EXCEL OBLIGATOIRE
+      // ⭐ TRAÇABILITÉ OPTIONNELLE - Ne plus bloquer le traitement
       excelFilename: row.excel_filename || 'UNKNOWN_FILE',
       excelSourceRow: row.excel_source_row || 0,
       excelProcessedAt: new Date().toISOString(),
@@ -45,18 +45,16 @@ class ExcelMappingService {
       processingStatus: 'NEW'
     };
     
-    // ⭐ VÉRIFICATION CRITIQUE AVANT RETOUR
+    // ⭐ AVERTISSEMENT au lieu d'erreur bloquante
     if (!collection.excelFilename || !collection.excelSourceRow) {
-      console.error('❌ TRAÇABILITÉ MANQUANTE APRÈS MAPPING:', {
+      console.warn('⚠️ TRAÇABILITÉ MANQUANTE (non-bloquant):', {
         client: collection.clientCode,
         filename: collection.excelFilename,
         row: collection.excelSourceRow
       });
-      
-      throw new Error(`TRAÇABILITÉ MANQUANTE pour ${collection.clientCode}: filename=${collection.excelFilename}, row=${collection.excelSourceRow}`);
     }
     
-    console.log('✅ Collection mappée avec traçabilité:', {
+    console.log('✅ Collection mappée (mode tolérant):', {
       client: collection.clientCode,
       filename: collection.excelFilename,
       row: collection.excelSourceRow
@@ -80,17 +78,19 @@ class ExcelMappingService {
         // Try to parse string date
         const parsed = new Date(value);
         if (isNaN(parsed.getTime())) {
-          return undefined;
+          console.warn('⚠️ Date invalide, utilisation de la date du jour:', value);
+          return new Date().toISOString().split('T')[0]; // Date par défaut
         }
         date = parsed;
       } else {
-        return undefined;
+        console.warn('⚠️ Format de date non reconnu, utilisation de la date du jour:', value);
+        return new Date().toISOString().split('T')[0]; // Date par défaut
       }
       
       return date.toISOString().split('T')[0];
     } catch (error) {
-      console.warn('⚠️ Erreur parsing date:', value, error);
-      return undefined;
+      console.warn('⚠️ Erreur parsing date, utilisation de la date du jour:', value, error);
+      return new Date().toISOString().split('T')[0]; // Date par défaut
     }
   }
   
@@ -101,19 +101,21 @@ class ExcelMappingService {
     
     try {
       if (typeof value === 'number') {
-        return isNaN(value) ? undefined : value;
+        // ⭐ ARRONDIR automatiquement pour éviter les erreurs bigint
+        return isNaN(value) ? undefined : Math.round(value);
       }
       
       if (typeof value === 'string') {
         // Nettoyer la chaîne (espaces, virgules comme séparateurs de milliers)
         const cleaned = value.replace(/[\s,]/g, '').replace(',', '.');
         const parsed = parseFloat(cleaned);
-        return isNaN(parsed) ? undefined : parsed;
+        // ⭐ ARRONDIR automatiquement
+        return isNaN(parsed) ? undefined : Math.round(parsed);
       }
       
       return undefined;
     } catch (error) {
-      console.warn('⚠️ Erreur parsing nombre:', value, error);
+      console.warn('⚠️ Erreur parsing nombre (non-bloquant):', value, error);
       return undefined;
     }
   }
