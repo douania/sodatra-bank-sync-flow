@@ -2,9 +2,9 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { FileSpreadsheet, FileText, Upload, Building2, X, AlertTriangle, CheckCircle, FileUp } from 'lucide-react';
+import { Badge } from '@/components/ui/badge'; 
+import { Alert, AlertDescription } from '@/components/ui/alert'; 
+import { FileSpreadsheet, FileText, Upload, Building2, X, AlertTriangle, CheckCircle, FileUp, ArrowRight } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { fileProcessingService } from '@/services/fileProcessingService';
 import { progressService } from '@/services/progressService';
@@ -208,19 +208,21 @@ const FileUpload = () => {
       
       {/* Bouton de traitement */}
       {selectedFiles.length > 0 && (
-        <div className="flex justify-center my-8">
+        <div className="flex justify-center my-8 sticky bottom-4">
           <Button 
             onClick={handleSubmit} 
             disabled={processing || selectedFiles.length === 0}
             size="lg"
-            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium"
+            className="px-8 py-6 bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-lg"
           >
             {processing ? (
               <>
                 Traitement en cours...
               </>
             ) : (
-              `Traiter ${Object.keys(selectedFiles).length} fichier(s)`
+              <>
+                Traiter {selectedFiles.length} fichier(s) <ArrowRight className="ml-2 h-5 w-5" />
+              </>
             )}
           </Button>
         </div>
@@ -292,10 +294,6 @@ const FileUpload = () => {
             </div>
           </CardContent>
         </Card>
-      )}
-      
-      {processingResults && (
-        <ProcessingResultsDetailed results={processingResults} />
       )}
     </div>
   );
