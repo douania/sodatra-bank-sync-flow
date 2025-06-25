@@ -1,4 +1,3 @@
-
 import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
@@ -42,7 +41,7 @@ export class FileProcessingService {
     }, 5 * 60 * 1000); // 5 minutes
 
     try {
-      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Flexible');
+      console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Flexible avec Rapports Bancaires');
       console.log('📁 Fichiers reçus:', Object.keys(files));
       progressService.updateOverallProgress(0);
 
@@ -58,9 +57,17 @@ export class FileProcessingService {
       };
       const hasBankStatements = Object.values(bankStatementFiles).some(file => !!file);
 
+      // ⭐ NOUVEAU : Détecter les rapports d'analyse bancaires
+      const bankAnalysisFiles = Object.entries(files).filter(([key, file]) => 
+        file && (key.includes('analysis') || key.includes('rapport') || 
+                this.isBankAnalysisFile(file.name))
+      );
+      const hasBankAnalysisReports = bankAnalysisFiles.length > 0;
+
       console.log('🔍 Type de traitement détecté:');
       console.log(`  - Collection Report: ${hasCollectionReport ? '✅' : '❌'}`);
       console.log(`  - Relevés bancaires: ${hasBankStatements ? '✅' : '❌'}`);
+      console.log(`  - Rapports d'analyse bancaires: ${hasBankAnalysisReports ? '✅' : '❌'} (${bankAnalysisFiles.length} fichiers)`);
 
       // 1. ⭐ TRAITEMENT CONDITIONNEL DU COLLECTION REPORT
       if (hasCollectionReport) {
@@ -130,7 +137,33 @@ export class FileProcessingService {
         console.log('ℹ️ Aucun Collection Report fourni, traitement des autres documents uniquement');
       }
 
-      // 2. ⭐ TRAITEMENT CONDITIONNEL DES RELEVÉS BANCAIRES
+      // 2. ⭐ NOUVEAU : TRAITEMENT DES RAPPORTS D'ANALYSE BANCAIRES
+      if (hasBankAnalysisReports) {
+        progressService.startStep('bank_analysis', 'Rapports Bancaires', 'Traitement des rapports d\'analyse bancaires');
+        
+        console.log('🏦 === DÉBUT TRAITEMENT RAPPORTS BANCAIRES ===');
+        const bankAnalysisReports = await this.processBankAnalysisReports(bankAnalysisFiles);
+        
+        if (bankAnalysisReports.length > 0) {
+          results.data!.bankReports.push(...bankAnalysisReports);
+          
+          // Sauvegarde en base
+          for (const report of bankAnalysisReports) {
+            const saveResult = await databaseService.saveBankReport(report);
+            if (!saveResult.success) {
+              results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
+            }
+          }
+          
+          progressService.completeStep('bank_analysis', 'Rapports Bancaires', 'Rapports bancaires traités',
+            `${bankAnalysisReports.length} rapports d'analyse traités`);
+        } else {
+          progressService.errorStep('bank_analysis', 'Rapports Bancaires', 'Aucun rapport traité', 
+            'Aucun rapport d\'analyse bancaire n\'a pu être traité');
+        }
+      }
+
+      // 3. ⭐ TRAITEMENT CONDITIONNEL DES RELEVÉS BANCAIRES (existant)
       if (hasBankStatements) {
         progressService.startStep('bank_statements', 'Relevés Bancaires', 'Traitement des relevés bancaires');
         
@@ -152,7 +185,7 @@ export class FileProcessingService {
         console.log('ℹ️ Aucun relevé bancaire fourni');
       }
 
-      // 3. ⭐ TRAITEMENT CONDITIONNEL FUND POSITION
+      // 4. ⭐ TRAITEMENT CONDITIONNEL FUND POSITION
       if (files.fundsPosition) {
         progressService.startStep('fund_position', 'Fund Position', 'Calcul de la position des fonds');
         
@@ -169,7 +202,7 @@ export class FileProcessingService {
         progressService.completeStep('fund_position', 'Fund Position', 'Position calculée');
       }
 
-      // 4. ⭐ TRAITEMENT CONDITIONNEL CLIENT RECONCILIATION
+      // 5. ⭐ TRAITEMENT CONDITIONNEL CLIENT RECONCILIATION
       if (files.clientReconciliation) {
         progressService.startStep('client_reconciliation', 'Réconciliation Client', 'Calcul des réconciliations clients');
         
@@ -185,16 +218,19 @@ export class FileProcessingService {
       progressService.updateOverallProgress(100);
       results.success = results.errors?.length === 0;
       
-      console.log(`\n🎯 === RÉSUMÉ FINAL TRAITEMENT FLEXIBLE ===`);
+      console.log(`\n🎯 === RÉSUMÉ FINAL TRAITEMENT AVEC RAPPORTS BANCAIRES ===`);
       console.log(`✅ Succès: ${results.success}`);
       console.log(`📊 Collections: ${results.data!.collectionReports?.length || 0}`);
-      console.log(`🏦 Rapports bancaires: ${results.data!.bankReports.length}`);
+      console.log(`🏦 Rapports bancaires (total): ${results.data!.bankReports.length}`);
       console.log(`💰 Fund Position: ${results.data!.fundPosition ? '✅' : '❌'}`);
       console.log(`👥 Client Reconciliation: ${results.data!.clientReconciliation?.length || 0}`);
       console.log(`❌ Erreurs: ${results.errors?.length || 0}`);
       
       if (hasCollectionReport && results.data!.syncResult) {
         console.log(`🧠 Enrichissement intelligent réussi !`);
+      }
+      if (hasBankAnalysisReports) {
+        console.log(`🏦 Rapports d'analyse bancaires intégrés !`);
       }
 
       clearTimeout(processingTimeout);
@@ -208,6 +244,55 @@ export class FileProcessingService {
       clearTimeout(processingTimeout);
       return results;
     }
+  }
+
+  // ⭐ NOUVELLE MÉTHODE : Traitement des rapports d'analyse bancaires
+  private async processBankAnalysisReports(bankAnalysisFiles: [string, File][]): Promise<BankReport[]> {
+    const reports: BankReport[] = [];
+    const { bankReportProcessingService } = await import('./bankReportProcessingService');
+    
+    console.log(`🏦 Traitement de ${bankAnalysisFiles.length} rapports d'analyse bancaires...`);
+    
+    for (const [fileKey, file] of bankAnalysisFiles) {
+      console.log(`📄 Traitement du rapport: ${file.name}`);
+      
+      try {
+        const processingResult = await bankReportProcessingService.processBankReportExcel(file);
+        
+        if (processingResult.success && processingResult.data) {
+          console.log(`✅ Rapport ${processingResult.bankType} traité avec succès`);
+          console.log(`📊 ${bankReportProcessingService.getBankReportSummary(processingResult.data)}`);
+          
+          // Validation du rapport
+          const warnings = await bankReportProcessingService.validateBankReport(processingResult.data);
+          if (warnings.length > 0) {
+            console.warn(`⚠️ Avertissements pour ${processingResult.bankType}:`, warnings);
+          }
+          
+          reports.push(processingResult.data);
+        } else {
+          console.error(`❌ Échec traitement ${file.name}:`, processingResult.errors);
+        }
+      } catch (error) {
+        console.error(`❌ Erreur traitement ${file.name}:`, error);
+      }
+    }
+    
+    console.log(`📊 ${reports.length} rapports d'analyse bancaires traités au total`);
+    return reports;
+  }
+
+  // ⭐ NOUVELLE MÉTHODE : Détecter si un fichier est un rapport d'analyse bancaire
+  private isBankAnalysisFile(filename: string): boolean {
+    const bankKeywords = ['BDK', 'ATB', 'BICIS', 'ORA', 'SGBS', 'BIS', 'SGS'];
+    const reportKeywords = ['RAPPORT', 'ANALYSIS', 'POSITION', 'STATEMENT'];
+    
+    const upperFilename = filename.toUpperCase();
+    
+    const hasBankKeyword = bankKeywords.some(keyword => upperFilename.includes(keyword));
+    const hasReportKeyword = reportKeywords.some(keyword => upperFilename.includes(keyword));
+    
+    return hasBankKeyword && (hasReportKeyword || upperFilename.includes('EXCEL') || upperFilename.includes('XLS'));
   }
 
   // ⭐ SUPPRESSION de processCollectionReport() - remplacée par l'analyse intelligente
