@@ -54,7 +54,7 @@ export class FileProcessingService {
       // ⭐ DÉTECTION INTELLIGENTE DES TYPES DE FICHIERS
       progressService.startStep('file_detection', 'Détection des fichiers', 'Analyse des types de fichiers');
       
-      const categorizedFiles = await this.categorizeFiles(files);
+    const categorizedFiles = await this.categorizeFiles(files);
       
       progressService.completeStep('file_detection', 'Détection des fichiers', 'Types de fichiers identifiés', 
         `${files.length} fichiers analysés`);

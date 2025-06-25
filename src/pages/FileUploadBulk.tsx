@@ -57,14 +57,14 @@ const FileUploadBulk = () => {
           return {
             type: `${pattern.type.replace('_analysis', '_statement')}`,
             confidence: 'high',
-            description: `Relevé bancaire ${pattern.bank}`,
+            description: `${pattern.bank} relevé`,
             icon: FileText
           };
         } else {
           return {
             type: pattern.type,
             confidence: 'high',
-            description: `Rapport d'analyse bancaire ${pattern.bank}`,
+            description: `${pattern.bank} rapport`,
             icon: Building2
           };
         }

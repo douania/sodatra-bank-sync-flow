@@ -575,7 +575,7 @@ export class EnhancedFileProcessingService {
       'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
       'BICIS': ['BICIS', 'BIC'],
       'ORA': ['ORA', 'ORABANK'],
-      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
+      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG', 'SGS'],
       'BIS': ['BIS', 'BANQUE ISLAMIQUE']
     };
     
