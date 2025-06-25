@@ -3,6 +3,7 @@ import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
 import { intelligentSyncService } from './intelligentSyncService';
 import { qualityControlEngine } from './qualityControlEngine';
+import { SupabaseRetryService } from './supabaseClientService';
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 import { progressService } from './progressService';
@@ -95,7 +96,6 @@ export class FileProcessingService {
             `Traitement de ${collectionFile.name}`, 25 + (50 * categorizedFiles.collectionReports.indexOf(collectionFile) / categorizedFiles.collectionReports.length));
           
           // ⭐ EXTRACTION EXCEL AVEC RETRY
-          const { SupabaseRetryService } = await import('./supabaseClientService');
           const excelResult = await SupabaseRetryService.executeWithRetry(
             () => excelProcessingService.processCollectionReportExcel(collectionFile),
             { maxRetries: 3 },
