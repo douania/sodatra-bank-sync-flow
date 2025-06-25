@@ -1,5 +1,5 @@
 
-Here's the fixed script with all missing closing brackets and required whitespace:
+Here's the fixed script with added closing brackets:
 
 import React, { useState, useCallback } from 'react';
 import { useDropzone, FileRejection } from 'react-dropzone';
@@ -161,7 +161,13 @@ const FileUpload = () => {
     if (type.includes('Collection')) return 'bg-blue-100 text-blue-800';
     if (type.includes('Fund')) return 'bg-green-100 text-green-800';
     if (type.includes('Client')) return 'bg-purple-100 text-purple-800';
-    if (type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
+    
+    // Différencier les relevés des rapports
+    if (type.includes('statement')) {
+      return 'bg-teal-100 text-teal-800';
+    }
+    
+    if (type.includes('analysis') || type.includes('BDK') || type.includes('ATB') || type.includes('BICIS') || 
         type.includes('ORA') || type.includes('SGBS') || type.includes('BIS')) {
       return 'bg-amber-100 text-amber-800';
     }
@@ -241,20 +247,23 @@ const FileUpload = () => {
                     {getFileTypeIcon(fileTypes[file.name] || 'Autre')}
                     <div>
                       <div className="font-medium truncate max-w-md">{file.name}</div>
-                      <div className="flex items-center space-x-2">
-                        <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
-                          {fileTypes[file.name] || 'Autre Document'}
-                        </Badge>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => removeFile(file.name)}
-                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
+                      <div className="text-sm text-gray-500">
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
                       </div>
                     </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
+                      {fileTypes[file.name] || 'Autre Document'}
+                    </Badge>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => removeFile(file.name)}
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               ))}
