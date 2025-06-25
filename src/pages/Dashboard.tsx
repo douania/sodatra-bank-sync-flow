@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle, AlertTriangle, Clock, FileX, RefreshCw } from 'lucide-react';
@@ -87,6 +88,33 @@ const Dashboard = () => {
     }
   };
 
+  // Fonction pour formater et filtrer les collections récentes
+  const getRecentCollections = () => {
+    if (!collectionReports || collectionReports.length === 0) return [];
+    
+    // Trier par date et prendre les plus récentes
+    const sortedCollections = [...collectionReports]
+      .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())
+      .slice(0, 10); // Prendre plus pour pouvoir filtrer
+    
+    // Créer un Map pour éviter les doublons basés sur client + montant + date
+    const uniqueCollections = new Map();
+    
+    sortedCollections.forEach(collection => {
+      const key = `${collection.clientCode}-${collection.collectionAmount}-${collection.reportDate}`;
+      
+      // Si on n'a pas encore cette combinaison, ou si cette collection a plus d'infos
+      if (!uniqueCollections.has(key) || 
+          (!uniqueCollections.get(key).factureNo && collection.factureNo)) {
+        uniqueCollections.set(key, collection);
+      }
+    });
+    
+    return Array.from(uniqueCollections.values()).slice(0, 5);
+  };
+
+  const recentCollections = getRecentCollections();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -174,32 +202,56 @@ const Dashboard = () => {
       {/* Graphiques Consolidés */}
       <ConsolidatedCharts bankReports={bankReports} />
 
-      {/* Collections récentes */}
-      {collectionReports.length > 0 && (
+      {/* Collections récentes améliorées */}
+      {recentCollections.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>📋 Collections Récentes</CardTitle>
+            <CardTitle>📋 Collections Récentes (Uniques)</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {collectionReports.slice(0, 5).map((collection, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
-                  <div>
-                    <span className="font-medium">{collection.clientCode}</span>
-                    <div className="text-sm text-gray-600">
-                      {collection.bankName} • {collection.factureNo}
+              {recentCollections.map((collection, index) => {
+                // Obtenir le nom de banque réel
+                const validBankNames = ['BDK', 'BICIS', 'ATB', 'BIS', 'ORA', 'SGS', 'SGBS', 'CBAO', 'ECOBANK', 'UBA'];
+                let displayBankName = collection.bankNameDisplay || collection.bankName || 'N/A';
+                
+                // Si c'est un code numérique, chercher une vraie banque dans les données
+                if (/^\d+$/.test(displayBankName) && collection.bankName) {
+                  const foundBank = validBankNames.find(bank => 
+                    collection.bankName?.toUpperCase().includes(bank)
+                  );
+                  if (foundBank) displayBankName = foundBank;
+                }
+                
+                return (
+                  <div key={`${collection.id}-${index}`} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-blue-600">{collection.clientCode}</span>
+                        <span className="text-gray-400">•</span>
+                        <span className="text-sm text-gray-600">{displayBankName}</span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {collection.factureNo ? `Facture: ${collection.factureNo}` : 'Facture non spécifiée'}
+                        {collection.noChqBd && ` • Chèque/BD: ${collection.noChqBd}`}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-medium text-green-600">
+                        {(collection.collectionAmount / 1000000).toFixed(2)}M FCFA
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(collection.reportDate).toLocaleDateString('fr-FR')}
+                      </div>
+                      {collection.dateOfValidity && (
+                        <div className="text-xs text-blue-500">
+                          Validité: {new Date(collection.dateOfValidity).toLocaleDateString('fr-FR')}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-medium">
-                      {(collection.collectionAmount / 1000000).toFixed(1)}M FCFA
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {collection.reportDate}
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
