@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { CollectionReport } from '@/types/banking';
 
@@ -86,9 +85,48 @@ export class IntelligentSyncService {
       
       if (existing) {
         console.log(`🔍 Collection existante trouvée pour enrichissement: ${excelRow.clientCode}`);
+        
+        // ⭐ CONVERSION CORRECTE vers CollectionReport
+        const convertedRecord: CollectionReport = {
+          id: existing.id,
+          reportDate: existing.report_date,
+          clientCode: existing.client_code,
+          collectionAmount: existing.collection_amount,
+          bankName: existing.bank_name,
+          status: existing.status as 'pending' | 'processed' | 'failed',
+          commission: existing.commission,
+          dateOfValidity: existing.date_of_validity,
+          nj: existing.nj,
+          taux: existing.taux,
+          interet: existing.interet,
+          tob: existing.tob,
+          fraisEscompte: existing.frais_escompte,
+          bankCommission: existing.bank_commission,
+          dNAmount: existing.d_n_amount,
+          income: existing.income,
+          dateOfImpay: existing.date_of_impay,
+          reglementImpaye: existing.reglement_impaye,
+          creditedDate: existing.credited_date,
+          remarques: existing.remarques,
+          factureNo: existing.facture_no,
+          noChqBd: existing.no_chq_bd,
+          bankNameDisplay: existing.bank_name_display,
+          depoRef: existing.depo_ref,
+          processingStatus: existing.processing_status,
+          matchedBankDepositId: existing.matched_bank_deposit_id,
+          matchConfidence: existing.match_confidence,
+          matchMethod: existing.match_method,
+          sgOrFaNo: existing.sg_or_fa_no,
+          processedAt: existing.processed_at,
+          excelSourceRow: existing.excel_source_row,
+          excelFilename: existing.excel_filename,
+          excelProcessedAt: existing.excel_processed_at
+        };
+        
+        return convertedRecord;
       }
       
-      return existing;
+      return null;
     } catch (error) {
       console.warn('⚠️ Erreur vérification enrichissement:', error);
       return null;
@@ -145,7 +183,7 @@ export class IntelligentSyncService {
   }
 
   // ⭐ CHARGEMENT PAR LOT des collections existantes
-  private async batchLoadExistingCollections(clientCodes: string[], reportDates: string[]): Promise<any[]> {
+  private async batchLoadExistingCollections(clientCodes: string[], reportDates: string[]): Promise<CollectionReport[]> {
     try {
       const { data: collections } = await supabase
         .from('collection_report')
@@ -154,7 +192,45 @@ export class IntelligentSyncService {
         .in('report_date', reportDates.slice(0, 100));
       
       console.log(`📦 Collections pré-chargées: ${collections?.length || 0}`);
-      return collections || [];
+      
+      // ⭐ CONVERSION CORRECTE vers CollectionReport[]
+      const convertedCollections: CollectionReport[] = (collections || []).map(existing => ({
+        id: existing.id,
+        reportDate: existing.report_date,
+        clientCode: existing.client_code,
+        collectionAmount: existing.collection_amount,
+        bankName: existing.bank_name,
+        status: existing.status as 'pending' | 'processed' | 'failed',
+        commission: existing.commission,
+        dateOfValidity: existing.date_of_validity,
+        nj: existing.nj,
+        taux: existing.taux,
+        interet: existing.interet,
+        tob: existing.tob,
+        fraisEscompte: existing.frais_escompte,
+        bankCommission: existing.bank_commission,
+        dNAmount: existing.d_n_amount,
+        income: existing.income,
+        dateOfImpay: existing.date_of_impay,
+        reglementImpaye: existing.reglement_impaye,
+        creditedDate: existing.credited_date,
+        remarques: existing.remarques,
+        factureNo: existing.facture_no,
+        noChqBd: existing.no_chq_bd,
+        bankNameDisplay: existing.bank_name_display,
+        depoRef: existing.depo_ref,
+        processingStatus: existing.processing_status,
+        matchedBankDepositId: existing.matched_bank_deposit_id,
+        matchConfidence: existing.match_confidence,
+        matchMethod: existing.match_method,
+        sgOrFaNo: existing.sg_or_fa_no,
+        processedAt: existing.processed_at,
+        excelSourceRow: existing.excel_source_row,
+        excelFilename: existing.excel_filename,
+        excelProcessedAt: existing.excel_processed_at
+      }));
+      
+      return convertedCollections;
     } catch (error) {
       console.warn('⚠️ Erreur chargement par lot:', error);
       return [];
@@ -162,18 +238,18 @@ export class IntelligentSyncService {
   }
 
   // ⭐ RECHERCHE dans le lot pré-chargé
-  private findExistingInBatch(excelRow: any, existingCollections: any[]): any | null {
+  private findExistingInBatch(excelRow: any, existingCollections: CollectionReport[]): CollectionReport | null {
     return existingCollections.find(existing => 
-      existing.client_code === excelRow.clientCode &&
-      existing.report_date === excelRow.reportDate &&
-      Math.abs(existing.collection_amount - excelRow.collectionAmount) < 0.01 // Tolérance pour les décimales
+      existing.clientCode === excelRow.clientCode &&
+      existing.reportDate === excelRow.reportDate &&
+      Math.abs(existing.collectionAmount - excelRow.collectionAmount) < 0.01 // Tolérance pour les décimales
     ) || null;
   }
 
   // ⭐ DÉTERMINATION INTELLIGENTE DU STATUT
   private async determineCollectionStatusOptimized(
     excelRow: any, 
-    existingRecord: any,
+    existingRecord: CollectionReport | null,
     collectionKey: string
   ): Promise<CollectionComparison> {
     
@@ -212,31 +288,32 @@ export class IntelligentSyncService {
     }
   }
 
+  
   // ⭐ IDENTIFICATION DES OPPORTUNITÉS D'ENRICHISSEMENT
   private async identifyEnrichmentOpportunitiesOptimized(
     excelRow: any, 
-    existingRecord: any
+    existingRecord: CollectionReport
   ): Promise<EnrichmentOpportunity[]> {
     
     const opportunities: EnrichmentOpportunity[] = [];
     
     // ⭐ ENRICHISSEMENT INTELLIGENT champ par champ
     const enrichmentFields = [
-      { excel: 'dateOfValidity', db: 'date_of_validity', type: 'BANK_CREDIT', confidence: 0.95 },
-      { excel: 'bankCommission', db: 'bank_commission', type: 'BANK_COMMISSION', confidence: 0.90 },
+      { excel: 'dateOfValidity', db: 'dateOfValidity', type: 'BANK_CREDIT', confidence: 0.95 },
+      { excel: 'bankCommission', db: 'bankCommission', type: 'BANK_COMMISSION', confidence: 0.90 },
       { excel: 'interet', db: 'interet', type: 'BANK_COMMISSION', confidence: 0.85 },
       { excel: 'tob', db: 'tob', type: 'BANK_COMMISSION', confidence: 0.85 },
-      { excel: 'fraisEscompte', db: 'frais_escompte', type: 'BANK_COMMISSION', confidence: 0.85 },
+      { excel: 'fraisEscompte', db: 'fraisEscompte', type: 'BANK_COMMISSION', confidence: 0.85 },
       { excel: 'income', db: 'income', type: 'BANK_COMMISSION', confidence: 0.85 },
-      { excel: 'noChqBd', db: 'no_chq_bd', type: 'REFERENCE_UPDATE', confidence: 0.80 },
-      { excel: 'sgOrFaNo', db: 'sg_or_fa_no', type: 'REFERENCE_UPDATE', confidence: 0.80 },
-      { excel: 'depoRef', db: 'depo_ref', type: 'REFERENCE_UPDATE', confidence: 0.80 },
+      { excel: 'noChqBd', db: 'noChqBd', type: 'REFERENCE_UPDATE', confidence: 0.80 },
+      { excel: 'sgOrFaNo', db: 'sgOrFaNo', type: 'REFERENCE_UPDATE', confidence: 0.80 },
+      { excel: 'depoRef', db: 'depoRef', type: 'REFERENCE_UPDATE', confidence: 0.80 },
       { excel: 'remarques', db: 'remarques', type: 'REFERENCE_UPDATE', confidence: 0.75 }
     ];
     
     for (const field of enrichmentFields) {
       const excelValue = excelRow[field.excel];
-      const dbValue = existingRecord[field.db];
+      const dbValue = (existingRecord as any)[field.db];
       
       // ⭐ LOGIQUE D'ENRICHISSEMENT INTELLIGENT
       if (this.shouldEnrichField(excelValue, dbValue)) {
@@ -329,11 +406,11 @@ export class IntelligentSyncService {
               
               // ⭐ COMPTABILISATION DES ENRICHISSEMENTS
               for (const enrichment of enrichmentResult.enrichments) {
-                if (enrichment.field === 'date_of_validity') result.summary.enrichments.date_of_validity_added++;
-                if (['bank_commission', 'interet', 'tob', 'frais_escompte', 'income'].includes(enrichment.field)) {
+                if (enrichment.field === 'dateOfValidity') result.summary.enrichments.date_of_validity_added++;
+                if (['bankCommission', 'interet', 'tob', 'fraisEscompte', 'income'].includes(enrichment.field)) {
                   result.summary.enrichments.bank_commissions_added++;
                 }
-                if (['no_chq_bd', 'sg_or_fa_no', 'depo_ref'].includes(enrichment.field)) {
+                if (['noChqBd', 'sgOrFaNo', 'depoRef'].includes(enrichment.field)) {
                   result.summary.enrichments.references_updated++;
                 }
               }
@@ -413,20 +490,20 @@ export class IntelligentSyncService {
     }
   }
 
-  private identifyMissingFields(record: any): string[] {
+  private identifyMissingFields(record: CollectionReport): string[] {
     const missingFields: string[] = [];
     
     const criticalFields = [
-      'date_of_validity',
-      'bank_commission',
+      'dateOfValidity',
+      'bankCommission',
       'income',
-      'no_chq_bd',
-      'sg_or_fa_no',
-      'depo_ref'
+      'noChqBd',
+      'sgOrFaNo',
+      'depoRef'
     ];
     
     for (const field of criticalFields) {
-      const value = record[field];
+      const value = (record as any)[field];
       if (!value || value === null || value === '' || value === 0) {
         missingFields.push(field);
       }
@@ -443,8 +520,20 @@ export class IntelligentSyncService {
     
     for (const opportunity of comparison.enrichmentOpportunities) {
       if (opportunity.confidence > 0.7) { // Seuil plus bas pour permettre plus d'enrichissements
-        const oldValue = comparison.existingRecord![opportunity.field];
-        updates[opportunity.field] = opportunity.newValue;
+        const oldValue = (comparison.existingRecord as any)![opportunity.field];
+        
+        // Convertir les noms de champs vers la base de données
+        const dbFieldMapping: { [key: string]: string } = {
+          dateOfValidity: 'date_of_validity',
+          bankCommission: 'bank_commission',
+          noChqBd: 'no_chq_bd',
+          sgOrFaNo: 'sg_or_fa_no',
+          depoRef: 'depo_ref',
+          fraisEscompte: 'frais_escompte'
+        };
+        
+        const dbField = dbFieldMapping[opportunity.field] || opportunity.field;
+        updates[dbField] = opportunity.newValue;
         
         enrichments.push({
           field: opportunity.field,
@@ -456,8 +545,8 @@ export class IntelligentSyncService {
     }
     
     if (Object.keys(updates).length > 0) {
-      updates.last_enriched_at = new Date().toISOString();
-      updates.enrichment_source = 'DAILY_EXCEL_UPDATE';
+      updates.excel_processed_at = new Date().toISOString();
+      updates.processing_status = 'ENRICHED';
       
       const { error } = await supabase
         .from('collection_report')
@@ -478,7 +567,7 @@ export class IntelligentSyncService {
       new: comparisons.filter(c => c.status === CollectionStatus.NEW).length,
       to_enrich: comparisons.filter(c => c.status === CollectionStatus.EXISTS_INCOMPLETE).length,
       complete: comparisons.filter(c => c.status === CollectionStatus.EXISTS_COMPLETE).length,
-      missing_date_validity: comparisons.filter(c => c.missingFields.includes('date_of_validity')).length,
+      missing_date_validity: comparisons.filter(c => c.missingFields.includes('dateOfValidity')).length,
       enrichment_opportunities: comparisons.reduce((sum, c) => sum + c.enrichmentOpportunities.length, 0)
     };
     

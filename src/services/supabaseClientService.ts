@@ -101,7 +101,11 @@ export class SupabaseRetryService {
     operationName?: string
   ): Promise<T> {
     return this.executeWithRetry(
-      () => supabaseOptimized.from('collection_report').insert(data),
+      async () => {
+        const { data: result, error } = await supabaseOptimized.from('collection_report').insert(data);
+        if (error) throw error;
+        return result as T;
+      },
       { maxRetries: 3 },
       operationName || 'Insert dans collection_report'
     );
@@ -112,7 +116,11 @@ export class SupabaseRetryService {
     operationName?: string
   ): Promise<T> {
     return this.executeWithRetry(
-      () => query,
+      async () => {
+        const { data, error } = await query;
+        if (error) throw error;
+        return data as T;
+      },
       { maxRetries: 5, baseDelay: 500 },
       operationName || 'Select query'
     );
@@ -134,7 +142,11 @@ export class SupabaseRetryService {
 
       try {
         const result = await this.executeWithRetry(
-          () => supabaseOptimized.from('collection_report').insert(batch),
+          async () => {
+            const { data, error } = await supabaseOptimized.from('collection_report').insert(batch);
+            if (error) throw error;
+            return data;
+          },
           { maxRetries: 3 },
           `${operationName || 'Batch Insert'} ${batchNumber}/${totalBatches}`
         );
