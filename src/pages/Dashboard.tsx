@@ -45,17 +45,31 @@ const Dashboard = () => {
       
       console.log(`📊 Données récupérées: ${reports.length} rapports bancaires, ${collections.length} collections, Fund Position: ${position ? 'Oui' : 'Non'}`);
       
-      setBankReports(reports);
+      // ⭐ DÉDOUBLONNER LES RAPPORTS BANCAIRES
+      const uniqueBankReports = reports.filter((report, index, self) => {
+        // Filtrer les rapports sans valeurs significatives
+        if (report.openingBalance === 0 && report.closingBalance === 0 && 
+            report.bankFacilities.length === 0 && report.impayes.length === 0) {
+          return false;
+        }
+        
+        // Garder seulement le premier rapport par banque (le plus récent)
+        return index === self.findIndex(r => r.bank === report.bank);
+      });
+      
+      console.log(`🔧 Rapports dédoublonnés: ${reports.length} → ${uniqueBankReports.length}`);
+      
+      setBankReports(uniqueBankReports);
       setCollectionReports(collections);
       setFundPosition(position);
       
       // Calculer les métriques du dashboard
-      const metrics = dashboardMetricsService.calculateDashboardMetrics(reports, collections, position);
+      const metrics = dashboardMetricsService.calculateDashboardMetrics(uniqueBankReports, collections, position);
       setDashboardMetrics(metrics);
       
-      if (reports.length > 0) {
+      if (uniqueBankReports.length > 0) {
         // Analyse consolidée pour les alertes
-        const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(reports);
+        const analysis = crossBankAnalysisService.analyzeConsolidatedPosition(uniqueBankReports);
         const alerts = crossBankAnalysisService.generateCriticalAlerts(analysis);
         
         setConsolidatedAnalysis({
@@ -257,55 +271,61 @@ const Dashboard = () => {
         </Card>
       )}
 
-      {/* Statut Détaillé par Banque avec données réelles */}
+      {/* Statut Détaillé par Banque avec données réelles - AMÉLIORÉ */}
       <Card>
         <CardHeader>
-          <CardTitle>🏦 Position Détaillée par Banque (Données Réelles)</CardTitle>
+          <CardTitle>🏦 Position Détaillée par Banque (Données Réelles - Dédoublonnées)</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {bankReports.map((report, index) => {
-              const variation = report.closingBalance - report.openingBalance;
-              const variationPercent = report.openingBalance > 0 ? (variation / report.openingBalance) * 100 : 0;
-              const hasImpayes = report.impayes.length > 0;
-              const hasCriticalMovement = Math.abs(variation) > 50000000; // >50M
-              const status = hasImpayes || hasCriticalMovement ? 'error' : Math.abs(variationPercent) > 10 ? 'warning' : 'success';
-              
-              const totalFacilityLimit = report.bankFacilities.reduce((sum, f) => sum + f.limitAmount, 0);
-              const totalFacilityUsed = report.bankFacilities.reduce((sum, f) => sum + f.usedAmount, 0);
-              const facilityRate = totalFacilityLimit > 0 ? (totalFacilityUsed / totalFacilityLimit) * 100 : 0;
-              
-              return (
-                <div key={index} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full ${
-                      status === 'success' ? 'bg-green-500' :
-                      status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
-                    }`} />
-                    <div>
-                      <span className="font-medium text-lg">{report.bank}</span>
+            {bankReports.length === 0 ? (
+              <div className="text-center text-gray-500 py-8">
+                Aucune position bancaire significative trouvée
+              </div>
+            ) : (
+              bankReports.map((report, index) => {
+                const variation = report.closingBalance - report.openingBalance;
+                const variationPercent = report.openingBalance > 0 ? (variation / report.openingBalance) * 100 : 0;
+                const hasImpayes = report.impayes.length > 0;
+                const hasCriticalMovement = Math.abs(variation) > 50000000; // >50M
+                const status = hasImpayes || hasCriticalMovement ? 'error' : Math.abs(variationPercent) > 10 ? 'warning' : 'success';
+                
+                const totalFacilityLimit = report.bankFacilities.reduce((sum, f) => sum + f.limitAmount, 0);
+                const totalFacilityUsed = report.bankFacilities.reduce((sum, f) => sum + f.usedAmount, 0);
+                const facilityRate = totalFacilityLimit > 0 ? (totalFacilityUsed / totalFacilityLimit) * 100 : 0;
+                
+                return (
+                  <div key={`${report.bank}-${index}`} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-3 h-3 rounded-full ${
+                        status === 'success' ? 'bg-green-500' :
+                        status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
+                      }`} />
+                      <div>
+                        <span className="font-medium text-lg">{report.bank}</span>
+                        <div className="text-xs text-gray-500">
+                          💳 Facilités: {facilityRate.toFixed(1)}% utilisé 
+                          ({(totalFacilityUsed / 1000000).toFixed(0)}M / {(totalFacilityLimit / 1000000).toFixed(0)}M)
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-medium">
+                        {(report.closingBalance / 1000000).toFixed(1)}M FCFA
+                      </div>
                       <div className="text-xs text-gray-500">
-                        💳 Facilités: {facilityRate.toFixed(1)}% utilisé 
-                        ({(totalFacilityUsed / 1000000).toFixed(0)}M / {(totalFacilityLimit / 1000000).toFixed(0)}M)
+                        {variation >= 0 ? '+' : ''}{(variation / 1000000).toFixed(1)}M ({variationPercent.toFixed(1)}%)
                       </div>
+                      {hasImpayes && (
+                        <div className="text-xs text-red-600">
+                          ❌ {report.impayes.length} impayé(s) - {(report.impayes.reduce((sum, i) => sum + i.montant, 0) / 1000000).toFixed(1)}M
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-lg font-medium">
-                      {(report.closingBalance / 1000000).toFixed(1)}M FCFA
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {variation >= 0 ? '+' : ''}{(variation / 1000000).toFixed(1)}M ({variationPercent.toFixed(1)}%)
-                    </div>
-                    {hasImpayes && (
-                      <div className="text-xs text-red-600">
-                        ❌ {report.impayes.length} impayé(s) - {(report.impayes.reduce((sum, i) => sum + i.montant, 0) / 1000000).toFixed(1)}M
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </CardContent>
       </Card>
