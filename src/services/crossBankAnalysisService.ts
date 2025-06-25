@@ -1,4 +1,3 @@
-
 import { BankReport, ClientReconciliation } from '@/types/banking';
 
 export interface CrossBankImpaye {
@@ -63,6 +62,33 @@ export interface CriticalAlert {
 
 export class CrossBankAnalysisService {
   
+  // ⭐ LISTE DES VRAIES BANQUES SÉNÉGALAISES
+  private readonly VALID_BANKS = [
+    'BDK', 'BICIS', 'ATB', 'BIS', 'ORA', 'SGS', 'SGBS', 'CBAO', 'ECOBANK', 'UBA'
+  ];
+  
+  // ⭐ FONCTION POUR VALIDER SI C'EST UNE VRAIE BANQUE
+  private isValidBank(bankName: string): boolean {
+    if (!bankName || typeof bankName !== 'string') return false;
+    
+    const cleanBankName = bankName.trim().toUpperCase();
+    
+    // Vérifier si c'est dans la liste des banques valides
+    if (this.VALID_BANKS.includes(cleanBankName)) return true;
+    
+    // Vérifier si c'est un nom de banque complet
+    const bankKeywords = ['BANK', 'BANQUE', 'CREDIT', 'SOCIÉTÉ GÉNÉRALE'];
+    if (bankKeywords.some(keyword => cleanBankName.includes(keyword))) return true;
+    
+    // Rejeter les codes numériques (références de transactions)
+    if (/^\d+$/.test(cleanBankName)) return false;
+    
+    // Rejeter les codes courts non-bancaires
+    if (cleanBankName.length < 3 && !this.VALID_BANKS.includes(cleanBankName)) return false;
+    
+    return false;
+  }
+  
   // Analyse consolidée de tous les rapports bancaires
   analyzeConsolidatedPosition(bankReports: BankReport[]): ConsolidatedPosition {
     console.log(`🔍 Analyse consolidée de ${bankReports.length} banques`);
@@ -108,7 +134,7 @@ export class CrossBankAnalysisService {
     return consolidatedPosition;
   }
   
-  // Détection des impayés cross-bank
+  // ⭐ DÉTECTION AMÉLIORÉE DES IMPAYÉS CROSS-BANK
   private analyzeImpayes(bankReports: BankReport[]) {
     const clientImpayes = new Map<string, CrossBankImpaye>();
     let totalAmount = 0;
@@ -173,6 +199,59 @@ export class CrossBankAnalysisService {
       totalCount,
       crossBankImpayes
     };
+  }
+  
+  // ⭐ ANALYSE AMÉLIORÉE DES COLLECTIONS POUR ÉVITER LES FAUSSES BANQUES
+  analyzeCollectionsForCrossBankRisk(collections: any[]): Array<{
+    clientCode: string;
+    totalRisk: number;
+    bankCount: number;
+    banks: string[];
+  }> {
+    const clientRiskMap = new Map<string, {
+      totalRisk: number;
+      banks: Set<string>;
+    }>();
+
+    // Analyser les collections en filtrant les vraies banques
+    collections.forEach(collection => {
+      const clientCode = collection.clientCode;
+      const bankName = collection.bankName;
+      
+      // ⭐ FILTRER SEULEMENT LES VRAIES BANQUES
+      if (!this.isValidBank(bankName)) {
+        return; // Ignorer les codes de transaction/référence
+      }
+      
+      if (!clientRiskMap.has(clientCode)) {
+        clientRiskMap.set(clientCode, {
+          totalRisk: 0,
+          banks: new Set()
+        });
+      }
+      
+      const client = clientRiskMap.get(clientCode)!;
+      client.totalRisk += collection.collectionAmount || 0;
+      client.banks.add(bankName.toUpperCase());
+    });
+
+    // Retourner seulement les clients présents sur plusieurs vraies banques
+    const crossBankClients = Array.from(clientRiskMap.entries())
+      .filter(([_, client]) => client.banks.size > 1) // Vraiment multi-banques
+      .map(([clientCode, client]) => ({
+        clientCode,
+        totalRisk: client.totalRisk,
+        bankCount: client.banks.size,
+        banks: Array.from(client.banks)
+      }))
+      .sort((a, b) => b.totalRisk - a.totalRisk);
+
+    console.log(`🔍 Clients cross-bank détectés: ${crossBankClients.length}`);
+    crossBankClients.forEach(client => {
+      console.log(`👤 ${client.clientCode}: ${client.bankCount} banques [${client.banks.join(', ')}]`);
+    });
+
+    return crossBankClients;
   }
   
   // Analyse des facilités consolidées

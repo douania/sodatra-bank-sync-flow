@@ -1,5 +1,6 @@
 
 import { BankReport, CollectionReport, FundPosition } from '@/types/banking';
+import { crossBankAnalysisService } from './crossBankAnalysisService';
 
 export interface DashboardMetrics {
   totalBanks: number;
@@ -67,53 +68,8 @@ export class DashboardMetricsService {
       .filter(item => Math.abs(item.percentage) > 10 || Math.abs(item.movement) > 50000000)
       .sort((a, b) => Math.abs(b.movement) - Math.abs(a.movement));
 
-    // Clients risqués cross-bank
-    const clientRiskMap = new Map<string, {
-      totalRisk: number;
-      banks: Set<string>;
-    }>();
-
-    // Analyser les impayés par client
-    bankReports.forEach(report => {
-      report.impayes.forEach(impaye => {
-        const clientCode = impaye.clientCode;
-        if (!clientRiskMap.has(clientCode)) {
-          clientRiskMap.set(clientCode, {
-            totalRisk: 0,
-            banks: new Set()
-          });
-        }
-        const client = clientRiskMap.get(clientCode)!;
-        client.totalRisk += impaye.montant;
-        client.banks.add(report.bank);
-      });
-    });
-
-    // Analyser les collections par client
-    collectionReports.forEach(collection => {
-      const clientCode = collection.clientCode;
-      if (!clientRiskMap.has(clientCode)) {
-        clientRiskMap.set(clientCode, {
-          totalRisk: 0,
-          banks: new Set()
-        });
-      }
-      const client = clientRiskMap.get(clientCode)!;
-      if (collection.bankName) {
-        client.banks.add(collection.bankName);
-      }
-    });
-
-    const topRiskyClients = Array.from(clientRiskMap.entries())
-      .filter(([_, client]) => client.banks.size > 1) // Clients multi-banques
-      .map(([clientCode, client]) => ({
-        clientCode,
-        totalRisk: client.totalRisk,
-        bankCount: client.banks.size,
-        banks: Array.from(client.banks)
-      }))
-      .sort((a, b) => b.totalRisk - a.totalRisk)
-      .slice(0, 10);
+    // ⭐ UTILISER L'ANALYSE CROSS-BANK AMÉLIORÉE
+    const topRiskyClients = crossBankAnalysisService.analyzeCollectionsForCrossBankRisk(collectionReports);
 
     const metrics: DashboardMetrics = {
       totalBanks,
