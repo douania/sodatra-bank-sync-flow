@@ -75,22 +75,50 @@ class ExcelMappingService {
         // Excel date serial number
         date = new Date((value - 25569) * 86400 * 1000);
       } else if (typeof value === 'string') {
-        // Try to parse string date
-        const parsed = new Date(value);
-        if (isNaN(parsed.getTime())) {
-          console.warn('⚠️ Date invalide, utilisation de la date du jour:', value);
-          return new Date().toISOString().split('T')[0]; // Date par défaut
+        // ⭐ AMÉLIORATION - Détecter le format français DD/MM/YYYY
+        const trimmedValue = value.trim();
+        
+        // Détection format français DD/MM/YYYY ou DD/MM/YY
+        const frenchDateRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
+        const frenchMatch = trimmedValue.match(frenchDateRegex);
+        
+        if (frenchMatch) {
+          const [, day, month, year] = frenchMatch;
+          
+          // Conversion vers le format ISO YYYY-MM-DD
+          let fullYear = parseInt(year);
+          if (fullYear < 100) {
+            // Gérer les années à 2 chiffres (25 -> 2025, 95 -> 1995)
+            fullYear += fullYear < 50 ? 2000 : 1900;
+          }
+          
+          const isoDate = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          console.log(`📅 Date française détectée: ${trimmedValue} -> ${isoDate}`);
+          
+          const parsed = new Date(isoDate);
+          if (!isNaN(parsed.getTime())) {
+            date = parsed;
+          } else {
+            throw new Error(`Date française invalide après conversion: ${isoDate}`);
+          }
+        } else {
+          // Essayer le parsing standard pour les autres formats
+          const parsed = new Date(trimmedValue);
+          if (isNaN(parsed.getTime())) {
+            console.warn('⚠️ Date invalide, utilisation de la date du jour:', trimmedValue);
+            return new Date().toISOString().split('T')[0];
+          }
+          date = parsed;
         }
-        date = parsed;
       } else {
         console.warn('⚠️ Format de date non reconnu, utilisation de la date du jour:', value);
-        return new Date().toISOString().split('T')[0]; // Date par défaut
+        return new Date().toISOString().split('T')[0];
       }
       
       return date.toISOString().split('T')[0];
     } catch (error) {
       console.warn('⚠️ Erreur parsing date, utilisation de la date du jour:', value, error);
-      return new Date().toISOString().split('T')[0]; // Date par défaut
+      return new Date().toISOString().split('T')[0];
     }
   }
   
