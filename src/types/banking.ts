@@ -47,6 +47,30 @@ export interface FundPosition {
   totalFundAvailable: number;
   collectionsNotDeposited: number;
   grandTotal: number;
+  depositForDay?: number;
+  paymentForDay?: number;
+  details?: FundPositionDetail[];
+  holdCollections?: FundPositionHold[];
+}
+
+export interface FundPositionDetail {
+  bankName: string;
+  balance: number;
+  fundApplied: number;
+  netBalance: number;
+  nonValidatedDeposit: number;
+  grandBalance: number;
+}
+
+export interface FundPositionHold {
+  holdDate: string;
+  chequeNumber: string;
+  clientBank: string;
+  clientName: string;
+  factureReference: string;
+  amount: number;
+  depositDate?: string;
+  daysRemaining?: number;
 }
 
 export interface ClientReconciliation {
