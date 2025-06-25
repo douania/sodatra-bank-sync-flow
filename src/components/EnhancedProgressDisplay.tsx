@@ -144,6 +144,9 @@ export const EnhancedProgressDisplay: React.FC<EnhancedProgressDisplayProps> = (
     setPersistedState(null);
   };
 
+  const isReconnecting = connectionStatus === 'reconnecting';
+  const isDisconnected = connectionStatus === 'disconnected';
+
   return (
     <Card>
       <CardHeader>
@@ -157,10 +160,10 @@ export const EnhancedProgressDisplay: React.FC<EnhancedProgressDisplayProps> = (
               {connectionStatus === 'connected' && (
                 <Wifi className="h-4 w-4 text-green-600" />
               )}
-              {connectionStatus === 'disconnected' && (
+              {isDisconnected && (
                 <WifiOff className="h-4 w-4 text-red-600" />
               )}
-              {connectionStatus === 'reconnecting' && (
+              {isReconnecting && (
                 <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />
               )}
             </div>
@@ -177,7 +180,7 @@ export const EnhancedProgressDisplay: React.FC<EnhancedProgressDisplayProps> = (
       
       <CardContent className="space-y-6">
         {/* ⭐ AVERTISSEMENT DE DÉCONNEXION */}
-        {connectionStatus === 'disconnected' && persistedState?.isActive && (
+        {isDisconnected && persistedState?.isActive && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -190,9 +193,9 @@ export const EnhancedProgressDisplay: React.FC<EnhancedProgressDisplayProps> = (
                 onClick={handleReconnect}
                 variant="outline"
                 size="sm"
-                disabled={connectionStatus === 'reconnecting'}
+                disabled={isReconnecting}
               >
-                {connectionStatus === 'reconnecting' ? (
+                {isReconnecting ? (
                   <>
                     <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                     Reconnexion...
