@@ -1,5 +1,5 @@
 
-import { supabase } from '@/integrations/supabase/client';
+import { supabaseOptimized, SupabaseRetryService } from './supabaseClientService';
 import { CollectionReport } from '@/types/banking';
 
 export enum CollectionStatus {
@@ -163,11 +163,13 @@ export class IntelligentSyncService {
   // ⭐ CHARGEMENT PAR LOT des collections existantes
   private async batchLoadExistingCollections(clientCodes: string[], reportDates: string[]): Promise<CollectionReport[]> {
     try {
-      const { data: collections } = await supabase
-        .from('collection_report')
-        .select('*')
-        .in('client_code', clientCodes.slice(0, 1000)) // Limite pour éviter les requêtes trop grandes
-        .in('report_date', reportDates.slice(0, 100));
+      const { data: collections } = await SupabaseRetryService.executeWithRetry(
+        () => supabaseOptimized
+          .from('collection_report')
+          .select('*')
+          .in('client_code', clientCodes.slice(0, 1000)) // Limite pour éviter les requêtes trop grandes
+          .in('report_date', reportDates.slice(0, 100))
+      );
       
       console.log(`📦 Collections pré-chargées: ${collections?.length || 0}`);
       
@@ -429,12 +431,14 @@ export class IntelligentSyncService {
     
     try {
       // ⭐ UTILISER UPSERT AVEC LE NOUVEL INDEX FIXE
-      const { error } = await supabase
-        .from('collection_report')
-        .upsert(collectionData, {
-          onConflict: 'excel_filename,excel_source_row',
-          ignoreDuplicates: false
-        });
+      const { error } = await SupabaseRetryService.executeWithRetry(
+        () => supabaseOptimized
+          .from('collection_report')
+          .upsert(collectionData, {
+            onConflict: 'excel_filename,excel_source_row',
+            ignoreDuplicates: false
+          })
+      );
       
       if (error) {
         console.warn(`⚠️ Upsert collection avec index fixe:`, error.message);
@@ -444,29 +448,35 @@ export class IntelligentSyncService {
           console.log(`🔄 Fallback: Vérification existence pour ${excelRow.clientCode}`);
           
           // Vérifier si l'enregistrement existe déjà
-          const { data: existingData } = await supabase
-            .from('collection_report')
-            .select('id')
-            .eq('excel_filename', collectionData.excel_filename)
-            .eq('excel_source_row', collectionData.excel_source_row)
-            .maybeSingle();
+          const { data: existingData } = await SupabaseRetryService.executeWithRetry(
+            () => supabaseOptimized
+              .from('collection_report')
+              .select('id')
+              .eq('excel_filename', collectionData.excel_filename)
+              .eq('excel_source_row', collectionData.excel_source_row)
+              .maybeSingle()
+          );
           
           if (existingData?.id) {
             // Mise à jour si existe
             console.log(`🔄 Mise à jour de l'enregistrement existant: ${existingData.id}`);
-            const { error: updateError } = await supabase
-              .from('collection_report')
-              .update(collectionData)
-              .eq('id', existingData.id);
+            const { error: updateError } = await SupabaseRetryService.executeWithRetry(
+              () => supabaseOptimized
+                .from('collection_report')
+                .update(collectionData)
+                .eq('id', existingData.id)
+            );
               
             if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
             return;
           } else {
             // Insertion si n'existe pas
             console.log(`🔄 Insertion nouvelle collection (fallback)`);
-            const { error: insertError } = await supabase
-              .from('collection_report')
-              .insert(collectionData);
+            const { error: insertError } = await SupabaseRetryService.executeWithRetry(
+              () => supabaseOptimized
+                .from('collection_report')
+                .insert(collectionData)
+            );
               
             if (insertError) throw new Error(`Erreur insertion: ${insertError.message}`);
             return;
@@ -539,10 +549,12 @@ export class IntelligentSyncService {
       updates.excel_processed_at = new Date().toISOString();
       updates.processing_status = 'ENRICHED';
       
-      const { error } = await supabase
-        .from('collection_report')
-        .update(updates)
-        .eq('id', comparison.existingRecord!.id);
+      const { error } = await SupabaseRetryService.executeWithRetry(
+        () => supabaseOptimized
+          .from('collection_report')
+          .update(updates)
+          .eq('id', comparison.existingRecord!.id)
+      );
       
       if (error) {
         throw new Error(`Erreur enrichissement: ${error.message}`);
