@@ -455,7 +455,17 @@ export class IntelligentSyncService {
               .update({
                 ...collectionData,
                 excel_processed_at: new Date().toISOString()
-              })
+              });
+            if (updateError) throw updateError;
+          } else {
+            throw insertError;
+          }
+        }
+      } else {
+        throw error;
+      }
+    }
+    
     try {
       // ⭐ UTILISER UPSERT AVEC NOUVELLE CONTRAINTE
       const { error } = await supabase
