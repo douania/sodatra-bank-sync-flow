@@ -1,5 +1,6 @@
 import { supabaseOptimized, SupabaseRetryService } from './supabaseClientService';
 import { CollectionReport } from '@/types/banking';
+import { excelMappingService } from './excelMappingService';
 
 export enum CollectionStatus {
   NEW = 'NEW',
@@ -404,6 +405,13 @@ export class IntelligentSyncService {
       bank_name: excelRow.bankName || '',
       status: excelRow.status || 'pending',
       
+      // Logique métier effet/chèque
+      collection_type: excelRow.collectionType || 'UNKNOWN',
+      effet_echeance_date: excelRow.effetEcheanceDate || null,
+      effet_status: excelRow.effetStatus || null,
+      cheque_number: excelRow.chequeNumber || null,
+      cheque_status: excelRow.chequeStatus || null,
+      
       // ⭐ TRAÇABILITÉ AMÉLIORÉE
       excel_filename: excelRow.excelFilename || 'DAILY_IMPORT',
       excel_source_row: excelRow.excelSourceRow || 0,
@@ -412,7 +420,7 @@ export class IntelligentSyncService {
       // Tous les champs disponibles
       date_of_validity: excelRow.dateOfValidity || null,
       facture_no: excelRow.factureNo || null,
-      no_chq_bd: excelRow.noChqBd || null,
+      no_chq_bd: excelRow.noChqBd || null, // Conserver la valeur brute
       bank_name_display: excelRow.bankNameDisplay || null,
       depo_ref: excelRow.depoRef || null,
       nj: excelRow.nj || null,
@@ -435,6 +443,18 @@ export class IntelligentSyncService {
     
     try {
       // ⭐ UTILISER UPSERT AVEC LE NOUVEL INDEX FIXE
+      
+      // Détecter le type de collection si non spécifié
+      if (!collectionData.collection_type && collectionData.no_chq_bd) {
+        const typeResult = excelMappingService.detectCollectionType(collectionData.no_chq_bd);
+        collectionData.collection_type = typeResult.type;
+        collectionData.effet_echeance_date = typeResult.effetEcheanceDate ? 
+          typeResult.effetEcheanceDate.toISOString().split('T')[0] : null;
+        collectionData.effet_status = typeResult.type === 'EFFET' ? 'PENDING' : null;
+        collectionData.cheque_number = typeResult.chequeNumber;
+        collectionData.cheque_status = typeResult.type === 'CHEQUE' ? 'PENDING' : null;
+      }
+      
       await SupabaseRetryService.executeWithRetry(
         async () => {
           const { error } = await supabaseOptimized

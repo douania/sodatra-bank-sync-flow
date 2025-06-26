@@ -168,6 +168,7 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
                         <TableHead>Client</TableHead>
                         <TableHead>Facture N°</TableHead>
                         <TableHead>Montant</TableHead>
+                        <TableHead>Type</TableHead>
                         <TableHead>Banque</TableHead>
                         <TableHead>Date Validité</TableHead>
                         <TableHead>N° Chq/BD</TableHead>
@@ -183,6 +184,15 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
                           <TableCell className="font-semibold">
                             {collection.collectionAmount.toLocaleString()} FCFA
                           </TableCell>
+                          <TableCell>
+                            {collection.collectionType === 'EFFET' ? (
+                              <Badge className="bg-purple-100 text-purple-800">Effet</Badge>
+                            ) : collection.collectionType === 'CHEQUE' ? (
+                              <Badge className="bg-blue-100 text-blue-800">Chèque</Badge>
+                            ) : (
+                              <Badge variant="outline">Inconnu</Badge>
+                            )}
+                          </TableCell>
                           <TableCell>{collection.bankNameDisplay || collection.bankName || 'N/A'}</TableCell>
                           <TableCell>
                             {collection.dateOfValidity 
@@ -190,11 +200,42 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
                               : <span className="text-red-500">Non définie ⚠️</span>
                             }
                           </TableCell>
-                          <TableCell>{collection.noChqBd || 'N/A'}</TableCell>
                           <TableCell>
-                            <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
-                              {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
-                            </Badge>
+                            {collection.collectionType === 'EFFET' ? (
+                              <span className="text-purple-600">{collection.effetEcheanceDate || collection.noChqBd}</span>
+                            ) : collection.collectionType === 'CHEQUE' ? (
+                              <span className="text-blue-600">{collection.chequeNumber || collection.noChqBd}</span>
+                            ) : (
+                              collection.noChqBd || 'N/A'
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {collection.collectionType === 'EFFET' ? (
+                              <Badge variant={
+                                collection.effetStatus === 'PAID' ? 'default' : 
+                                collection.effetStatus === 'IMPAYE' ? 'destructive' : 
+                                'secondary'
+                              }>
+                                {collection.effetStatus === 'PAID' ? 'Payé' : 
+                                 collection.effetStatus === 'IMPAYE' ? 'Impayé' : 
+                                 'En attente'}
+                              </Badge>
+                            ) : collection.collectionType === 'CHEQUE' ? (
+                              <Badge variant={
+                                collection.chequeStatus === 'CLEARED' ? 'default' : 
+                                collection.chequeStatus === 'BOUNCED' ? 'destructive' : 
+                                'secondary'
+                              }>
+                                {collection.chequeStatus === 'CLEARED' ? 'Encaissé' : 
+                                 collection.chequeStatus === 'BOUNCED' ? 'Rejeté' : 
+                                 'En attente'}
+                              </Badge>
+                            ) : (
+                              <Badge variant={collection.status === 'processed' ? 'default' : 'secondary'}>
+                                {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
+                              </Badge>
+                            )}
+                          </TableCell>
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
@@ -206,14 +247,36 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
                                 <Eye className="h-4 w-4" />
                               </Button>
                               {collection.status === 'pending' && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => markAsProcessed(collection.id!)}
-                                  className="flex items-center gap-1"
-                                >
-                                  <CheckCircle className="h-4 w-4" />
-                                  Créditer
-                                </Button>
+                                <>
+                                  {collection.collectionType === 'EFFET' ? (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => markAsProcessed(collection.id!)}
+                                      className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700"
+                                    >
+                                      <CheckCircle className="h-4 w-4" />
+                                      Payer Effet
+                                    </Button>
+                                  ) : collection.collectionType === 'CHEQUE' ? (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => markAsProcessed(collection.id!)}
+                                      className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700"
+                                    >
+                                      <CheckCircle className="h-4 w-4" />
+                                      Encaisser
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => markAsProcessed(collection.id!)}
+                                      className="flex items-center gap-1"
+                                    >
+                                      <CheckCircle className="h-4 w-4" />
+                                      Créditer
+                                    </Button>
+                                  )}
+                                </>
                               )}
                             </div>
                           </TableCell>

@@ -89,6 +89,14 @@ export interface CollectionReport {
   status?: 'pending' | 'processed' | 'failed';
   commission?: number;
   dateOfValidity?: string;
+  
+  // Logique métier effet/chèque
+  collectionType?: 'EFFET' | 'CHEQUE' | 'UNKNOWN';
+  effetEcheanceDate?: string;
+  effetStatus?: 'PENDING' | 'PAID' | 'IMPAYE';
+  chequeNumber?: string;
+  chequeStatus?: 'PENDING' | 'CLEARED' | 'BOUNCED';
+  
   nj?: number;
   taux?: number;
   interet?: number;
@@ -129,7 +137,7 @@ export interface ProcessingResults {
 }
 
 export interface Alert {
-  type: 'CRITICAL' | 'WARNING' | 'INFO';
+  type: 'CRITICAL' | 'WARNING' | 'INFO' | 'EFFET_ALERT' | 'CHEQUE_ALERT';
   title: string;
   description: string;
   action: string;
@@ -163,4 +171,27 @@ export interface DuplicateRemovalResult {
     deletedCount: number;
   };
   error?: string;
+}
+
+// Alertes spécifiques aux effets et chèques
+export interface EffetAlert {
+  id?: string;
+  type: 'EFFET_ECHU' | 'EFFET_PROCHE_ECHEANCE' | 'EFFET_IMPAYE';
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  collection: CollectionReport;
+  message: string;
+  action: string;
+  daysToEcheance?: number;
+  createdAt?: string;
+}
+
+export interface ChequeAlert {
+  id?: string;
+  type: 'CHEQUE_BOUNCED' | 'CHEQUE_DELAYED';
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  collection: CollectionReport;
+  message: string;
+  action: string;
+  daysSinceDeposit?: number;
+  createdAt?: string;
 }

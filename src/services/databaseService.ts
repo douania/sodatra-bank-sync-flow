@@ -148,7 +148,13 @@ export class DatabaseService {
     try {
       const { error } = await supabase
         .from('collection_report')
-        .update({ date_of_validity: dateOfValidity })
+        .update({ 
+          date_of_validity: dateOfValidity,
+          // Mettre à jour le statut en fonction du type de collection
+          effet_status: 'PAID',
+          cheque_status: 'CLEARED',
+          status: 'processed'
+        })
         .eq('id', id);
 
       if (error) {
@@ -160,6 +166,132 @@ export class DatabaseService {
     } catch (error) {
       console.error('Error updating collection date of validity:', error);
       return false;
+    }
+  }
+
+  // Nouvelle méthode pour marquer un effet comme impayé
+  async markEffetAsImpaye(id: string, dateOfImpay: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('collection_report')
+        .update({ 
+          date_of_impay: dateOfImpay,
+          effet_status: 'IMPAYE',
+          status: 'failed'
+        })
+        .eq('id', id)
+        .eq('collection_type', 'EFFET');
+
+      if (error) {
+        console.error('Error marking effet as impaye:', error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error marking effet as impaye:', error);
+      return false;
+    }
+  }
+
+  // Nouvelle méthode pour marquer un chèque comme rejeté
+  async markChequeAsBounced(id: string, dateOfImpay: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('collection_report')
+        .update({ 
+          date_of_impay: dateOfImpay,
+          cheque_status: 'BOUNCED',
+          status: 'failed'
+        })
+        .eq('id', id)
+        .eq('collection_type', 'CHEQUE');
+
+      if (error) {
+        console.error('Error marking cheque as bounced:', error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error marking cheque as bounced:', error);
+      return false;
+    }
+  }
+
+  // Méthode pour obtenir les effets à échéance
+  async getUpcomingEffets(daysThreshold: number = 7): Promise<CollectionReport[]> {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + daysThreshold);
+      const futureDateStr = futureDate.toISOString().split('T')[0];
+      
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('collection_type', 'EFFET')
+        .eq('effet_status', 'PENDING')
+        .gte('effet_echeance_date', today)
+        .lte('effet_echeance_date', futureDateStr)
+        .order('effet_echeance_date', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching upcoming effets:', error);
+        return [];
+      }
+
+      return (data || []).map(this.mapDbToCollectionReport);
+    } catch (error) {
+      console.error('Error fetching upcoming effets:', error);
+      return [];
+    }
+  }
+
+  // Méthode pour obtenir les effets échus non payés
+  async getOverdueEffets(): Promise<CollectionReport[]> {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('collection_type', 'EFFET')
+        .eq('effet_status', 'PENDING')
+        .lt('effet_echeance_date', today)
+        .order('effet_echeance_date', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching overdue effets:', error);
+        return [];
+      }
+
+      return (data || []).map(this.mapDbToCollectionReport);
+    } catch (error) {
+      console.error('Error fetching overdue effets:', error);
+      return [];
+    }
+  }
+
+  // Méthode pour obtenir les chèques en attente d'encaissement
+  async getPendingCheques(): Promise<CollectionReport[]> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('collection_type', 'CHEQUE')
+        .eq('cheque_status', 'PENDING')
+        .order('report_date', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching pending cheques:', error);
+        return [];
+      }
+
+      return (data || []).map(this.mapDbToCollectionReport);
+    } catch (error) {
+      console.error('Error fetching pending cheques:', error);
+      return [];
     }
   }
 
