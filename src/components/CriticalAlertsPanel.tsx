@@ -1,8 +1,10 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertTriangle, TrendingUp, TrendingDown, Clock, Users } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AlertTriangle, TrendingUp, TrendingDown, Clock, Users, Eye } from 'lucide-react';
+import ClientRiskAnalysisModal from './ClientRiskAnalysisModal';
 
 interface CriticalAlertsPanelProps {
   criticalAlerts: any[];
@@ -13,6 +15,33 @@ const CriticalAlertsPanel: React.FC<CriticalAlertsPanelProps> = ({
   criticalAlerts, 
   crossBankClients 
 }) => {
+  const [selectedClient, setSelectedClient] = useState<{
+    clientCode: string;
+    clientData: {
+      totalRisk: number;
+      bankCount: number;
+      banks: string[];
+    };
+  } | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleViewDetails = (client: any) => {
+    setSelectedClient({
+      clientCode: client.clientCode,
+      clientData: {
+        totalRisk: client.totalRisk,
+        bankCount: client.bankCount,
+        banks: client.banks
+      }
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedClient(null);
+  };
+
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'CRITICAL': return 'border-red-500 bg-red-50';
@@ -103,22 +132,43 @@ const CriticalAlertsPanel: React.FC<CriticalAlertsPanelProps> = ({
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-xl font-bold text-red-600">
-                      {(client.totalRisk / 1000000).toFixed(1)}M
+                  <div className="text-right flex items-center space-x-3">
+                    <div>
+                      <div className="text-xl font-bold text-red-600">
+                        {(client.totalRisk / 1000000).toFixed(1)}M
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Exposition totale FCFA
+                      </div>
+                      <div className="text-xs text-red-500 mt-1">
+                        Risque élevé
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      Exposition totale FCFA
-                    </div>
-                    <div className="text-xs text-red-500 mt-1">
-                      Risque élevé
-                    </div>
+                    <Button
+                      onClick={() => handleViewDetails(client)}
+                      variant="outline"
+                      size="sm"
+                      className="border-blue-500 text-blue-600 hover:bg-blue-50"
+                    >
+                      <Eye className="h-4 w-4 mr-1" />
+                      Détails
+                    </Button>
                   </div>
                 </div>
               ))}
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Modal de détails */}
+      {selectedClient && (
+        <ClientRiskAnalysisModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          clientCode={selectedClient.clientCode}
+          clientData={selectedClient.clientData}
+        />
       )}
     </div>
   );

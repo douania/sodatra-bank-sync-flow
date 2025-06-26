@@ -337,7 +337,26 @@ export class DatabaseService {
     }
   }
 
-  // Missing methods for fileProcessingService
+  async getCollectionsByClient(clientCode: string): Promise<any[]> {
+    try {
+      const { data, error } = await supabase
+        .from('collection_report')
+        .select('*')
+        .eq('client_code', clientCode)
+        .order('report_date', { ascending: false });
+
+      if (error) {
+        console.error('Erreur récupération collections client:', error);
+        throw error;
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Erreur service collections client:', error);
+      throw error;
+    }
+  }
+
   async saveBankReport(report: BankReport): Promise<{ success: boolean; error?: string }> {
     // ⭐ SAUVEGARDE AVEC RETRY
     const { SupabaseRetryService } = await import('./supabaseClientService');

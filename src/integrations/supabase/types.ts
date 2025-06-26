@@ -263,28 +263,128 @@ export type Database = {
         Row: {
           collections_not_deposited: number
           created_at: string
+          deposit_for_day: number | null
           grand_total: number
           id: string
+          payment_for_day: number | null
           report_date: string
           total_fund_available: number
         }
         Insert: {
           collections_not_deposited: number
           created_at?: string
+          deposit_for_day?: number | null
           grand_total: number
           id?: string
+          payment_for_day?: number | null
           report_date: string
           total_fund_available: number
         }
         Update: {
           collections_not_deposited?: number
           created_at?: string
+          deposit_for_day?: number | null
           grand_total?: number
           id?: string
+          payment_for_day?: number | null
           report_date?: string
           total_fund_available?: number
         }
         Relationships: []
+      }
+      fund_position_detail: {
+        Row: {
+          balance: number
+          bank_name: string
+          created_at: string
+          fund_applied: number | null
+          fund_position_id: string | null
+          grand_balance: number
+          id: string
+          net_balance: number
+          non_validated_deposit: number | null
+        }
+        Insert: {
+          balance: number
+          bank_name: string
+          created_at?: string
+          fund_applied?: number | null
+          fund_position_id?: string | null
+          grand_balance: number
+          id?: string
+          net_balance: number
+          non_validated_deposit?: number | null
+        }
+        Update: {
+          balance?: number
+          bank_name?: string
+          created_at?: string
+          fund_applied?: number | null
+          fund_position_id?: string | null
+          grand_balance?: number
+          id?: string
+          net_balance?: number
+          non_validated_deposit?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fund_position_detail_fund_position_id_fkey"
+            columns: ["fund_position_id"]
+            isOneToOne: false
+            referencedRelation: "fund_position"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fund_position_hold: {
+        Row: {
+          amount: number
+          cheque_number: string | null
+          client_bank: string | null
+          client_name: string
+          created_at: string
+          days_remaining: number | null
+          deposit_date: string | null
+          facture_reference: string | null
+          fund_position_id: string | null
+          hold_date: string
+          id: string
+        }
+        Insert: {
+          amount: number
+          cheque_number?: string | null
+          client_bank?: string | null
+          client_name: string
+          created_at?: string
+          days_remaining?: number | null
+          deposit_date?: string | null
+          facture_reference?: string | null
+          fund_position_id?: string | null
+          hold_date: string
+          id?: string
+        }
+        Update: {
+          amount?: number
+          cheque_number?: string | null
+          client_bank?: string | null
+          client_name?: string
+          created_at?: string
+          days_remaining?: number | null
+          deposit_date?: string | null
+          facture_reference?: string | null
+          fund_position_id?: string | null
+          hold_date?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fund_position_hold_fund_position_id_fkey"
+            columns: ["fund_position_id"]
+            isOneToOne: false
+            referencedRelation: "fund_position"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       impayes: {
         Row: {
