@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -235,7 +234,6 @@ const CollectionsManager: React.FC<CollectionsManagerProps> = ({ refreshTrigger 
                                 {collection.status === 'processed' ? 'Traitée' : 'En Attente'}
                               </Badge>
                             )}
-                          </TableCell>
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
