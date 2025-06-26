@@ -456,23 +456,53 @@ export class IntelligentSyncService {
                 ...collectionData,
                 excel_processed_at: new Date().toISOString()
               })
-              .eq('excel_filename', collectionData.excel_filename)
-              .eq('excel_source_row', collectionData.excel_source_row);
-            
-            if (updateError) {
-              throw new Error(`Erreur update fallback: ${updateError.message}`);
-            }
-            console.log(`✅ Updated existing record via fallback for ${excelRow.clientCode}`);
-          } else {
-            throw new Error(`Erreur insert fallback: ${insertError.message}`);
-          }
-        } else {
-          console.log(`✅ Inserted new record via fallback for ${excelRow.clientCode}`);
-        }
-        return;
-      }
+    try {
+      // ⭐ UTILISER UPSERT AVEC NOUVELLE CONTRAINTE
+      const { error } = await supabase
+        .from('collection_report')
+        .upsert(collectionData, {
+          onConflict: 'unique_excel_upsert_fixed',
+          ignoreDuplicates: false
+        });
       
-      throw new Error(`Erreur upsert: ${error.message}`);
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      console.warn(`⚠️ Upsert collection:`, error.message);
+      
+      // Si l'upsert échoue, essayer une approche alternative avec select puis insert/update
+      try {
+        // Vérifier si l'enregistrement existe déjà
+        const { data: existingData } = await supabase
+          .from('collection_report')
+          .select('id')
+          .eq('excel_filename', collectionData.excel_filename)
+          .eq('excel_source_row', collectionData.excel_source_row)
+          .maybeSingle();
+        
+        if (existingData?.id) {
+          // Mise à jour si existe
+          const { error: updateError } = await supabase
+            .from('collection_report')
+            .update(collectionData)
+            .eq('id', existingData.id);
+          
+          if (updateError) throw updateError;
+          console.log(`🔄 Mise à jour réussie pour ${excelRow.clientCode}`);
+        } else {
+          // Insertion si n'existe pas
+          const { error: insertError } = await supabase
+            .from('collection_report')
+            .insert(collectionData);
+          
+          if (insertError) throw insertError;
+          console.log(`✅ Insertion réussie pour ${excelRow.clientCode}`);
+        }
+      } catch (fallbackError) {
+        console.error(`❌ Échec de la méthode alternative:`, fallbackError);
+        throw new Error(`Erreur upsert et fallback: ${fallbackError.message}`);
+      }
     }
   }
 
