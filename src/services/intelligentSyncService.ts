@@ -163,13 +163,15 @@ export class IntelligentSyncService {
   // ⭐ CHARGEMENT PAR LOT des collections existantes
   private async batchLoadExistingCollections(clientCodes: string[], reportDates: string[]): Promise<CollectionReport[]> {
     try {
-      const { data: collections } = await SupabaseRetryService.executeWithRetry(
+      const { data: collections, error } = await SupabaseRetryService.executeWithRetry(
         () => supabaseOptimized
           .from('collection_report')
           .select('*')
           .in('client_code', clientCodes.slice(0, 1000)) // Limite pour éviter les requêtes trop grandes
           .in('report_date', reportDates.slice(0, 100))
       );
+      
+      if (error) throw error;
       
       console.log(`📦 Collections pré-chargées: ${collections?.length || 0}`);
       
@@ -448,7 +450,7 @@ export class IntelligentSyncService {
           console.log(`🔄 Fallback: Vérification existence pour ${excelRow.clientCode}`);
           
           // Vérifier si l'enregistrement existe déjà
-          const { data: existingData } = await SupabaseRetryService.executeWithRetry(
+          const { data: existingData, error: selectError } = await SupabaseRetryService.executeWithRetry(
             () => supabaseOptimized
               .from('collection_report')
               .select('id')
@@ -456,6 +458,8 @@ export class IntelligentSyncService {
               .eq('excel_source_row', collectionData.excel_source_row)
               .maybeSingle()
           );
+          
+          if (selectError) throw new Error(`Erreur sélection: ${selectError.message}`);
           
           if (existingData?.id) {
             // Mise à jour si existe
@@ -579,4 +583,3 @@ export class IntelligentSyncService {
 }
 
 export const intelligentSyncService = new IntelligentSyncService();
-
