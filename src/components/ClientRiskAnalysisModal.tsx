@@ -200,9 +200,9 @@ const ClientRiskAnalysisModal: React.FC<ClientRiskAnalysisModalProps> = ({
               <div className="p-3 bg-gray-50 rounded">
                 <strong>Critères de Classification:</strong>
                 <ul className="mt-2 space-y-1 text-sm">
-                  <li>• <span className="text-red-600 font-semibold">CRITIQUE</span>: Montant > 50M FCFA</li>
-                  <li>• <span className="text-orange-600 font-semibold">ÉLEVÉ</span>: Montant > 20M FCFA OU présent sur > 2 banques</li>
-                  <li>• <span className="text-yellow-600 font-semibold">MOYEN</span>: Montant > 10M FCFA OU présent sur > 1 banque</li>
+                  <li>• <span className="text-red-600 font-semibold">CRITIQUE</span>: Montant {'>'}  50M FCFA</li>
+                  <li>• <span className="text-orange-600 font-semibold">ÉLEVÉ</span>: Montant {'>'} 20M FCFA OU présent sur {'>'} 2 banques</li>
+                  <li>• <span className="text-yellow-600 font-semibold">MOYEN</span>: Montant {'>'} 10M FCFA OU présent sur {'>'} 1 banque</li>
                   <li>• <span className="text-green-600 font-semibold">FAIBLE</span>: Autres cas</li>
                 </ul>
               </div>
