@@ -551,10 +551,24 @@ export class FileProcessingService {
   
   // Méthodes d'extraction de contenu à partir de fichiers
   private async extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
-    // Pour l'instant, retourner un texte vide
-    // TODO: Intégrer une bibliothèque PDF comme pdf-parse
-    console.warn('⚠️ Extraction PDF pas encore implémentée');
-    return '';
+    try {
+      // Import pdf-parse dynamically to avoid issues with SSR
+      const pdfParse = await import('pdf-parse');
+      
+      // Convert ArrayBuffer to Buffer for pdf-parse
+      const pdfBuffer = Buffer.from(buffer);
+      
+      // Extract text from PDF
+      const data = await pdfParse.default(pdfBuffer);
+      
+      console.log(`📄 PDF text extracted: ${data.text.length} characters`);
+      return data.text;
+    } catch (error) {
+      console.error('❌ Erreur extraction PDF:', error);
+      // Fallback: return empty string but log the error
+      console.warn('⚠️ PDF extraction failed, returning empty content');
+      return '';
+    }
   }
   
   private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {

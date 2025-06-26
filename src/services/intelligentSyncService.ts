@@ -435,7 +435,7 @@ export class IntelligentSyncService {
         () => supabaseOptimized
           .from('collection_report')
           .upsert(collectionData, {
-            onConflict: 'excel_filename,excel_source_row',
+            onConflict: 'idx_collection_excel_upsert_constraint',
             ignoreDuplicates: false
           })
       );
