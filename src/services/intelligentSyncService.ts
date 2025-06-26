@@ -427,24 +427,58 @@ export class IntelligentSyncService {
       processed_at: new Date().toISOString()
     };
     
-    // ⭐ UTILISER UPSERT POUR ÉVITER LES VIOLATIONS DE CONTRAINTES
-    const { error } = await supabase
-      .from('collection_report')
-      .upsert(collectionData, {
-        onConflict: 'excel_filename,excel_source_row',
-        ignoreDuplicates: false
-      });
-    
-    if (error) {
-      console.warn(`⚠️ Upsert collection failed:`, error.message);
+    try {
+      // ⭐ UTILISER UPSERT AVEC LE NOUVEL INDEX FIXE
+      const { error } = await supabase
+        .from('collection_report')
+        .upsert(collectionData, {
+          onConflict: 'unique_excel_upsert_fixed',
+          ignoreDuplicates: false
+        });
       
-      // If upsert fails due to constraint issues, try insert first, then update if duplicate
-      if (error.message.includes('ON CONFLICT') || error.message.includes('deferrable') || error.message.includes('55000')) {
-        console.log(`🔄 Fallback to insert/update pattern for ${excelRow.clientCode}`);
+      if (error) {
+        console.warn(`⚠️ Upsert collection avec index fixe:`, error.message);
         
-        // Try insert first
-        const { error: insertError } = await supabase
-          .from('collection_report')
+        // ⭐ FALLBACK: Vérifier si l'enregistrement existe déjà
+        if (error.message.includes('constraint') || error.message.includes('unique') || error.message.includes('conflict')) {
+          console.log(`🔄 Fallback: Vérification existence pour ${excelRow.clientCode}`);
+          
+          // Vérifier si l'enregistrement existe déjà
+          const { data: existingData } = await supabase
+            .from('collection_report')
+            .select('id')
+            .eq('excel_filename', collectionData.excel_filename)
+            .eq('excel_source_row', collectionData.excel_source_row)
+            .maybeSingle();
+          
+          if (existingData?.id) {
+            // Mise à jour si existe
+            console.log(`🔄 Mise à jour de l'enregistrement existant: ${existingData.id}`);
+            const { error: updateError } = await supabase
+              .from('collection_report')
+              .update(collectionData)
+              .eq('id', existingData.id);
+              
+            if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
+            return;
+          } else {
+            // Insertion si n'existe pas
+            console.log(`🔄 Insertion nouvelle collection (fallback)`);
+            const { error: insertError } = await supabase
+              .from('collection_report')
+              .insert(collectionData);
+              
+            if (insertError) throw new Error(`Erreur insertion: ${insertError.message}`);
+            return;
+          }
+        }
+        
+        throw new Error(`Erreur upsert: ${error.message}`);
+      }
+    } catch (error) {
+      console.error(`❌ Erreur critique upsert:`, error);
+      throw error;
+    }
           .insert(collectionData);
         
         if (insertError) {
