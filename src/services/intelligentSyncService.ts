@@ -436,13 +436,42 @@ export class IntelligentSyncService {
       });
     
     if (error) {
-      console.warn(`⚠️ Upsert collection:`, error.message);
-      // Si upsert échoue, essayer juste un update
-      if (error.message.includes('duplicate') || error.message.includes('unique')) {
-        console.log(`🔄 Tentative d'enrichissement au lieu d'insertion pour ${excelRow.clientCode}`);
-        // Collection existe déjà, ne pas traiter comme erreur
+      console.warn(`⚠️ Upsert collection failed:`, error.message);
+      
+      // If upsert fails due to constraint issues, try insert first, then update if duplicate
+      if (error.message.includes('ON CONFLICT') || error.message.includes('deferrable') || error.message.includes('55000')) {
+        console.log(`🔄 Fallback to insert/update pattern for ${excelRow.clientCode}`);
+        
+        // Try insert first
+        const { error: insertError } = await supabase
+          .from('collection_report')
+          .insert(collectionData);
+        
+        if (insertError) {
+          if (insertError.message.includes('duplicate') || insertError.message.includes('unique')) {
+            // Record exists, try to update it
+            const { error: updateError } = await supabase
+              .from('collection_report')
+              .update({
+                ...collectionData,
+                excel_processed_at: new Date().toISOString()
+              })
+              .eq('excel_filename', collectionData.excel_filename)
+              .eq('excel_source_row', collectionData.excel_source_row);
+            
+            if (updateError) {
+              throw new Error(`Erreur update fallback: ${updateError.message}`);
+            }
+            console.log(`✅ Updated existing record via fallback for ${excelRow.clientCode}`);
+          } else {
+            throw new Error(`Erreur insert fallback: ${insertError.message}`);
+          }
+        } else {
+          console.log(`✅ Inserted new record via fallback for ${excelRow.clientCode}`);
+        }
         return;
       }
+      
       throw new Error(`Erreur upsert: ${error.message}`);
     }
   }
