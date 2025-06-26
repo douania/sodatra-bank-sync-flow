@@ -261,9 +261,7 @@ const BankReconciliationEngine: React.FC = () => {
                       <div>Description: {result.impaye.description || 'Non spécifiée'}</div>
                     </div>
                   )}
-                </div>
-              ))}
-            </div>
+                  
                   <div className="mt-2 text-xs">
                     <div className="flex items-center gap-1 mb-1">
                       <Badge className={
@@ -292,6 +290,12 @@ const BankReconciliationEngine: React.FC = () => {
                     <div className="text-muted-foreground">
                       Critères: {result.reasons.join(', ')}
                     </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
