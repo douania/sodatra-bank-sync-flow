@@ -431,7 +431,7 @@ export class IntelligentSyncService {
     const { error } = await supabase
       .from('collection_report')
       .upsert(collectionData, {
-        onConflict: 'unique_excel_upsert',
+        onConflict: 'excel_filename,excel_source_row',
         ignoreDuplicates: false
       });
     
