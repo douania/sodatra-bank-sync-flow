@@ -9,7 +9,79 @@ interface CollectionTypeResult {
   rawValue?: string;
 }
 
+// Interface pour le résultat de détection du type de collection
+interface CollectionTypeResult {
+  type: 'EFFET' | 'CHEQUE' | 'UNKNOWN';
+  effetEcheanceDate: Date | null;
+  chequeNumber: string | null;
+  rawValue?: string;
+}
+
 class ExcelMappingService {
+  // Détecte le type de collection (EFFET ou CHEQUE) basé sur la valeur de No.CHq /Bd
+  detectCollectionType(noChqBdValue: any): CollectionTypeResult {
+    if (!noChqBdValue || noChqBdValue === null) {
+      return {
+        type: 'UNKNOWN',
+        effetEcheanceDate: null,
+        chequeNumber: null
+      };
+    }
+    
+    // Détection : DATE = EFFET
+    if (this.isDate(noChqBdValue)) {
+      return {
+        type: 'EFFET',
+        effetEcheanceDate: this.parseDate(noChqBdValue),
+        chequeNumber: null,
+        rawValue: String(noChqBdValue)
+      };
+    }
+    
+    // Détection : NUMÉRO = CHÈQUE
+    if (this.isNumber(noChqBdValue)) {
+      return {
+        type: 'CHEQUE',
+        effetEcheanceDate: null,
+        chequeNumber: String(noChqBdValue),
+        rawValue: String(noChqBdValue)
+      };
+    }
+    
+    // Cas ambigus
+    return {
+      type: 'UNKNOWN',
+      effetEcheanceDate: null,
+      chequeNumber: null,
+      rawValue: String(noChqBdValue)
+    };
+  }
+  
+  private isDate(value: any): boolean {
+    // Vérification si c'est un objet Date
+    if (value instanceof Date) return true;
+    
+    // Vérification si c'est une string de date
+    if (typeof value === 'string') {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{2}-\d{2}-\d{4}/;
+      return dateRegex.test(value);
+    }
+    
+    return false;
+  }
+  
+  private isNumber(value: any): boolean {
+    // Vérification si c'est un nombre
+    if (typeof value === 'number' && !isNaN(value)) return true;
+    
+    // Vérification si c'est une string numérique
+    if (typeof value === 'string') {
+      const numericRegex = /^\d+$/;
+      return numericRegex.test(value.trim());
+    }
+    
+    return false;
+  }
   // Détecte le type de collection (EFFET ou CHEQUE) basé sur la valeur de No.CHq /Bd
   detectCollectionType(noChqBdValue: any): CollectionTypeResult {
     if (!noChqBdValue || noChqBdValue === null) {
@@ -86,6 +158,10 @@ class ExcelMappingService {
     const noChqBdValue = row.noChqBd;
     const typeResult = this.detectCollectionType(noChqBdValue);
     
+    // Détection du type de collection (EFFET ou CHEQUE)
+    const noChqBdValue = row.noChqBd;
+    const typeResult = this.detectCollectionType(noChqBdValue);
+    
     // ⭐ MODE TOLÉRANT - Traçabilité optionnelle
     const collection: CollectionReport = {
       reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
@@ -93,6 +169,13 @@ class ExcelMappingService {
       collectionAmount: this.parseNumber(row.collectionAmount) || 0,
       bankName: this.parseString(row.bankName),
       status: 'pending',
+      
+      // Logique métier effet/chèque
+      collectionType: typeResult.type,
+      effetEcheanceDate: typeResult.effetEcheanceDate ? typeResult.effetEcheanceDate.toISOString().split('T')[0] : undefined,
+      effetStatus: typeResult.type === 'EFFET' ? 'PENDING' : undefined,
+      chequeNumber: typeResult.chequeNumber,
+      chequeStatus: typeResult.type === 'CHEQUE' ? 'PENDING' : undefined,
       
       // Logique métier effet/chèque
       collectionType: typeResult.type,
