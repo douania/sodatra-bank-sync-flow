@@ -63,7 +63,7 @@
     "vaul": "^0.9.3",
     "xlsx": "^0.18.5",
     "xlsx": "^0.18.5",
-    "pdf-parse": "^1.1.1"
+    "pdfjs-dist": "^4.0.379"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
