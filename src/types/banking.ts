@@ -97,6 +97,13 @@ export interface CollectionReport {
   chequeNumber?: string;
   chequeStatus?: 'PENDING' | 'CLEARED' | 'BOUNCED';
   
+  // Logique métier effet/chèque
+  collectionType?: 'EFFET' | 'CHEQUE' | 'UNKNOWN';
+  effetEcheanceDate?: string;
+  effetStatus?: 'PENDING' | 'PAID' | 'IMPAYE';
+  chequeNumber?: string;
+  chequeStatus?: 'PENDING' | 'CLEARED' | 'BOUNCED';
+  
   nj?: number;
   taux?: number;
   interet?: number;

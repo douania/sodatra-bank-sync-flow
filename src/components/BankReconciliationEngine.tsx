@@ -3,17 +3,20 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { AlertTriangle, CheckCircle, Clock, MapPin, ArrowRight } from 'lucide-react';
+import { Progress } from '@/components/ui/progress'; 
+import { AlertTriangle, CheckCircle, Clock, MapPin, ArrowRight, FileText, FileCheck } from 'lucide-react';
 import { databaseService } from '@/services/databaseService';
 import { CollectionReport, BankReport, DepositNotCleared } from '@/types/banking';
+import { specializedMatchingService, MatchResult } from '@/services/specializedMatchingService';
 
 interface MatchResult {
   collection: CollectionReport;
   deposit?: DepositNotCleared;
+  impaye?: any;
   confidence: number;
   status: 'perfect' | 'partial' | 'unmatched';
   reasons: string[];
+  matchType: 'effet' | 'cheque' | 'generic' | 'none';
 }
 
 const BankReconciliationEngine: React.FC = () => {
@@ -62,6 +65,14 @@ const BankReconciliationEngine: React.FC = () => {
         allDeposits.push({ ...deposit, bankName: report.bank });
       });
     });
+    
+    // Créer une liste plate de tous les impayés
+    const allImpayes: (any & { bankName: string })[] = [];
+    bankReports.forEach(report => {
+      report.impayes.forEach(impaye => {
+        allImpayes.push({ ...impaye, bankName: report.bank });
+      });
+    });
 
     console.log('🔍 Début du rapprochement:', { collections: collections.length, deposits: allDeposits.length });
 
@@ -69,70 +80,14 @@ const BankReconciliationEngine: React.FC = () => {
       const collection = collections[i];
       setProgress((i / collections.length) * 100);
 
-      // Algorithme de rapprochement amélioré
-      let bestMatch: (DepositNotCleared & { bankName: string }) | undefined;
-      let maxConfidence = 0;
-      const reasons: string[] = [];
-
-      for (const deposit of allDeposits) {
-        let confidence = 0;
-        const matchReasons: string[] = [];
-
-        // 1. Correspondance exacte du montant (50 points)
-        if (Math.abs(collection.collectionAmount - deposit.montant) < 1) {
-          confidence += 50;
-          matchReasons.push('Montant exact');
-        } else if (Math.abs(collection.collectionAmount - deposit.montant) / collection.collectionAmount < 0.05) {
-          confidence += 30;
-          matchReasons.push('Montant proche (±5%)');
-        }
-
-        // 2. Correspondance de la banque (30 points)
-        if (collection.bankName && deposit.bankName.toLowerCase().includes(collection.bankName.toLowerCase())) {
-          confidence += 30;
-          matchReasons.push('Banque correspondante');
-        }
-
-        // 3. Correspondance de la date (20 points)
-        if (collection.dateOfValidity && deposit.dateValeur) {
-          const dateDiff = Math.abs(new Date(collection.dateOfValidity).getTime() - new Date(deposit.dateValeur).getTime());
-          const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
-          
-          if (daysDiff <= 1) {
-            confidence += 20;
-            matchReasons.push('Date exacte');
-          } else if (daysDiff <= 3) {
-            confidence += 10;
-            matchReasons.push('Date proche');
-          }
-        }
-
-        // 4. Correspondance du code client ou référence
-        if (collection.clientCode && (deposit.clientCode === collection.clientCode || deposit.reference?.includes(collection.clientCode))) {
-          confidence += 15;
-          matchReasons.push('Code client/référence');
-        }
-
-        if (confidence > maxConfidence) {
-          maxConfidence = confidence;
-          bestMatch = deposit;
-          reasons.length = 0;
-          reasons.push(...matchReasons);
-        }
-      }
-
-      // Déterminer le statut basé sur la confiance
-      let status: 'perfect' | 'partial' | 'unmatched' = 'unmatched';
-      if (maxConfidence >= 80) status = 'perfect';
-      else if (maxConfidence >= 50) status = 'partial';
-
-      results.push({
+      // Utiliser le service de rapprochement spécialisé
+      const matchResult = specializedMatchingService.matchCollection(
         collection,
-        deposit: bestMatch,
-        confidence: maxConfidence,
-        status,
-        reasons
-      });
+        allDeposits,
+        allImpayes
+      );
+      
+      results.push(matchResult);
     }
 
     setMatchResults(results);
@@ -263,7 +218,14 @@ const BankReconciliationEngine: React.FC = () => {
                       </Badge>
                       <span className="font-medium">{result.collection.factureNo}</span>
                     </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    <div>Banque: {result.collection.bankName || 'Non spécifiée'}</div>
+                    <div>Type: {result.collection.collectionType || 'Non spécifié'} {
+                      result.collection.collectionType === 'EFFET' ? 
+                        `(Échéance: ${result.collection.effetEcheanceDate || 'N/A'})` : 
+                      result.collection.collectionType === 'CHEQUE' ? 
+                        `(N°: ${result.collection.chequeNumber || 'N/A'})` : 
+                        ''
+                    }</div>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -287,13 +249,49 @@ const BankReconciliationEngine: React.FC = () => {
                   {result.reasons.length > 0 && (
                     <div className="mt-2 text-xs text-muted-foreground">
                       Critères: {result.reasons.join(', ')}
+                      <div>Type: {result.deposit.typeReglement || 'Non spécifié'}</div>
+                    </div>
+                  )}
+                  
+                  {result.impaye && (
+                    <div>
+                      <div className="font-medium text-red-600">Impayé correspondant:</div>
+                      <div>Montant: {result.impaye.montant.toLocaleString()} FCFA</div>
+                      <div>Date: {result.impaye.dateEcheance}</div>
+                      <div>Description: {result.impaye.description || 'Non spécifiée'}</div>
                     </div>
                   )}
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+                  <div className="mt-2 text-xs">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Badge className={
+                        result.matchType === 'effet' ? 'bg-purple-100 text-purple-800' :
+                        result.matchType === 'cheque' ? 'bg-blue-100 text-blue-800' :
+                        'bg-gray-100 text-gray-800'
+                      }>
+                        {result.matchType === 'effet' ? (
+                          <>
+                            <FileText className="h-3 w-3 mr-1" />
+                            Effet
+                          </>
+                        ) : result.matchType === 'cheque' ? (
+                          <>
+                            <FileCheck className="h-3 w-3 mr-1" />
+                            Chèque
+                          </>
+                        ) : (
+                          'Générique'
+                        )}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {result.confidence}% confiance
+                      </span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Critères: {result.reasons.join(', ')}
+                    </div>
       )}
     </div>
   );
