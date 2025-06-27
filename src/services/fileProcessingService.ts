@@ -552,17 +552,30 @@ export class FileProcessingService {
   // Méthodes d'extraction de contenu à partir de fichiers
   private async extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
     try {
-      // Import pdf-parse dynamically to avoid issues with SSR
-      const pdfParse = await import('pdf-parse');
+      // Import pdfjs-dist for browser-compatible PDF parsing
+      const pdfjsLib = await import('pdfjs-dist');
       
-      // Convert ArrayBuffer to Buffer for pdf-parse
-      const pdfBuffer = Buffer.from(buffer);
+      // Set worker source for PDF.js
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString();
       
-      // Extract text from PDF
-      const data = await pdfParse.default(pdfBuffer);
+      // Load PDF document
+      const loadingTask = pdfjsLib.getDocument({ data: buffer });
+      const pdf = await loadingTask.promise;
       
-      console.log(`📄 PDF text extracted: ${data.text.length} characters`);
-      return data.text;
+      let fullText = '';
+      
+      // Extract text from each page
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        fullText += pageText + '\n';
+      }
+      
+      console.log(`📄 PDF text extracted: ${fullText.length} characters`);
+      return fullText;
     } catch (error) {
       console.error('❌ Erreur extraction PDF:', error);
       // Fallback: return empty string but log the error

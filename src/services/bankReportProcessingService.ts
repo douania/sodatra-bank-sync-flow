@@ -134,7 +134,7 @@ class BankReportProcessingService {
       const pdfjsLib = await import('pdfjs-dist');
       
       // Set worker source for PDF.js
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString();
       
       // Load PDF document
       const loadingTask = pdfjsLib.getDocument({ data: buffer });
