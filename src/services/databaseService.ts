@@ -69,6 +69,8 @@ export class DatabaseService {
 
   async getLatestBankReports(): Promise<BankReport[]> {
     try {
+      console.log('🔍 Récupération des derniers rapports bancaires...');
+      
       const { data, error } = await supabase
         .from('bank_reports')
         .select(`
@@ -80,12 +82,27 @@ export class DatabaseService {
         .order('report_date', { ascending: false })
         .limit(10);
 
+      console.log(`🏦 Rapports bancaires récupérés: ${data?.length || 0}`);
+      
       if (error) {
         console.error('Error fetching bank reports:', error);
         return [];
       }
 
-      return (data || []).map(this.mapDbToBankReport);
+      const reports = (data || []).map(this.mapDbToBankReport);
+      
+      // Vérifier si les impayés sont correctement chargés
+      let totalImpayes = 0;
+      reports.forEach(report => {
+        console.log(`🏦 Rapport ${report.bank}: ${report.impayes.length} impayés`);
+        report.impayes.forEach(impaye => {
+          totalImpayes += impaye.montant;
+        });
+      });
+      
+      console.log(`💰 Total des impayés dans tous les rapports: ${totalImpayes.toLocaleString()} FCFA`);
+      
+      return reports;
     } catch (error) {
       console.error('Error fetching bank reports:', error);
       return [];
@@ -824,6 +841,14 @@ export class DatabaseService {
   }
 
   private mapDbToBankReport(data: any): BankReport {
+    // Vérifier si les impayés sont présents dans les données
+    const impayesCount = data.impayes?.length || 0;
+    console.log(`🔍 Mapping rapport ${data.bank_name}: ${impayesCount} impayés trouvés dans les données brutes`);
+    
+    if (impayesCount > 0) {
+      console.log(`  📊 Échantillon d'impayés:`, data.impayes.slice(0, 2));
+    }
+    
     return {
       id: data.id,
       bank: data.bank_name,

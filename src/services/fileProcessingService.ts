@@ -537,21 +537,37 @@ export class FileProcessingService {
       // Agréger les impayés par client
       const clientImpayes = new Map<string, number>();
       
+      console.log('🔍 Rapports bancaires récupérés:', bankReports.length);
+      
       bankReports.forEach(report => {
+        console.log(`🏦 Analyse rapport ${report.bank} du ${report.date}:`, {
+          impayes: report.impayes.length,
+          solde: report.closingBalance
+        });
+        
         report.impayes.forEach(impaye => {
           const clientCode = impaye.clientCode;
+          console.log(`  ❌ Impayé trouvé: Client ${clientCode}, Montant: ${impaye.montant.toLocaleString()} FCFA, Date: ${impaye.dateEcheance}`);
+          
           const currentAmount = clientImpayes.get(clientCode) || 0;
+          const newAmount = currentAmount + impaye.montant;
+          console.log(`  💰 Montant cumulé pour ${clientCode}: ${currentAmount} + ${impaye.montant} = ${newAmount}`);
+          
           clientImpayes.set(clientCode, currentAmount + impaye.montant);
         });
       });
       
-      console.log(`👥 Impayés trouvés pour ${clientImpayes.size} clients`);
+      console.log(`👥 Impayés trouvés pour ${clientImpayes.size} clients:`);
+      clientImpayes.forEach((amount, clientCode) => {
+        console.log(`  - ${clientCode}: ${amount.toLocaleString()} FCFA`);
+      });
       
       // Créer les réconciliations client avec les montants d'impayés réels
       const clientReconciliations: ClientReconciliation[] = [];
       
       // Ajouter les clients avec impayés
       for (const [clientCode, impayesAmount] of clientImpayes.entries()) {
+        console.log(`👤 Ajout client avec impayés: ${clientCode} - ${impayesAmount.toLocaleString()} FCFA`);
         clientReconciliations.push({
           reportDate: new Date().toISOString().split('T')[0],
           clientCode: clientCode,
@@ -565,6 +581,7 @@ export class FileProcessingService {
       for (const client of clientsData) {
         // Ne pas dupliquer les clients déjà ajoutés avec impayés
         if (!clientImpayes.has(client.clientCode)) {
+          console.log(`👤 Ajout client sans impayés: ${client.clientCode}`);
           clientReconciliations.push({
             reportDate: new Date().toISOString().split('T')[0],
             clientCode: client.clientCode,
@@ -575,6 +592,17 @@ export class FileProcessingService {
       }
 
       console.log('👥 Client Reconciliation calculée:', clientReconciliations.length, 'clients');
+      console.log('📊 Échantillon des réconciliations calculées:');
+      clientReconciliations.slice(0, 5).forEach(reconciliation => {
+        console.log(`  - ${reconciliation.clientCode}: ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
+      });
+      
+      // Vérifier s'il y a des montants non nuls
+      const nonZeroReconciliations = clientReconciliations.filter(r => r.impayesAmount > 0);
+      console.log(`📊 Réconciliations avec montants non nuls: ${nonZeroReconciliations.length}`);
+      nonZeroReconciliations.forEach(reconciliation => {
+        console.log(`  - ${reconciliation.clientCode}: ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
+      });
       return clientReconciliations;
     } catch (error) {
       console.error('❌ Erreur calcul Client Reconciliation:', error);
