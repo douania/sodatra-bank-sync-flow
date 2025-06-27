@@ -134,7 +134,7 @@ class BankReportProcessingService {
       const pdfjsLib = await import('pdfjs-dist');
       
       // Set worker source to local file
-      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
       
       // Load PDF document
       const loadingTask = pdfjsLib.getDocument({ data: buffer });
