@@ -1,4 +1,3 @@
-
 export interface BankFacility {
   facilityType: string;
   limitAmount: number;
@@ -89,13 +88,6 @@ export interface CollectionReport {
   status?: 'pending' | 'processed' | 'failed';
   commission?: number;
   dateOfValidity?: string;
-  
-  // Logique métier effet/chèque
-  collectionType?: 'EFFET' | 'CHEQUE' | 'UNKNOWN';
-  effetEcheanceDate?: string;
-  effetStatus?: 'PENDING' | 'PAID' | 'IMPAYE';
-  chequeNumber?: string;
-  chequeStatus?: 'PENDING' | 'CLEARED' | 'BOUNCED';
   
   // Logique métier effet/chèque
   collectionType?: 'EFFET' | 'CHEQUE' | 'UNKNOWN';
