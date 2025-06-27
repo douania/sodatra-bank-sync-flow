@@ -535,14 +535,22 @@ export class DatabaseService {
         holdCollections: fundPosition.holdCollections?.length || 0
       });
       
-      // ⭐ ARRONDIR AVANT INSERTION pour éviter l'erreur bigint
+      // ⭐ SÉCURISER LES VALEURS AVANT INSERTION pour éviter l'erreur bigint
+      const safeValue = (value: number): number => {
+        if (!Number.isFinite(value) || value > Number.MAX_SAFE_INTEGER) {
+          console.warn(`⚠️ Valeur non sûre détectée: ${value}, utilisation de 0`);
+          return 0;
+        }
+        return Math.floor(Math.abs(value)); // Assurer un entier positif
+      };
+      
       const roundedFundPosition = {
         report_date: fundPosition.reportDate,
-        total_fund_available: Math.round(fundPosition.totalFundAvailable),
-        collections_not_deposited: Math.round(fundPosition.collectionsNotDeposited),
-        grand_total: Math.round(fundPosition.grandTotal),
-        deposit_for_day: fundPosition.depositForDay ? Math.round(fundPosition.depositForDay) : null,
-        payment_for_day: fundPosition.paymentForDay ? Math.round(fundPosition.paymentForDay) : null
+        total_fund_available: safeValue(fundPosition.totalFundAvailable),
+        collections_not_deposited: safeValue(fundPosition.collectionsNotDeposited),
+        grand_total: safeValue(fundPosition.grandTotal),
+        deposit_for_day: fundPosition.depositForDay ? safeValue(fundPosition.depositForDay) : null,
+        payment_for_day: fundPosition.paymentForDay ? safeValue(fundPosition.paymentForDay) : null
       };
       
       console.log('🔢 Valeurs arrondies pour insertion:', roundedFundPosition);
@@ -576,11 +584,11 @@ export class DatabaseService {
         const detailsToInsert = fundPosition.details.map(detail => ({
           fund_position_id: fundPositionId,
           bank_name: detail.bankName,
-          balance: Math.round(detail.balance),
-          fund_applied: Math.round(detail.fundApplied),
-          net_balance: Math.round(detail.netBalance),
-          non_validated_deposit: Math.round(detail.nonValidatedDeposit),
-          grand_balance: Math.round(detail.grandBalance)
+          balance: safeValue(detail.balance),
+          fund_applied: safeValue(detail.fundApplied),
+          net_balance: safeValue(detail.netBalance),
+          non_validated_deposit: safeValue(detail.nonValidatedDeposit),
+          grand_balance: safeValue(detail.grandBalance)
         }));
         
         await SupabaseRetryService.executeWithRetry(
@@ -609,7 +617,7 @@ export class DatabaseService {
           client_bank: hold.clientBank,
           client_name: hold.clientName,
           facture_reference: hold.factureReference,
-          amount: Math.round(hold.amount),
+          amount: safeValue(hold.amount),
           deposit_date: hold.depositDate,
           days_remaining: hold.daysRemaining
         }));
@@ -655,9 +663,18 @@ export class DatabaseService {
         'Calcul total collections'
       );
 
-      // ⭐ ARRONDIR le total pour éviter les décimales
-      const total = (data || []).reduce((sum, item) => sum + (item.collection_amount || 0), 0);
-      return Math.round(total);
+      // ⭐ SÉCURISER le total pour éviter les valeurs non sûres
+      const total = (data || []).reduce((sum, item) => {
+        const amount = Number(item.collection_amount) || 0;
+        return sum + (Number.isFinite(amount) ? amount : 0);
+      }, 0);
+      
+      if (total > Number.MAX_SAFE_INTEGER) {
+        console.warn(`⚠️ Total très élevé: ${total}, limitation appliquée`);
+        return Number.MAX_SAFE_INTEGER;
+      }
+      
+      return Math.floor(total);
     } catch (error) {
       console.error('Error getting total collections:', error);
       return 0;
