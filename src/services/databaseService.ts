@@ -494,22 +494,101 @@ export class DatabaseService {
     const { SupabaseRetryService } = await import('./supabaseClientService');
     
     try {
-      await SupabaseRetryService.executeWithRetry(
+      const { data: reportData, error: reportError } = await SupabaseRetryService.executeWithRetry(
         async () => {
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from('bank_reports')
             .insert({
               bank_name: report.bank,
               report_date: report.date,
               opening_balance: report.openingBalance,
               closing_balance: report.closingBalance
-            });
+            })
+            .select('id')
+            .single();
 
           if (error) throw error;
+          return { data, error };
         },
         { maxRetries: 3 },
         `Sauvegarde rapport ${report.bank}`
       );
+      
+      if (reportError) throw reportError;
+      
+      const reportId = reportData.id;
+      
+      // Sauvegarder les facilités bancaires
+      if (report.bankFacilities && report.bankFacilities.length > 0) {
+        const facilitiesData = report.bankFacilities.map(facility => ({
+          bank_report_id: reportId,
+          facility_type: facility.facilityType,
+          limit_amount: facility.limitAmount,
+          used_amount: facility.usedAmount,
+          available_amount: facility.availableAmount
+        }));
+        
+        await SupabaseRetryService.executeWithRetry(
+          async () => {
+            const { error } = await supabase
+              .from('bank_facilities')
+              .insert(facilitiesData);
+            
+            if (error) throw error;
+          },
+          { maxRetries: 3 },
+          `Sauvegarde facilités ${report.bank}`
+        );
+      }
+      
+      // Sauvegarder les dépôts non crédités
+      if (report.depositsNotCleared && report.depositsNotCleared.length > 0) {
+        const depositsData = report.depositsNotCleared.map(deposit => ({
+          bank_report_id: reportId,
+          date_depot: deposit.dateDepot,
+          date_valeur: deposit.dateValeur,
+          type_reglement: deposit.typeReglement,
+          client_code: deposit.clientCode,
+          reference: deposit.reference,
+          montant: deposit.montant
+        }));
+        
+        await SupabaseRetryService.executeWithRetry(
+          async () => {
+            const { error } = await supabase
+              .from('deposits_not_cleared')
+              .insert(depositsData);
+            
+            if (error) throw error;
+          },
+          { maxRetries: 3 },
+          `Sauvegarde dépôts ${report.bank}`
+        );
+      }
+      
+      // Sauvegarder les impayés
+      if (report.impayes && report.impayes.length > 0) {
+        const impayesData = report.impayes.map(impaye => ({
+          bank_report_id: reportId,
+          date_echeance: impaye.dateEcheance,
+          date_retour: impaye.dateRetour,
+          client_code: impaye.clientCode,
+          description: impaye.description,
+          montant: impaye.montant
+        }));
+        
+        await SupabaseRetryService.executeWithRetry(
+          async () => {
+            const { error } = await supabase
+              .from('impayes')
+              .insert(impayesData);
+            
+            if (error) throw error;
+          },
+          { maxRetries: 3 },
+          `Sauvegarde impayés ${report.bank}`
+        );
+      }
 
       return { success: true };
     } catch (error) {

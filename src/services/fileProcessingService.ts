@@ -529,17 +529,50 @@ export class FileProcessingService {
   private async processClientReconciliation(file: File): Promise<ClientReconciliation[]> {
     // ⭐ Créer une réconciliation client basée sur les données réelles
     try {
-      console.log('👥 Calcul Client Reconciliation basée sur données réelles...');
+      console.log('👥 Calcul Client Reconciliation basée sur les impayés des rapports bancaires...');
       
-      // Récupérer les clients depuis les collections
+      // Récupérer les impayés depuis les rapports bancaires
+      const bankReports = await databaseService.getLatestBankReports();
+      
+      // Agréger les impayés par client
+      const clientImpayes = new Map<string, number>();
+      
+      bankReports.forEach(report => {
+        report.impayes.forEach(impaye => {
+          const clientCode = impaye.clientCode;
+          const currentAmount = clientImpayes.get(clientCode) || 0;
+          clientImpayes.set(clientCode, currentAmount + impaye.montant);
+        });
+      });
+      
+      console.log(`👥 Impayés trouvés pour ${clientImpayes.size} clients`);
+      
+      // Créer les réconciliations client avec les montants d'impayés réels
+      const clientReconciliations: ClientReconciliation[] = [];
+      
+      // Ajouter les clients avec impayés
+      for (const [clientCode, impayesAmount] of clientImpayes.entries()) {
+        clientReconciliations.push({
+          reportDate: new Date().toISOString().split('T')[0],
+          clientCode: clientCode,
+          clientName: `Client ${clientCode}`, // Nom générique, à améliorer si disponible
+          impayesAmount: impayesAmount
+        });
+      }
+      
+      // Ajouter également les clients sans impayés depuis les collections
       const clientsData = await databaseService.getClientsWithCollections();
-      
-      const clientReconciliations: ClientReconciliation[] = clientsData.map(client => ({
-        reportDate: '2025-06-25',
-        clientCode: client.clientCode,
-        clientName: client.clientName || `Client ${client.clientCode}`,
-        impayesAmount: 0 // Pas d'impayés fictifs
-      }));
+      for (const client of clientsData) {
+        // Ne pas dupliquer les clients déjà ajoutés avec impayés
+        if (!clientImpayes.has(client.clientCode)) {
+          clientReconciliations.push({
+            reportDate: new Date().toISOString().split('T')[0],
+            clientCode: client.clientCode,
+            clientName: client.clientName || `Client ${client.clientCode}`,
+            impayesAmount: 0 // Client sans impayés
+          });
+        }
+      }
 
       console.log('👥 Client Reconciliation calculée:', clientReconciliations.length, 'clients');
       return clientReconciliations;
