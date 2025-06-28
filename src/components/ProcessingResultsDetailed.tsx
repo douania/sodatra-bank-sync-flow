@@ -282,7 +282,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                 <div className="max-h-32 overflow-y-auto">
                   {results.data.clientReconciliation.slice(0, 5).map((client, index) => (
                     <div key={index} className="flex justify-between text-xs py-1">
-                      <span>{client.clientCode}</span>
+                      <span>{client.clientName || `Client ${client.clientCode}`}</span>
                       <span>{formatCurrency(client.impayesAmount)}</span>
                     </div>
                   ))}
