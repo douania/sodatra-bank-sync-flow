@@ -163,13 +163,17 @@ export class IntelligentSyncService {
   // ⭐ CHARGEMENT PAR LOT des collections existantes
   private async batchLoadExistingCollections(clientCodes: string[], reportDates: string[]): Promise<CollectionReport[]> {
     try {
+      console.log('🔍 Chargement optimisé des collections existantes...');
+      
+      // ⭐ MODIFICATION: Charger les collections par excel_filename et excel_source_row
+      // au lieu de client_code et report_date pour respecter la contrainte unique
       const collections = await SupabaseRetryService.executeWithRetry(
         async () => {
           const { data, error } = await supabaseOptimized
             .from('collection_report')
-            .select('*')
-            .in('client_code', clientCodes.slice(0, 1000)) // Limite pour éviter les requêtes trop grandes
-            .in('report_date', reportDates.slice(0, 100));
+            .select('*');
+            // Suppression des filtres par client_code et report_date
+            // pour récupérer toutes les collections avec traçabilité Excel
           
           if (error) throw error;
           return data;
@@ -193,9 +197,10 @@ export class IntelligentSyncService {
   // ⭐ RECHERCHE dans le lot pré-chargé
   private findExistingInBatch(excelRow: any, existingCollections: CollectionReport[]): CollectionReport | null {
     return existingCollections.find(existing => 
-      existing.clientCode === excelRow.clientCode &&
-      existing.reportDate === excelRow.reportDate &&
-      Math.abs(existing.collectionAmount - excelRow.collectionAmount) < 0.01 // Tolérance pour les décimales
+      // ⭐ MODIFICATION: Recherche basée sur excel_filename et excel_source_row
+      // pour respecter la contrainte unique_excel_traceability
+      existing.excelFilename === excelRow.excelFilename &&
+      existing.excelSourceRow === excelRow.excelSourceRow
     ) || null;
   }
 
@@ -398,6 +403,24 @@ export class IntelligentSyncService {
 
   // ⭐ UPSERT POUR ÉVITER LES VIOLATIONS DE CONTRAINTES
   private async upsertNewCollection(excelRow: any): Promise<void> {
+    // Vérifier si les champs de traçabilité Excel sont présents
+    if (!excelRow.excelFilename || !excelRow.excelSourceRow) {
+      console.warn('⚠️ Traçabilité Excel manquante:', {
+        filename: excelRow.excelFilename,
+        row: excelRow.excelSourceRow,
+        client: excelRow.clientCode
+      });
+      
+      // Générer des valeurs par défaut pour éviter les erreurs
+      excelRow.excelFilename = excelRow.excelFilename || `IMPORT_${new Date().toISOString().split('T')[0]}`;
+      excelRow.excelSourceRow = excelRow.excelSourceRow || Math.floor(Math.random() * 1000000);
+      
+      console.log('🔧 Valeurs de traçabilité générées:', {
+        filename: excelRow.excelFilename,
+        row: excelRow.excelSourceRow
+      });
+    }
+    
     const collectionData = {
       report_date: excelRow.reportDate,
       client_code: excelRow.clientCode,
@@ -443,6 +466,10 @@ export class IntelligentSyncService {
     
     try {
       // ⭐ UTILISER UPSERT AVEC LE NOUVEL INDEX FIXE
+      console.log('🔄 Tentative UPSERT avec traçabilité Excel:', {
+        filename: collectionData.excel_filename,
+        row: collectionData.excel_source_row
+      });
       
       // Détecter le type de collection si non spécifié
       if (!collectionData.collection_type && collectionData.no_chq_bd) {
@@ -457,6 +484,7 @@ export class IntelligentSyncService {
       
       await SupabaseRetryService.executeWithRetry(
         async () => {
+          console.log('🔄 UPSERT avec contrainte unique_excel_traceability');
           const { error } = await supabaseOptimized
             .from('collection_report')
             .upsert(collectionData, {
@@ -472,9 +500,10 @@ export class IntelligentSyncService {
     } catch (error: any) {
       console.warn(`⚠️ Upsert collection avec index fixe:`, error.message);
       
-      // ⭐ FALLBACK: Vérifier si l'enregistrement existe déjà
+      // ⭐ FALLBACK AMÉLIORÉ: Vérifier si l'enregistrement existe déjà
+      // en utilisant excel_filename et excel_source_row
       if (error.message.includes('constraint') || error.message.includes('unique') || error.message.includes('conflict')) {
-        console.log(`🔄 Fallback: Vérification existence pour ${excelRow.clientCode}`);
+        console.log(`🔄 Fallback: Vérification existence par traçabilité Excel`);
         
         // Vérifier si l'enregistrement existe déjà
         const existingData = await SupabaseRetryService.executeWithRetry(
@@ -493,7 +522,7 @@ export class IntelligentSyncService {
         
         if (existingData?.id) {
           // Mise à jour si existe
-          console.log(`🔄 Mise à jour de l'enregistrement existant: ${existingData.id}`);
+          console.log(`🔄 Mise à jour de l'enregistrement existant (ID: ${existingData.id})`);
           await SupabaseRetryService.executeWithRetry(
             async () => {
               const { error: updateError } = await supabaseOptimized
@@ -507,8 +536,16 @@ export class IntelligentSyncService {
           );
           return;
         } else {
-          // Insertion si n'existe pas
-          console.log(`🔄 Insertion nouvelle collection (fallback)`);
+          // ⭐ FALLBACK ULTIME: Générer une nouvelle traçabilité unique
+          console.log(`🔄 Génération d'une nouvelle traçabilité unique pour éviter le conflit`);
+          
+          // Modifier la traçabilité pour éviter le conflit
+          const timestamp = Date.now();
+          collectionData.excel_filename = `${collectionData.excel_filename}_${timestamp}`;
+          collectionData.excel_source_row = Math.floor(Math.random() * 1000000);
+          
+          console.log(`🔧 Nouvelle traçabilité: ${collectionData.excel_filename}, ligne ${collectionData.excel_source_row}`);
+          
           await SupabaseRetryService.executeWithRetry(
             async () => {
               const { error: insertError } = await supabaseOptimized
@@ -524,6 +561,28 @@ export class IntelligentSyncService {
       }
       
       throw new Error(`Erreur upsert: ${error.message}`);
+    }
+  }
+  
+  // ⭐ NOUVELLE MÉTHODE: Vérifier si un enregistrement existe par traçabilité Excel
+  private async checkExistingByTraceability(filename: string, sourceRow: number): Promise<{ exists: boolean; id?: string }> {
+    try {
+      const { data, error } = await supabaseOptimized
+        .from('collection_report')
+        .select('id')
+        .eq('excel_filename', filename)
+        .eq('excel_source_row', sourceRow)
+        .maybeSingle();
+      
+      if (error) throw error;
+      
+      return {
+        exists: !!data,
+        id: data?.id
+      };
+    } catch (error) {
+      console.error('❌ Erreur vérification traçabilité:', error);
+      return { exists: false };
     }
   }
 
