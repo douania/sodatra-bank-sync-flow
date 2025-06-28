@@ -52,9 +52,9 @@ class BankReportSectionExtractor {
         checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
         checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         facilitiesSection: /BANK\s+FACILITY/i,
-        facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
+        facilityLine: /(\d{2}\/\d{2}\/\d{4})\s+(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/g,
         impayesSection: /IMPAYE/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+(.*?)\s+([\d\s]+)/g
       }
     },
     {
@@ -310,7 +310,10 @@ class BankReportSectionExtractor {
       }
 
       if (inFacilitiesSection && line.trim()) {
-        const match = line.match(config.patterns.facilityLine);
+        // Use the global regex to find all matches in the line
+        const matches = Array.from(line.matchAll(config.patterns.facilityLine));
+        const match = matches.length > 0 ? matches[0] : null;
+        
         if (match) {
           console.log(`✅ Ligne de facilité trouvée: "${line.trim()}"`);
           
@@ -318,22 +321,22 @@ class BankReportSectionExtractor {
           let usedAmount = 0;
           let availableAmount = 0;
           
-          // Cas spécial pour ATB avec format "500M limit, 84M used, 415M balance"
-          if (config.bankName === 'ATB') {
-            // Convertir "500M" en 500000000
-            limitAmount = this.parseMillionAmount(match[2]);
-            usedAmount = this.parseMillionAmount(match[3]);
-            availableAmount = this.parseMillionAmount(match[4]);
+          // Check if we have a date in the first capture group (new ATB pattern)
+          if (match[1] && match[1].match(/\d{2}\/\d{2}\/\d{4}/)) {
+            // New ATB pattern with date: date, type, limit, used, available
+            limitAmount = this.parseAmount(match[3]);
+            usedAmount = this.parseAmount(match[4]);
+            availableAmount = this.parseAmount(match[5]);
           } else {
             // Format standard pour les autres banques
-            limitAmount = this.parseAmount(match[2]);
-            usedAmount = this.parseAmount(match[3]);
-            availableAmount = this.parseAmount(match[4]);
+            limitAmount = this.parseAmount(match[2] || '0');
+            usedAmount = this.parseAmount(match[3] || '0');
+            availableAmount = this.parseAmount(match[4] || '0');
           }
 
           if (limitAmount > 0) {
             facilities.push({
-              facilityType: match[1].trim(),
+              facilityType: match[1].match(/\d{2}\/\d{2}\/\d{4}/) ? match[2].trim() : match[1].trim(),
               limitAmount,
               usedAmount,
               availableAmount
@@ -382,16 +385,21 @@ class BankReportSectionExtractor {
       }
 
       if (inImpayesSection && line.trim()) {
-        const match = line.match(config.patterns.impayeLine);
+        // Use the global regex to find all matches in the line
+        const matches = Array.from(line.matchAll(config.patterns.impayeLine));
+        const match = matches.length > 0 ? matches[0] : null;
+        
         if (match) {
           console.log(`✅ Ligne d'impayé trouvée: "${line.trim()}"`);
           
           let clientCode = 'UNKNOWN';
           let description = 'IMPAYE';
           
-          // Format standard pour les banques
-          clientCode = match[3]?.trim() || 'UNKNOWN';
-          description = match[4]?.trim() || 'IMPAYE';
+          // Check if we have all the expected capture groups
+          if (match.length >= 6) {
+            clientCode = match[3]?.trim() || 'UNKNOWN';
+            description = match[4]?.trim() || 'IMPAYE';
+          }
           
           console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
           
