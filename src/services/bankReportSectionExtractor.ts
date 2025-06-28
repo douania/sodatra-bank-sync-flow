@@ -10,16 +10,18 @@ export interface SectionExtractionResult {
 export interface BankSectionConfig {
   bankName: string;
   patterns: {
-    openingBalance: RegExp;
-    closingBalance: RegExp;
-    depositsSection: RegExp;
-    depositLine: RegExp;
-    checksSection: RegExp;
-    checkLine: RegExp;
-    facilitiesSection: RegExp;
-    facilityLine: RegExp;
-    impayesSection: RegExp;
-    impayeLine: RegExp;
+    openingBalance: RegExp;         // Pattern to find opening balance
+    closingBalance: RegExp;         // Pattern to find closing balance
+    depositsSection: RegExp;        // Pattern to identify deposits section
+    depositLine: RegExp;            // Pattern to extract individual deposit lines
+    depositsTotal?: RegExp;         // Pattern to extract total deposits (for ATB)
+    checksSection: RegExp;          // Pattern to identify checks section
+    checkLine: RegExp;              // Pattern to extract individual check lines
+    checksTotal?: RegExp;           // Pattern to extract total checks (for ATB)
+    facilitiesSection: RegExp;      // Pattern to identify facilities section
+    facilityLine: RegExp;           // Pattern to extract individual facility lines
+    impayesSection: RegExp;         // Pattern to identify impayes section
+    impayeLine: RegExp;             // Pattern to extract individual impaye lines
   };
 }
 
@@ -53,6 +55,23 @@ class BankReportSectionExtractor {
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /IMPAYES\s+NON\s+REGULARISES/i,
         impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
+      }
+    },
+    {
+      bankName: 'ATB',
+      patterns: {
+        openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s*:\s*([\d\s]+)/i,
+        closingBalance: /CLOSING\s+BALANCE\s*:\s*([\d\s]+)/i,
+        depositsSection: /DEPOSIT\s+NOT\s+YET\s+CLEARED/i,
+        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s+(\w+)\s+(\w+)\s+(\w+)\s+([\d\s]+)/i,
+        depositsTotal: /DEPOSIT\s+NOT\s+YET\s+CLEARED\s*:\s*([\d\s]+)/i,
+        checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
+        checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
+        checksTotal: /CHECK\s+Not\s+yet\s+cleared\s*:\s*([\d\s]+)/i,
+        facilitiesSection: /BANK\s+FACILITY/i,
+        facilityLine: /-\s+([^:]+):\s+([\d]+M)\s+limit,\s+([\d]+M)\s+used,\s+([\d]+M)\s+balance/i,
+        impayesSection: /IMPAYE/i,
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*IMPAYE\s+(\S+)\/(\S+)\s+([\d\s]+)/i
       }
     },
     {
@@ -187,16 +206,20 @@ class BankReportSectionExtractor {
     const deposits: DepositNotCleared[] = [];
     const lines = textContent.split('\n');
     let inDepositsSection = false;
+    
+    console.log(`🔍 Extraction des dépôts non crédités pour ${config.bankName}...`);
 
     for (const line of lines) {
       if (config.patterns.depositsSection.test(line)) {
         inDepositsSection = true;
+        console.log(`✅ Section des dépôts trouvée: "${line.trim()}"`);
         continue;
       }
 
       if (inDepositsSection && line.trim()) {
         const match = line.match(config.patterns.depositLine);
         if (match) {
+          console.log(`✅ Ligne de dépôt trouvée: "${line.trim()}"`);
           deposits.push({
             dateDepot: this.parseDate(match[1]),
             reference: match[3] || '',
@@ -210,6 +233,28 @@ class BankReportSectionExtractor {
       }
     }
 
+    // Si aucun dépôt détaillé n'a été trouvé mais que la section existe,
+    // essayer d'extraire le montant total des dépôts (cas ATB)
+    if (deposits.length === 0 && config.patterns.depositsTotal) {
+      console.log(`🔍 Aucun dépôt détaillé trouvé, recherche du total...`);
+      const totalMatch = textContent.match(config.patterns.depositsTotal);
+      if (totalMatch) {
+        const totalAmount = this.parseAmount(totalMatch[1]);
+        console.log(`✅ Total des dépôts trouvé: ${totalAmount}`);
+        
+        if (totalAmount > 0) {
+          deposits.push({
+            dateDepot: new Date().toISOString().split('T')[0], // Date actuelle par défaut
+            reference: 'TOTAL_DEPOSITS',
+            clientCode: 'VARIOUS',
+            typeReglement: 'TOTAL',
+            montant: totalAmount
+          });
+        }
+      }
+    }
+
+    console.log(`📊 ${deposits.length} dépôts extraits`);
     return deposits;
   }
 
@@ -217,16 +262,20 @@ class BankReportSectionExtractor {
     const checks: CheckNotCleared[] = [];
     const lines = textContent.split('\n');
     let inChecksSection = false;
+    
+    console.log(`🔍 Extraction des chèques non débités pour ${config.bankName}...`);
 
     for (const line of lines) {
       if (config.patterns.checksSection.test(line)) {
         inChecksSection = true;
+        console.log(`✅ Section des chèques trouvée: "${line.trim()}"`);
         continue;
       }
 
       if (inChecksSection && line.trim()) {
         const match = line.match(config.patterns.checkLine);
         if (match) {
+          console.log(`✅ Ligne de chèque trouvée: "${line.trim()}"`);
           checks.push({
             dateEmission: this.parseDate(match[1]),
             numeroCheque: match[2] || '',
@@ -239,6 +288,27 @@ class BankReportSectionExtractor {
       }
     }
 
+    // Si aucun chèque détaillé n'a été trouvé mais que la section existe,
+    // essayer d'extraire le montant total des chèques (cas ATB)
+    if (checks.length === 0 && config.patterns.checksTotal) {
+      console.log(`🔍 Aucun chèque détaillé trouvé, recherche du total...`);
+      const totalMatch = textContent.match(config.patterns.checksTotal);
+      if (totalMatch) {
+        const totalAmount = this.parseAmount(totalMatch[1]);
+        console.log(`✅ Total des chèques trouvé: ${totalAmount}`);
+        
+        if (totalAmount > 0) {
+          checks.push({
+            dateEmission: new Date().toISOString().split('T')[0], // Date actuelle par défaut
+            numeroCheque: 'TOTAL_CHECKS',
+            beneficiaire: 'VARIOUS',
+            montant: totalAmount
+          });
+        }
+      }
+    }
+
+    console.log(`📊 ${checks.length} chèques extraits`);
     return checks;
   }
 
@@ -246,19 +316,37 @@ class BankReportSectionExtractor {
     const facilities: BankFacility[] = [];
     const lines = textContent.split('\n');
     let inFacilitiesSection = false;
+    
+    console.log(`🔍 Extraction des facilités bancaires pour ${config.bankName}...`);
 
     for (const line of lines) {
       if (config.patterns.facilitiesSection.test(line)) {
         inFacilitiesSection = true;
+        console.log(`✅ Section des facilités trouvée: "${line.trim()}"`);
         continue;
       }
 
       if (inFacilitiesSection && line.trim()) {
         const match = line.match(config.patterns.facilityLine);
-        if (match && match[1] && !match[1].match(/CLIENT|TOTAL|LIMIT/i)) {
-          const limitAmount = this.parseAmount(match[2]);
-          const usedAmount = this.parseAmount(match[3]);
-          const availableAmount = this.parseAmount(match[4]);
+        if (match) {
+          console.log(`✅ Ligne de facilité trouvée: "${line.trim()}"`);
+          
+          let limitAmount = 0;
+          let usedAmount = 0;
+          let availableAmount = 0;
+          
+          // Cas spécial pour ATB avec format "500M limit, 84M used, 415M balance"
+          if (config.bankName === 'ATB') {
+            // Convertir "500M" en 500000000
+            limitAmount = this.parseMillionAmount(match[2]);
+            usedAmount = this.parseMillionAmount(match[3]);
+            availableAmount = this.parseMillionAmount(match[4]);
+          } else {
+            // Format standard pour les autres banques
+            limitAmount = this.parseAmount(match[2]);
+            usedAmount = this.parseAmount(match[3]);
+            availableAmount = this.parseAmount(match[4]);
+          }
 
           if (limitAmount > 0) {
             facilities.push({
@@ -277,6 +365,25 @@ class BankReportSectionExtractor {
     return facilities;
   }
 
+  // Méthode pour convertir "500M" en 500000000
+  private parseMillionAmount(value: string): number {
+    if (!value) return 0;
+    
+    try {
+      // Extraire le nombre avant le "M"
+      const match = value.match(/(\d+)M/i);
+      if (match && match[1]) {
+        const millions = parseInt(match[1], 10);
+        return millions * 1000000; // Convertir en unités
+      }
+      
+      return this.parseAmount(value);
+    } catch (error) {
+      console.error('❌ Erreur parsing montant en millions:', error);
+      return 0;
+    }
+  }
+
   private extractImpayes(textContent: string, config: BankSectionConfig): Impaye[] {
     const impayes: Impaye[] = [];
     const lines = textContent.split('\n');
@@ -287,15 +394,29 @@ class BankReportSectionExtractor {
     for (const line of lines) {
       if (config.patterns.impayesSection.test(line)) {
         inImpayesSection = true;
+        console.log(`✅ Section des impayés trouvée: "${line.trim()}"`);
         continue;
       }
 
       if (inImpayesSection && line.trim()) {
         const match = line.match(config.patterns.impayeLine);
         if (match) {
-          // Extraire le code client et la description (nom du client)
-          const clientCode = match[3]?.trim() || 'UNKNOWN';
-          const description = match[4]?.trim() || 'IMPAYE';
+          console.log(`✅ Ligne d'impayé trouvée: "${line.trim()}"`);
+          
+          let clientCode = 'UNKNOWN';
+          let description = 'IMPAYE';
+          
+          // Cas spécial pour ATB avec format "ORABANK/CDE"
+          if (config.bankName === 'ATB' && match[3] && match[4]) {
+            // Format: BANQUE/CLIENT
+            clientCode = match[4]?.trim() || 'UNKNOWN';
+            description = match[3]?.trim() || 'IMPAYE';
+            console.log(`🔍 Format ATB détecté: Banque=${description}, Client=${clientCode}`);
+          } else {
+            // Format standard pour les autres banques
+            clientCode = match[3]?.trim() || 'UNKNOWN';
+            description = match[4]?.trim() || 'IMPAYE';
+          }
           
           console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
           
