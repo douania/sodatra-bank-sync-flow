@@ -652,6 +652,61 @@ export class EnhancedFileProcessingService {
   }
 
   /**
+   * Analyzes a single file for debugging purposes
+   */
+  async analyzeSingleFile(file: File): Promise<{
+    fileType: string;
+    confidence: 'high' | 'medium' | 'low';
+    rawText: string;
+    parsedData: any;
+  }> {
+    try {
+      console.log('🔍 Analyse de fichier unique pour debug:', file.name);
+      
+      // 1. Detect file type
+      const detection = await this.detectFileType(file);
+      
+      // 2. Extract raw text
+      const buffer = await file.arrayBuffer();
+      let rawText = '';
+      
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        rawText = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        rawText = await this.extractTextFromExcel(buffer);
+      }
+      
+      // 3. Process based on detected type
+      let parsedData = null;
+      
+      if (detection.detectedType === 'collectionReport') {
+        const { excelProcessingService } = await import('./excelProcessingService');
+        const result = await excelProcessingService.processCollectionReportExcel(file);
+        if (result.success && result.data) {
+          parsedData = result.data;
+        }
+      } else if (detection.detectedType === 'bankAnalysis' || detection.detectedType === 'bankStatement') {
+        const { bankReportProcessingService } = await import('./bankReportProcessingService');
+        const result = await bankReportProcessingService.processBankReportExcel(file);
+        if (result.success && result.data) {
+          parsedData = result.data;
+        }
+      }
+      
+      return {
+        fileType: detection.detectedType,
+        confidence: detection.confidence,
+        rawText,
+        parsedData
+      };
+      
+    } catch (error) {
+      console.error('❌ Erreur analyse fichier unique:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Méthode de compatibilité avec l'ancienne interface
    */
   async processFiles(files: { [key: string]: File }): Promise<ProcessingResult> {
