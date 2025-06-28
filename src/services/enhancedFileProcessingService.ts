@@ -30,6 +30,15 @@ export interface FileDetectionResult {
 
 export class EnhancedFileProcessingService {
   
+  private readonly bankPatterns = [
+    { keywords: ['BDK', 'BANQUE DE DAKAR'], code: 'BDK' },
+    { keywords: ['ATB', 'ATLANTIQUE', 'ARAB TUNISIAN'], code: 'ATB' }, 
+    { keywords: ['BICIS', 'BIC'], code: 'BICIS' }, 
+    { keywords: ['ORA', 'ORABANK'], code: 'ORA' }, 
+    { keywords: ['SGS', 'SOCIETE GENERALE', 'SGBS'], code: 'SGS' }, 
+    { keywords: ['BIS', 'BANQUE ISLAMIQUE'], code: 'BIS' } 
+  ];
+  
   /**
    * Détecte automatiquement le type d'un fichier basé sur son nom et son contenu
    */
@@ -47,16 +56,8 @@ export class EnhancedFileProcessingService {
     }
 
     // Détection des banques
-    const bankPatterns = [
-      { keywords: ['BDK', 'BANQUE DE DAKAR'], code: 'BDK' },
-      { keywords: ['ATB', 'ATLANTIQUE', 'ARAB TUNISIAN'], code: 'ATB' }, 
-      { keywords: ['BICIS', 'BIC'], code: 'BICIS' }, 
-      { keywords: ['ORA', 'ORABANK'], code: 'ORA' }, 
-      { keywords: ['SGS', 'SOCIETE GENERALE', 'SGBS'], code: 'SGS' }, 
-      { keywords: ['BIS', 'BANQUE ISLAMIQUE'], code: 'BIS' } 
-    ];
 
-    for (const pattern of bankPatterns) {
+    for (const pattern of this.bankPatterns) {
       if (pattern.keywords.some(keyword => filename.includes(keyword))) {
         // Distinguer rapport d'analyse vs relevé bancaire
         if (filename.includes('ONLINE') || filename.includes('STATEMENT') || filename.includes('RELEVE')) {
@@ -185,16 +186,8 @@ export class EnhancedFileProcessingService {
     }
 
     // Rechercher des patterns bancaires
-    const bankPatterns = [
-      { keywords: ['BDK', 'BANQUE DE DAKAR'], code: 'BDK' },
-      { keywords: ['ATB', 'ATLANTIQUE'], code: 'ATB' },
-      { keywords: ['BICIS'], code: 'BICIS' },
-      { keywords: ['ORABANK'], code: 'ORA' },
-      { keywords: ['SOCIETE GENERALE', 'SGBS'], code: 'SGS' },
-      { keywords: ['BANQUE ISLAMIQUE'], code: 'BIS' }
-    ];
 
-    for (const pattern of bankPatterns) {
+    for (const pattern of this.bankPatterns) {
       if (pattern.keywords.some(keyword => textContent.includes(keyword))) {
         if (textContent.includes('BALANCE') || textContent.includes('SOLDE')) {
           return { detectedType: 'bankAnalysis', confidence: 'medium', bankType: pattern.code };
@@ -222,16 +215,8 @@ export class EnhancedFileProcessingService {
     }
 
     // Patterns bancaires
-    const bankPatterns = [
-      { keywords: ['BDK'], code: 'BDK' },
-      { keywords: ['ATB'], code: 'ATB' },
-      { keywords: ['BICIS'], code: 'BICIS' },
-      { keywords: ['ORA'], code: 'ORA' },
-      { keywords: ['SGS'], code: 'SGS' },
-      { keywords: ['BIS'], code: 'BIS' }
-    ];
 
-    for (const pattern of bankPatterns) {
+    for (const pattern of this.bankPatterns) {
       if (pattern.keywords.some(keyword => filename.includes(keyword))) {
         return { detectedType: 'bankAnalysis', confidence: 'medium', bankType: pattern.code };
       }
@@ -592,18 +577,9 @@ export class EnhancedFileProcessingService {
   private detectBankTypeFromFilename(filename: string): string | null {
     const upperFilename = filename.toUpperCase();
     
-    const bankKeywords = {
-      'BDK': ['BDK', 'BANQUE DE DAKAR'],
-      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
-      'BICIS': ['BICIS', 'BIC'],
-      'ORA': ['ORA', 'ORABANK'],
-      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG', 'SGS'],
-      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
-    };
-    
-    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-      if (keywords.some(keyword => upperFilename.includes(keyword))) {
-        return bankCode;
+    for (const pattern of this.bankPatterns) {
+      if (pattern.keywords.some(keyword => upperFilename.includes(keyword))) {
+        return pattern.code;
       }
     }
     
@@ -840,6 +816,3 @@ export class EnhancedFileProcessingService {
     const { excelProcessingService } = await import('./excelProcessingService');
     return await excelProcessingService.processCollectionReportExcel(file);
   }
-
-// Instance singleton
-export const enhancedFileProcessingService = new EnhancedFileProcessingService();
