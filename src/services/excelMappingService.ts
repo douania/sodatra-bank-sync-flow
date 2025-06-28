@@ -88,7 +88,7 @@ class ExcelMappingService {
     
     // ⭐ MODE TOLÉRANT - Traçabilité optionnelle
     const collection: CollectionReport = {
-      reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
+      reportDate: this.parseDate(row.reportDate)?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
       clientCode: this.parseString(row.clientCode) || 'UNKNOWN',
       collectionAmount: this.parseNumber(row.collectionAmount) || 0,
       bankName: this.parseString(row.bankName),
@@ -107,7 +107,7 @@ class ExcelMappingService {
       excelProcessedAt: new Date().toISOString(),
       
       // Champs optionnels
-      dateOfValidity: this.parseDate(row.dateOfValidity),
+      dateOfValidity: this.parseDate(row.dateOfValidity)?.toISOString().split('T')[0],
       factureNo: this.parseString(row.factureNo),
       noChqBd: this.parseString(row.noChqBd),
       bankNameDisplay: this.parseString(row.bankNameDisplay),
@@ -122,7 +122,7 @@ class ExcelMappingService {
       sgOrFaNo: this.parseString(row.sgOrFaNo),
       dNAmount: this.parseNumber(row.dNAmount),
       income: this.parseNumber(row.income),
-      dateOfImpay: this.parseDate(row.dateOfImpay),
+      dateOfImpay: this.parseDate(row.dateOfImpay)?.toISOString().split('T')[0],
       reglementImpaye: this.parseString(row.reglementImpaye),
       remarques: this.parseString(row.remarques),
       
