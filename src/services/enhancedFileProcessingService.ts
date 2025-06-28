@@ -143,11 +143,33 @@ export class EnhancedFileProcessingService {
   private async analyzeExcelContent(file: File): Promise<{ detectedType: string; confidence: 'high' | 'medium' | 'low'; bankType?: string }> {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: 'buffer' });
+    
+    // Check if workbook has sheets
+    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      return { detectedType: 'unknown', confidence: 'low' };
+    }
+    
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    
+    // Check if sheet exists
+    if (!firstSheet) {
+      return { detectedType: 'unknown', confidence: 'low' };
+    }
+    
     const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
 
+    // Check if data is valid and not empty
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return { detectedType: 'unknown', confidence: 'low' };
+    }
+
     // Convertir en texte pour analyse
-    const textContent = data.flat().join(' ').toUpperCase();
+    const flatData = data.flat().filter(cell => cell != null && cell !== '');
+    if (flatData.length === 0) {
+      return { detectedType: 'unknown', confidence: 'low' };
+    }
+    
+    const textContent = flatData.join(' ').toUpperCase();
 
     // Rechercher des patterns spécifiques
     if (textContent.includes('COLLECTION') && textContent.includes('AMOUNT') && textContent.includes('CLIENT')) {
