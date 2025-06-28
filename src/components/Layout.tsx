@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { 
   LayoutDashboard, 
   Upload, 
+  FileSearch,
   BarChart3, 
   GitMerge, 
   AlertTriangle,
@@ -20,6 +21,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
+    { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
     { name: 'Rapprochement', href: '/reconciliation', icon: GitMerge },
     { name: 'Vue Consolidée', href: '/consolidated', icon: BarChart3 },
     { name: 'Alertes', href: '/alerts', icon: AlertTriangle },

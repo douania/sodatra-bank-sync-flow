@@ -11,6 +11,7 @@ import FileUpload from "./pages/FileUpload";
 import FileUploadBulk from "./pages/FileUploadBulk";
 import ConsolidatedDashboard from "./pages/ConsolidatedDashboard";
 import Reconciliation from "./pages/Reconciliation";
+import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import Alerts from "./pages/Alerts";
 import QualityControl from "./pages/QualityControl";
 import NotFound from "./pages/NotFound";
@@ -30,6 +31,7 @@ const App = () => (
             <Route path="/upload" element={<FileUpload />} />
             <Route path="/upload-bulk" element={<FileUploadBulk />} />
             <Route path="/consolidated" element={<ConsolidatedDashboard />} />
+            <Route path="/document-understanding" element={<DocumentUnderstanding />} />
             <Route path="/reconciliation" element={<Reconciliation />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/quality-control" element={<QualityControl />} />

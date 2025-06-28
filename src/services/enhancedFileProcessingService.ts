@@ -661,5 +661,108 @@ export class EnhancedFileProcessingService {
   }
 }
 
+  /**
+   * Analyzes a single file for debugging and understanding purposes
+   */
+  async analyzeSingleFileForDebug(file: File): Promise<any> {
+    try {
+      console.log('🔍 DÉBUT ANALYSE FICHIER POUR DEBUG:', file.name);
+      
+      // Detect file type
+      const detection = await this.detectFileType(file);
+      console.log('🔍 Type détecté:', detection);
+      
+      // Extract raw text content
+      const buffer = await file.arrayBuffer();
+      let rawTextContent = '';
+      
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        rawTextContent = await this.extractTextFromPDF(buffer);
+      } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+        rawTextContent = await this.extractTextFromExcel(buffer);
+      } else if (file.name.toLowerCase().endsWith('.csv')) {
+        const decoder = new TextDecoder('utf-8');
+        rawTextContent = decoder.decode(buffer);
+      }
+      
+      console.log(`📄 Contenu extrait: ${rawTextContent.length} caractères`);
+      
+      // Parse structured data based on file type
+      let parsedData = null;
+      
+      switch (detection.detectedType) {
+        case 'collectionReport':
+          const excelResult = await this.processCollectionReportExcel(file);
+          parsedData = excelResult.data;
+          break;
+          
+        case 'bankAnalysis':
+        case 'bankStatement':
+          const { bankReportProcessingService } = await import('./bankReportProcessingService');
+          const bankResult = await bankReportProcessingService.processBankReportExcel(file);
+          parsedData = bankResult.data;
+          break;
+          
+        case 'fundsPosition':
+          const buffer = await file.arrayBuffer();
+          let textContent = '';
+          
+          if (file.name.toLowerCase().endsWith('.pdf')) {
+            textContent = await this.extractTextFromPDF(buffer);
+          } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+            textContent = await this.extractTextFromExcel(buffer);
+          }
+          
+          if (textContent) {
+            const { extractFundPosition } = await import('./extractionService');
+            const result = extractFundPosition(textContent);
+            parsedData = result.data;
+          }
+          break;
+          
+        case 'clientReconciliation':
+          const clientBuffer = await file.arrayBuffer();
+          let clientTextContent = '';
+          
+          if (file.name.toLowerCase().endsWith('.pdf')) {
+            clientTextContent = await this.extractTextFromPDF(clientBuffer);
+          } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
+            clientTextContent = await this.extractTextFromExcel(clientBuffer);
+          }
+          
+          if (clientTextContent) {
+            const { extractClientReconciliation } = await import('./extractionService');
+            const result = extractClientReconciliation(clientTextContent);
+            parsedData = result.data;
+          }
+          break;
+      }
+      
+      return {
+        success: true,
+        detectedType: detection.detectedType,
+        bankType: detection.bankType,
+        confidence: detection.confidence,
+        rawTextContent: rawTextContent.substring(0, 10000), // Limit size for display
+        parsedData
+      };
+      
+    } catch (error) {
+      console.error('❌ ERREUR ANALYSE FICHIER POUR DEBUG:', error);
+      return {
+        success: false,
+        errors: [error instanceof Error ? error.message : 'Erreur inconnue']
+      };
+    }
+  }
+
+  /**
+   * Process a collection report Excel file for debug purposes
+   */
+  private async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
+    const { excelProcessingService } = await import('./excelProcessingService');
+    return await excelProcessingService.processCollectionReportExcel(file);
+  }
+
 // Instance singleton
 export const enhancedFileProcessingService = new EnhancedFileProcessingService();
