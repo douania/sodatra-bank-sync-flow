@@ -212,16 +212,16 @@ class ExcelMappingService {
     
     try {
       if (typeof value === 'number') {
-        // ⭐ ARRONDIR automatiquement pour éviter les erreurs bigint
-        return isNaN(value) ? undefined : Math.round(value);
+        // ⭐ TRONQUER pour éviter les erreurs de type integer avec des valeurs comme "72.0"
+        return isNaN(value) ? undefined : Math.trunc(value);
       }
       
       if (typeof value === 'string') {
         // Nettoyer la chaîne (espaces, virgules comme séparateurs de milliers)
         const cleaned = value.replace(/[\s,]/g, '').replace(',', '.');
         const parsed = parseFloat(cleaned);
-        // ⭐ ARRONDIR automatiquement
-        return isNaN(parsed) ? undefined : Math.round(parsed);
+        // ⭐ TRONQUER pour garantir un entier sans partie décimale
+        return isNaN(parsed) ? undefined : Math.trunc(parsed);
       }
       
       return undefined;
