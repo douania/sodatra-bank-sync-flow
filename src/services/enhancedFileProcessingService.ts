@@ -705,16 +705,6 @@ export class EnhancedFileProcessingService {
   }
 
   /**
-   * Méthode de compatibilité avec l'ancienne interface
-   */
-  async processFiles(files: { [key: string]: File }): Promise<ProcessingResult> {
-    // Convertir l'objet en tableau
-    const fileArray = Object.values(files).filter(file => file !== null && file !== undefined);
-    return this.processFilesArray(fileArray);
-  }
-}
-
-  /**
    * Analyzes a single file for debugging and understanding purposes
    */
   async analyzeSingleFileForDebug(file: File): Promise<any> {
@@ -812,7 +802,19 @@ export class EnhancedFileProcessingService {
   /**
    * Process a collection report Excel file for debug purposes
    */
-  private async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
+  private async processCollectionReportExcel(file: File): Promise<any> {
     const { excelProcessingService } = await import('./excelProcessingService');
     return await excelProcessingService.processCollectionReportExcel(file);
   }
+
+  /**
+   * Méthode de compatibilité avec l'ancienne interface
+   */
+  async processFiles(files: { [key: string]: File }): Promise<ProcessingResult> {
+    // Convertir l'objet en tableau
+    const fileArray = Object.values(files).filter(file => file !== null && file !== undefined);
+    return this.processFilesArray(fileArray);
+  }
+}
+
+export const enhancedFileProcessingService = new EnhancedFileProcessingService();

@@ -109,8 +109,11 @@ export type Database = {
           bank_commission: number | null
           bank_name: string | null
           bank_name_display: string | null
+          cheque_number: string | null
+          cheque_status: string | null
           client_code: string
           collection_amount: number
+          collection_type: string | null
           commission: number | null
           created_at: string
           credited_date: string | null
@@ -118,6 +121,8 @@ export type Database = {
           date_of_impay: string | null
           date_of_validity: string | null
           depo_ref: string | null
+          effet_echeance_date: string | null
+          effet_status: string | null
           excel_filename: string | null
           excel_processed_at: string | null
           excel_source_row: number | null
@@ -140,13 +145,17 @@ export type Database = {
           status: string | null
           taux: number | null
           tob: number | null
+          unique_excel_traceability: string | null
         }
         Insert: {
           bank_commission?: number | null
           bank_name?: string | null
           bank_name_display?: string | null
+          cheque_number?: string | null
+          cheque_status?: string | null
           client_code: string
           collection_amount: number
+          collection_type?: string | null
           commission?: number | null
           created_at?: string
           credited_date?: string | null
@@ -154,6 +163,8 @@ export type Database = {
           date_of_impay?: string | null
           date_of_validity?: string | null
           depo_ref?: string | null
+          effet_echeance_date?: string | null
+          effet_status?: string | null
           excel_filename?: string | null
           excel_processed_at?: string | null
           excel_source_row?: number | null
@@ -176,13 +187,17 @@ export type Database = {
           status?: string | null
           taux?: number | null
           tob?: number | null
+          unique_excel_traceability?: string | null
         }
         Update: {
           bank_commission?: number | null
           bank_name?: string | null
           bank_name_display?: string | null
+          cheque_number?: string | null
+          cheque_status?: string | null
           client_code?: string
           collection_amount?: number
+          collection_type?: string | null
           commission?: number | null
           created_at?: string
           credited_date?: string | null
@@ -190,6 +205,8 @@ export type Database = {
           date_of_impay?: string | null
           date_of_validity?: string | null
           depo_ref?: string | null
+          effet_echeance_date?: string | null
+          effet_status?: string | null
           excel_filename?: string | null
           excel_processed_at?: string | null
           excel_source_row?: number | null
@@ -212,6 +229,7 @@ export type Database = {
           status?: string | null
           taux?: number | null
           tob?: number | null
+          unique_excel_traceability?: string | null
         }
         Relationships: []
       }
@@ -432,7 +450,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      clean_client_name: {
+        Args: { description: string; client_code: string }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never
