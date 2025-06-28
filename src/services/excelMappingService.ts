@@ -1,3 +1,4 @@
+
 import { CollectionReport } from '@/types/banking';
 
 // Interface pour le résultat de détection du type de collection
@@ -146,7 +147,7 @@ class ExcelMappingService {
     return collection;
   }
   
-  private parseDate(value: any): string | undefined {
+  private parseDate(value: any): Date | undefined {
     if (!value) return undefined;
     
     try {
@@ -189,19 +190,19 @@ class ExcelMappingService {
           const parsed = new Date(trimmedValue);
           if (isNaN(parsed.getTime())) {
             console.warn('⚠️ Date invalide, utilisation de la date du jour:', trimmedValue);
-            return new Date().toISOString().split('T')[0];
+            return new Date();
           }
           date = parsed;
         }
       } else {
         console.warn('⚠️ Format de date non reconnu, utilisation de la date du jour:', value);
-        return new Date().toISOString().split('T')[0];
+        return new Date();
       }
       
-      return date.toISOString().split('T')[0];
+      return date;
     } catch (error) {
       console.warn('⚠️ Erreur parsing date, utilisation de la date du jour:', value, error);
-      return new Date().toISOString().split('T')[0];
+      return new Date();
     }
   }
   

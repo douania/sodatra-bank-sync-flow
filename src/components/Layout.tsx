@@ -7,7 +7,6 @@ import {
   Upload, 
   FileSearch,
   BarChart3,
-  FileSearch,
   GitMerge, 
   AlertTriangle,
   Shield,
@@ -24,7 +23,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
     { name: 'Rapprochement', href: '/reconciliation', icon: GitMerge },
-    { name: 'Comprendre Documents', href: '/document-understanding', icon: FileSearch },
     { name: 'Vue Consolidée', href: '/consolidated', icon: BarChart3 },
     { name: 'Alertes', href: '/alerts', icon: AlertTriangle },
   ];
