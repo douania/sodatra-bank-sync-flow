@@ -530,52 +530,61 @@ export class FileProcessingService {
     // ⭐ Créer une réconciliation client basée sur les données réelles
     try {
       console.log('👥 Calcul Client Reconciliation basée sur les impayés des rapports bancaires...');
-      
-      // Récupérer les impayés depuis les rapports bancaires
+
+      // 1. Récupérer les rapports bancaires avec leurs impayés
       const bankReports = await databaseService.getLatestBankReports();
-      
-      // Agréger les impayés par client
-      const clientImpayes = new Map<string, number>();
-      
+
       console.log('🔍 Rapports bancaires récupérés:', bankReports.length);
-      
+
+      // 2. Agréger les impayés par client avec leurs noms
+      const clientImpayes = new Map<string, {
+        amount: number;
+        clientName: string;
+      }>();
+
       bankReports.forEach(report => {
         console.log(`🏦 Analyse rapport ${report.bank} du ${report.date}:`, {
           impayes: report.impayes.length,
           solde: report.closingBalance
         });
-        
+
         report.impayes.forEach(impaye => {
           const clientCode = impaye.clientCode;
-          console.log(`  ❌ Impayé trouvé: Client ${clientCode}, Montant: ${impaye.montant.toLocaleString()} FCFA, Date: ${impaye.dateEcheance}`);
-          
-          const currentAmount = clientImpayes.get(clientCode) || 0;
-          const newAmount = currentAmount + impaye.montant;
-          console.log(`  💰 Montant cumulé pour ${clientCode}: ${currentAmount} + ${impaye.montant} = ${newAmount}`);
-          
-          clientImpayes.set(clientCode, currentAmount + impaye.montant);
+          // Extraire le nom du client depuis la description de l'impayé
+          const clientName = this.extractClientName(impaye.description || '', clientCode);
+
+          console.log(`  ❌ Impayé trouvé: Client ${clientCode} (${clientName}), Montant: ${impaye.montant.toLocaleString()} FCFA, Date: ${impaye.dateEcheance}`);
+
+          const current = clientImpayes.get(clientCode) || { amount: 0, clientName };
+          const newAmount = current.amount + impaye.montant;
+          console.log(`  💰 Montant cumulé pour ${clientCode}: ${current.amount} + ${impaye.montant} = ${newAmount}`);
+
+          clientImpayes.set(clientCode, {
+            amount: newAmount,
+            clientName: clientName
+          });
         });
       });
-      
+
       console.log(`👥 Impayés trouvés pour ${clientImpayes.size} clients:`);
-      clientImpayes.forEach((amount, clientCode) => {
-        console.log(`  - ${clientCode}: ${amount.toLocaleString()} FCFA`);
+      clientImpayes.forEach((data, clientCode) => {
+        console.log(`  - ${clientCode} (${data.clientName}): ${data.amount.toLocaleString()} FCFA`);
       });
-      
-      // Créer les réconciliations client avec les montants d'impayés réels
+
+      // 3. Créer les réconciliations client avec les montants d'impayés réels et les noms de clients
       const clientReconciliations: ClientReconciliation[] = [];
-      
+
       // Ajouter les clients avec impayés
-      for (const [clientCode, impayesAmount] of clientImpayes.entries()) {
-        console.log(`👤 Ajout client avec impayés: ${clientCode} - ${impayesAmount.toLocaleString()} FCFA`);
+      for (const [clientCode, data] of clientImpayes.entries()) {
+        console.log(`👤 Ajout client avec impayés: ${clientCode} (${data.clientName}) - ${data.amount.toLocaleString()} FCFA`);
         clientReconciliations.push({
           reportDate: new Date().toISOString().split('T')[0],
           clientCode: clientCode,
-          clientName: `Client ${clientCode}`, // Nom générique, à améliorer si disponible
-          impayesAmount: impayesAmount
+          clientName: data.clientName,
+          impayesAmount: data.amount
         });
       }
-      
+
       // Ajouter également les clients sans impayés depuis les collections
       const clientsData = await databaseService.getClientsWithCollections();
       for (const client of clientsData) {
@@ -594,20 +603,51 @@ export class FileProcessingService {
       console.log('👥 Client Reconciliation calculée:', clientReconciliations.length, 'clients');
       console.log('📊 Échantillon des réconciliations calculées:');
       clientReconciliations.slice(0, 5).forEach(reconciliation => {
-        console.log(`  - ${reconciliation.clientCode}: ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
+        console.log(`  - ${reconciliation.clientCode} (${reconciliation.clientName}): ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
       });
-      
+
       // Vérifier s'il y a des montants non nuls
       const nonZeroReconciliations = clientReconciliations.filter(r => r.impayesAmount > 0);
       console.log(`📊 Réconciliations avec montants non nuls: ${nonZeroReconciliations.length}`);
       nonZeroReconciliations.forEach(reconciliation => {
-        console.log(`  - ${reconciliation.clientCode}: ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
+        console.log(`  - ${reconciliation.clientCode} (${reconciliation.clientName}): ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
       });
       return clientReconciliations;
     } catch (error) {
       console.error('❌ Erreur calcul Client Reconciliation:', error);
       return [];
     }
+  }
+
+  /**
+   * Extrait un nom de client propre à partir de la description d'un impayé
+   * en supprimant les mots-clés comme "EFFET", "IMPAYE", etc.
+   */
+  private extractClientName(description: string, clientCode: string): string {
+    if (!description || description.trim() === '') {
+      return `Client ${clientCode}`;
+    }
+
+    // Nettoyer la description
+    let cleanName = description.trim()
+      // Supprimer les mots-clés courants qui ne font pas partie du nom
+      .replace(/\b(EFFET|IMPAYE|CHEQUE|IMPAYÉ|BOUNCED|RETURNED|CHQ|FACTURE|INVOICE)\b/gi, '')
+      // Supprimer les codes de banque
+      .replace(/\b(BDK|ATB|BICIS|ORA|SGBS|SGS|BIS)\b/g, '')
+      // Supprimer les numéros et dates
+      .replace(/\d{2}\/\d{2}\/\d{4}/g, '')
+      .replace(/\b\d+\b/g, '')
+      // Supprimer les caractères spéciaux et espaces multiples
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Si après nettoyage il ne reste rien de significatif, utiliser le code client
+    if (!cleanName || cleanName.length < 3) {
+      return `Client ${clientCode}`;
+    }
+
+    return cleanName;
   }
   
   // Méthodes d'extraction de contenu à partir de fichiers
