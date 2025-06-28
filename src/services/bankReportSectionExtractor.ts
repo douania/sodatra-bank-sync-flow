@@ -37,7 +37,7 @@ class BankReportSectionExtractor {
         facilitiesSection: /BANK\s+FACILITY/i,
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /IMPAYE/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
       }
     },
     {
@@ -52,7 +52,7 @@ class BankReportSectionExtractor {
         facilitiesSection: /FACILITES\s+BANCAIRES/i,
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /IMPAYES\s+NON\s+REGULARISES/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
       }
     },
     {
@@ -67,7 +67,7 @@ class BankReportSectionExtractor {
         facilitiesSection: /LIGNES\s+DE\s+CREDIT/i,
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /INCIDENTS\s+DE\s+PAIEMENT/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
       }
     },
     {
@@ -82,7 +82,7 @@ class BankReportSectionExtractor {
         facilitiesSection: /CREDIT\s+FACILITIES/i,
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /UNPAID\s+ITEMS/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+UNPAID\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*UNPAID\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
       }
     },
     {
@@ -97,7 +97,7 @@ class BankReportSectionExtractor {
         facilitiesSection: /FACILITES\s+BANCAIRES/i,
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /IMPAYES\s+NON\s+REGULARISES/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
       }
     },
     {
@@ -112,7 +112,7 @@ class BankReportSectionExtractor {
         facilitiesSection: /FINANCING\s+FACILITIES/i,
         facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /DEFAULTED\s+ITEMS/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+DEFAULT\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*DEFAULT\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
       }
     }
   ];
@@ -281,6 +281,8 @@ class BankReportSectionExtractor {
     const impayes: Impaye[] = [];
     const lines = textContent.split('\n');
     let inImpayesSection = false;
+    
+    console.log('🔍 Recherche des impayés dans le texte...');
 
     for (const line of lines) {
       if (config.patterns.impayesSection.test(line)) {
@@ -291,12 +293,18 @@ class BankReportSectionExtractor {
       if (inImpayesSection && line.trim()) {
         const match = line.match(config.patterns.impayeLine);
         if (match) {
+          // Extraire le code client et la description (nom du client)
+          const clientCode = match[3]?.trim() || 'UNKNOWN';
+          const description = match[4]?.trim() || 'IMPAYE';
+          
+          console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
+          
           impayes.push({
             dateRetour: this.parseDate(match[1]),
             dateEcheance: this.parseDate(match[2]),
-            clientCode: match[3] || 'UNKNOWN',
-            description: 'IMPAYE',
-            montant: this.parseAmount(match[4])
+            clientCode: clientCode,
+            description: description,
+            montant: this.parseAmount(match[5])
           });
         } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
           inImpayesSection = false;
