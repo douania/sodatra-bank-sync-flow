@@ -45,33 +45,16 @@ class BankReportSectionExtractor {
     {
       bankName: 'ATB',
       patterns: {
-        openingBalance: /SOLDE\s+OUVERTURE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /SOLDE\s+CLOTURE\s+COMPTABLE\s*:\s*([\d\s]+)/i,
-        depositsSection: /DEPOTS\s+NON\s+CREDITES/i,
-        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
-        checksSection: /CHEQUES\s+EMIS\s+NON\s+DEBITES/i,
-        checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
-        facilitiesSection: /FACILITES\s+BANCAIRES/i,
-        facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
-        impayesSection: /IMPAYES\s+NON\s+REGULARISES/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
-      }
-    },
-    {
-      bankName: 'ATB',
-      patterns: {
-        openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s*:\s*([\d\s]+)/i,
-        closingBalance: /CLOSING\s+BALANCE\s*:\s*([\d\s]+)/i,
+        openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
+        closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+)/i,
         depositsSection: /DEPOSIT\s+NOT\s+YET\s+CLEARED/i,
-        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s+(\w+)\s+(\w+)\s+(\w+)\s+([\d\s]+)/i,
-        depositsTotal: /DEPOSIT\s+NOT\s+YET\s+CLEARED\s*:\s*([\d\s]+)/i,
+        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
         checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
-        checksTotal: /CHECK\s+Not\s+yet\s+cleared\s*:\s*([\d\s]+)/i,
         facilitiesSection: /BANK\s+FACILITY/i,
-        facilityLine: /-\s+([^:]+):\s+([\d]+M)\s+limit,\s+([\d]+M)\s+used,\s+([\d]+M)\s+balance/i,
+        facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
         impayesSection: /IMPAYE/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*IMPAYE\s+(\S+)\/(\S+)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+([\d\s]+)/i
       }
     },
     {
@@ -406,17 +389,9 @@ class BankReportSectionExtractor {
           let clientCode = 'UNKNOWN';
           let description = 'IMPAYE';
           
-          // Cas spécial pour ATB avec format "ORABANK/CDE"
-          if (config.bankName === 'ATB' && match[3] && match[4]) {
-            // Format: BANQUE/CLIENT
-            clientCode = match[4]?.trim() || 'UNKNOWN';
-            description = match[3]?.trim() || 'IMPAYE';
-            console.log(`🔍 Format ATB détecté: Banque=${description}, Client=${clientCode}`);
-          } else {
-            // Format standard pour les autres banques
-            clientCode = match[3]?.trim() || 'UNKNOWN';
-            description = match[4]?.trim() || 'IMPAYE';
-          }
+          // Format standard pour les banques
+          clientCode = match[3]?.trim() || 'UNKNOWN';
+          description = match[4]?.trim() || 'IMPAYE';
           
           console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
           
