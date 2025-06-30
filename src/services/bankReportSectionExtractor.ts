@@ -33,13 +33,13 @@ class BankReportSectionExtractor {
         openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
         closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+)/i,
         depositsSection: /DEPOSIT\s+NOT\s+YET\s+CLEARED/i,
-        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(REGUL\s+IMPAYE|REGLEMENT\s+FACTURE|TR\s+No\/FACT\.No)\s+(.*?)\s+([\d\s]+)/i,
+        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s+(REGUL\s+IMPAYE|REGLEMENT\s+FACTURE|TR\s+No\/FACT\.No|PAYMENT)\s+(.*?)\s+(.*?)\s+([\d\s,\.]+)/i,
         checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
-        checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
+        checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+(.*?)\s+([\d\s,\.]+)/i,
         facilitiesSection: /BANK\s+FACILITY/i,
-        facilityLine: /(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/,
+        facilityLine: /(\d{2}\/\d{2}\/\d{4})?\s*([A-Z\s]+[A-Z])\s+([\d\s,\.]+)\s+([\d\s,\.]+)\s+([\d\s,\.]+)/g,
         impayesSection: /IMPAYE/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s]+)/i
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*IMPAYE\s+(\S+)\s+(.*?)\s+([\d\s,\.]+)/gi
       }
     },
     {
@@ -48,13 +48,13 @@ class BankReportSectionExtractor {
         openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
         closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+)/i,
         depositsSection: /DEPOSIT\s+NOT\s+YET\s+CLEARED/i,
-        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
+        depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s+(.*?)\s+(.*?)\s+([\d\s,\.]+)/i,
         checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
-        checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
+        checkLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+(.*?)\s+([\d\s,\.]+)/i,
         facilitiesSection: /BANK\s+FACILITY/i,
-        facilityLine: /(\d{2}\/\d{2}\/\d{4})\s+(.*?)\s+([\d\s]+)\s+([\d\s]+)\s+([\d\s]+)/g,
+        facilityLine: /(\d{2}\/\d{2}\/\d{4})\s+(.*?)\s+([\d\s,\.]+)\s+([\d\s,\.]+)\s+([\d\s,\.]+)/g,
         impayesSection: /IMPAYE/i,
-        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+IMPAYE\s+(.*?)\s+(.*?)\s+([\d\s]+)/g
+        impayeLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})?\s*IMPAYE\s+(.*?)\s+(.*?)\s+([\d\s,\.]+)/g
       }
     },
     {
@@ -203,13 +203,17 @@ class BankReportSectionExtractor {
         const match = line.match(config.patterns.depositLine);
         if (match) {
           console.log(`✅ Ligne de dépôt trouvée: "${line.trim()}"`);
-          deposits.push({
-            dateDepot: this.parseDate(match[1]),
-            reference: match[3] || '',
-            clientCode: match[4] || '',
-            typeReglement: match[3] || 'DEPOT',
-            montant: this.parseAmount(match[5])
-          });
+          // Adapter l'extraction selon le pattern mis à jour
+          if (match.length >= 6) {
+            deposits.push({
+              dateDepot: this.parseDate(match[1]),
+              dateValeur: match[2] ? this.parseDate(match[2]) : undefined,
+              typeReglement: match[3] || 'DEPOT',
+              clientCode: match[4] || '',
+              reference: match[5] || '',
+              montant: this.parseAmount(match[6] || match[5]) // Utiliser le dernier groupe pour le montant
+            });
+          }
         } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
           inDepositsSection = false;
         }
@@ -317,26 +321,30 @@ class BankReportSectionExtractor {
         if (match) {
           console.log(`✅ Ligne de facilité trouvée: "${line.trim()}"`);
           
+          // Extraction améliorée des facilités
+          let facilityType = '';
           let limitAmount = 0;
           let usedAmount = 0;
           let availableAmount = 0;
           
-          // Check if we have a date in the first capture group (new ATB pattern)
+          // Vérifier si le premier groupe est une date
           if (match[1] && match[1].match(/\d{2}\/\d{2}\/\d{4}/)) {
-            // New ATB pattern with date: date, type, limit, used, available
+            // Format ATB avec date: date, type, limit, used, available
+            facilityType = match[2].trim();
             limitAmount = this.parseAmount(match[3]);
             usedAmount = this.parseAmount(match[4]);
             availableAmount = this.parseAmount(match[5]);
           } else {
             // Format standard pour les autres banques
-            limitAmount = this.parseAmount(match[2] || '0');
-            usedAmount = this.parseAmount(match[3] || '0');
-            availableAmount = this.parseAmount(match[4] || '0');
+            facilityType = match[1] ? match[1].trim() : (match[2] ? match[2].trim() : 'FACILITÉ');
+            limitAmount = this.parseAmount(match[2] || match[3] || '0');
+            usedAmount = this.parseAmount(match[3] || match[4] || '0');
+            availableAmount = this.parseAmount(match[4] || match[5] || '0');
           }
 
           if (limitAmount > 0) {
             facilities.push({
-              facilityType: match[1].match(/\d{2}\/\d{2}\/\d{4}/) ? match[2].trim() : match[1].trim(),
+              facilityType: facilityType,
               limitAmount,
               usedAmount,
               availableAmount
@@ -392,24 +400,26 @@ class BankReportSectionExtractor {
         if (match) {
           console.log(`✅ Ligne d'impayé trouvée: "${line.trim()}"`);
           
-          let clientCode = 'UNKNOWN';
-          let description = 'IMPAYE';
+          // Extraction améliorée des impayés
+          const dateRetour = this.parseDate(match[1]);
+          const dateEcheance = match[2] ? this.parseDate(match[2]) : dateRetour;
+          const clientCode = match[3]?.trim() || 'UNKNOWN';
+          const description = match[4]?.trim() || 'IMPAYE';
+          const montant = this.parseAmount(match[5]);
           
-          // Check if we have all the expected capture groups
-          if (match.length >= 6) {
-            clientCode = match[3]?.trim() || 'UNKNOWN';
-            description = match[4]?.trim() || 'IMPAYE';
+          console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}, Montant: ${montant}`);
+          
+          if (montant > 0) {
+            impayes.push({
+              dateRetour,
+              dateEcheance,
+              clientCode,
+              description,
+              montant
+            });
+          } else {
+            console.warn(`⚠️ Impayé ignoré car montant invalide: ${montant}`);
           }
-          
-          console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
-          
-          impayes.push({
-            dateRetour: this.parseDate(match[1]),
-            dateEcheance: this.parseDate(match[2]),
-            clientCode: clientCode,
-            description: description,
-            montant: this.parseAmount(match[5])
-          });
         } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
           inImpayesSection = false;
         }
@@ -421,7 +431,28 @@ class BankReportSectionExtractor {
 
   private parseAmount(value: string): number {
     if (!value) return 0;
-    return parseInt(value.replace(/\s/g, ''), 10) || 0;
+    try {
+      // Nettoyer le string : supprimer espaces, virgules comme séparateurs de milliers
+      const cleaned = value
+        .toString()
+        .replace(/\s/g, '') // Supprimer tous les espaces
+        .replace(/,/g, '') // Supprimer les virgules (séparateurs de milliers)
+        .replace(/[^\d\.]/g, ''); // Garder seulement chiffres et points
+      
+      // Éviter la notation scientifique en utilisant parseFloat puis Math.floor
+      const floatValue = parseFloat(cleaned) || 0;
+      // Vérifier si le nombre est trop grand pour être un entier sûr
+      if (floatValue > Number.MAX_SAFE_INTEGER) {
+        console.warn(`⚠️ Montant très élevé détecté: ${floatValue}, limitation à MAX_SAFE_INTEGER`);
+        return Number.MAX_SAFE_INTEGER;
+      }
+      const result = Math.floor(floatValue);
+      console.log(`💰 Montant nettoyé: "${value}" -> ${result}`);
+      return result;
+    } catch (error) {
+      console.error('❌ Erreur nettoyage montant:', value, error);
+      return 0;
+    }
   }
 
   private parseDate(value: string): string {
