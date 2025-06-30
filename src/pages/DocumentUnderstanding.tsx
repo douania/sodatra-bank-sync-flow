@@ -9,6 +9,7 @@ import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Databa
 import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
+import { pdfExtractionService } from '@/services/pdfExtractionService';
 import { toast } from '@/components/ui/sonner';
 
 const DocumentUnderstanding = () => {
@@ -19,6 +20,7 @@ const DocumentUnderstanding = () => {
   const [rawText, setRawText] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<any | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -28,6 +30,7 @@ const DocumentUnderstanding = () => {
       setRawText(null);
       setParsedData(null);
       setBankType(null);
+      setExtractionError(null);
     }
   }, []);
 
@@ -46,24 +49,39 @@ const DocumentUnderstanding = () => {
     if (!selectedFile) return;
 
     setIsAnalyzing(true);
+    setExtractionError(null);
+    
     try {
+      console.log('🔍 Début analyse fichier:', selectedFile.name);
+      
       // 1. Detect file type
       const detection = await enhancedFileProcessingService.detectFileType(selectedFile);
       setFileType(detection.detectedType);
       setConfidence(detection.confidence);
       setBankType(detection.bankType || null);
 
+      console.log('🎯 Type détecté:', detection.detectedType, 'Confiance:', detection.confidence);
+
       // 2. Extract raw text
       const buffer = await selectedFile.arrayBuffer();
       let extractedText = '';
       
-      if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
-        extractedText = await extractTextFromPDF(buffer);
-      } else if (selectedFile.name.toLowerCase().endsWith('.xlsx') || selectedFile.name.toLowerCase().endsWith('.xls')) {
-        extractedText = await extractTextFromExcel(buffer);
+      try {
+        if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
+          console.log('📄 Extraction PDF...');
+          extractedText = await pdfExtractionService.extractTextFromPDF(buffer);
+        } else if (selectedFile.name.toLowerCase().endsWith('.xlsx') || selectedFile.name.toLowerCase().endsWith('.xls')) {
+          console.log('📊 Extraction Excel...');
+          extractedText = await extractTextFromExcel(buffer);
+        }
+        
+        console.log('📝 Texte extrait:', extractedText.length, 'caractères');
+        setRawText(extractedText);
+      } catch (extractError) {
+        console.error('❌ Erreur extraction:', extractError);
+        setExtractionError(extractError instanceof Error ? extractError.message : 'Erreur d\'extraction');
+        setRawText('Erreur lors de l\'extraction du texte');
       }
-      
-      setRawText(extractedText);
 
       // 3. Process based on detected type
       if (detection.detectedType === 'collectionReport') {
@@ -95,43 +113,12 @@ const DocumentUnderstanding = () => {
         description: `Type détecté: ${detection.detectedType} (${detection.confidence})`,
       });
     } catch (error) {
-      console.error('Erreur analyse:', error);
+      console.error('❌ Erreur analyse:', error);
       toast.error('Erreur lors de l\'analyse', {
         description: error instanceof Error ? error.message : 'Erreur inconnue',
       });
     } finally {
       setIsAnalyzing(false);
-    }
-  };
-
-  const extractTextFromPDF = async (buffer: ArrayBuffer): Promise<string> => {
-    try {
-      // Import pdfjs-dist for browser-compatible PDF parsing
-      const pdfjsLib = await import('pdfjs-dist');
-      
-      // Set worker source to local file
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
-      
-      // Load PDF document
-      const loadingTask = pdfjsLib.getDocument({ data: buffer });
-      const pdf = await loadingTask.promise;
-      
-      let fullText = '';
-      
-      // Extract text from each page
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        fullText += pageText + '\n';
-      }
-      
-      return fullText;
-    } catch (error) {
-      console.error('Erreur extraction PDF:', error);
-      return 'Erreur extraction PDF: ' + (error instanceof Error ? error.message : 'Erreur inconnue');
     }
   };
 
@@ -155,8 +142,8 @@ const DocumentUnderstanding = () => {
       
       return allText;
     } catch (error) {
-      console.error('Erreur extraction Excel:', error);
-      return 'Erreur extraction Excel: ' + (error instanceof Error ? error.message : 'Erreur inconnue');
+      console.error('❌ Erreur extraction Excel:', error);
+      throw new Error('Erreur extraction Excel: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
     }
   };
 
@@ -428,6 +415,14 @@ const DocumentUnderstanding = () => {
                   <Brain className="h-4 w-4" />
                   <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
                 </Button>
+              </div>
+            )}
+
+            {/* Affichage des erreurs d'extraction */}
+            {extractionError && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <h3 className="text-sm font-medium text-red-800 mb-1">Erreur d'extraction</h3>
+                <p className="text-sm text-red-700">{extractionError}</p>
               </div>
             )}
           </div>
