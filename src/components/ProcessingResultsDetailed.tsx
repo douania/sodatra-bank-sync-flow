@@ -12,7 +12,8 @@ import {
   TrendingUp,
   Users,
   DollarSign,
-  TrendingUp, Users, DollarSign, Database, FileCheck
+  Database, 
+  FileCheck
 } from 'lucide-react';
 import { ProcessingResult } from '@/services/enhancedFileProcessingService';
 import BankReportDetailedView from './BankReportDetailedView';
