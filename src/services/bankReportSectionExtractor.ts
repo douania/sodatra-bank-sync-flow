@@ -1,4 +1,3 @@
-
 import { BankReport, BankFacility, Impaye, DepositNotCleared, CheckNotCleared } from '@/types/banking';
 
 export interface SectionExtractionResult {
@@ -421,7 +420,7 @@ class BankReportSectionExtractor {
             console.warn(`⚠️ Impayé ignoré car montant invalide: ${montant}`);
           }
         } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
-          inFacilitiesSection = false;
+          inImpayesSection = false;
         }
       }
     }
