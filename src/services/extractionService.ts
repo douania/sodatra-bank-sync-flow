@@ -70,7 +70,7 @@ function cleanAmount(amountStr: string | undefined): number {
       .toString()
       .replace(/\s/g, '') // Supprimer tous les espaces
       .replace(/,/g, '') // Supprimer les virgules (séparateurs de milliers)
-      .replace(/[^\d\.]/g, ''); // Garder seulement chiffres et points
+      .replace(/[^\d]/g, ''); // ✅ Garde seulement les chiffres
     
     // Éviter la notation scientifique en utilisant parseFloat puis Math.floor
     const floatValue = parseFloat(cleaned) || 0;
