@@ -144,6 +144,7 @@ function extractClosingBalance(text: string): number {
   
   for (const match of matches) {
     if (match[1]) {
+      console.log(`🔍 TEXTE BRUT CAPTURÉ: "${match[1]}" (longueur: ${match[1].length})`);
       const amount = cleanAmount(match[1]);
       if (amount > 0) {
         console.log(`✅ Solde de clôture trouvé: ${amount}`);
