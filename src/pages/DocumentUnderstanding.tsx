@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertTriangle, Info } from 'lucide-react';
 import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
@@ -21,6 +22,7 @@ const DocumentUnderstanding = () => {
   const [parsedData, setParsedData] = useState<any | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
   const [extractionError, setExtractionError] = useState<string | null>(null);
+  const [pdfMetadata, setPdfMetadata] = useState<any | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -50,6 +52,7 @@ const DocumentUnderstanding = () => {
 
     setIsAnalyzing(true);
     setExtractionError(null);
+    setPdfMetadata(null);
     
     try {
       console.log('🔍 Début analyse fichier:', selectedFile.name);
@@ -62,14 +65,30 @@ const DocumentUnderstanding = () => {
 
       console.log('🎯 Type détecté:', detection.detectedType, 'Confiance:', detection.confidence);
 
-      // 2. Extract raw text
+      // 2. Extract raw text with improved error handling
       const buffer = await selectedFile.arrayBuffer();
       let extractedText = '';
       
       try {
         if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
           console.log('📄 Extraction PDF...');
+          
+          // Essayer d'abord d'extraire les métadonnées
+          try {
+            const metadata = await pdfExtractionService.getPDFMetadata(buffer);
+            setPdfMetadata(metadata);
+            console.log('📋 Métadonnées PDF récupérées:', metadata);
+          } catch (metaError) {
+            console.warn('⚠️ Impossible de récupérer les métadonnées:', metaError);
+          }
+          
+          // Puis extraire le texte
           extractedText = await pdfExtractionService.extractTextFromPDF(buffer);
+          
+          if (extractedText.length === 0) {
+            setExtractionError('Le PDF a été lu mais aucun texte n\'a pu être extrait. Il pourrait s\'agir d\'un PDF scanné ou protégé.');
+            extractedText = 'PDF lu mais aucun texte extractible trouvé';
+          }
         } else if (selectedFile.name.toLowerCase().endsWith('.xlsx') || selectedFile.name.toLowerCase().endsWith('.xls')) {
           console.log('📊 Extraction Excel...');
           extractedText = await extractTextFromExcel(buffer);
@@ -79,8 +98,9 @@ const DocumentUnderstanding = () => {
         setRawText(extractedText);
       } catch (extractError) {
         console.error('❌ Erreur extraction:', extractError);
-        setExtractionError(extractError instanceof Error ? extractError.message : 'Erreur d\'extraction');
-        setRawText('Erreur lors de l\'extraction du texte');
+        const errorMessage = extractError instanceof Error ? extractError.message : 'Erreur d\'extraction inconnue';
+        setExtractionError(errorMessage);
+        setRawText(`Erreur lors de l'extraction: ${errorMessage}`);
       }
 
       // 3. Process based on detected type
@@ -418,12 +438,37 @@ const DocumentUnderstanding = () => {
               </div>
             )}
 
-            {/* Affichage des erreurs d'extraction */}
+            {/* Affichage des métadonnées PDF */}
+            {pdfMetadata && (
+              <Alert className="bg-blue-50 border-blue-200">
+                <Info className="h-4 w-4 text-blue-600" />
+                <AlertDescription>
+                  <div className="font-medium text-blue-800 mb-2">Informations du PDF</div>
+                  <div className="text-sm text-blue-700 space-y-1">
+                    <div><strong>Pages:</strong> {pdfMetadata.numPages}</div>
+                    {pdfMetadata.title !== 'Titre non disponible' && (
+                      <div><strong>Titre:</strong> {pdfMetadata.title}</div>
+                    )}
+                    {pdfMetadata.author !== 'Auteur non disponible' && (
+                      <div><strong>Auteur:</strong> {pdfMetadata.author}</div>
+                    )}
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Affichage des erreurs d'extraction amélioré */}
             {extractionError && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <h3 className="text-sm font-medium text-red-800 mb-1">Erreur d'extraction</h3>
-                <p className="text-sm text-red-700">{extractionError}</p>
-              </div>
+              <Alert className="bg-yellow-50 border-yellow-200">
+                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                <AlertDescription>
+                  <div className="font-medium text-yellow-800 mb-1">Avertissement d'extraction</div>
+                  <p className="text-sm text-yellow-700">{extractionError}</p>
+                  <p className="text-xs text-yellow-600 mt-2">
+                    L'analyse peut continuer avec les données disponibles.
+                  </p>
+                </AlertDescription>
+              </Alert>
             )}
           </div>
         </CardContent>
