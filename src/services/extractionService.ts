@@ -64,28 +64,8 @@ function cleanAmount(amountStr: string | undefined): number {
     return 0;
   }
   
-  try {
-    // Nettoyer le string : supprimer espaces, virgules comme séparateurs de milliers
-    const cleaned = amountStr
-      .toString()
-      .replace(/\s/g, '') // Supprimer tous les espaces
-      .replace(/,/g, '') // Supprimer les virgules (séparateurs de milliers)
-      .replace(/[^\d\.]/g, ''); // Garder seulement chiffres et points
-    
-    // Éviter la notation scientifique en utilisant parseFloat puis Math.floor
-    const floatValue = parseFloat(cleaned) || 0;
-    // Vérifier si le nombre est trop grand pour être un entier sûr
-    if (floatValue > Number.MAX_SAFE_INTEGER) {
-      console.warn(`⚠️ Montant très élevé détecté: ${floatValue}, limitation à MAX_SAFE_INTEGER`);
-      return Number.MAX_SAFE_INTEGER;
-    }
-    const result = Math.floor(floatValue);
-    console.log(`💰 Montant nettoyé: "${amountStr}" -> ${result}`);
-    return result;
-  } catch (error) {
-    console.error('❌ Erreur nettoyage montant:', amountStr, error);
-    return 0;
-  }
+  const cleanValue = amountStr.replace(/[^\d]/g, '');
+  return parseInt(cleanValue, 10) || 0;
 }
 
 // Fonction utilitaire pour extraire la date
