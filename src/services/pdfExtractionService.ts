@@ -4,6 +4,7 @@ export class PDFExtractionService {
   private static instance: PDFExtractionService;
   private pdfjsLib: any = null;
   private isInitialized = false;
+  private initPromise: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -14,91 +15,134 @@ export class PDFExtractionService {
     return PDFExtractionService.instance;
   }
 
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(errorMessage)), timeoutMs);
+    });
+    
+    return Promise.race([promise, timeoutPromise]);
+  }
+
   private async initializePDFJS(): Promise<void> {
     if (this.isInitialized && this.pdfjsLib) {
       return;
     }
 
+    // Éviter les initialisations multiples simultanées
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    this.initPromise = this.performInitialization();
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  private async performInitialization(): Promise<void> {
     try {
       console.log('🔧 Initialisation de PDF.js...');
       
-      // Import statique de pdfjs-dist pour éviter les problèmes de modules dynamiques
-      const pdfjs = await import('pdfjs-dist');
+      // Timeout pour l'initialisation
+      const pdfjs = await this.withTimeout(
+        import('pdfjs-dist'),
+        15000,
+        'Timeout lors du chargement de PDF.js'
+      );
+      
       this.pdfjsLib = pdfjs;
       
-      // Essayer d'abord le worker local, puis le CDN en fallback
+      // Configuration du worker avec fallback
       const workerPaths = [
         '/pdf.worker.min.js', // Worker local
-        'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN alternatif
+        'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN principal
         'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.js' // CDN backup
       ];
 
-      let workerLoaded = false;
+      let workerConfigured = false;
       for (const workerPath of workerPaths) {
         try {
+          console.log(`🔧 Configuration du worker: ${workerPath}`);
           this.pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
-          console.log(`🔧 Tentative de chargement du worker: ${workerPath}`);
-          
-          // Test simple pour vérifier si le worker fonctionne
-          const testDoc = await this.pdfjsLib.getDocument({ data: new Uint8Array([]) }).promise.catch(() => null);
-          if (testDoc || workerPath.includes('unpkg') || workerPath.includes('jsdelivr')) {
-            console.log(`✅ Worker PDF.js configuré: ${workerPath}`);
-            workerLoaded = true;
-            break;
-          }
+          workerConfigured = true;
+          break;
         } catch (error) {
-          console.warn(`⚠️ Échec du worker ${workerPath}:`, error);
+          console.warn(`⚠️ Échec worker ${workerPath}:`, error);
           continue;
         }
       }
 
-      if (!workerLoaded) {
-        console.warn('⚠️ Aucun worker PDF.js disponible, mode dégradé');
+      if (!workerConfigured) {
+        console.warn('⚠️ Aucun worker configuré, mode sans worker');
+        // Mode sans worker pour les cas critiques
+        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
       }
       
       this.isInitialized = true;
-      console.log('✅ PDF.js initialisé');
+      console.log('✅ PDF.js initialisé avec succès');
     } catch (error) {
       console.error('❌ Erreur initialisation PDF.js:', error);
-      throw new Error('Impossible d\'initialiser PDF.js: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
+      this.isInitialized = false;
+      throw new Error('Échec de l\'initialisation PDF.js: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
     }
   }
 
-  public async extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
+  public async extractTextFromPDF(buffer: ArrayBuffer, onProgress?: (progress: number) => void): Promise<string> {
     try {
-      await this.initializePDFJS();
-      
       console.log('📄 Début extraction PDF...', `Taille: ${buffer.byteLength} bytes`);
       
       if (buffer.byteLength === 0) {
         throw new Error('Le fichier PDF est vide');
       }
+
+      // Initialisation avec timeout
+      await this.withTimeout(
+        this.initializePDFJS(),
+        30000,
+        'Timeout lors de l\'initialisation PDF.js'
+      );
       
-      // Charger le document PDF avec options de robustesse
+      // Chargement du document avec timeout
       const loadingTask = this.pdfjsLib.getDocument({ 
         data: buffer,
-        verbosity: 0, // Réduire les logs PDF.js
-        useSystemFonts: true, // Utiliser les polices système
-        disableAutoFetch: false, // Permettre le chargement automatique
-        disableStream: false, // Permettre le streaming
-        disableRange: false, // Permettre le chargement par plages
-        stopAtErrors: false // Continuer malgré les erreurs
+        verbosity: 0,
+        useSystemFonts: true,
+        disableAutoFetch: true, // Éviter les chargements automatiques qui peuvent bloquer
+        disableStream: true, // Simplifier le chargement
+        stopAtErrors: false
       });
       
-      const pdf = await loadingTask.promise;
+      const pdf = await this.withTimeout(
+        loadingTask.promise,
+        45000,
+        'Timeout lors du chargement du PDF'
+      );
+      
       console.log(`📄 PDF chargé: ${pdf.numPages} pages`);
+      onProgress?.(20);
       
       let fullText = '';
       let successfulPages = 0;
       
-      // Extraire le texte de chaque page avec gestion d'erreurs robuste
+      // Extraire le texte avec timeout par page
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         try {
-          const page = await pdf.getPage(pageNum);
-          const textContent = await page.getTextContent({
-            normalizeWhitespace: true, // Normaliser les espaces
-            disableCombineTextItems: false // Combiner les éléments de texte
-          });
+          const page = await this.withTimeout(
+            pdf.getPage(pageNum),
+            10000,
+            `Timeout chargement page ${pageNum}`
+          );
+          
+          const textContent = await this.withTimeout(
+            page.getTextContent({
+              normalizeWhitespace: true,
+              disableCombineTextItems: false
+            }),
+            15000,
+            `Timeout extraction texte page ${pageNum}`
+          );
           
           const pageText = textContent.items
             .map((item: any) => {
@@ -115,7 +159,10 @@ export class PDFExtractionService {
             successfulPages++;
           }
           
-          console.log(`📄 Page ${pageNum} extraite: ${pageText.length} caractères`);
+          const progress = 20 + (pageNum / pdf.numPages) * 70;
+          onProgress?.(Math.round(progress));
+          
+          console.log(`📄 Page ${pageNum}/${pdf.numPages} extraite: ${pageText.length} caractères`);
         } catch (pageError) {
           console.warn(`⚠️ Erreur page ${pageNum}:`, pageError);
           // Continuer avec les autres pages
@@ -126,20 +173,18 @@ export class PDFExtractionService {
         throw new Error('Aucun texte extractible trouvé dans le PDF');
       }
       
+      onProgress?.(100);
       console.log(`✅ Extraction terminée: ${fullText.length} caractères au total (${successfulPages}/${pdf.numPages} pages)`);
       return fullText.trim();
       
     } catch (error) {
       console.error('❌ Erreur extraction PDF:', error);
       
-      // Messages d'erreur plus descriptifs et utiles
       if (error instanceof Error) {
-        if (error.message.includes('Invalid PDF')) {
-          throw new Error('Le fichier PDF semble corrompu ou n\'est pas un PDF valide. Vérifiez le fichier et réessayez.');
-        } else if (error.message.includes('fetch')) {
-          throw new Error('Problème de chargement des ressources PDF.js. L\'extraction peut ne pas fonctionner correctement.');
-        } else if (error.message.includes('worker')) {
-          throw new Error('Erreur de configuration PDF.js. Certaines fonctionnalités peuvent être limitées.');
+        if (error.message.includes('Timeout')) {
+          throw new Error('L\'extraction PDF a pris trop de temps. Le fichier est peut-être trop volumineux ou complexe.');
+        } else if (error.message.includes('Invalid PDF')) {
+          throw new Error('Le fichier PDF semble corrompu ou n\'est pas un PDF valide.');
         } else if (error.message.includes('vide')) {
           throw new Error('Le fichier PDF est vide ou n\'a pas pu être lu.');
         } else {
@@ -147,25 +192,25 @@ export class PDFExtractionService {
         }
       }
       
-      throw new Error('Erreur inconnue lors de l\'extraction PDF. Vérifiez que le fichier est un PDF valide.');
+      throw new Error('Erreur inconnue lors de l\'extraction PDF.');
     }
   }
 
   public async testPDFJS(): Promise<boolean> {
     try {
-      await this.initializePDFJS();
+      await this.withTimeout(this.initializePDFJS(), 10000, 'Timeout test PDF.js');
       return true;
     } catch {
       return false;
     }
   }
 
-  // Méthode pour obtenir des métadonnées du PDF sans extraction complète
+  // Méthode pour obtenir des métadonnées du PDF
   public async getPDFMetadata(buffer: ArrayBuffer): Promise<any> {
     try {
       await this.initializePDFJS();
       const loadingTask = this.pdfjsLib.getDocument({ data: buffer, verbosity: 0 });
-      const pdf = await loadingTask.promise;
+      const pdf = await this.withTimeout(loadingTask.promise, 30000, 'Timeout métadonnées PDF');
       
       const metadata = await pdf.getMetadata();
       return {
@@ -185,6 +230,14 @@ export class PDFExtractionService {
         error: error instanceof Error ? error.message : 'Erreur inconnue'
       };
     }
+  }
+
+  // Méthode pour annuler les opérations en cours
+  public cancelOperations(): void {
+    console.log('🚫 Annulation des opérations PDF en cours...');
+    this.isInitialized = false;
+    this.pdfjsLib = null;
+    this.initPromise = null;
   }
 }
 

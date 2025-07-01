@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,7 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertTriangle, Info } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertTriangle, Info, X, CheckCircle } from 'lucide-react';
 import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
@@ -18,23 +19,36 @@ const DocumentUnderstanding = () => {
   const [fileType, setFileType] = useState<string | null>(null);
   const [confidence, setConfidence] = useState<'high' | 'medium' | 'low' | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState<string>('');
   const [rawText, setRawText] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<any | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
   const [extractionError, setExtractionError] = useState<string | null>(null);
   const [pdfMetadata, setPdfMetadata] = useState<any | null>(null);
+  const [canCancel, setCanCancel] = useState(false);
+  
+  const analysisRef = useRef<boolean>(false);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       setSelectedFile(acceptedFiles[0]);
-      setFileType(null);
-      setConfidence(null);
-      setRawText(null);
-      setParsedData(null);
-      setBankType(null);
-      setExtractionError(null);
+      resetAnalysisState();
     }
   }, []);
+
+  const resetAnalysisState = () => {
+    setFileType(null);
+    setConfidence(null);
+    setRawText(null);
+    setParsedData(null);
+    setBankType(null);
+    setExtractionError(null);
+    setPdfMetadata(null);
+    setAnalysisProgress(0);
+    setCurrentStep('');
+    setCanCancel(false);
+  };
 
   const { getRootProps, getInputProps } = useDropzone({
     onDrop,
@@ -47,43 +61,73 @@ const DocumentUnderstanding = () => {
     multiple: false
   });
 
+  const cancelAnalysis = () => {
+    analysisRef.current = false;
+    pdfExtractionService.cancelOperations();
+    setIsAnalyzing(false);
+    setCanCancel(false);
+    setCurrentStep('');
+    setAnalysisProgress(0);
+    toast.info('Analyse annulée');
+  };
+
   const analyzeFile = async () => {
     if (!selectedFile) return;
 
+    analysisRef.current = true;
     setIsAnalyzing(true);
     setExtractionError(null);
     setPdfMetadata(null);
+    setAnalysisProgress(5);
+    setCanCancel(true);
     
     try {
       console.log('🔍 Début analyse fichier:', selectedFile.name);
       
       // 1. Detect file type
+      setCurrentStep('Détection du type de fichier...');
+      setAnalysisProgress(10);
+      
+      if (!analysisRef.current) return;
+      
       const detection = await enhancedFileProcessingService.detectFileType(selectedFile);
       setFileType(detection.detectedType);
       setConfidence(detection.confidence);
       setBankType(detection.bankType || null);
+      setAnalysisProgress(20);
 
       console.log('🎯 Type détecté:', detection.detectedType, 'Confiance:', detection.confidence);
 
-      // 2. Extract raw text with improved error handling
+      // 2. Extract raw text
+      setCurrentStep('Extraction du contenu...');
       const buffer = await selectedFile.arrayBuffer();
       let extractedText = '';
+      
+      if (!analysisRef.current) return;
       
       try {
         if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
           console.log('📄 Extraction PDF...');
+          setCurrentStep('Analyse du PDF en cours...');
           
           // Essayer d'abord d'extraire les métadonnées
           try {
             const metadata = await pdfExtractionService.getPDFMetadata(buffer);
             setPdfMetadata(metadata);
             console.log('📋 Métadonnées PDF récupérées:', metadata);
+            setAnalysisProgress(30);
           } catch (metaError) {
             console.warn('⚠️ Impossible de récupérer les métadonnées:', metaError);
           }
           
-          // Puis extraire le texte
-          extractedText = await pdfExtractionService.extractTextFromPDF(buffer);
+          if (!analysisRef.current) return;
+          
+          // Puis extraire le texte avec callback de progression
+          extractedText = await pdfExtractionService.extractTextFromPDF(buffer, (progress) => {
+            if (analysisRef.current) {
+              setAnalysisProgress(30 + (progress * 0.4)); // 30% à 70%
+            }
+          });
           
           if (extractedText.length === 0) {
             setExtractionError('Le PDF a été lu mais aucun texte n\'a pu être extrait. Il pourrait s\'agir d\'un PDF scanné ou protégé.');
@@ -92,10 +136,12 @@ const DocumentUnderstanding = () => {
         } else if (selectedFile.name.toLowerCase().endsWith('.xlsx') || selectedFile.name.toLowerCase().endsWith('.xls')) {
           console.log('📊 Extraction Excel...');
           extractedText = await extractTextFromExcel(buffer);
+          setAnalysisProgress(70);
         }
         
         console.log('📝 Texte extrait:', extractedText.length, 'caractères');
         setRawText(extractedText);
+        setAnalysisProgress(75);
       } catch (extractError) {
         console.error('❌ Erreur extraction:', extractError);
         const errorMessage = extractError instanceof Error ? extractError.message : 'Erreur d\'extraction inconnue';
@@ -103,13 +149,18 @@ const DocumentUnderstanding = () => {
         setRawText(`Erreur lors de l'extraction: ${errorMessage}`);
       }
 
+      if (!analysisRef.current) return;
+
       // 3. Process based on detected type
+      setCurrentStep('Traitement des données...');
+      setAnalysisProgress(80);
+      
       if (detection.detectedType === 'collectionReport') {
         const result = await excelProcessingService.processCollectionReportExcel(selectedFile);
         if (result.success && result.data) {
           setParsedData({
             type: 'Collection Report',
-            collections: result.data.slice(0, 10), // Limit to first 10 for display
+            collections: result.data.slice(0, 10),
             totalCollections: result.data.length
           });
         }
@@ -129,16 +180,25 @@ const DocumentUnderstanding = () => {
         }
       }
 
-      toast.success('Analyse terminée', {
-        description: `Type détecté: ${detection.detectedType} (${detection.confidence})`,
-      });
+      setAnalysisProgress(100);
+      setCurrentStep('Analyse terminée');
+      
+      if (analysisRef.current) {
+        toast.success('Analyse terminée', {
+          description: `Type détecté: ${detection.detectedType} (${detection.confidence})`,
+        });
+      }
     } catch (error) {
       console.error('❌ Erreur analyse:', error);
-      toast.error('Erreur lors de l\'analyse', {
-        description: error instanceof Error ? error.message : 'Erreur inconnue',
-      });
+      if (analysisRef.current) {
+        toast.error('Erreur lors de l\'analyse', {
+          description: error instanceof Error ? error.message : 'Erreur inconnue',
+        });
+      }
     } finally {
       setIsAnalyzing(false);
+      setCanCancel(false);
+      setCurrentStep('');
     }
   };
 
@@ -427,18 +487,52 @@ const DocumentUnderstanding = () => {
                     </p>
                   </div>
                 </div>
-                <Button
-                  onClick={analyzeFile}
-                  disabled={isAnalyzing}
-                  className="flex items-center space-x-2"
-                >
-                  <Brain className="h-4 w-4" />
-                  <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
-                </Button>
+                <div className="flex items-center space-x-2">
+                  {canCancel && (
+                    <Button 
+                      onClick={cancelAnalysis}
+                      variant="outline"
+                      size="sm"
+                      className="flex items-center space-x-2"
+                    >
+                      <X className="h-4 w-4" />
+                      <span>Annuler</span>
+                    </Button>
+                  )}
+                  <Button
+                    onClick={analyzeFile}
+                    disabled={isAnalyzing}
+                    className="flex items-center space-x-2"
+                  >
+                    <Brain className="h-4 w-4" />
+                    <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
+                  </Button>
+                </div>
               </div>
             )}
 
-            {/* Affichage des métadonnées PDF */}
+            {/* Indicateur de progression détaillé */}
+            {isAnalyzing && (
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="pt-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center space-x-2">
+                      <Brain className="h-4 w-4 text-blue-600 animate-pulse" />
+                      <span className="text-sm font-medium text-blue-800">
+                        {currentStep || 'Analyse en cours...'}
+                      </span>
+                    </div>
+                    <Progress value={analysisProgress} className="h-2" />
+                    <div className="flex justify-between text-xs text-blue-600">
+                      <span>Progression</span>
+                      <span>{analysisProgress.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Métadonnées PDF */}
             {pdfMetadata && (
               <Alert className="bg-blue-50 border-blue-200">
                 <Info className="h-4 w-4 text-blue-600" />
@@ -457,7 +551,7 @@ const DocumentUnderstanding = () => {
               </Alert>
             )}
 
-            {/* Affichage des erreurs d'extraction amélioré */}
+            {/* Erreurs d'extraction */}
             {extractionError && (
               <Alert className="bg-yellow-50 border-yellow-200">
                 <AlertTriangle className="h-4 w-4 text-yellow-600" />
@@ -470,10 +564,25 @@ const DocumentUnderstanding = () => {
                 </AlertDescription>
               </Alert>
             )}
+
+            {/* Succès de l'analyse */}
+            {!isAnalyzing && fileType && (
+              <Alert className="bg-green-50 border-green-200">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <AlertDescription>
+                  <div className="font-medium text-green-800">Analyse terminée avec succès</div>
+                  <p className="text-sm text-green-700">
+                    Type détecté: {fileType} • Confiance: {confidence}
+                    {bankType && ` • Banque: ${bankType}`}
+                  </p>
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </CardContent>
       </Card>
 
+      {/* ... keep existing code (results display section) */}
       {(fileType || rawText || parsedData) && (
         <Card>
           <CardHeader>
@@ -579,6 +688,7 @@ const DocumentUnderstanding = () => {
         </Card>
       )}
 
+      {/* ... keep existing code (guide section) */}
       <Card className="mt-8">
         <CardHeader>
           <CardTitle>Guide d'Interprétation des Documents</CardTitle>
