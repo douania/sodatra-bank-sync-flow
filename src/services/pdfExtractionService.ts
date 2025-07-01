@@ -23,6 +23,18 @@ export class PDFExtractionService {
     return Promise.race([promise, timeoutPromise]);
   }
 
+  private calculateTimeouts(fileSize: number) {
+    // Calcul adaptatif des timeouts basé sur la taille du fichier
+    const baseSizeInMB = fileSize / (1024 * 1024);
+    
+    return {
+      initialization: Math.max(15000, Math.min(45000, baseSizeInMB * 2000)), // 15s à 45s
+      documentLoading: Math.max(30000, Math.min(90000, baseSizeInMB * 3000)), // 30s à 90s
+      pageLoading: Math.max(8000, Math.min(20000, baseSizeInMB * 500)), // 8s à 20s
+      textExtraction: Math.max(10000, Math.min(30000, baseSizeInMB * 1000)) // 10s à 30s
+    };
+  }
+
   private async initializePDFJS(): Promise<void> {
     if (this.isInitialized && this.pdfjsLib) {
       return;
@@ -45,7 +57,7 @@ export class PDFExtractionService {
     try {
       console.log('🔧 Initialisation de PDF.js...');
       
-      // Timeout pour l'initialisation
+      // Timeout pour l'initialisation (réduit)
       const pdfjs = await this.withTimeout(
         import('pdfjs-dist'),
         15000,
@@ -54,11 +66,11 @@ export class PDFExtractionService {
       
       this.pdfjsLib = pdfjs;
       
-      // Configuration du worker avec fallback
+      // Configuration du worker avec fallback intelligent
       const workerPaths = [
-        '/pdf.worker.min.js', // Worker local
-        'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN principal
-        'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.js' // CDN backup
+        'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN principal en premier
+        'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN backup
+        '/pdf.worker.min.js' // Worker local en dernier
       ];
 
       let workerConfigured = false;
@@ -75,8 +87,7 @@ export class PDFExtractionService {
       }
 
       if (!workerConfigured) {
-        console.warn('⚠️ Aucun worker configuré, mode sans worker');
-        // Mode sans worker pour les cas critiques
+        console.warn('⚠️ Mode sans worker activé');
         this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
       }
       
@@ -97,27 +108,36 @@ export class PDFExtractionService {
         throw new Error('Le fichier PDF est vide');
       }
 
-      // Initialisation avec timeout
+      // Calcul des timeouts adaptés à la taille du fichier
+      const timeouts = this.calculateTimeouts(buffer.byteLength);
+      console.log('⏱️ Timeouts calculés:', timeouts);
+
+      // Initialisation avec timeout adaptatif
       await this.withTimeout(
         this.initializePDFJS(),
-        30000,
+        timeouts.initialization,
         'Timeout lors de l\'initialisation PDF.js'
       );
       
-      // Chargement du document avec timeout
+      onProgress?.(10);
+      
+      // Configuration optimisée pour l'extraction
       const loadingTask = this.pdfjsLib.getDocument({ 
         data: buffer,
         verbosity: 0,
-        useSystemFonts: true,
-        disableAutoFetch: true, // Éviter les chargements automatiques qui peuvent bloquer
-        disableStream: true, // Simplifier le chargement
-        stopAtErrors: false
+        useSystemFonts: false, // Désactiver pour améliorer les performances
+        disableAutoFetch: true,
+        disableStream: true,
+        stopAtErrors: false,
+        maxImageSize: 1024 * 1024, // Limiter la taille des images pour éviter les timeouts
+        cMapPacked: true
       });
       
-      const pdf = await this.withTimeout(
+      // Chargement du document avec timeout adaptatif
+      const pdf: any = await this.withTimeout(
         loadingTask.promise,
-        45000,
-        'Timeout lors du chargement du PDF'
+        timeouts.documentLoading,
+        `Timeout lors du chargement du PDF (${timeouts.documentLoading}ms)`
       );
       
       console.log(`📄 PDF chargé: ${pdf.numPages} pages`);
@@ -125,22 +145,30 @@ export class PDFExtractionService {
       
       let fullText = '';
       let successfulPages = 0;
+      const maxPages = Math.min(pdf.numPages, 50); // Limiter à 50 pages pour éviter les timeouts
       
-      // Extraire le texte avec timeout par page
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      if (pdf.numPages > 50) {
+        console.log(`⚠️ PDF volumineux (${pdf.numPages} pages), limitation à ${maxPages} pages`);
+      }
+      
+      // Extraire le texte avec timeouts adaptés par page
+      for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
         try {
-          const page = await this.withTimeout(
+          console.log(`📄 Traitement page ${pageNum}/${maxPages}...`);
+          
+          const page: any = await this.withTimeout(
             pdf.getPage(pageNum),
-            10000,
+            timeouts.pageLoading,
             `Timeout chargement page ${pageNum}`
           );
           
-          const textContent = await this.withTimeout(
+          const textContent: any = await this.withTimeout(
             page.getTextContent({
               normalizeWhitespace: true,
-              disableCombineTextItems: false
+              disableCombineTextItems: false,
+              includeMarkedContent: false // Désactiver pour améliorer les performances
             }),
-            15000,
+            timeouts.textExtraction,
             `Timeout extraction texte page ${pageNum}`
           );
           
@@ -151,7 +179,7 @@ export class PDFExtractionService {
               }
               return '';
             })
-            .filter(text => text.length > 0)
+            .filter((text: string) => text.length > 0)
             .join(' ');
           
           if (pageText.length > 0) {
@@ -159,13 +187,14 @@ export class PDFExtractionService {
             successfulPages++;
           }
           
-          const progress = 20 + (pageNum / pdf.numPages) * 70;
+          const progress = 20 + ((pageNum / maxPages) * 70);
           onProgress?.(Math.round(progress));
           
-          console.log(`📄 Page ${pageNum}/${pdf.numPages} extraite: ${pageText.length} caractères`);
+          console.log(`📄 Page ${pageNum}/${maxPages} extraite: ${pageText.length} caractères`);
         } catch (pageError) {
           console.warn(`⚠️ Erreur page ${pageNum}:`, pageError);
-          // Continuer avec les autres pages
+          // Continuer avec les autres pages au lieu de bloquer
+          continue;
         }
       }
       
@@ -174,7 +203,11 @@ export class PDFExtractionService {
       }
       
       onProgress?.(100);
-      console.log(`✅ Extraction terminée: ${fullText.length} caractères au total (${successfulPages}/${pdf.numPages} pages)`);
+      const finalMessage = pdf.numPages > 50 
+        ? `✅ Extraction terminée: ${fullText.length} caractères (${successfulPages}/${maxPages} pages traitées sur ${pdf.numPages} au total)`
+        : `✅ Extraction terminée: ${fullText.length} caractères (${successfulPages}/${pdf.numPages} pages)`;
+      
+      console.log(finalMessage);
       return fullText.trim();
       
     } catch (error) {
@@ -182,7 +215,7 @@ export class PDFExtractionService {
       
       if (error instanceof Error) {
         if (error.message.includes('Timeout')) {
-          throw new Error('L\'extraction PDF a pris trop de temps. Le fichier est peut-être trop volumineux ou complexe.');
+          throw new Error('L\'extraction PDF a pris trop de temps. Essayez avec un fichier plus petit ou contactez le support.');
         } else if (error.message.includes('Invalid PDF')) {
           throw new Error('Le fichier PDF semble corrompu ou n\'est pas un PDF valide.');
         } else if (error.message.includes('vide')) {
@@ -209,8 +242,14 @@ export class PDFExtractionService {
   public async getPDFMetadata(buffer: ArrayBuffer): Promise<any> {
     try {
       await this.initializePDFJS();
-      const loadingTask = this.pdfjsLib.getDocument({ data: buffer, verbosity: 0 });
-      const pdf = await this.withTimeout(loadingTask.promise, 30000, 'Timeout métadonnées PDF');
+      const loadingTask = this.pdfjsLib.getDocument({ 
+        data: buffer, 
+        verbosity: 0,
+        useSystemFonts: false,
+        disableAutoFetch: true,
+        disableStream: true
+      });
+      const pdf: any = await this.withTimeout(loadingTask.promise, 20000, 'Timeout métadonnées PDF');
       
       const metadata = await pdf.getMetadata();
       return {
@@ -220,13 +259,15 @@ export class PDFExtractionService {
         subject: metadata.info?.Subject || 'Sujet non disponible',
         creator: metadata.info?.Creator || 'Créateur non disponible',
         producer: metadata.info?.Producer || 'Producteur non disponible',
-        creationDate: metadata.info?.CreationDate || 'Date non disponible'
+        creationDate: metadata.info?.CreationDate || 'Date non disponible',
+        fileSize: `${(buffer.byteLength / (1024 * 1024)).toFixed(2)} MB`
       };
     } catch (error) {
       console.warn('⚠️ Impossible de récupérer les métadonnées PDF:', error);
       return {
         numPages: 0,
         title: 'Métadonnées non disponibles',
+        fileSize: `${(buffer.byteLength / (1024 * 1024)).toFixed(2)} MB`,
         error: error instanceof Error ? error.message : 'Erreur inconnue'
       };
     }
