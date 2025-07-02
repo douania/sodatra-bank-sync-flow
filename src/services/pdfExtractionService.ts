@@ -76,8 +76,8 @@ export class PDFExtractionService {
         console.warn('⚠️ Worker local non disponible, essai CDN...', localError);
         
         try {
-          // Fallback vers CDN avec version plus récente
-          this.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.worker.min.js';
+          // Fallback vers CDN avec version stable
+          this.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
           console.log('✅ Worker CDN configuré');
         } catch (cdnError) {
           console.warn('⚠️ Worker CDN non disponible, mode sans worker...', cdnError);
