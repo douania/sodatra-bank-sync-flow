@@ -67,28 +67,25 @@ export class PDFExtractionService {
       this.pdfjsLib = pdfjs;
       
       // Configuration du worker avec fallback intelligent
-      const workerPaths = [
-        'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN principal en premier
-        'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.js', // CDN backup
-        '/pdf.worker.min.js' // Worker local en dernier
-      ];
-
-      let workerConfigured = false;
-      for (const workerPath of workerPaths) {
+      try {
+        // Essayer le worker local d'abord
+        console.log('🔧 Configuration worker local...');
+        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+        console.log('✅ Worker local configuré');
+      } catch (localError) {
+        console.warn('⚠️ Worker local non disponible, essai CDN...', localError);
+        
         try {
-          console.log(`🔧 Configuration du worker: ${workerPath}`);
-          this.pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
-          workerConfigured = true;
-          break;
-        } catch (error) {
-          console.warn(`⚠️ Échec worker ${workerPath}:`, error);
-          continue;
+          // Fallback vers CDN avec version plus récente
+          this.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.worker.min.js';
+          console.log('✅ Worker CDN configuré');
+        } catch (cdnError) {
+          console.warn('⚠️ Worker CDN non disponible, mode sans worker...', cdnError);
+          
+          // Mode sans worker en dernier recours
+          this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+          console.log('⚠️ Mode sans worker activé - performance réduite mais fonctionnel');
         }
-      }
-
-      if (!workerConfigured) {
-        console.warn('⚠️ Mode sans worker activé');
-        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
       }
       
       this.isInitialized = true;
