@@ -49,8 +49,14 @@ export class PDFExtractionService {
       const pdfjs = await import('pdfjs-dist');
       this.pdfjsLib = pdfjs;
       
-      // Configuration du worker
-      this.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js';
+      // Essayer d'abord le worker local, puis fallback sans worker
+      try {
+        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+        console.log('📁 Utilisation du worker local');
+      } catch (workerError) {
+        console.warn('⚠️ Échec du worker local, passage en mode synchrone:', workerError);
+        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+      }
       
       this.isInitialized = true;
       console.log('✅ PDF.js initialisé avec succès');
