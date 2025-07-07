@@ -49,14 +49,9 @@ export class PDFExtractionService {
       const pdfjs = await import('pdfjs-dist');
       this.pdfjsLib = pdfjs;
       
-      // Essayer d'abord le worker local, puis fallback sans worker
-      try {
-        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
-        console.log('📁 Utilisation du worker local');
-      } catch (workerError) {
-        console.warn('⚠️ Échec du worker local, passage en mode synchrone:', workerError);
-        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-      }
+      // Configuration sans worker pour une meilleure compatibilité
+      this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+      console.log('📁 Mode sans worker activé pour la stabilité');
       
       this.isInitialized = true;
       console.log('✅ PDF.js initialisé avec succès');
