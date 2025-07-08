@@ -49,9 +49,9 @@ export class PDFExtractionService {
       const pdfjs = await import('pdfjs-dist');
       this.pdfjsLib = pdfjs;
       
-      // Configuration sans worker pour une meilleure compatibilité
-      this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-      console.log('📁 Mode sans worker activé pour la stabilité');
+      // Configuration avec worker CDN pour de meilleures performances
+      this.pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${this.pdfjsLib.version}/pdf.worker.min.js`;
+      console.log('📁 Worker PDF.js configuré via CDN');
       
       this.isInitialized = true;
       console.log('✅ PDF.js initialisé avec succès');
