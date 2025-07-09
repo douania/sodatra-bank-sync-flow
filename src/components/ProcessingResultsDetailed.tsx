@@ -2,7 +2,6 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { 
   FileSpreadsheet, 
   FileText, 
@@ -13,12 +12,9 @@ import {
   TrendingUp,
   Users,
   DollarSign,
-  Database, 
-  FileCheck
+  Database
 } from 'lucide-react';
 import { ProcessingResult } from '@/services/enhancedFileProcessingService';
-import BankReportDetailedView from './BankReportDetailedView';
-import { bankReportValidationService } from '@/services/bankReportValidationService';
 
 interface ProcessingResultsDetailedProps {
   results: ProcessingResult;
@@ -204,55 +200,22 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
               </CardDescription>
             </CardHeader>
             <CardContent>
-             <div className="space-y-6">
-               {results.data.bankReports.map((report, index) => {
-                 // Valider le rapport bancaire
-                 const validationResult = bankReportValidationService.validateBankReport(report);
-                 
-                 return (
-                   <div key={index} className="border rounded-lg p-4">
-                     <div className="flex justify-between items-center mb-4">
-                       <div className="flex items-center space-x-2">
-                         <Building2 className="h-5 w-5 text-purple-600" />
-                         <h3 className="text-lg font-semibold">{report.bank}</h3>
-                         <span className="text-sm text-gray-500">{report.date}</span>
-                       </div>
-                       <div className="flex items-center space-x-2">
-                         {validationResult.isValid ? (
-                           <Badge className="bg-green-100 text-green-800">
-                             <FileCheck className="h-3 w-3 mr-1" />
-                             Validé
-                           </Badge>
-                         ) : (
-                           <Badge className="bg-yellow-100 text-yellow-800">
-                             <AlertTriangle className="h-3 w-3 mr-1" />
-                             Avertissements
-                           </Badge>
-                         )}
-                       </div>
-                     </div>
-                     
-                     {/* Afficher les avertissements de validation */}
-                     {validationResult.warnings.length > 0 && (
-                       <Alert className="mb-4 bg-yellow-50 border-yellow-200">
-                         <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                         <AlertDescription>
-                           <div className="font-medium text-yellow-800 mb-1">Avertissements de validation</div>
-                           <ul className="text-xs space-y-1 text-yellow-700">
-                             {validationResult.warnings.map((warning, i) => (
-                               <li key={i}>• {warning}</li>
-                             ))}
-                           </ul>
-                         </AlertDescription>
-                       </Alert>
-                     )}
-                     
-                     {/* Vue détaillée du rapport bancaire */}
-                     <BankReportDetailedView bankReport={report} />
-                   </div>
-                 );
-               })}
-             </div>
+              <div className="space-y-3">
+                {results.data.bankReports.map((report, index) => (
+                  <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+                    <div>
+                      <span className="font-medium">{report.bank}</span>
+                      <p className="text-xs text-gray-500">{report.date}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium">
+                        {formatCurrency(report.closingBalance)}
+                      </p>
+                      <p className="text-xs text-gray-500">Solde de clôture</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         )}

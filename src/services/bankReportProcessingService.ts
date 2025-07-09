@@ -2,7 +2,6 @@
 import * as XLSX from 'xlsx';
 import { BankReport } from '@/types/banking';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
-import { bankReportValidationService } from './bankReportValidationService';
 
 export interface BankReportProcessingResult {
   success: boolean;
@@ -66,14 +65,6 @@ class BankReportProcessingService {
         };
       }
 
-     // Valider le rapport extrait
-     const validationResult = bankReportValidationService.validateBankReport(extractionResult.data);
-     
-     // Ajouter les avertissements de validation aux warnings du résultat
-     const warnings = validationResult.warnings.length > 0 
-       ? validationResult.warnings 
-       : undefined;
-
       console.log(`✅ Rapport bancaire ${bankType} traité avec succès par sections`);
       
       return {
@@ -81,7 +72,6 @@ class BankReportProcessingService {
         data: extractionResult.data,
         sourceFile: file.name,
         bankType: bankType,
-       warnings: warnings,
         confidence: 95 // Confiance élevée avec le nouveau système
       };
       

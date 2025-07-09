@@ -1,4 +1,3 @@
-
 import { CollectionReport } from '@/types/banking';
 
 // Interface pour le résultat de détection du type de collection
@@ -88,7 +87,7 @@ class ExcelMappingService {
     
     // ⭐ MODE TOLÉRANT - Traçabilité optionnelle
     const collection: CollectionReport = {
-      reportDate: this.parseDate(row.reportDate)?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
+      reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
       clientCode: this.parseString(row.clientCode) || 'UNKNOWN',
       collectionAmount: this.parseNumber(row.collectionAmount) || 0,
       bankName: this.parseString(row.bankName),
@@ -107,7 +106,7 @@ class ExcelMappingService {
       excelProcessedAt: new Date().toISOString(),
       
       // Champs optionnels
-      dateOfValidity: this.parseDate(row.dateOfValidity)?.toISOString().split('T')[0],
+      dateOfValidity: this.parseDate(row.dateOfValidity),
       factureNo: this.parseString(row.factureNo),
       noChqBd: this.parseString(row.noChqBd),
       bankNameDisplay: this.parseString(row.bankNameDisplay),
@@ -122,7 +121,7 @@ class ExcelMappingService {
       sgOrFaNo: this.parseString(row.sgOrFaNo),
       dNAmount: this.parseNumber(row.dNAmount),
       income: this.parseNumber(row.income),
-      dateOfImpay: this.parseDate(row.dateOfImpay)?.toISOString().split('T')[0],
+      dateOfImpay: this.parseDate(row.dateOfImpay),
       reglementImpaye: this.parseString(row.reglementImpaye),
       remarques: this.parseString(row.remarques),
       
@@ -147,7 +146,7 @@ class ExcelMappingService {
     return collection;
   }
   
-  private parseDate(value: any): Date | undefined {
+  private parseDate(value: any): string | undefined {
     if (!value) return undefined;
     
     try {
@@ -190,19 +189,19 @@ class ExcelMappingService {
           const parsed = new Date(trimmedValue);
           if (isNaN(parsed.getTime())) {
             console.warn('⚠️ Date invalide, utilisation de la date du jour:', trimmedValue);
-            return new Date();
+            return new Date().toISOString().split('T')[0];
           }
           date = parsed;
         }
       } else {
         console.warn('⚠️ Format de date non reconnu, utilisation de la date du jour:', value);
-        return new Date();
+        return new Date().toISOString().split('T')[0];
       }
       
-      return date;
+      return date.toISOString().split('T')[0];
     } catch (error) {
       console.warn('⚠️ Erreur parsing date, utilisation de la date du jour:', value, error);
-      return new Date();
+      return new Date().toISOString().split('T')[0];
     }
   }
   
