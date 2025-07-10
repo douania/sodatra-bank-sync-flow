@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { AlertTriangle, CheckCircle, Clock, MapPin, ArrowRight, FileText, FileCheck } from 'lucide-react';
 import { databaseService } from '@/services/databaseService';
 import { CollectionReport, BankReport, DepositNotCleared } from '@/types/banking';
-import { specializedMatchingService, MatchResult } from '@/services/specializedMatchingService';
+import { specializedMatchingService } from '@/services/specializedMatchingService';
 
 interface MatchResult {
   collection: CollectionReport;

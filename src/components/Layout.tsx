@@ -7,7 +7,6 @@ import {
   Upload, 
   FileSearch,
   BarChart3,
-  FileSearch,
   GitMerge, 
   AlertTriangle,
   Shield,

@@ -23,7 +23,7 @@ class ExcelMappingService {
     if (this.isDate(noChqBdValue)) {
       return {
         type: 'EFFET',
-        effetEcheanceDate: this.parseDate(noChqBdValue),
+        effetEcheanceDate: this.parseDate(noChqBdValue) ? new Date(this.parseDate(noChqBdValue)!) : null,
         chequeNumber: null,
         rawValue: String(noChqBdValue)
       };
