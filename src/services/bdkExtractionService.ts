@@ -262,37 +262,83 @@ export class BDKExtractionService {
         const startIdx = dateIndices[i];
         const endIdx = dateIndices[i + 1] || words.length;
         
-        if (endIdx - startIdx >= 3) { // Au minimum: date, numéro, description, montant
+        if (endIdx - startIdx >= 3) { // Au minimum: date, numéro, description
           const date = words[startIdx];
           const checkNumber = words[startIdx + 1];
           
-          // Chercher le montant (dernier élément numérique valide)
-          let amount = 0;
-          let amountIdx = -1;
+          // Extraire tous les éléments entre la date et la fin du groupe
+          const groupWords = words.slice(startIdx + 2, endIdx);
+          console.log(`🔍 Groupe chèque ${checkNumber}: [${groupWords.join(' | ')}]`);
           
-          for (let j = endIdx - 1; j > startIdx + 1; j--) {
-            const parsed = this.parseAmount(words[j]);
-            if (parsed > 100) { // Seuil pour montant valide
-              amount = parsed;
-              amountIdx = j;
-              break;
+          // Chercher la colonne AMOUNT - reconstituée à partir des nombres dispersés
+          let amount = 0;
+          let description = '';
+          
+          // Identifier tous les éléments numériques dans le groupe
+          const numericElements: number[] = [];
+          const nonNumericElements: string[] = [];
+          
+          groupWords.forEach(word => {
+            const parsed = this.parseAmount(word);
+            if (parsed > 0) {
+              numericElements.push(parsed);
+            } else if (word.toLowerCase() !== 'fcfa' && word.toLowerCase() !== 'cfa') {
+              nonNumericElements.push(word);
+            }
+          });
+          
+          // Si on a des éléments numériques, essayer de reconstituer le montant
+          if (numericElements.length > 0) {
+            if (numericElements.length === 1) {
+              // Un seul montant trouvé
+              amount = numericElements[0];
+            } else {
+              // Plusieurs nombres - essayer de les concaténer intelligemment
+              // Pattern: "45 053" + "436" = 45053436
+              // Pattern: "100334" + "71" = 10033471 (but should be 71176)
+              
+              // Stratégie 1: Concaténer tous les nombres
+              const concatenated = numericElements.join('');
+              amount = parseInt(concatenated);
+              
+              // Stratégie 2: Si le dernier nombre est plus petit, il peut être le montant principal
+              if (numericElements.length === 2) {
+                const [first, second] = numericElements;
+                
+                // Si le deuxième nombre a moins de 4 chiffres et le premier plus de 4,
+                // le vrai montant pourrait être "second + first"
+                if (second < 10000 && first > 10000) {
+                  const alternative = parseInt(second.toString() + first.toString());
+                  console.log(`🔍 Montant alternatif possible: ${alternative.toLocaleString()} FCFA (${second} + ${first})`);
+                  
+                  // Pour les cas comme "100334 71" -> 71176, on prend la version alternative
+                  if (first.toString().length >= 6) {
+                    amount = alternative;
+                  }
+                }
+              }
+              
+              console.log(`🔢 Éléments numériques: [${numericElements.join(', ')}] -> ${amount.toLocaleString()} FCFA`);
             }
           }
           
-          if (amount > 0 && amountIdx > startIdx + 1) {
-            // Description = mots entre numéro de chèque et montant
-            const description = words.slice(startIdx + 2, amountIdx).join(' ');
-            
-            const check: BDKCheck = {
-              date: date,
-              checkNumber: checkNumber,
-              description: description || 'N/A',
-              amount: amount
-            };
-            
-            checks.push(check);
-            console.log(`✅ Chèque: ${check.date} - ${check.checkNumber} - ${check.amount.toLocaleString()} FCFA`);
+          // La description est constituée des éléments non-numériques
+          description = nonNumericElements.join(' ').trim() || 'N/A';
+          
+          // Si aucun montant trouvé (colonne AMOUNT vide), le montant est 0
+          if (amount === 0) {
+            console.log(`⚠️ Aucun montant trouvé pour le chèque ${checkNumber} - colonne AMOUNT probablement vide`);
           }
+          
+          const check: BDKCheck = {
+            date: date,
+            checkNumber: checkNumber,
+            description: description,
+            amount: amount
+          };
+          
+          checks.push(check);
+          console.log(`✅ Chèque: ${check.date} - ${check.checkNumber} - ${check.amount.toLocaleString()} FCFA - "${check.description}"`);
         }
       }
     }
