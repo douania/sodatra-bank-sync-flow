@@ -14,6 +14,78 @@ export type Database = {
   }
   public: {
     Tables: {
+      bank_audit_log: {
+        Row: {
+          action: string
+          bank_name: string | null
+          created_at: string | null
+          details: Json | null
+          id: string
+          ip_address: unknown | null
+          report_date: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          bank_name?: string | null
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          ip_address?: unknown | null
+          report_date?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          bank_name?: string | null
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          ip_address?: unknown | null
+          report_date?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      bank_evolution_tracking: {
+        Row: {
+          amount: number | null
+          bank_name: string
+          created_at: string | null
+          current_status: string | null
+          description: string | null
+          evolution_type: string
+          id: string
+          previous_status: string | null
+          reference: string | null
+          report_date: string
+        }
+        Insert: {
+          amount?: number | null
+          bank_name: string
+          created_at?: string | null
+          current_status?: string | null
+          description?: string | null
+          evolution_type: string
+          id?: string
+          previous_status?: string | null
+          reference?: string | null
+          report_date: string
+        }
+        Update: {
+          amount?: number | null
+          bank_name?: string
+          created_at?: string | null
+          current_status?: string | null
+          description?: string | null
+          evolution_type?: string
+          id?: string
+          previous_status?: string | null
+          reference?: string | null
+          report_date?: string
+        }
+        Relationships: []
+      }
       bank_facilities: {
         Row: {
           available_amount: number
@@ -449,6 +521,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      universal_bank_reports: {
+        Row: {
+          bank_name: string
+          checksum: string
+          created_at: string | null
+          id: string
+          parser_version: string | null
+          processed_data: Json
+          raw_data: Json
+          report_date: string
+          user_id: string | null
+        }
+        Insert: {
+          bank_name: string
+          checksum: string
+          created_at?: string | null
+          id?: string
+          parser_version?: string | null
+          processed_data: Json
+          raw_data: Json
+          report_date: string
+          user_id?: string | null
+        }
+        Update: {
+          bank_name?: string
+          checksum?: string
+          created_at?: string | null
+          id?: string
+          parser_version?: string | null
+          processed_data?: Json
+          raw_data?: Json
+          report_date?: string
+          user_id?: string | null
+        }
+        Relationships: []
       }
     }
     Views: {

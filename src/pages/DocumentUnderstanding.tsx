@@ -10,6 +10,8 @@ import { enhancedFileProcessingService } from '@/services/enhancedFileProcessing
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
 import { toast } from '@/components/ui/sonner';
+import UniversalBankParser from '@/components/UniversalBankParser';
+import { RapportBancaire } from '@/types/banking-universal';
 
 const DocumentUnderstanding = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -19,6 +21,20 @@ const DocumentUnderstanding = () => {
   const [rawText, setRawText] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<any | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
+
+  const handleParseComplete = (rapport: RapportBancaire) => {
+    console.log('Rapport traité avec le parser universel:', rapport);
+    toast.success('Rapport traité', {
+      description: `Banque: ${rapport.banque} - Date: ${rapport.dateRapport}`,
+    });
+  };
+
+  const handleParseError = (error: string) => {
+    console.error('Erreur de parsing universel:', error);
+    toast.error('Erreur de traitement', {
+      description: error,
+    });
+  };
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -394,43 +410,59 @@ const DocumentUnderstanding = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-6">
-            <div
-              {...getRootProps()}
-              className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg cursor-pointer transition-colors border-gray-300 bg-gray-50 hover:bg-gray-100"
-            >
-              <input {...getInputProps()} />
-              <Upload className="h-10 w-10 text-gray-400 mb-2" />
-              <p className="text-gray-600 text-lg font-medium mb-1">
-                Glissez-déposez un document ici
-              </p>
-              <p className="text-gray-500 text-sm">
-                ou cliquez pour sélectionner un fichier
-              </p>
-            </div>
-
-            {selectedFile && (
-              <div className="flex items-center justify-between p-4 border rounded-lg bg-gray-50">
-                <div className="flex items-center space-x-3">
-                  <FileText className="h-8 w-8 text-gray-600" />
-                  <div>
-                    <p className="font-medium text-gray-900">{selectedFile.name}</p>
-                    <p className="text-sm text-gray-500">
-                      {(selectedFile.size / 1024 / 1024).toFixed(2)} MB • {selectedFile.type || 'Type inconnu'}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  onClick={analyzeFile}
-                  disabled={isAnalyzing}
-                  className="flex items-center space-x-2"
+          <Tabs defaultValue="universal" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="universal">Parser Universel</TabsTrigger>
+              <TabsTrigger value="legacy">Système Legacy</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="universal" className="space-y-4">
+              <UniversalBankParser 
+                onParseComplete={handleParseComplete}
+                onError={handleParseError}
+              />
+            </TabsContent>
+            
+            <TabsContent value="legacy" className="space-y-4">
+              <div className="space-y-6">
+                <div
+                  {...getRootProps()}
+                  className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg cursor-pointer transition-colors border-gray-300 bg-gray-50 hover:bg-gray-100"
                 >
-                  <Brain className="h-4 w-4" />
-                  <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
-                </Button>
+                  <input {...getInputProps()} />
+                  <Upload className="h-10 w-10 text-gray-400 mb-2" />
+                  <p className="text-gray-600 text-lg font-medium mb-1">
+                    Glissez-déposez un document ici
+                  </p>
+                  <p className="text-gray-500 text-sm">
+                    ou cliquez pour sélectionner un fichier
+                  </p>
+                </div>
+
+                {selectedFile && (
+                  <div className="flex items-center justify-between p-4 border rounded-lg bg-gray-50">
+                    <div className="flex items-center space-x-3">
+                      <FileText className="h-8 w-8 text-gray-600" />
+                      <div>
+                        <p className="font-medium text-gray-900">{selectedFile.name}</p>
+                        <p className="text-sm text-gray-500">
+                          {(selectedFile.size / 1024 / 1024).toFixed(2)} MB • {selectedFile.type || 'Type inconnu'}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      onClick={analyzeFile}
+                      disabled={isAnalyzing}
+                      className="flex items-center space-x-2"
+                    >
+                      <Brain className="h-4 w-4" />
+                      <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
+                    </Button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
 
