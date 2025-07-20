@@ -23,6 +23,9 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { bankingUniversalService } from "@/services/bankingUniversalService";
 import { BankType, RapportConsolide, RapportBancaire } from "@/types/banking-universal";
 import { useToast } from "@/hooks/use-toast";
+import EvolutionAnalysis from "@/components/EvolutionAnalysis";
+import IntelligenceMetier from "@/components/IntelligenceMetier";
+import RealtimeManager from "@/components/RealtimeManager";
 
 const BankingDashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -372,7 +375,9 @@ const BankingDashboard: React.FC = () => {
           <Tabs defaultValue="positions" className="space-y-4">
             <TabsList>
               <TabsTrigger value="positions">Positions</TabsTrigger>
-              <TabsTrigger value="alertes">Alertes</TabsTrigger>
+              <TabsTrigger value="evolutions">Évolutions</TabsTrigger>
+              <TabsTrigger value="intelligence">Intelligence IA</TabsTrigger>
+              <TabsTrigger value="realtime">Temps Réel</TabsTrigger>
               <TabsTrigger value="transactions">Transactions</TabsTrigger>
             </TabsList>
             
@@ -426,10 +431,16 @@ const BankingDashboard: React.FC = () => {
               </div>
             </TabsContent>
             
-            <TabsContent value="alertes">
-              <div className="text-center py-8 text-muted-foreground">
-                Système d'alertes détaillées par banque en développement
-              </div>
+            <TabsContent value="evolutions" className="space-y-4">
+              <EvolutionAnalysis banque={selectedBanks[0]} />
+            </TabsContent>
+            
+            <TabsContent value="intelligence" className="space-y-4">
+              <IntelligenceMetier />
+            </TabsContent>
+            
+            <TabsContent value="realtime" className="space-y-4">
+              <RealtimeManager />
             </TabsContent>
             
             <TabsContent value="transactions">
