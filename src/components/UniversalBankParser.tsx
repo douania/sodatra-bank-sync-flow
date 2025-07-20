@@ -117,7 +117,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       // Fallback vers l'ancienne méthode si la nouvelle échoue
       console.log('🔄 Fallback vers extraction texte brut...');
       
-      const textContent = await this.extractPDFContentAsText(file);
+      const textContent = await extractPDFContentAsText(file);
       const bdkData = bdkExtractionService.extractBDKData(textContent);
       
       const rapport: RapportBancaire = {
@@ -181,7 +181,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
   }, []);
 
   // Méthode d'extraction PDF texte simple pour fallback
-  private async extractPDFContentAsText(file: File): Promise<string> {
+  const extractPDFContentAsText = useCallback(async (file: File): Promise<string> => {
     const pdfjsLib = await import('pdfjs-dist');
     
     pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
@@ -202,13 +202,13 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
     }
     
     return fullText;
-  }
+  }, []);
 
   // Parser universel qui délègue au parser spécialisé
   const parseContent = useCallback(async (file: File, fileName: string): Promise<ParseResult> => {
     try {
       // Détection de banque basée sur le nom de fichier ou contenu
-      const bankDetected = this.detectBankFromFile(file, fileName);
+      const bankDetected = detectBankFromFile(file, fileName);
       
       if (!bankDetected) {
         return {
@@ -271,10 +271,10 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
         bankDetected: undefined
       };
     }
-  }, [parseBDK]);
+  }, [parseBDK, detectBankFromFile]);
 
   // Détection de banque améliorée
-  private detectBankFromFile(file: File, fileName: string): BankType | null {
+  const detectBankFromFile = useCallback((file: File, fileName: string): BankType | null => {
     const upperFileName = fileName.toUpperCase();
     
     if (upperFileName.includes('BDK') || upperFileName.includes('BANQUE DE KIGALI')) return 'BDK';
@@ -285,7 +285,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
     if (upperFileName.includes('BIS') || upperFileName.includes('BANQUE ISLAMIQUE')) return 'BIS';
     
     return null;
-  }
+  }, []);
 
   // Gestion de l'upload de fichiers (mise à jour pour utiliser la nouvelle méthode)
   const handleFileUpload = useCallback(async (files: FileList) => {
