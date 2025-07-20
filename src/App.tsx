@@ -35,8 +35,9 @@ const App = () => (
             <Route path="/consolidated" element={<ConsolidatedDashboard />} />
             <Route path="/reconciliation" element={<Reconciliation />} />
             <Route path="/document-understanding" element={<DocumentUnderstanding />} />
-            <Route path="/banking/dashboard" element={<BankingDashboard />} />
-            <Route path="/banking/reports" element={<BankingReports />} />
+        <Route path="/banking/dashboard" element={<BankingDashboard />} />
+        <Route path="/banking/reports" element={<BankingReports />} />
+        <Route path="/consolidated-dashboard" element={<ConsolidatedDashboard />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/quality-control" element={<QualityControl />} />
             <Route path="*" element={<NotFound />} />
