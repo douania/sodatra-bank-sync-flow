@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import BankReconciliationEngine from '@/components/BankReconciliationEngine';
+import { BankReconciliationEngine } from '@/components/BankReconciliationEngine';
 import CollectionsManager from '@/components/CollectionsManager';
 import IntelligentSyncManager from '@/components/IntelligentSyncManager';
 import { SyncResult } from '@/services/intelligentSyncService';

@@ -466,7 +466,7 @@ export function BankReconciliationEngine() {
                 <h4 className="font-semibold">Critères de Rapprochement Approximatif</h4>
                 <ul className="text-sm text-muted-foreground space-y-1 mt-2">
                   <li>• Montant similaire (±5%)</li>
-                  <li>• Code client similaire (score de similarité > 80%)</li>
+                  <li>• Code client similaire (score de similarité {'>'}80%)</li>
                   <li>• Date dans la plage de ±5 jours</li>
                   <li>• Banque correspondante</li>
                 </ul>
@@ -476,7 +476,7 @@ export function BankReconciliationEngine() {
                 <ul className="text-sm text-muted-foreground space-y-1 mt-2">
                   <li>• Validation automatique: ≥95%</li>
                   <li>• Validation manuelle: 70-94%</li>
-                  <li>• Rejet automatique: &lt;70%</li>
+                  <li>• Rejet automatique: {'<'}70%</li>
                 </ul>
               </div>
             </CardContent>
