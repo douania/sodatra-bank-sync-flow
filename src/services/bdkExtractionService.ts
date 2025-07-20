@@ -1,4 +1,3 @@
-
 // Service d'extraction spécialisé pour les relevés BDK
 export interface BDKOpeningBalance {
   date: string;
@@ -113,231 +112,280 @@ export class BDKExtractionService {
   }
 
   /**
-   * Extrait les dépôts non crédités avec tous les détails
+   * Extrait les dépôts à partir d'une longue ligne concaténée
    */
   private extractDeposits(textContent: string): { deposits: BDKDeposit[], total: number } {
     console.log('🔍 Extraction dépôts non crédités BDK...');
     
     const deposits: BDKDeposit[] = [];
-    const lines = textContent.split('\n');
-    
-    let inDepositsSection = false;
     let totalDeposits = 0;
     
-    // Debug: chercher les mots-clés
-    const keywords = ['DEPOSIT', 'ADD', 'NOT', 'YET', 'CLEARED'];
-    keywords.forEach(keyword => {
-      if (textContent.toLowerCase().includes(keyword.toLowerCase())) {
-        console.log(`📍 Mot-clé "${keyword}" trouvé dans le PDF`);
-      }
-    });
+    // Chercher le total des dépôts d'abord
+    const totalDepositMatch = textContent.match(/TOTAL\s+DEPOSIT\s+([\d\s]+)/i);
+    if (totalDepositMatch) {
+      totalDeposits = this.parseAmount(totalDepositMatch[1]);
+      console.log(`✅ Total dépôts trouvé: ${totalDeposits.toLocaleString()} FCFA`);
+    }
     
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
+    // Extraire la section des dépôts entre "ADD : DEPOSIT NOT YET CLEARED" et "TOTAL DEPOSIT"
+    const depositSectionMatch = textContent.match(/ADD\s*:\s*DEPOSIT\s+NOT\s+YET\s+CLEARED\s+(.*?)\s+TOTAL\s+DEPOSIT/si);
+    
+    if (depositSectionMatch) {
+      const depositSection = depositSectionMatch[1];
+      console.log(`📝 Section dépôts extraite (${depositSection.length} caractères)`);
       
-      // Debug: afficher les lignes qui contiennent "DEPOSIT"
-      if (line.toLowerCase().includes('deposit')) {
-        console.log(`📝 Ligne avec DEPOSIT: "${line}"`);
-      }
+      // Pattern pour chaque dépôt: Date1 Date2 Description Vendor Client Montant
+      // 19/06/2025   18/08/2025   REGLEMENT FACTURE   ECOBANK   UNITED SOLAR   3 000 000
+      const depositPattern = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([A-Z\s]+?)\s+([A-Z\s]+?)\s+([A-Z\s]+?)\s+([\d\s]+?)(?=\s+\d{2}\/\d{2}\/\d{4}|$)/g;
       
-      // Début de section - patterns multiples
-      if (line.match(/ADD\s*:\s*DEPOSIT\s+NOT\s+YET\s+CLEARED/i) || 
-          line.match(/DEPOSIT\s+NOT\s+YET\s+CLEARED/i) ||
-          line.match(/DEPOSITS?\s+NOT\s+CREDITED/i)) {
-        inDepositsSection = true;
-        console.log('✅ Section dépôts trouvée:', line);
-        continue;
-      }
-      
-      // Fin de section
-      if (inDepositsSection && line.match(/TOTAL\s+DEPOSIT\s+([\d\s]+)/i)) {
-        const totalMatch = line.match(/TOTAL\s+DEPOSIT\s+([\d\s]+)/i);
-        if (totalMatch) {
-          totalDeposits = this.parseAmount(totalMatch[1]);
-          console.log(`✅ Total dépôts: ${totalDeposits.toLocaleString()} FCFA`);
+      let match;
+      while ((match = depositPattern.exec(depositSection)) !== null) {
+        const deposit: BDKDeposit = {
+          dateOperation: match[1].trim(),
+          dateValeur: match[2].trim(),
+          description: match[3].trim(),
+          vendor: match[4].trim(),
+          client: match[5].trim(),
+          amount: this.parseAmount(match[6])
+        };
+        
+        if (deposit.amount > 0) {
+          deposits.push(deposit);
+          console.log(`✅ Dépôt: ${deposit.dateOperation} - ${deposit.client} - ${deposit.amount.toLocaleString()} FCFA`);
         }
-        inDepositsSection = false;
-        break;
       }
       
-      // Parser les lignes de dépôts
-      if (inDepositsSection && line.length > 20 && line.match(/\d{2}\/\d{2}\/\d{4}/)) {
-        console.log(`📝 Ligne de dépôt potentielle: "${line}"`);
+      // Si pas de match avec le pattern complexe, essayer une approche plus simple
+      if (deposits.length === 0) {
+        console.log('🔄 Tentative avec pattern simplifié...');
+        const lines = depositSection.split(/\s+/);
         
-        // Pattern très simple d'abord
-        const simplePattern = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+?)(\d[\d\s]*\d)$/;
-        const simpleMatch = line.match(simplePattern);
-        
-        if (simpleMatch) {
-          console.log(`✅ Pattern simple matched:`, simpleMatch);
-          // Split la partie description sur les espaces multiples
-          const descParts = simpleMatch[3].trim().split(/\s{2,}/);
-          
-          const deposit: BDKDeposit = {
-            dateOperation: simpleMatch[1],
-            dateValeur: simpleMatch[2],
-            description: descParts[0] || 'N/A',
-            vendor: descParts[1] || 'N/A', 
-            client: descParts[2] || 'N/A',
-            amount: this.parseAmount(simpleMatch[4])
-          };
-          
-          if (deposit.amount > 0) {
-            deposits.push(deposit);
-            console.log(`✅ Dépôt ajouté: ${deposit.client} - ${deposit.amount.toLocaleString()} FCFA`);
+        // Identifier les indices des dates (format DD/MM/YYYY)
+        const dateIndices: number[] = [];
+        lines.forEach((item, index) => {
+          if (/^\d{2}\/\d{2}\/\d{4}$/.test(item)) {
+            dateIndices.push(index);
           }
-        } else {
-          console.log(`❌ Aucun pattern ne correspond à: "${line}"`);
+        });
+        
+        console.log(`📍 ${dateIndices.length} dates trouvées dans la section dépôts`);
+        
+        // Traiter chaque groupe entre deux dates
+        for (let i = 0; i < dateIndices.length - 1; i += 2) {
+          const startIdx = dateIndices[i];
+          const endIdx = dateIndices[i + 2] || lines.length;
+          
+          if (startIdx + 1 < dateIndices.length && dateIndices[startIdx + 1] === startIdx + 1) {
+            // Nous avons deux dates consécutives
+            const dateOp = lines[startIdx];
+            const dateVal = lines[startIdx + 1];
+            
+            // Chercher le montant (dernier élément numérique avant la prochaine date)
+            let amount = 0;
+            let amountIdx = -1;
+            
+            for (let j = endIdx - 1; j > startIdx + 1; j--) {
+              const parsed = this.parseAmount(lines[j]);
+              if (parsed > 1000) { // Seuil minimum pour un montant valide
+                amount = parsed;
+                amountIdx = j;
+                break;
+              }
+            }
+            
+            if (amount > 0 && amountIdx > startIdx + 1) {
+              // Extraire description, vendor, client
+              const middleParts = lines.slice(startIdx + 2, amountIdx);
+              const description = middleParts.slice(0, Math.floor(middleParts.length / 3)).join(' ');
+              const vendor = middleParts.slice(Math.floor(middleParts.length / 3), Math.floor(2 * middleParts.length / 3)).join(' ');
+              const client = middleParts.slice(Math.floor(2 * middleParts.length / 3)).join(' ');
+              
+              const deposit: BDKDeposit = {
+                dateOperation: dateOp,
+                dateValeur: dateVal,
+                description: description || 'N/A',
+                vendor: vendor || 'N/A',
+                client: client || 'N/A',
+                amount: amount
+              };
+              
+              deposits.push(deposit);
+              console.log(`✅ Dépôt (méthode 2): ${deposit.dateOperation} - ${deposit.client} - ${deposit.amount.toLocaleString()} FCFA`);
+            }
+          }
         }
       }
     }
     
-    console.log(`✅ ${deposits.length} dépôts extraits, Total: ${totalDeposits.toLocaleString()} FCFA`);
+    console.log(`✅ ${deposits.length} dépôts extraits, Total déclaré: ${totalDeposits.toLocaleString()} FCFA`);
     return { deposits, total: totalDeposits };
   }
 
   /**
-   * Extrait les chèques non débités avec tous les détails
+   * Extrait les chèques à partir de la section LESS : CHECK Not yet cleared
    */
   private extractChecks(textContent: string): { checks: BDKCheck[], total: number } {
     console.log('🔍 Extraction chèques non débités BDK...');
     
     const checks: BDKCheck[] = [];
-    const lines = textContent.split('\n');
-    
-    let inChecksSection = false;
     let totalChecks = 0;
     
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
+    // Chercher le total des chèques
+    const totalCheckMatch = textContent.match(/TOTAL\s+\(B\)\s+([\d\s]+)/i);
+    if (totalCheckMatch) {
+      totalChecks = this.parseAmount(totalCheckMatch[1]);
+      console.log(`✅ Total chèques trouvé: ${totalChecks.toLocaleString()} FCFA`);
+    }
+    
+    // Extraire la section des chèques entre "LESS : CHECK Not yet cleared" et "TOTAL (B)"
+    const checkSectionMatch = textContent.match(/LESS\s*:\s*CHECK\s+Not\s+yet\s+cleared\s+(.*?)\s+TOTAL\s+\(B\)/si);
+    
+    if (checkSectionMatch) {
+      const checkSection = checkSectionMatch[1];
+      console.log(`📝 Section chèques extraite (${checkSection.length} caractères)`);
       
-      // Début de section
-      if (line.match(/LESS\s*:\s*CHECK\s+Not\s+yet\s+cleared/i)) {
-        inChecksSection = true;
-        console.log('✅ Section chèques trouvée');
-        continue;
-      }
+      // Split en mots et chercher les patterns de chèques
+      const words = checkSection.split(/\s+/);
       
-      // Fin de section
-      if (inChecksSection && line.match(/TOTAL\s+\(B\)\s+([\d\s]+)/i)) {
-        const totalMatch = line.match(/TOTAL\s+\(B\)\s+([\d\s]+)/i);
-        if (totalMatch) {
-          totalChecks = this.parseAmount(totalMatch[1]);
-          console.log(`✅ Total chèques: ${totalChecks.toLocaleString()} FCFA`);
+      // Identifier les dates pour structurer les chèques
+      const dateIndices: number[] = [];
+      words.forEach((word, index) => {
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(word)) {
+          dateIndices.push(index);
         }
-        inChecksSection = false;
-        break;
-      }
+      });
       
-      // Parser les lignes de chèques
-      if (inChecksSection && line.length > 15 && line.match(/\d{2}\/\d{2}\/\d{4}/)) {
-        // Patterns améliorés pour différents formats de chèques
-        const checkPatterns = [
-          // Format 1: 17/04/2018   0,0215634   CUSTOM TAX   CEDEAO   CDE (montant avec virgule)
-          /(\d{2}\/\d{2}\/\d{4})\s+([\d,\.]+)\s+([A-Z][A-Z\s\/\-]+?)\s+([A-Z][A-Z\s]+?)\s+([A-Z][A-Z\s]+?)$/,
-          // Format 2: 23/04/2025   876701   DEBARQUEMENT   CARGOTRANS   CASSIS   100129   798 990
-          /(\d{2}\/\d{2}\/\d{4})\s+([\d,\.]+)\s+([A-Z][A-Z\s\/\-]+?)\s+([A-Z][A-Z\s]+?)\s+([A-Z][A-Z\s]+?)\s+([\d]+)\s+([\d\s]+)$/,
-          // Format 3: Date + Numéro + Description + Montant (flexible)
-          /(\d{2}\/\d{2}\/\d{4})\s+([\d,\.]+)\s+(.*?)\s+([\d\s]{4,})$/,
-          // Format 4: Plus flexible pour capturer tout format
-          /(\d{2}\/\d{2}\/\d{4})\s+([^\s]+)\s+(.*?)\s+([\d\s]{4,})$/
-        ];
+      console.log(`📍 ${dateIndices.length} dates trouvées dans la section chèques`);
+      
+      // Traiter chaque groupe commençant par une date
+      for (let i = 0; i < dateIndices.length; i++) {
+        const startIdx = dateIndices[i];
+        const endIdx = dateIndices[i + 1] || words.length;
         
-        for (let i = 0; i < checkPatterns.length; i++) {
-          const pattern = checkPatterns[i];
-          const match = line.match(pattern);
-          if (match) {
-            let check: BDKCheck;
-            
-            if (i === 1 && match[7]) {
-              // Format 2 avec référence et montant séparés
-              check = {
-                date: match[1],
-                checkNumber: match[2],
-                description: match[3].trim(),
-                client: match[4]?.trim(),
-                reference: match[6],
-                amount: this.parseAmount(match[7])
-              };
-            } else if (i === 0 && match[5]) {
-              // Format 1 simple - le montant pourrait être dans la description
-              const parts = line.split(/\s+/);
-              const lastPart = parts[parts.length - 1];
-              const secondLastPart = parts[parts.length - 2];
-              
-              // Essayer de trouver le montant à la fin
-              let amount = this.parseAmount(lastPart);
-              if (amount === 0) {
-                amount = this.parseAmount(secondLastPart + ' ' + lastPart);
-              }
-              
-              check = {
-                date: match[1],
-                checkNumber: match[2],
-                description: match[3].trim(),
-                client: match[4]?.trim(),
-                reference: match[5]?.trim(),
-                amount: amount
-              };
-            } else {
-              // Formats 3 et 4 - parser plus simple
-              const parts = line.split(/\s+/);
-              const amount = this.parseAmount(match[match.length - 1]);
-              
-              check = {
-                date: match[1],
-                checkNumber: match[2],
-                description: parts.slice(2, -1).join(' '),
-                amount: amount
-              };
+        if (endIdx - startIdx >= 3) { // Au minimum: date, numéro, description, montant
+          const date = words[startIdx];
+          const checkNumber = words[startIdx + 1];
+          
+          // Chercher le montant (dernier élément numérique valide)
+          let amount = 0;
+          let amountIdx = -1;
+          
+          for (let j = endIdx - 1; j > startIdx + 1; j--) {
+            const parsed = this.parseAmount(words[j]);
+            if (parsed > 100) { // Seuil pour montant valide
+              amount = parsed;
+              amountIdx = j;
+              break;
             }
+          }
+          
+          if (amount > 0 && amountIdx > startIdx + 1) {
+            // Description = mots entre numéro de chèque et montant
+            const description = words.slice(startIdx + 2, amountIdx).join(' ');
             
-            // Vérifier que le montant est valide
-            if (check.amount > 100) { // Seuil plus bas pour capturer plus de chèques
-              checks.push(check);
-              console.log(`✅ Chèque: ${check.checkNumber} - ${check.amount.toLocaleString()} FCFA`);
-            }
-            break;
+            const check: BDKCheck = {
+              date: date,
+              checkNumber: checkNumber,
+              description: description || 'N/A',
+              amount: amount
+            };
+            
+            checks.push(check);
+            console.log(`✅ Chèque: ${check.date} - ${check.checkNumber} - ${check.amount.toLocaleString()} FCFA`);
           }
         }
       }
     }
     
-    console.log(`✅ ${checks.length} chèques extraits, Total: ${totalChecks.toLocaleString()} FCFA`);
+    console.log(`✅ ${checks.length} chèques extraits, Total déclaré: ${totalChecks.toLocaleString()} FCFA`);
     return { checks, total: totalChecks };
   }
 
   /**
-   * Extrait le solde de clôture
+   * Extrait le solde de clôture - CORRECTION DU BUG
    */
   private extractClosingBalance(textContent: string): number {
     console.log('🔍 Extraction solde de clôture BDK...');
     
-    // Patterns multiples pour différents formats
-    const closingPatterns = [
-      // Pattern principal: CLOSING BALANCE as per Book : C=(A-B)   37 927 595
-      /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+)/i,
-      // Pattern alternatif au cas où il y a des caractères supplémentaires
-      /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+).*$/i,
-      // Pattern plus simple
-      /CLOSING\s+BALANCE.*?:\s*.*?\s+([\d\s]+)/i
-    ];
+    // Pattern corrigé : prendre seulement les chiffres et espaces, sans les caractères suivants
+    const closingPattern = /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+)/i;
+    const match = textContent.match(closingPattern);
     
-    for (const pattern of closingPatterns) {
-      const match = textContent.match(pattern);
-      if (match) {
-        // Nettoyer le montant - prendre seulement les chiffres et espaces avant tout autre caractère
-        const cleanAmount = match[1].split(/[^\d\s]/)[0]; // Prendre tout avant le premier non-chiffre/non-espace
-        const amount = this.parseAmount(cleanAmount);
-        if (amount > 0) {
-          console.log(`✅ Solde de clôture: ${amount.toLocaleString()} FCFA`);
-          return amount;
-        }
+    if (match) {
+      // Nettoyer le montant - prendre seulement les chiffres et espaces, ignorer le reste
+      const rawAmount = match[1];
+      // Séparer au premier caractère non-numérique/non-espace
+      const cleanAmount = rawAmount.split(/[^\d\s]/)[0].trim();
+      
+      const amount = this.parseAmount(cleanAmount);
+      if (amount > 0) {
+        console.log(`✅ Solde de clôture: ${amount.toLocaleString()} FCFA (raw: "${rawAmount}", clean: "${cleanAmount}")`);
+        return amount;
       }
     }
     
     console.log('❌ Solde de clôture non trouvé');
     return 0;
+  }
+
+  /**
+   * Fonction principale d'extraction et validation
+   */
+  public extractBDKData(textContent: string): BDKParsedData {
+    console.log('🏦 Début extraction complète BDK');
+    console.log(`📄 Taille du contenu: ${textContent.length} caractères`);
+    
+    try {
+      // Extraire la date du rapport
+      const dateMatch = textContent.match(/(\d{2}\/\d{2}\/\d{4})\s+BDK/);
+      const reportDate = dateMatch?.[1] || new Date().toLocaleDateString('fr-FR');
+      
+      // Extraction de toutes les sections
+      const openingBalance = this.extractOpeningBalance(textContent);
+      const { deposits, total: totalDeposits } = this.extractDeposits(textContent);
+      const { checks, total: totalChecks } = this.extractChecks(textContent);
+      const closingBalance = this.extractClosingBalance(textContent);
+      const { facilities, totals: totalFacilities } = this.extractFacilities(textContent);
+      const impayes = this.extractImpayes(textContent);
+      
+      // Calcul du solde total A (Opening + Deposits)
+      const totalBalanceA = openingBalance.amount + totalDeposits;
+      
+      // Validation mathématique
+      const calculatedClosing = totalBalanceA - totalChecks;
+      const isValid = Math.abs(calculatedClosing - closingBalance) < 1000; // Tolérance de 1000 FCFA
+      const discrepancy = calculatedClosing - closingBalance;
+      
+      const result: BDKParsedData = {
+        reportDate,
+        openingBalance,
+        deposits,
+        totalDeposits,
+        totalBalanceA,
+        checks,
+        totalChecks,
+        closingBalance,
+        facilities,
+        totalFacilities,
+        impayes,
+        validation: {
+          calculatedClosing,
+          isValid,
+          discrepancy
+        }
+      };
+      
+      console.log('✅ Extraction BDK terminée avec succès');
+      console.log(`📊 Validation: ${isValid ? '✅ VALIDE' : '❌ ERREUR'} (Écart: ${discrepancy.toLocaleString()} FCFA)`);
+      console.log(`📈 Résumé: ${deposits.length} dépôts, ${checks.length} chèques, ${facilities.length} facilités, ${impayes.length} impayés`);
+      console.log(`🧮 Calcul: ${openingBalance.amount.toLocaleString()} + ${totalDeposits.toLocaleString()} - ${totalChecks.toLocaleString()} = ${calculatedClosing.toLocaleString()} (déclaré: ${closingBalance.toLocaleString()})`);
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'extraction BDK:', error);
+      throw error;
+    }
   }
 
   /**
@@ -449,65 +497,6 @@ export class BDKExtractionService {
     
     console.log(`✅ ${impayes.length} impayés extraits`);
     return impayes;
-  }
-
-  /**
-   * Fonction principale d'extraction et validation
-   */
-  public extractBDKData(textContent: string): BDKParsedData {
-    console.log('🏦 Début extraction complète BDK');
-    console.log(`📄 Taille du contenu: ${textContent.length} caractères`);
-    
-    try {
-      // Extraire la date du rapport
-      const dateMatch = textContent.match(/(\d{2}\/\d{2}\/\d{4})\s+BDK/);
-      const reportDate = dateMatch?.[1] || new Date().toLocaleDateString('fr-FR');
-      
-      // Extraction de toutes les sections
-      const openingBalance = this.extractOpeningBalance(textContent);
-      const { deposits, total: totalDeposits } = this.extractDeposits(textContent);
-      const { checks, total: totalChecks } = this.extractChecks(textContent);
-      const closingBalance = this.extractClosingBalance(textContent);
-      const { facilities, totals: totalFacilities } = this.extractFacilities(textContent);
-      const impayes = this.extractImpayes(textContent);
-      
-      // Calcul du solde total A (Opening + Deposits)
-      const totalBalanceA = openingBalance.amount + totalDeposits;
-      
-      // Validation mathématique
-      const calculatedClosing = totalBalanceA - totalChecks;
-      const isValid = Math.abs(calculatedClosing - closingBalance) < 1000; // Tolérance de 1000 FCFA
-      const discrepancy = calculatedClosing - closingBalance;
-      
-      const result: BDKParsedData = {
-        reportDate,
-        openingBalance,
-        deposits,
-        totalDeposits,
-        totalBalanceA,
-        checks,
-        totalChecks,
-        closingBalance,
-        facilities,
-        totalFacilities,
-        impayes,
-        validation: {
-          calculatedClosing,
-          isValid,
-          discrepancy
-        }
-      };
-      
-      console.log('✅ Extraction BDK terminée avec succès');
-      console.log(`📊 Validation: ${isValid ? '✅ VALIDE' : '❌ ERREUR'} (Écart: ${discrepancy.toLocaleString()} FCFA)`);
-      console.log(`📈 Résumé: ${deposits.length} dépôts, ${checks.length} chèques, ${facilities.length} facilités, ${impayes.length} impayés`);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Erreur lors de l\'extraction BDK:', error);
-      throw error;
-    }
   }
 }
 
