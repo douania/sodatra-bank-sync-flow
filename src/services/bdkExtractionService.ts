@@ -124,13 +124,28 @@ export class BDKExtractionService {
     let inDepositsSection = false;
     let totalDeposits = 0;
     
+    // Debug: chercher les mots-clés
+    const keywords = ['DEPOSIT', 'ADD', 'NOT', 'YET', 'CLEARED'];
+    keywords.forEach(keyword => {
+      if (textContent.toLowerCase().includes(keyword.toLowerCase())) {
+        console.log(`📍 Mot-clé "${keyword}" trouvé dans le PDF`);
+      }
+    });
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       
-      // Début de section
-      if (line.match(/ADD\s*:\s*DEPOSIT\s+NOT\s+YET\s+CLEARED/i)) {
+      // Debug: afficher les lignes qui contiennent "DEPOSIT"
+      if (line.toLowerCase().includes('deposit')) {
+        console.log(`📝 Ligne avec DEPOSIT: "${line}"`);
+      }
+      
+      // Début de section - patterns multiples
+      if (line.match(/ADD\s*:\s*DEPOSIT\s+NOT\s+YET\s+CLEARED/i) || 
+          line.match(/DEPOSIT\s+NOT\s+YET\s+CLEARED/i) ||
+          line.match(/DEPOSITS?\s+NOT\s+CREDITED/i)) {
         inDepositsSection = true;
-        console.log('✅ Section dépôts trouvée');
+        console.log('✅ Section dépôts trouvée:', line);
         continue;
       }
       
@@ -147,50 +162,32 @@ export class BDKExtractionService {
       
       // Parser les lignes de dépôts
       if (inDepositsSection && line.length > 20 && line.match(/\d{2}\/\d{2}\/\d{4}/)) {
-        // Patterns multiples pour différents formats
-        const depositPatterns = [
-          // Format standard: 19/06/2025   18/08/2025   REGLEMENT FACTURE   ECOBANK   UNITED SOLAR   3 000 000
-          /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Z\s\/\-]+?)\s+([A-Z][A-Z\s]+?)\s+([A-Z][A-Z\s\&\.\-]+?)\s+([\d\s]+)$/,
-          // Format avec descriptions plus longues
-          /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Z\s\/\-]+?)\s+([A-Z][A-Z\s]+?)\s+([A-Z][A-Z\s\&\.\-]+?)\s+([\d\s]+)$/,
-          // Format flexible pour capturer tout montant en fin de ligne
-          /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+(.*?)\s+([\d\s]{3,})$/
-        ];
+        console.log(`📝 Ligne de dépôt potentielle: "${line}"`);
         
-        for (const depositPattern of depositPatterns) {
-          const match = line.match(depositPattern);
-          if (match) {
-            let deposit: BDKDeposit;
-            
-            if (match.length === 7) {
-              // Format complet avec 6 groupes
-              deposit = {
-                dateOperation: match[1],
-                dateValeur: match[2],
-                description: match[3].trim(),
-                vendor: match[4].trim(),
-                client: match[5].trim(),
-                amount: this.parseAmount(match[6])
-              };
-            } else {
-              // Format simplifié - parser les colonnes manuellement
-              const parts = match[3].split(/\s{2,}/); // Split sur 2+ espaces
-              deposit = {
-                dateOperation: match[1],
-                dateValeur: match[2],
-                description: parts[0] || 'N/A',
-                vendor: parts[1] || 'N/A',
-                client: parts[2] || 'N/A',
-                amount: this.parseAmount(match[4])
-              };
-            }
-            
-            if (deposit.amount > 0) {
-              deposits.push(deposit);
-              console.log(`✅ Dépôt: ${deposit.client} - ${deposit.amount.toLocaleString()} FCFA`);
-            }
-            break;
+        // Pattern très simple d'abord
+        const simplePattern = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+?)(\d[\d\s]*\d)$/;
+        const simpleMatch = line.match(simplePattern);
+        
+        if (simpleMatch) {
+          console.log(`✅ Pattern simple matched:`, simpleMatch);
+          // Split la partie description sur les espaces multiples
+          const descParts = simpleMatch[3].trim().split(/\s{2,}/);
+          
+          const deposit: BDKDeposit = {
+            dateOperation: simpleMatch[1],
+            dateValeur: simpleMatch[2],
+            description: descParts[0] || 'N/A',
+            vendor: descParts[1] || 'N/A', 
+            client: descParts[2] || 'N/A',
+            amount: this.parseAmount(simpleMatch[4])
+          };
+          
+          if (deposit.amount > 0) {
+            deposits.push(deposit);
+            console.log(`✅ Dépôt ajouté: ${deposit.client} - ${deposit.amount.toLocaleString()} FCFA`);
           }
+        } else {
+          console.log(`❌ Aucun pattern ne correspond à: "${line}"`);
         }
       }
     }
