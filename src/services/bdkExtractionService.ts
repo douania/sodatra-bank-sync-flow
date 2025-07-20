@@ -1,7 +1,4 @@
-// Service d'extraction spécialisé pour les relevés BDK avec détection de colonnes avancée
-import { enhancedPDFExtraction } from './enhancedPDFExtraction';
-import { bdkColumnDetector } from './bdkColumnDetector';
-
+// Service d'extraction spécialisé pour les relevés BDK
 export interface BDKOpeningBalance {
   date: string;
   amount: number;
@@ -89,232 +86,6 @@ export class BDKExtractionService {
       console.error('❌ Erreur parsing montant:', amountStr, error);
       return 0;
     }
-  }
-
-  /**
-   * Nouvelle méthode principale utilisant l'extraction PDF structurée
-   */
-  public async extractBDKDataFromFile(file: File): Promise<BDKParsedData> {
-    console.log('🏦 Début extraction BDK avec détection de colonnes');
-    
-    try {
-      // Extraction PDF structurée
-      const { rawText, lines, sections } = await enhancedPDFExtraction.extractStructuredContent(file);
-      
-      console.log(`📊 PDF analysé: ${lines.length} lignes, ${sections.length} sections`);
-      
-      // Extraire la date du rapport
-      const dateMatch = rawText.match(/(\d{2}\/\d{2}\/\d{4})\s+BDK/);
-      const reportDate = dateMatch?.[1] || new Date().toLocaleDateString('fr-FR');
-      
-      // Extraire les données avec la nouvelle méthode
-      const openingBalance = this.extractOpeningBalanceFromSections(sections);
-      const { deposits, total: totalDeposits } = this.extractDepositsFromSections(sections);
-      const { checks, total: totalChecks } = this.extractChecksFromSections(sections);
-      const closingBalance = this.extractClosingBalanceFromText(rawText);
-      const { facilities, totals: totalFacilities } = this.extractFacilities(rawText);
-      const impayes = this.extractImpayes(rawText);
-      
-      // Calcul du solde total A (Opening + Deposits)
-      const totalBalanceA = openingBalance.amount + totalDeposits;
-      
-      // Validation mathématique
-      const calculatedClosing = totalBalanceA - totalChecks;
-      const isValid = Math.abs(calculatedClosing - closingBalance) < 1000;
-      const discrepancy = calculatedClosing - closingBalance;
-      
-      const result: BDKParsedData = {
-        reportDate,
-        openingBalance,
-        deposits,
-        totalDeposits,
-        totalBalanceA,
-        checks,
-        totalChecks,
-        closingBalance,
-        facilities,
-        totalFacilities,
-        impayes,
-        validation: {
-          calculatedClosing,
-          isValid,
-          discrepancy
-        }
-      };
-      
-      console.log('✅ Extraction BDK avec colonnes terminée');
-      console.log(`📊 Validation: ${isValid ? '✅ VALIDE' : '❌ ERREUR'} (Écart: ${discrepancy.toLocaleString()} FCFA)`);
-      console.log(`📈 Résumé: ${deposits.length} dépôts (${totalDeposits.toLocaleString()}), ${checks.length} chèques (${totalChecks.toLocaleString()})`);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Erreur lors de l\'extraction BDK avec colonnes:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Méthode de fallback pour l'extraction basée sur du texte brut
-   */
-  public extractBDKData(textContent: string): BDKParsedData {
-    console.log('🏦 Extraction BDK mode fallback (texte brut)');
-    
-    try {
-      // Extraire la date du rapport
-      const dateMatch = textContent.match(/(\d{2}\/\d{2}\/\d{4})\s+BDK/);
-      const reportDate = dateMatch?.[1] || new Date().toLocaleDateString('fr-FR');
-      
-      // Extraction de toutes les sections (méthodes existantes)
-      const openingBalance = this.extractOpeningBalance(textContent);
-      const { deposits, total: totalDeposits } = this.extractDeposits(textContent);
-      const { checks, total: totalChecks } = this.extractChecks(textContent);
-      const closingBalance = this.extractClosingBalance(textContent);
-      const { facilities, totals: totalFacilities } = this.extractFacilities(textContent);
-      const impayes = this.extractImpayes(textContent);
-      
-      // Calcul du solde total A (Opening + Deposits)
-      const totalBalanceA = openingBalance.amount + totalDeposits;
-      
-      // Validation mathématique
-      const calculatedClosing = totalBalanceA - totalChecks;
-      const isValid = Math.abs(calculatedClosing - closingBalance) < 1000;
-      const discrepancy = calculatedClosing - closingBalance;
-      
-      const result: BDKParsedData = {
-        reportDate,
-        openingBalance,
-        deposits,
-        totalDeposits,
-        totalBalanceA,
-        checks,
-        totalChecks,
-        closingBalance,
-        facilities,
-        totalFacilities,
-        impayes,
-        validation: {
-          calculatedClosing,
-          isValid,
-          discrepancy
-        }
-      };
-      
-      console.log('✅ Extraction BDK terminée avec succès');
-      console.log(`📊 Validation: ${isValid ? '✅ VALIDE' : '❌ ERREUR'} (Écart: ${discrepancy.toLocaleString()} FCFA)`);
-      console.log(`📈 Résumé: ${deposits.length} dépôts, ${checks.length} chèques, ${facilities.length} facilités, ${impayes.length} impayés`);
-      console.log(`🧮 Calcul: ${openingBalance.amount.toLocaleString()} + ${totalDeposits.toLocaleString()} - ${totalChecks.toLocaleString()} = ${calculatedClosing.toLocaleString()} (déclaré: ${closingBalance.toLocaleString()})`);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Erreur lors de l\'extraction BDK:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Extrait les dépôts à partir des sections structurées
-   */
-  private extractDepositsFromSections(sections: any[]): { deposits: BDKDeposit[], total: number } {
-    console.log('🔍 Extraction dépôts avec détection de colonnes...');
-    
-    const depositSection = sections.find(section => 
-      section.title.includes('DEPOSIT') && section.title.includes('NOT') && section.title.includes('CLEARED')
-    );
-    
-    if (!depositSection) {
-      console.log('❌ Section dépôts non trouvée');
-      return { deposits: [], total: 0 };
-    }
-    
-    // Parser les dépôts avec détection de colonnes
-    const parsedDeposits = bdkColumnDetector.parseDeposits(depositSection);
-    
-    // Convertir au format BDKDeposit
-    const deposits: BDKDeposit[] = parsedDeposits.map(parsed => ({
-      dateOperation: parsed.dateOperation,
-      dateValeur: parsed.dateValeur,
-      description: parsed.description,
-      vendor: parsed.vendor,
-      client: parsed.client,
-      amount: parsed.amount
-    }));
-    
-    const total = deposits.reduce((sum, dep) => sum + dep.amount, 0);
-    
-    console.log(`✅ ${deposits.length} dépôts extraits avec colonnes, Total: ${total.toLocaleString()} FCFA`);
-    return { deposits, total };
-  }
-
-  /**
-   * Extrait les chèques à partir des sections structurées
-   */
-  private extractChecksFromSections(sections: any[]): { checks: BDKCheck[], total: number } {
-    console.log('🔍 Extraction chèques avec détection de colonnes...');
-    
-    const checkSection = sections.find(section => 
-      section.title.includes('CHECK') && section.title.includes('Not') && section.title.includes('cleared')
-    );
-    
-    if (!checkSection) {
-      console.log('❌ Section chèques non trouvée');
-      return { checks: [], total: 0 };
-    }
-    
-    // Parser les chèques avec détection de colonnes
-    const parsedChecks = bdkColumnDetector.parseChecks(checkSection);
-    
-    // Convertir au format BDKCheck
-    const checks: BDKCheck[] = parsedChecks.map(parsed => ({
-      date: parsed.date,
-      checkNumber: parsed.checkNumber,
-      description: parsed.description,
-      client: parsed.client,
-      reference: parsed.reference,
-      amount: parsed.amount
-    }));
-    
-    const total = checks.reduce((sum, chk) => sum + chk.amount, 0);
-    
-    console.log(`✅ ${checks.length} chèques extraits avec colonnes, Total: ${total.toLocaleString()} FCFA`);
-    return { checks, total };
-  }
-
-  /**
-   * Extrait le solde d'ouverture à partir des sections structurées
-   */
-  private extractOpeningBalanceFromSections(sections: any[]): BDKOpeningBalance {
-    console.log('🔍 Extraction solde d\'ouverture avec sections...');
-    
-    const openingSection = sections.find(section => 
-      section.title.includes('OPENING') && section.title.includes('BALANCE')
-    );
-    
-    if (openingSection && openingSection.lines.length > 0) {
-      // Chercher dans les lignes de la section
-      for (const line of openingSection.lines) {
-        const match = line.fullText.match(/(\d{2}\/\d{2}\/\d{4})\s+([\d\s]+)/);
-        if (match) {
-          const result = {
-            date: match[1],
-            amount: this.parseAmount(match[2])
-          };
-          console.log(`✅ Solde d'ouverture: ${result.date} - ${result.amount.toLocaleString()} FCFA`);
-          return result;
-        }
-      }
-    }
-    
-    console.log('❌ Solde d\'ouverture non trouvé avec sections');
-    return { date: '', amount: 0 };
-  }
-
-  /**
-   * Extrait le solde de clôture à partir du texte brut (plus fiable)
-   */
-  private extractClosingBalanceFromText(textContent: string): number {
-    return this.extractClosingBalance(textContent);
   }
 
   /**
@@ -612,6 +383,66 @@ export class BDKExtractionService {
     
     console.log('❌ Solde de clôture non trouvé');
     return 0;
+  }
+
+  /**
+   * Fonction principale d'extraction et validation
+   */
+  public extractBDKData(textContent: string): BDKParsedData {
+    console.log('🏦 Début extraction complète BDK');
+    console.log(`📄 Taille du contenu: ${textContent.length} caractères`);
+    
+    try {
+      // Extraire la date du rapport
+      const dateMatch = textContent.match(/(\d{2}\/\d{2}\/\d{4})\s+BDK/);
+      const reportDate = dateMatch?.[1] || new Date().toLocaleDateString('fr-FR');
+      
+      // Extraction de toutes les sections
+      const openingBalance = this.extractOpeningBalance(textContent);
+      const { deposits, total: totalDeposits } = this.extractDeposits(textContent);
+      const { checks, total: totalChecks } = this.extractChecks(textContent);
+      const closingBalance = this.extractClosingBalance(textContent);
+      const { facilities, totals: totalFacilities } = this.extractFacilities(textContent);
+      const impayes = this.extractImpayes(textContent);
+      
+      // Calcul du solde total A (Opening + Deposits)
+      const totalBalanceA = openingBalance.amount + totalDeposits;
+      
+      // Validation mathématique
+      const calculatedClosing = totalBalanceA - totalChecks;
+      const isValid = Math.abs(calculatedClosing - closingBalance) < 1000; // Tolérance de 1000 FCFA
+      const discrepancy = calculatedClosing - closingBalance;
+      
+      const result: BDKParsedData = {
+        reportDate,
+        openingBalance,
+        deposits,
+        totalDeposits,
+        totalBalanceA,
+        checks,
+        totalChecks,
+        closingBalance,
+        facilities,
+        totalFacilities,
+        impayes,
+        validation: {
+          calculatedClosing,
+          isValid,
+          discrepancy
+        }
+      };
+      
+      console.log('✅ Extraction BDK terminée avec succès');
+      console.log(`📊 Validation: ${isValid ? '✅ VALIDE' : '❌ ERREUR'} (Écart: ${discrepancy.toLocaleString()} FCFA)`);
+      console.log(`📈 Résumé: ${deposits.length} dépôts, ${checks.length} chèques, ${facilities.length} facilités, ${impayes.length} impayés`);
+      console.log(`🧮 Calcul: ${openingBalance.amount.toLocaleString()} + ${totalDeposits.toLocaleString()} - ${totalChecks.toLocaleString()} = ${calculatedClosing.toLocaleString()} (déclaré: ${closingBalance.toLocaleString()})`);
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'extraction BDK:', error);
+      throw error;
+    }
   }
 
   /**
