@@ -270,60 +270,71 @@ export class BDKExtractionService {
           const groupWords = words.slice(startIdx + 2, endIdx);
           console.log(`🔍 Groupe chèque ${checkNumber}: [${groupWords.join(' | ')}]`);
           
-          // Chercher la colonne AMOUNT - reconstituée à partir des nombres dispersés
+          // Reconstruire la ligne complète pour une analyse plus précise
+          const fullLine = groupWords.join(' ');
+          console.log(`🔍 Ligne complète du chèque ${checkNumber}: "${fullLine}"`);
+          
+          // Chercher un montant en FCFA explicite à la fin
+          const fcfaMatch = fullLine.match(/(\d+(?:\s+\d+)*)\s+FCFA\s*$/);
           let amount = 0;
           let description = '';
           
-          // Identifier tous les éléments numériques dans le groupe
-          const numericElements: number[] = [];
-          const nonNumericElements: string[] = [];
-          
-          groupWords.forEach(word => {
-            const parsed = this.parseAmount(word);
-            if (parsed > 0) {
-              numericElements.push(parsed);
-            } else if (word.toLowerCase() !== 'fcfa' && word.toLowerCase() !== 'cfa') {
-              nonNumericElements.push(word);
-            }
-          });
-          
-          // Si on a des éléments numériques, essayer de reconstituer le montant
-          if (numericElements.length > 0) {
-            if (numericElements.length === 1) {
-              // Un seul montant trouvé
-              amount = numericElements[0];
-            } else {
-              // Plusieurs nombres - essayer de les concaténer intelligemment
-              // Pattern: "45 053" + "436" = 45053436
-              // Pattern: "100334" + "71" = 10033471 (but should be 71176)
-              
-              // Stratégie 1: Concaténer tous les nombres
-              const concatenated = numericElements.join('');
-              amount = parseInt(concatenated);
-              
-              // Stratégie 2: Si le dernier nombre est plus petit, il peut être le montant principal
-              if (numericElements.length === 2) {
-                const [first, second] = numericElements;
+          if (fcfaMatch) {
+            // Montant trouvé en FCFA
+            amount = this.parseAmount(fcfaMatch[1]);
+            description = fullLine.replace(fcfaMatch[0], '').trim();
+            console.log(`💰 Montant FCFA explicite trouvé: ${amount.toLocaleString()} FCFA`);
+          } else {
+            // Pas de FCFA explicite, analyser les nombres dans la ligne
+            const allNumbers = fullLine.match(/\d+/g) || [];
+            console.log(`🔢 Tous les nombres trouvés: [${allNumbers.join(', ')}]`);
+            
+            if (allNumbers.length > 0) {
+              // Pour des lignes comme "TAXE DE PORT GRIMALDI JADO 100302 123 870 FCFA"
+              // Prendre les derniers nombres comme montant
+              if (allNumbers.length >= 3) {
+                // Les 2-3 derniers nombres sont probablement le montant
+                const lastNumbers = allNumbers.slice(-3);
                 
-                // Si le deuxième nombre a moins de 4 chiffres et le premier plus de 4,
-                // le vrai montant pourrait être "second + first"
-                if (second < 10000 && first > 10000) {
-                  const alternative = parseInt(second.toString() + first.toString());
-                  console.log(`🔍 Montant alternatif possible: ${alternative.toLocaleString()} FCFA (${second} + ${first})`);
+                // Si nous avons des patterns comme "100302 123 870", 
+                // 100302 est probablement un numéro de facture SODATRA
+                // et 123 870 est le montant réel
+                if (lastNumbers.length >= 2) {
+                  const potentialFacNumber = parseInt(lastNumbers[0]);
+                  const potentialAmount = lastNumbers.slice(1).join('');
                   
-                  // Pour les cas comme "100334 71" -> 71176, on prend la version alternative
-                  if (first.toString().length >= 6) {
-                    amount = alternative;
+                  // Si le premier nombre a 6 chiffres (type numéro facture),
+                  // et les suivants forment un montant raisonnable
+                  if (potentialFacNumber >= 100000 && parseInt(potentialAmount) > 100) {
+                    amount = parseInt(potentialAmount);
+                    console.log(`💰 Montant détecté (séparé du n° facture ${potentialFacNumber}): ${amount.toLocaleString()} FCFA`);
+                  } else {
+                    // Concaténer tous les derniers nombres
+                    amount = parseInt(lastNumbers.join(''));
+                    console.log(`💰 Montant concaténé: ${amount.toLocaleString()} FCFA`);
                   }
+                } else {
+                  amount = parseInt(allNumbers[allNumbers.length - 1]);
+                  console.log(`💰 Dernier nombre comme montant: ${amount.toLocaleString()} FCFA`);
                 }
+              } else if (allNumbers.length === 1) {
+                amount = parseInt(allNumbers[0]);
+                console.log(`💰 Montant unique: ${amount.toLocaleString()} FCFA`);
               }
-              
-              console.log(`🔢 Éléments numériques: [${numericElements.join(', ')}] -> ${amount.toLocaleString()} FCFA`);
+            }
+            
+            // Description = ligne sans les derniers nombres
+            description = fullLine;
+            if (allNumbers.length > 0) {
+              const lastNumbersPattern = allNumbers.slice(-2).join('\\s*');
+              description = fullLine.replace(new RegExp(`\\b${lastNumbersPattern}\\s*$`), '').trim();
             }
           }
           
-          // La description est constituée des éléments non-numériques
-          description = nonNumericElements.join(' ').trim() || 'N/A';
+          // Si pas de description définie, utiliser le nom du chèque par défaut
+          if (!description) {
+            description = 'N/A';
+          }
           
           // Si aucun montant trouvé (colonne AMOUNT vide), le montant est 0
           if (amount === 0) {
