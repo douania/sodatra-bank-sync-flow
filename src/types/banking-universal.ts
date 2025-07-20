@@ -1,3 +1,4 @@
+
 // Types universels pour le système bancaire multi-banques
 export type BankType = 'BDK' | 'SGS' | 'BICIS' | 'ATB' | 'ORA' | 'BIS';
 
@@ -28,6 +29,11 @@ export interface RapportBancaire {
     versionParser: string;
     dateExtraction: string;
     checksum: string;
+    validation?: {
+      isValid: boolean;
+      discrepancy: number;
+      calculatedClosing: number;
+    };
   };
 }
 

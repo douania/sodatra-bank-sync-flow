@@ -7,11 +7,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { BankType, RapportBancaire } from "@/types/banking-universal";
 import { bankingUniversalService } from "@/services/bankingUniversalService";
+import { bdkExtractionService, BDKParsedData } from "@/services/bdkExtractionService";
 import { useToast } from "@/hooks/use-toast";
+import BDKDetailedReport from './BDKDetailedReport';
 
 interface ParseResult {
   success: boolean;
   rapport?: RapportBancaire;
+  bdkData?: BDKParsedData;
   error?: string;
   bankDetected?: BankType;
 }
@@ -28,6 +31,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [parseResults, setParseResults] = useState<ParseResult[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [currentBDKData, setCurrentBDKData] = useState<BDKParsedData | null>(null);
   const { toast } = useToast();
 
   // Détection automatique de la banque basée sur le contenu
@@ -44,41 +48,82 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
     return null;
   }, []);
 
-  // Parser spécialisé pour BDK (exemple d'implémentation)
-  const parseBDK = useCallback((content: string): RapportBancaire => {
-    // Parser basique - à enrichir avec la logique réelle d'extraction
-    const lines = content.split('\n');
-    const dateMatch = content.match(/(\d{2}\/\d{2}\/\d{4})/);
-    const compteMatch = content.match(/COMPTE[:\s]+(\d+)/i);
+  // Parser spécialisé pour BDK avec la nouvelle logique complète
+  const parseBDK = useCallback((content: string): { rapport: RapportBancaire; bdkData: BDKParsedData } => {
+    console.log('🏦 Parsing BDK avec service avancé...');
     
-    // Extraction des montants (patterns simplifiés)
-    const soldeOuvertureMatch = content.match(/SOLDE\s+D[\'']OUVERTURE[:\s]+([\d\s,.-]+)/i);
-    const soldeClotureMatch = content.match(/SOLDE\s+DE\s+CLOTURE[:\s]+([\d\s,.-]+)/i);
+    // Utiliser le nouveau service BDK
+    const bdkData = bdkExtractionService.extractBDKData(content);
     
-    const parseAmount = (str?: string): number => {
-      if (!str) return 0;
-      return parseFloat(str.replace(/[^\d.-]/g, '')) || 0;
-    };
-
-    return {
+    // Convertir vers le format RapportBancaire universel
+    const rapport: RapportBancaire = {
       banque: 'BDK',
-      dateRapport: dateMatch?.[1] || new Date().toLocaleDateString('fr-FR'),
-      compte: compteMatch?.[1] || 'N/A',
-      soldeOuverture: parseAmount(soldeOuvertureMatch?.[1]),
-      soldeCloture: parseAmount(soldeClotureMatch?.[1]),
-      depotsNonCredites: [],
-      chequesNonDebites: [],
+      dateRapport: bdkData.reportDate,
+      compte: bdkData.accountNumber || 'N/A',
+      soldeOuverture: bdkData.openingBalance.amount,
+      soldeCloture: bdkData.closingBalance,
+      
+      // Convertir les dépôts
+      depotsNonCredites: bdkData.deposits.map(dep => ({
+        id: `dep_${dep.dateOperation}_${dep.amount}`,
+        reference: `${dep.vendor}_${dep.client}`,
+        montant: dep.amount,
+        description: `${dep.description} - ${dep.vendor} - ${dep.client}`,
+        dateOperation: dep.dateOperation,
+        dateValeur: dep.dateValeur,
+        type: 'depot' as const,
+        statut: 'en_attente' as const
+      })),
+      
+      // Convertir les chèques
+      chequesNonDebites: bdkData.checks.map(chk => ({
+        id: `chk_${chk.date}_${chk.checkNumber}`,
+        reference: chk.checkNumber,
+        montant: chk.amount,
+        description: `${chk.description} - ${chk.client || 'N/A'}`,
+        dateOperation: chk.date,
+        type: 'cheque' as const,
+        statut: 'en_attente' as const
+      })),
+      
+      // Autres éléments vides pour l'instant
       autresDebits: [],
       autresCredits: [],
-      facilitesBancaires: [],
-      impayes: [],
+      
+      // Convertir les facilités
+      facilitesBancaires: bdkData.facilities.map(fac => ({
+        type: fac.name,
+        montantAutorise: fac.limit,
+        montantUtilise: fac.used,
+        montantDisponible: fac.balance,
+        dateEcheance: fac.dateEcheance
+      })),
+      
+      // Convertir les impayés
+      impayes: bdkData.impayes.map(imp => ({
+        reference: imp.reference,
+        montant: imp.amount,
+        dateEcheance: imp.date,
+        dateRetour: imp.date,
+        motif: imp.type,
+        clientCode: imp.client,
+        description: `${imp.description} - ${imp.bank}`
+      })),
+      
       metadata: {
         formatSource: 'PDF',
-        versionParser: '1.0.0',
+        versionParser: '2.0.0-BDK-Advanced',
         dateExtraction: new Date().toISOString(),
-        checksum: Date.now().toString()
+        checksum: Date.now().toString(),
+        validation: {
+          isValid: bdkData.validation.isValid,
+          discrepancy: bdkData.validation.discrepancy,
+          calculatedClosing: bdkData.validation.calculatedClosing
+        }
       }
     };
+    
+    return { rapport, bdkData };
   }, []);
 
   // Parser universel qui délègue au parser spécialisé
@@ -95,20 +140,42 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       }
 
       let rapport: RapportBancaire;
+      let bdkData: BDKParsedData | undefined;
 
       // Délégation au parser spécialisé
       switch (bankDetected) {
         case 'BDK':
-          rapport = parseBDK(content);
+          const bdkResult = parseBDK(content);
+          rapport = bdkResult.rapport;
+          bdkData = bdkResult.bdkData;
           break;
         case 'SGS':
         case 'BICIS':
         case 'ATB':
         case 'ORA':
         case 'BIS':
-          // Pour l'instant, utiliser le parser BDK comme base
+          // Pour l'instant, utiliser le parser de base
           // À implémenter spécifiquement pour chaque banque
-          rapport = { ...parseBDK(content), banque: bankDetected };
+          const dateMatch = content.match(/(\d{2}\/\d{2}\/\d{4})/);
+          rapport = {
+            banque: bankDetected,
+            dateRapport: dateMatch?.[1] || new Date().toLocaleDateString('fr-FR'),
+            compte: 'N/A',
+            soldeOuverture: 0,
+            soldeCloture: 0,
+            depotsNonCredites: [],
+            chequesNonDebites: [],
+            autresDebits: [],
+            autresCredits: [],
+            facilitesBancaires: [],
+            impayes: [],
+            metadata: {
+              formatSource: 'PDF',
+              versionParser: '1.0.0',
+              dateExtraction: new Date().toISOString(),
+              checksum: Date.now().toString()
+            }
+          };
           break;
         default:
           throw new Error(`Parser non implémenté pour ${bankDetected}`);
@@ -117,6 +184,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       return {
         success: true,
         rapport,
+        bdkData,
         bankDetected
       };
     } catch (error) {
@@ -132,6 +200,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
   const handleFileUpload = useCallback(async (files: FileList) => {
     setIsUploading(true);
     setUploadProgress(0);
+    setCurrentBDKData(null);
     const results: ParseResult[] = [];
 
     try {
@@ -149,26 +218,8 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
           continue;
         }
 
-        // Simulation d'extraction de contenu PDF
-        // En production, utiliser une vraie librairie d'extraction PDF
-        const fileContent = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            // Simulation du contenu extrait
-            resolve(`
-              BANQUE DE KIGALI
-              RAPPORT JOURNALIER
-              DATE: 25/06/2025
-              COMPTE: 1234567890
-              SOLDE D'OUVERTURE: 15,450,000
-              SOLDE DE CLOTURE: 16,200,000
-              DEPOTS NON CREDITES: 500,000
-              CHEQUES NON DEBITES: 750,000
-            `);
-          };
-          reader.readAsText(file);
-        });
-
+        // Extraction PDF réelle avec pdfjs-dist
+        const fileContent = await extractPDFContent(file);
         const parseResult = parseContent(fileContent, file.name);
         
         if (parseResult.success && parseResult.rapport) {
@@ -180,9 +231,15 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
           
           if (saveResult.success) {
             onParseComplete?.(parseResult.rapport);
+            
+            // Si c'est BDK, sauvegarder les données détaillées pour affichage
+            if (parseResult.bdkData) {
+              setCurrentBDKData(parseResult.bdkData);
+            }
+            
             toast({
               title: "Rapport traité",
-              description: `${parseResult.bankDetected} - ${file.name}`,
+              description: `${parseResult.bankDetected} - ${file.name} ${parseResult.bdkData?.validation.isValid ? '✅' : '⚠️'}`,
             });
           } else {
             parseResult.error = saveResult.error;
@@ -219,6 +276,37 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
     }
   }, [parseContent, onParseComplete, onError, toast]);
 
+  // Extraction PDF avec pdfjs-dist
+  const extractPDFContent = async (file: File): Promise<string> => {
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      
+      // Set worker source to local file
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
+      
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      
+      let fullText = '';
+      
+      // Extract text from each page
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        fullText += pageText + '\n';
+      }
+      
+      return fullText;
+    } catch (error) {
+      console.error('Erreur extraction PDF:', error);
+      throw new Error('Erreur extraction PDF: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
+    }
+  };
+
   // Drag & Drop handlers
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -250,7 +338,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
           </CardTitle>
           <CardDescription>
             Glissez vos rapports PDF bancaires ou cliquez pour les sélectionner.
-            Support: BDK, SGS, BICIS, ATB, ORA, BIS.
+            Support: BDK (complet), SGS, BICIS, ATB, ORA, BIS.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -293,6 +381,11 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
         </CardContent>
       </Card>
 
+      {/* Affichage détaillé BDK */}
+      {currentBDKData && (
+        <BDKDetailedReport data={currentBDKData} />
+      )}
+
       {/* Résultats du parsing */}
       {parseResults.length > 0 && (
         <Card>
@@ -314,9 +407,19 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
                         <div className="space-y-1">
                           <p className="font-medium">
                             Rapport traité avec succès
+                            {result.bdkData && (
+                              <span className="ml-2">
+                                {result.bdkData.validation.isValid ? '✅' : '⚠️'}
+                              </span>
+                            )}
                           </p>
                           <p className="text-sm text-muted-foreground">
                             {result.rapport?.dateRapport} - {result.rapport?.compte}
+                            {result.bdkData && !result.bdkData.validation.isValid && (
+                              <span className="text-orange-600 ml-2">
+                                (Écart détecté: {Math.abs(result.bdkData.validation.discrepancy).toLocaleString()} FCFA)
+                              </span>
+                            )}
                           </p>
                         </div>
                       ) : (
@@ -347,8 +450,8 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       <Alert>
         <AlertCircle className="h-4 w-4" />
         <AlertDescription>
-          <strong>Banques supportées:</strong> BDK (complet), SGS, BICIS, ATB, ORA, BIS (en développement).
-          Les données sont automatiquement sauvegardées et comparées avec les rapports précédents.
+          <strong>Banques supportées:</strong> BDK (extraction complète avec validation), SGS, BICIS, ATB, ORA, BIS (en développement).
+          Les données sont automatiquement sauvegardées et validées mathématiquement.
         </AlertDescription>
       </Alert>
     </div>

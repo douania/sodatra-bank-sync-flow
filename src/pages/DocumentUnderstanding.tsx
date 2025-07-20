@@ -9,8 +9,10 @@ import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Databa
 import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
+import { bdkExtractionService, BDKParsedData } from '@/services/bdkExtractionService';
 import { toast } from '@/components/ui/sonner';
 import UniversalBankParser from '@/components/UniversalBankParser';
+import BDKDetailedReport from '@/components/BDKDetailedReport';
 import { RapportBancaire } from '@/types/banking-universal';
 
 const DocumentUnderstanding = () => {
@@ -20,6 +22,7 @@ const DocumentUnderstanding = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [rawText, setRawText] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<any | null>(null);
+  const [bdkDetailedData, setBdkDetailedData] = useState<BDKParsedData | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
 
   const handleParseComplete = (rapport: RapportBancaire) => {
@@ -43,6 +46,7 @@ const DocumentUnderstanding = () => {
       setConfidence(null);
       setRawText(null);
       setParsedData(null);
+      setBdkDetailedData(null);
       setBankType(null);
     }
   }, []);
@@ -81,7 +85,7 @@ const DocumentUnderstanding = () => {
       
       setRawText(extractedText);
 
-      // 3. Process based on detected type
+      // 3. Process based on detected type - avec le nouveau parser BDK
       if (detection.detectedType === 'collectionReport') {
         const result = await excelProcessingService.processCollectionReportExcel(selectedFile);
         if (result.success && result.data) {
@@ -92,18 +96,58 @@ const DocumentUnderstanding = () => {
           });
         }
       } else if (detection.detectedType === 'bankAnalysis' || detection.detectedType === 'bankStatement') {
-        const result = await bankReportProcessingService.processBankReportExcel(selectedFile);
-        if (result.success && result.data) {
-          setParsedData({
-            type: 'Bank Report',
-            bankName: result.data.bank,
-            date: result.data.date,
-            openingBalance: result.data.openingBalance,
-            closingBalance: result.data.closingBalance,
-            depositsNotCleared: result.data.depositsNotCleared,
-            bankFacilities: result.data.bankFacilities,
-            impayes: result.data.impayes
-          });
+        // Essayer d'abord le nouveau parser BDK si c'est un PDF BDK
+        if (selectedFile.type === 'application/pdf' && extractedText.toUpperCase().includes('BDK')) {
+          try {
+            const bdkData = bdkExtractionService.extractBDKData(extractedText);
+            setBdkDetailedData(bdkData);
+            setParsedData({
+              type: 'BDK Bank Report (Advanced)',
+              bankName: 'BDK',
+              date: bdkData.reportDate,
+              openingBalance: bdkData.openingBalance.amount,
+              closingBalance: bdkData.closingBalance,
+              totalDeposits: bdkData.totalDeposits,
+              totalChecks: bdkData.totalChecks,
+              validation: bdkData.validation,
+              facilities: bdkData.facilities,
+              impayes: bdkData.impayes
+            });
+            
+            toast.success('Analyse BDK avancée terminée', {
+              description: `Validation: ${bdkData.validation.isValid ? '✅ Valide' : '⚠️ Écart détecté'}`,
+            });
+          } catch (error) {
+            console.error('Erreur parser BDK avancé:', error);
+            // Fallback sur l'ancien système
+            const result = await bankReportProcessingService.processBankReportExcel(selectedFile);
+            if (result.success && result.data) {
+              setParsedData({
+                type: 'Bank Report',
+                bankName: result.data.bank,
+                date: result.data.date,
+                openingBalance: result.data.openingBalance,
+                closingBalance: result.data.closingBalance,
+                depositsNotCleared: result.data.depositsNotCleared,
+                bankFacilities: result.data.bankFacilities,
+                impayes: result.data.impayes
+              });
+            }
+          }
+        } else {
+          const result = await bankReportProcessingService.processBankReportExcel(selectedFile);
+          if (result.success && result.data) {
+            setParsedData({
+              type: 'Bank Report',
+              bankName: result.data.bank,
+              date: result.data.date,
+              openingBalance: result.data.openingBalance,
+              closingBalance: result.data.closingBalance,
+              depositsNotCleared: result.data.depositsNotCleared,
+              bankFacilities: result.data.bankFacilities,
+              impayes: result.data.impayes
+            });
+          }
         }
       }
 
@@ -203,6 +247,90 @@ const DocumentUnderstanding = () => {
 
   const renderParsedData = () => {
     if (!parsedData) return null;
+
+    // Affichage spécial pour les données BDK avancées
+    if (parsedData.type === 'BDK Bank Report (Advanced)' && bdkDetailedData) {
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-medium">Rapport BDK Avancé: {parsedData.bankName}</h3>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-500">Date: {parsedData.date}</span>
+              <Badge className={parsedData.validation.isValid ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}>
+                {parsedData.validation.isValid ? '✅ Validé' : '⚠️ Écart'}
+              </Badge>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Solde d'ouverture</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-lg font-bold text-blue-600">
+                  {parsedData.openingBalance?.toLocaleString()} FCFA
+                </p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Dépôts non crédités</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-lg font-bold text-green-600">
+                  {parsedData.totalDeposits?.toLocaleString()} FCFA
+                </p>
+                <p className="text-xs text-gray-500">{bdkDetailedData.deposits.length} dépôts</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Chèques non débités</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-lg font-bold text-red-600">
+                  {parsedData.totalChecks?.toLocaleString()} FCFA
+                </p>
+                <p className="text-xs text-gray-500">{bdkDetailedData.checks.length} chèques</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Solde de clôture</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-lg font-bold text-purple-600">
+                  {parsedData.closingBalance?.toLocaleString()} FCFA
+                </p>
+                <p className="text-xs text-gray-500">
+                  Calculé: {parsedData.validation.calculatedClosing?.toLocaleString()}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+          
+          {!parsedData.validation.isValid && (
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-5 w-5 text-orange-600" />
+                <span className="font-medium text-orange-800">Écart détecté</span>
+              </div>
+              <p className="text-sm text-orange-700 mt-1">
+                Différence de {Math.abs(parsedData.validation.discrepancy).toLocaleString()} FCFA entre le solde calculé et déclaré.
+              </p>
+            </div>
+          )}
+          
+          <p className="text-sm text-gray-600">
+            📊 Résumé: {parsedData.facilities?.length || 0} facilités, {parsedData.impayes?.length || 0} impayés
+          </p>
+        </div>
+      );
+    }
 
     if (parsedData.type === 'Collection Report') {
       return (
@@ -466,109 +594,9 @@ const DocumentUnderstanding = () => {
         </CardContent>
       </Card>
 
-      {(fileType || rawText || parsedData) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Database className="h-6 w-6 text-blue-500" />
-              <span>Résultats de l'Analyse</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Tabs defaultValue="analysis" className="space-y-4">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="analysis">Résultats d'Analyse</TabsTrigger>
-                <TabsTrigger value="raw">Texte Brut Extrait</TabsTrigger>
-                <TabsTrigger value="parsed">Données Structurées</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="analysis" className="space-y-4">
-                {fileType && (
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center space-x-3 mb-4">
-                      {getFileTypeIcon(fileType)}
-                      <div>
-                        <h3 className="text-lg font-medium">Type de Document Détecté</h3>
-                        <div className="flex items-center space-x-2 mt-1">
-                          <Badge className={getConfidenceColor(confidence)}>
-                            {confidence === 'high' ? 'Confiance Élevée' : 
-                             confidence === 'medium' ? 'Confiance Moyenne' : 
-                             'Confiance Faible'}
-                          </Badge>
-                          {bankType && (
-                            <Badge variant="outline">{bankType}</Badge>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <div className="flex items-center space-x-2">
-                        <Code className="h-4 w-4 text-blue-500" />
-                        <span className="font-medium">Type détecté:</span>
-                        <span>
-                          {fileType === 'collectionReport' ? 'Collection Report' :
-                           fileType === 'bankAnalysis' ? 'Rapport d\'Analyse Bancaire' :
-                           fileType === 'bankStatement' ? 'Relevé Bancaire' :
-                           fileType === 'fundsPosition' ? 'Fund Position' :
-                           fileType === 'clientReconciliation' ? 'Client Reconciliation' :
-                           'Type Inconnu'}
-                        </span>
-                      </div>
-                      
-                      {bankType && (
-                        <div className="flex items-center space-x-2">
-                          <Building2 className="h-4 w-4 text-orange-500" />
-                          <span className="font-medium">Banque détectée:</span>
-                          <span>{bankType}</span>
-                        </div>
-                      )}
-                      
-                      <div className="mt-4 text-sm text-gray-600">
-                        <p>
-                          La détection du type de document est basée sur le nom du fichier, son extension et son contenu.
-                          Une confiance élevée signifie que le système est très sûr du type de document.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="raw">
-                {rawText ? (
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <h3 className="text-lg font-medium mb-2">Texte Brut Extrait</h3>
-                    <div className="max-h-96 overflow-y-auto">
-                      <pre className="text-xs whitespace-pre-wrap bg-gray-100 p-4 rounded">
-                        {rawText}
-                      </pre>
-                    </div>
-                    <p className="text-sm text-gray-500 mt-2">
-                      Ce texte brut est ce que le système extrait du document avant de le structurer.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    Aucun texte brut extrait. Veuillez d'abord analyser un document.
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="parsed">
-                {parsedData ? (
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    {renderParsedData()}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    Aucune donnée structurée extraite. Veuillez d'abord analyser un document.
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
+      {/* Affichage détaillé BDK si disponible */}
+      {bdkDetailedData && (
+        <BDKDetailedReport data={bdkDetailedData} />
       )}
 
       <Card className="mt-8">
@@ -578,7 +606,16 @@ const DocumentUnderstanding = () => {
         <CardContent>
           <div className="space-y-4">
             <div className="p-4 bg-blue-50 rounded-lg">
-              <h3 className="font-semibold text-blue-800 mb-2">Collection Report</h3>
+              <h3 className="font-semibold text-blue-800 mb-2">Rapports BDK (Nouveau)</h3>
+              <p className="text-sm text-blue-700">
+                Le nouveau parser BDK effectue une extraction complète avec validation mathématique. Il capture tous les dépôts, 
+                chèques, facilités et impayés avec leurs détails, puis vérifie que la formule Ouverture + Dépôts - Chèques = Clôture 
+                est respectée. Les écarts sont automatiquement détectés et signalés.
+              </p>
+            </div>
+            
+            <div className="p-4 bg-blue-50 rounded-lg">
+              <h3 className="font-semibold text-blue-700 mb-2">Collection Report</h3>
               <p className="text-sm text-blue-700">
                 Les fichiers Excel de Collection Report sont analysés ligne par ligne. Le système extrait les codes clients, 
                 montants, dates et références. Il détecte automatiquement si chaque collection est un effet ou un chèque 
@@ -587,7 +624,7 @@ const DocumentUnderstanding = () => {
             </div>
             
             <div className="p-4 bg-orange-50 rounded-lg">
-              <h3 className="font-semibold text-orange-800 mb-2">Rapports Bancaires</h3>
+              <h3 className="font-semibold text-orange-800 mb-2">Rapports Bancaires (Legacy)</h3>
               <p className="text-sm text-orange-700">
                 Les rapports bancaires sont analysés par sections. Le système extrait les soldes d'ouverture et de clôture, 
                 les dépôts non crédités, les facilités bancaires et les impayés. Les noms de clients dans les impayés sont 
