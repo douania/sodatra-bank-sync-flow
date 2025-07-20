@@ -14,6 +14,8 @@ import Reconciliation from "./pages/Reconciliation";
 import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import Alerts from "./pages/Alerts";
 import QualityControl from "./pages/QualityControl";
+import BankingDashboard from "./pages/BankingDashboard";
+import BankingReports from "./pages/BankingReports";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -33,6 +35,8 @@ const App = () => (
             <Route path="/consolidated" element={<ConsolidatedDashboard />} />
             <Route path="/reconciliation" element={<Reconciliation />} />
             <Route path="/document-understanding" element={<DocumentUnderstanding />} />
+            <Route path="/banking/dashboard" element={<BankingDashboard />} />
+            <Route path="/banking/reports" element={<BankingReports />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/quality-control" element={<QualityControl />} />
             <Route path="*" element={<NotFound />} />

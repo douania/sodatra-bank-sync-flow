@@ -10,7 +10,10 @@ import {
   GitMerge, 
   AlertTriangle,
   Shield,
-  Home
+  Home,
+  Building2,
+  FileText,
+  TrendingUp
 } from 'lucide-react';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
@@ -22,8 +25,9 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
+    { name: 'Banking Dashboard', href: '/banking/dashboard', icon: Building2 },
+    { name: 'Rapports Bancaires', href: '/banking/reports', icon: FileText },
     { name: 'Rapprochement', href: '/reconciliation', icon: GitMerge },
-    { name: 'Comprendre Documents', href: '/document-understanding', icon: FileSearch },
     { name: 'Vue Consolidée', href: '/consolidated', icon: BarChart3 },
     { name: 'Alertes', href: '/alerts', icon: AlertTriangle },
   ];
