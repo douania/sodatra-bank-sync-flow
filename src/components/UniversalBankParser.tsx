@@ -204,6 +204,20 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
     return fullText;
   }, []);
 
+  // Détection de banque améliorée
+  const detectBankFromFile = useCallback((file: File, fileName: string): BankType | null => {
+    const upperFileName = fileName.toUpperCase();
+    
+    if (upperFileName.includes('BDK') || upperFileName.includes('BANQUE DE KIGALI')) return 'BDK';
+    if (upperFileName.includes('SGS') || upperFileName.includes('SOCIÉTÉ GÉNÉRALE')) return 'SGS';
+    if (upperFileName.includes('BICIS') || upperFileName.includes('BANQUE INTERNATIONALE')) return 'BICIS';
+    if (upperFileName.includes('ATB') || upperFileName.includes('ATLANTIC BANK')) return 'ATB';
+    if (upperFileName.includes('ORA') || upperFileName.includes('ORABANK')) return 'ORA';
+    if (upperFileName.includes('BIS') || upperFileName.includes('BANQUE ISLAMIQUE')) return 'BIS';
+    
+    return null;
+  }, []);
+
   // Parser universel qui délègue au parser spécialisé
   const parseContent = useCallback(async (file: File, fileName: string): Promise<ParseResult> => {
     try {
@@ -272,20 +286,6 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       };
     }
   }, [parseBDK, detectBankFromFile]);
-
-  // Détection de banque améliorée
-  const detectBankFromFile = useCallback((file: File, fileName: string): BankType | null => {
-    const upperFileName = fileName.toUpperCase();
-    
-    if (upperFileName.includes('BDK') || upperFileName.includes('BANQUE DE KIGALI')) return 'BDK';
-    if (upperFileName.includes('SGS') || upperFileName.includes('SOCIÉTÉ GÉNÉRALE')) return 'SGS';
-    if (upperFileName.includes('BICIS') || upperFileName.includes('BANQUE INTERNATIONALE')) return 'BICIS';
-    if (upperFileName.includes('ATB') || upperFileName.includes('ATLANTIC BANK')) return 'ATB';
-    if (upperFileName.includes('ORA') || upperFileName.includes('ORABANK')) return 'ORA';
-    if (upperFileName.includes('BIS') || upperFileName.includes('BANQUE ISLAMIQUE')) return 'BIS';
-    
-    return null;
-  }, []);
 
   // Gestion de l'upload de fichiers (mise à jour pour utiliser la nouvelle méthode)
   const handleFileUpload = useCallback(async (files: FileList) => {
