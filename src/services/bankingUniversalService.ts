@@ -18,8 +18,14 @@ export class BankingUniversalService {
    */
   async saveReport(rapport: RapportBancaire, rawData: any): Promise<{ success: boolean; error?: string }> {
     try {
-      // Audit log
-      await this.logAction('save_report', rapport.banque, rapport.dateRapport, {
+      // Récupérer l'utilisateur connecté
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Convertir la date au format ISO si nécessaire
+      const reportDate = this.convertDateToISO(rapport.dateRapport);
+      
+      // Audit log (sans user_id si pas connecté)
+      await this.logAction('save_report', rapport.banque, reportDate, {
         checksum: rapport.metadata.checksum
       });
 
@@ -27,12 +33,12 @@ export class BankingUniversalService {
         .from('universal_bank_reports')
         .upsert({
           bank_name: rapport.banque,
-          report_date: rapport.dateRapport,
+          report_date: reportDate,
           raw_data: rawData as any,
           processed_data: rapport as any,
           checksum: rapport.metadata.checksum,
           parser_version: rapport.metadata.versionParser,
-          user_id: (await supabase.auth.getUser()).data.user?.id
+          user_id: user?.id || null
         }, {
           onConflict: 'bank_name,report_date,checksum'
         });
@@ -42,7 +48,17 @@ export class BankingUniversalService {
       return { success: true };
     } catch (error) {
       console.error('Erreur sauvegarde rapport:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Erreur inconnue' };
+      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+      
+      // Messages d'erreur plus explicites
+      if (errorMessage.includes('42501')) {
+        return { success: false, error: 'Erreur de permissions. Veuillez vous connecter.' };
+      }
+      if (errorMessage.includes('22008')) {
+        return { success: false, error: 'Format de date invalide. Veuillez vérifier le format des dates.' };
+      }
+      
+      return { success: false, error: errorMessage };
     }
   }
 
@@ -329,16 +345,46 @@ export class BankingUniversalService {
 
   private async logAction(action: string, banque?: BankType, date?: string, details?: any): Promise<void> {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
       await supabase.from('bank_audit_log').insert({
-        user_id: (await supabase.auth.getUser()).data.user?.id,
+        user_id: user?.id || null,
         action,
         bank_name: banque,
-        report_date: date,
+        report_date: date ? this.convertDateToISO(date) : null,
         details
       });
     } catch (error) {
       console.error('Erreur audit log:', error);
     }
+  }
+
+  /**
+   * Convertit une date du format DD/MM/YYYY vers YYYY-MM-DD pour PostgreSQL
+   */
+  private convertDateToISO(dateString: string): string {
+    // Si déjà au format ISO, retourner tel quel
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      return dateString;
+    }
+    
+    // Convertir DD/MM/YYYY vers YYYY-MM-DD
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateString)) {
+      const [day, month, year] = dateString.split('/');
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    
+    // Essayer d'autres formats si nécessaire
+    try {
+      const date = new Date(dateString);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0];
+      }
+    } catch (e) {
+      console.warn('Format de date non reconnu:', dateString);
+    }
+    
+    return dateString; // Retourner tel quel si conversion impossible
   }
 }
 
