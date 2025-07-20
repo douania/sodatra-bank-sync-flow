@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code } from 'lucide-react';
+import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertCircle } from 'lucide-react';
 import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
