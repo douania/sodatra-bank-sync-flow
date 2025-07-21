@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,12 +7,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Save, RotateCcw, Download, Settings, Eye } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Save, RotateCcw, Download, Settings, Eye, AlertTriangle, CheckCircle, Target } from 'lucide-react';
 import { PositionalData, TextItem, Column } from '@/services/positionalExtractionService';
-import { BDK_COLUMN_TEMPLATES } from '@/services/bdkColumnDetectionService';
+import { BDK_COLUMN_TEMPLATES, bdkColumnDetectionService } from '@/services/bdkColumnDetectionService';
 import ColumnAdjuster from './ColumnAdjuster';
 import DataViewer from './DataViewer';
 import ValidationMatrix from './ValidationMatrix';
+import BDKCalibrationInsights from './BDKCalibrationInsights';
 
 interface BDKDebugPanelProps {
   positionalData: PositionalData[];
@@ -26,6 +27,12 @@ interface ColumnConfig {
   enabled: boolean;
 }
 
+interface DetectionQuality {
+  overallScore: number;
+  columnScores: number[];
+  recommendations: string[];
+}
+
 export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
   positionalData,
   onColumnsChanged
@@ -35,6 +42,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
   const [adjustedColumns, setAdjustedColumns] = useState<Column[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [autoRecalculate, setAutoRecalculate] = useState(true);
+  const [detectionQuality, setDetectionQuality] = useState<DetectionQuality | null>(null);
 
   const currentPage = positionalData[selectedPage];
   const pageWidth = currentPage?.pageWidth || 800;
@@ -102,6 +110,11 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
     });
 
     setAdjustedColumns(newColumns);
+    
+    // Analyze detection quality
+    const quality = bdkColumnDetectionService.analyzeDetectionQuality(newColumns);
+    setDetectionQuality(quality);
+    
     onColumnsChanged?.(newColumns);
   };
 
@@ -122,10 +135,25 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
     }
   };
 
+  const resetToCalibratedZones = () => {
+    // Reset to the calibrated zones from the service
+    const referencePage = 850;
+    const scaleFactor = pageWidth / referencePage;
+    
+    const calibratedConfigs = BDK_COLUMN_TEMPLATES.map(template => ({
+      xStart: template.zone.xMin * scaleFactor,
+      xEnd: template.zone.xMax * scaleFactor,
+      enabled: true
+    }));
+    
+    setColumnConfigs(calibratedConfigs);
+  };
+
   const saveConfiguration = () => {
     const config = {
       pageWidth,
       columns: columnConfigs,
+      detectionQuality,
       timestamp: new Date().toISOString()
     };
     localStorage.setItem('bdk-column-config', JSON.stringify(config));
@@ -136,11 +164,13 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
     const exportData = {
       pages: positionalData.length,
       currentPage: selectedPage,
+      detectionQuality,
       columns: adjustedColumns.map((col, index) => ({
         name: BDK_COLUMN_TEMPLATES[index]?.name || `Column ${index}`,
         elements: col.texts.length,
         xStart: col.xStart,
         xEnd: col.xEnd,
+        validationScore: detectionQuality?.columnScores[index] || 0,
         data: col.texts.map(item => ({
           text: item.text,
           x: item.x,
@@ -159,6 +189,18 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const getQualityColor = (score: number) => {
+    if (score >= 90) return 'text-green-600';
+    if (score >= 70) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const getQualityIcon = (score: number) => {
+    if (score >= 90) return <CheckCircle className="h-4 w-4 text-green-600" />;
+    if (score >= 70) return <AlertTriangle className="h-4 w-4 text-yellow-600" />;
+    return <AlertTriangle className="h-4 w-4 text-red-600" />;
+  };
+
   if (!currentPage) {
     return (
       <Card>
@@ -175,7 +217,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Debug BDK Avancé</span>
+            <span>Debug BDK Avancé (Calibré)</span>
             <div className="flex items-center space-x-2">
               <Badge variant="outline">
                 Page {selectedPage + 1} / {positionalData.length}
@@ -183,6 +225,14 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
               <Badge className="bg-blue-100 text-blue-800">
                 {currentPage.items.length} éléments
               </Badge>
+              {detectionQuality && (
+                <div className="flex items-center space-x-1">
+                  {getQualityIcon(detectionQuality.overallScore)}
+                  <Badge className={`${getQualityColor(detectionQuality.overallScore)} bg-gray-100`}>
+                    {detectionQuality.overallScore.toFixed(0)}% qualité
+                  </Badge>
+                </div>
+              )}
             </div>
           </CardTitle>
           <div className="flex items-center justify-between">
@@ -208,7 +258,11 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
             <div className="flex items-center space-x-2">
               <Button variant="outline" size="sm" onClick={resetToDefault}>
                 <RotateCcw className="h-4 w-4 mr-1" />
-                Reset
+                Reset Détecté
+              </Button>
+              <Button variant="outline" size="sm" onClick={resetToCalibratedZones}>
+                <Target className="h-4 w-4 mr-1" />
+                Zones Calibrées
               </Button>
               <Button variant="outline" size="sm" onClick={saveConfiguration}>
                 <Save className="h-4 w-4 mr-1" />
@@ -227,6 +281,58 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
           </div>
         </CardHeader>
       </Card>
+
+      {/* Detection Quality Panel */}
+      {detectionQuality && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Target className="h-5 w-5" />
+              <span>Qualité de Détection</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Score Global</span>
+                <div className="flex items-center space-x-2">
+                  <Progress value={detectionQuality.overallScore} className="w-32" />
+                  <span className={`text-sm font-bold ${getQualityColor(detectionQuality.overallScore)}`}>
+                    {detectionQuality.overallScore.toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-7 gap-2">
+                {detectionQuality.columnScores.map((score, index) => (
+                  <div key={index} className="text-center">
+                    <div className="text-xs font-medium mb-1">
+                      {BDK_COLUMN_TEMPLATES[index]?.name.slice(0, 8)}...
+                    </div>
+                    <div className="flex items-center justify-center space-x-1">
+                      {getQualityIcon(score)}
+                      <span className={`text-xs ${getQualityColor(score)}`}>
+                        {score.toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {detectionQuality.recommendations.length > 0 && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <h4 className="text-sm font-medium text-yellow-800 mb-2">Recommandations</h4>
+                  <ul className="text-xs text-yellow-700 space-y-1">
+                    {detectionQuality.recommendations.map((rec, index) => (
+                      <li key={index}>• {rec}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Page Navigation */}
       {positionalData.length > 1 && (
@@ -253,8 +359,9 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
 
       {/* Main Debug Interface */}
       <Tabs defaultValue="adjuster" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="adjuster">Ajustement</TabsTrigger>
+          <TabsTrigger value="calibration">Calibration</TabsTrigger>
           <TabsTrigger value="data">Données</TabsTrigger>
           <TabsTrigger value="validation">Validation</TabsTrigger>
           <TabsTrigger value="overview">Vue Globale</TabsTrigger>
@@ -266,6 +373,13 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
             pageWidth={pageWidth}
             showAdvanced={showAdvanced}
             onConfigChange={handleColumnConfigChange}
+          />
+        </TabsContent>
+        
+        <TabsContent value="calibration">
+          <BDKCalibrationInsights
+            columns={adjustedColumns.length > 0 ? adjustedColumns : currentPage.tables[0]?.columns || []}
+            pageWidth={pageWidth}
           />
         </TabsContent>
         
