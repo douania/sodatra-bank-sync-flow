@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
-import { Save, RotateCcw, Download, Settings, Eye, AlertTriangle, CheckCircle, Target } from 'lucide-react';
-import { PositionalData, TextItem, Column } from '@/services/positionalExtractionService';
+import { Save, RotateCcw, Download, Target, AlertTriangle, CheckCircle, Eye } from 'lucide-react';
+import { PositionalData, Column } from '@/services/positionalExtractionService';
 import { BDK_COLUMN_TEMPLATES, bdkColumnDetectionService } from '@/services/bdkColumnDetectionService';
 import ColumnAdjuster from './ColumnAdjuster';
 import DataViewer from './DataViewer';
@@ -33,6 +31,14 @@ interface DetectionQuality {
   recommendations: string[];
 }
 
+interface AmountAnalysis {
+  totalElements: number;
+  validAmounts: number;
+  emptyOrZero: number;
+  missingPositions: number;
+  qualityScore: number;
+}
+
 export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
   positionalData,
   onColumnsChanged
@@ -43,6 +49,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [autoRecalculate, setAutoRecalculate] = useState(true);
   const [detectionQuality, setDetectionQuality] = useState<DetectionQuality | null>(null);
+  const [amountAnalysis, setAmountAnalysis] = useState<AmountAnalysis | null>(null);
 
   const currentPage = positionalData[selectedPage];
   const pageWidth = currentPage?.pageWidth || 800;
@@ -78,6 +85,38 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
     }
   }, [columnConfigs, autoRecalculate, currentPage]);
 
+  // Analyze AMOUNT column specifically
+  const analyzeAmountColumn = (columns: Column[]) => {
+    const amountColumn = columns[6];
+    if (!amountColumn) return null;
+
+    const totalElements = amountColumn.texts.length;
+    const validAmounts = amountColumn.texts.filter(item => {
+      const trimmed = item.text.trim();
+      const num = parseInt(trimmed.replace(/\s/g, ''));
+      return !isNaN(num) && num > 0;
+    }).length;
+    
+    const emptyOrZero = amountColumn.texts.filter(item => {
+      const trimmed = item.text.trim();
+      return trimmed === '' || trimmed === '0';
+    }).length;
+
+    // Estimate missing positions by comparing with other columns
+    const otherColumnsMaxItems = Math.max(...columns.slice(0, 6).map(col => col.texts.length));
+    const missingPositions = Math.max(0, otherColumnsMaxItems - totalElements);
+
+    const qualityScore = totalElements > 0 ? (validAmounts / totalElements) * 100 : 0;
+
+    return {
+      totalElements,
+      validAmounts,
+      emptyOrZero,
+      missingPositions,
+      qualityScore
+    };
+  };
+
   const recalculateColumns = () => {
     if (!currentPage) return;
 
@@ -88,34 +127,21 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
       texts: []
     }));
 
-    // Redistribute items to columns
-    currentPage.items.forEach(item => {
-      let bestColumn = 0;
-      let minDistance = Infinity;
-
-      for (let i = 0; i < newColumns.length; i++) {
-        if (!columnConfigs[i].enabled) continue;
-        
-        const column = newColumns[i];
-        const columnCenter = (column.xStart + column.xEnd) / 2;
-        const distance = Math.abs(item.x - columnCenter);
-
-        if (distance < minDistance) {
-          minDistance = distance;
-          bestColumn = i;
-        }
-      }
-
-      newColumns[bestColumn].texts.push(item);
-    });
-
-    setAdjustedColumns(newColumns);
+    // Use the enhanced BDK detection service
+    const enhancedColumns = bdkColumnDetectionService.detectBDKColumns(currentPage.items, pageWidth);
+    
+    // Update with enhanced results
+    setAdjustedColumns(enhancedColumns);
     
     // Analyze detection quality
-    const quality = bdkColumnDetectionService.analyzeDetectionQuality(newColumns);
+    const quality = bdkColumnDetectionService.analyzeDetectionQuality(enhancedColumns);
     setDetectionQuality(quality);
     
-    onColumnsChanged?.(newColumns);
+    // Analyze AMOUNT column specifically
+    const amountAnalysis = analyzeAmountColumn(enhancedColumns);
+    setAmountAnalysis(amountAnalysis);
+    
+    onColumnsChanged?.(enhancedColumns);
   };
 
   const handleColumnConfigChange = (index: number, field: 'xStart' | 'xEnd', value: number) => {
@@ -136,7 +162,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
   };
 
   const resetToCalibratedZones = () => {
-    // Reset to the calibrated zones from the service
+    // Reset to the enhanced calibrated zones from the service
     const referencePage = 850;
     const scaleFactor = pageWidth / referencePage;
     
@@ -154,6 +180,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
       pageWidth,
       columns: columnConfigs,
       detectionQuality,
+      amountAnalysis,
       timestamp: new Date().toISOString()
     };
     localStorage.setItem('bdk-column-config', JSON.stringify(config));
@@ -165,6 +192,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
       pages: positionalData.length,
       currentPage: selectedPage,
       detectionQuality,
+      amountAnalysis,
       columns: adjustedColumns.map((col, index) => ({
         name: BDK_COLUMN_TEMPLATES[index]?.name || `Column ${index}`,
         elements: col.texts.length,
@@ -217,7 +245,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Debug BDK Avancé (Calibré)</span>
+            <span>Debug BDK Renforcé (Montants Fixes)</span>
             <div className="flex items-center space-x-2">
               <Badge variant="outline">
                 Page {selectedPage + 1} / {positionalData.length}
@@ -262,7 +290,7 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
               </Button>
               <Button variant="outline" size="sm" onClick={resetToCalibratedZones}>
                 <Target className="h-4 w-4 mr-1" />
-                Zones Calibrées
+                Zones Renforcées
               </Button>
               <Button variant="outline" size="sm" onClick={saveConfiguration}>
                 <Save className="h-4 w-4 mr-1" />
@@ -282,13 +310,68 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
         </CardHeader>
       </Card>
 
+      {/* AMOUNT Column Analysis Panel */}
+      {amountAnalysis && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Target className="h-5 w-5" />
+              <span>Analyse Colonne AMOUNT</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">{amountAnalysis.totalElements}</div>
+                <div className="text-sm text-muted-foreground">Éléments Total</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600">{amountAnalysis.validAmounts}</div>
+                <div className="text-sm text-muted-foreground">Montants Valides</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-yellow-600">{amountAnalysis.emptyOrZero}</div>
+                <div className="text-sm text-muted-foreground">Zéros/Vides</div>
+              </div>
+              <div className="text-center">
+                <div className={`text-2xl font-bold ${amountAnalysis.missingPositions > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {amountAnalysis.missingPositions}
+                </div>
+                <div className="text-sm text-muted-foreground">Positions Manquantes</div>
+              </div>
+            </div>
+            
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium">Qualité Colonne AMOUNT</span>
+                <span className={`text-sm font-bold ${getQualityColor(amountAnalysis.qualityScore)}`}>
+                  {amountAnalysis.qualityScore.toFixed(0)}%
+                </span>
+              </div>
+              <Progress value={amountAnalysis.qualityScore} className="h-2" />
+            </div>
+            
+            {amountAnalysis.qualityScore < 70 && (
+              <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                  <span className="text-sm font-medium text-yellow-800">
+                    Qualité AMOUNT faible - Vérifiez le calibrage de la zone
+                  </span>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Detection Quality Panel */}
       {detectionQuality && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
               <Target className="h-5 w-5" />
-              <span>Qualité de Détection</span>
+              <span>Qualité de Détection Globale</span>
             </CardTitle>
           </CardHeader>
           <CardContent>
