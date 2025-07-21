@@ -64,64 +64,162 @@ export class BDKColumnDetectionService {
     
     console.log(`[BDK] Détection de colonnes pour ${items.length} éléments, largeur: ${pageWidth}`);
     
-    // 1. Extraire toutes les positions X uniques
-    const xPositions = items.map(item => item.x);
-    const uniquePositions = [...new Set(xPositions)].sort((a, b) => a - b);
+    // 1. Détecter les en-têtes de colonnes BDK
+    const headers = this.detectColumnHeaders(items);
+    console.log(`[BDK] En-têtes détectés:`, headers);
     
-    console.log(`[BDK] ${uniquePositions.length} positions X uniques détectées`);
-    
-    // 2. Appliquer K-means avec k=7 pour forcer 7 colonnes
-    const clusterResult = columnClusteringService.kMeans(xPositions, 7);
-    
-    console.log(`[BDK] Clustering K-means résultat:`, {
-      nbClusters: clusterResult.clusters.length,
-      centroids: clusterResult.centroids.map(c => Math.round(c))
-    });
-    
-    // 3. Créer les colonnes basées sur les clusters
-    const columns: Column[] = [];
-    
-    for (let i = 0; i < clusterResult.clusters.length; i++) {
-      const cluster = clusterResult.clusters[i];
-      if (cluster.length === 0) continue;
-      
-      const centroid = clusterResult.centroids[i];
-      
-      // Définir les limites de la colonne
-      const xStart = centroid - this.calculateColumnWidth(i, pageWidth) / 2;
-      const xEnd = centroid + this.calculateColumnWidth(i, pageWidth) / 2;
-      
-      // Collecter tous les éléments dans cette colonne
-      const columnItems = items.filter(item => {
-        const isInCluster = cluster.includes(item.x);
-        const isInRange = item.x >= xStart && item.x <= xEnd;
-        return isInCluster || isInRange;
-      });
-      
-      columns.push({
-        xStart,
-        xEnd,
-        index: i,
-        texts: columnItems
-      });
-      
-      console.log(`[BDK] Colonne ${i} (${BDK_COLUMN_TEMPLATES[i]?.name || 'Unknown'}): ${columnItems.length} éléments, x: ${Math.round(xStart)}-${Math.round(xEnd)}`);
+    // 2. Si on a des en-têtes, les utiliser pour définir les colonnes
+    let columns: Column[];
+    if (headers.length >= 3) {
+      columns = this.createColumnsFromHeaders(headers, items, pageWidth);
+    } else {
+      // 3. Sinon, diviser uniformément en 7 colonnes
+      columns = this.createUniformColumns(items, pageWidth);
     }
     
-    // 4. Trier les colonnes par position X
-    columns.sort((a, b) => a.xStart - b.xStart);
+    // 4. S'assurer qu'on a exactement 7 colonnes
+    this.ensureSevenColumns(columns, pageWidth);
     
-    // 5. Réindexer après tri
-    columns.forEach((col, index) => {
-      col.index = index;
-    });
+    // 5. Distribuer les éléments dans les colonnes
+    this.distributeItemsToColumns(columns, items);
     
-    // 6. Validation et ajustements
-    this.validateAndAdjustColumns(columns, pageWidth);
+    // 6. Validation finale
+    this.validateColumnContent(columns);
     
     console.log(`[BDK] ${columns.length} colonnes finales détectées`);
+    columns.forEach((col, i) => {
+      console.log(`[BDK] Colonne ${i} (${BDK_COLUMN_TEMPLATES[i]?.name || 'Unknown'}): ${col.texts.length} éléments, x: ${Math.round(col.xStart)}-${Math.round(col.xEnd)}`);
+    });
     
     return columns;
+  }
+  
+  /**
+   * Détecte les en-têtes de colonnes BDK
+   */
+  private detectColumnHeaders(items: TextItem[]): Array<{text: string, x: number, templateIndex: number}> {
+    const headers: Array<{text: string, x: number, templateIndex: number}> = [];
+    
+    const headerTexts = ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR NO/FACT.NO', 'AMOUNT'];
+    
+    for (const item of items) {
+      const upperText = item.text.toUpperCase().trim();
+      const templateIndex = headerTexts.findIndex(header => 
+        upperText.includes(header) || header.includes(upperText)
+      );
+      
+      if (templateIndex !== -1) {
+        headers.push({
+          text: upperText,
+          x: item.x,
+          templateIndex
+        });
+      }
+    }
+    
+    // Trier par position X
+    return headers.sort((a, b) => a.x - b.x);
+  }
+  
+  /**
+   * Crée les colonnes basées sur les en-têtes détectés
+   */
+  private createColumnsFromHeaders(headers: Array<{text: string, x: number, templateIndex: number}>, items: TextItem[], pageWidth: number): Column[] {
+    const columns: Column[] = [];
+    
+    for (let i = 0; i < 7; i++) {
+      const header = headers.find(h => h.templateIndex === i);
+      
+      if (header) {
+        // Utiliser la position de l'en-tête comme référence
+        const template = BDK_COLUMN_TEMPLATES[i];
+        const columnWidth = this.calculateColumnWidth(i, pageWidth);
+        
+        columns.push({
+          xStart: header.x - columnWidth / 4, // Décaler légèrement à gauche
+          xEnd: header.x + columnWidth * 3 / 4, // Étendre à droite
+          index: i,
+          texts: []
+        });
+      } else {
+        // Colonne manquante, utiliser une position calculée
+        const columnWidth = pageWidth / 7;
+        columns.push({
+          xStart: i * columnWidth,
+          xEnd: (i + 1) * columnWidth,
+          index: i,
+          texts: []
+        });
+      }
+    }
+    
+    return columns;
+  }
+  
+  /**
+   * Crée des colonnes uniformément réparties
+   */
+  private createUniformColumns(items: TextItem[], pageWidth: number): Column[] {
+    const columns: Column[] = [];
+    const columnWidth = pageWidth / 7;
+    
+    for (let i = 0; i < 7; i++) {
+      columns.push({
+        xStart: i * columnWidth,
+        xEnd: (i + 1) * columnWidth,
+        index: i,
+        texts: []
+      });
+    }
+    
+    return columns;
+  }
+  
+  /**
+   * S'assure qu'on a exactement 7 colonnes
+   */
+  private ensureSevenColumns(columns: Column[], pageWidth: number): void {
+    while (columns.length < 7) {
+      const index = columns.length;
+      const columnWidth = pageWidth / 7;
+      columns.push({
+        xStart: index * columnWidth,
+        xEnd: (index + 1) * columnWidth,
+        index,
+        texts: []
+      });
+    }
+    
+    if (columns.length > 7) {
+      columns.splice(7);
+    }
+    
+    // Ajuster les limites pour éviter les chevauchements
+    this.adjustColumnBoundaries(columns, pageWidth);
+  }
+  
+  /**
+   * Distribue les éléments dans les colonnes appropriées
+   */
+  private distributeItemsToColumns(columns: Column[], items: TextItem[]): void {
+    for (const item of items) {
+      // Trouver la colonne la plus appropriée pour cet élément
+      let bestColumn = 0;
+      let minDistance = Infinity;
+      
+      for (let i = 0; i < columns.length; i++) {
+        const column = columns[i];
+        const columnCenter = (column.xStart + column.xEnd) / 2;
+        const distance = Math.abs(item.x - columnCenter);
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          bestColumn = i;
+        }
+      }
+      
+      columns[bestColumn].texts.push(item);
+    }
   }
   
   /**
