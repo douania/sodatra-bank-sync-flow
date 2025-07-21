@@ -378,7 +378,69 @@ export class BDKColumnDetectionService {
     
     return bestColumn;
   }
-  
+
+  /**
+   * Trouve la meilleure colonne pour un élément donné EXCLUANT la colonne AMOUNT (index 6)
+   */
+  private findBestColumnForItemExcludingAmount(item: TextItem, columns: Column[]): number {
+    let bestColumn = -1;
+    let bestScore = -1;
+    
+    for (let i = 0; i < columns.length; i++) {
+      // EXCLURE complètement la colonne AMOUNT (index 6)
+      if (i === 6) {
+        continue;
+      }
+      
+      const column = columns[i];
+      const template = BDK_COLUMN_TEMPLATES[i];
+      
+      // Vérifier si l'élément est dans la zone de la colonne
+      if (item.x >= column.xStart && item.x <= column.xEnd) {
+        let score = 100; // Score de base pour être dans la zone
+        
+        // Bonus standard pour la validation du contenu
+        if (template.validation(item.text)) {
+          score += 30;
+        }
+        
+        // Pénalité pour la distance du centre (colonnes alignées à gauche)
+        const columnCenter = (column.xStart + column.xEnd) / 2;
+        const distance = Math.abs(item.x - columnCenter);
+        const columnWidth = column.xEnd - column.xStart;
+        const normalizedDistance = distance / columnWidth;
+        score -= normalizedDistance * 20;
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestColumn = i;
+        }
+      }
+    }
+    
+    // Si aucune colonne parfaite, utiliser la logique de distance minimale (EXCLUANT index 6)
+    if (bestColumn === -1) {
+      let minDistance = Infinity;
+      for (let i = 0; i < columns.length; i++) {
+        // EXCLURE complètement la colonne AMOUNT (index 6)
+        if (i === 6) {
+          continue;
+        }
+        
+        const column = columns[i];
+        const columnCenter = (column.xStart + column.xEnd) / 2;
+        const distance = Math.abs(item.x - columnCenter);
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          bestColumn = i;
+        }
+      }
+    }
+    
+    return bestColumn;
+  }
+   
   /**
    * Validation améliorée du contenu avec analyse contextuelle
    */
