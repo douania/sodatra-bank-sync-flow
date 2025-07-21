@@ -1,5 +1,5 @@
-
 import { getDocument } from 'pdfjs-dist';
+import { bdkColumnDetectionService } from './bdkColumnDetectionService';
 
 export interface TextItem {
   text: string;
@@ -86,14 +86,37 @@ export class PositionalExtractionService {
   private detectTables(items: TextItem[]): TableData[] {
     if (items.length === 0) return [];
     
+    console.log(`[Positional] Détection de tables pour ${items.length} éléments`);
+    
+    // Détecter si c'est un document BDK
+    const isBDK = bdkColumnDetectionService.isBDKDocument(items);
+    
+    let columns: Column[];
+    
+    if (isBDK) {
+      console.log('[Positional] Document BDK détecté, utilisation de la détection spécialisée');
+      // Utiliser la détection spécialisée BDK
+      const firstItem = items[0];
+      const lastItem = items.reduce((max, item) => item.x + item.width > max.x + max.width ? item : max, firstItem);
+      const pageWidth = lastItem.x + lastItem.width;
+      
+      columns = bdkColumnDetectionService.detectBDKColumns(items, pageWidth);
+    } else {
+      console.log('[Positional] Document standard, utilisation de la détection générique');
+      // Utiliser l'ancienne méthode pour les documents non-BDK
+      columns = this.detectColumns(items);
+    }
+    
+    console.log(`[Positional] ${columns.length} colonnes détectées`);
+    
     // Grouper les éléments par position Y approximative pour identifier les lignes
     const rows = this.groupByRows(items);
-    
-    // Détecter les colonnes basées sur les positions X
-    const columns = this.detectColumns(items);
+    console.log(`[Positional] ${rows.length} lignes détectées`);
     
     // Créer la structure tabulaire
     const tableData = this.createTableStructure(rows, columns);
+    
+    console.log(`[Positional] Table créée: ${tableData.columns.length} colonnes, ${tableData.rows.length} lignes`);
     
     return tableData.columns.length > 0 && tableData.rows.length > 0 ? [tableData] : [];
   }
@@ -149,7 +172,7 @@ export class PositionalExtractionService {
   }
   
   /**
-   * Détecte les colonnes basées sur les positions X
+   * Détecte les colonnes basées sur les positions X (méthode générique)
    */
   private detectColumns(items: TextItem[]): Column[] {
     const tolerance = 10; // Tolérance pour regrouper les éléments dans la même colonne
