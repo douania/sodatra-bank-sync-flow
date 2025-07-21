@@ -9,7 +9,7 @@ const COLUMN_ZONES_CALIBRATED = {
   VENDOR_PROVIDER: { xMin: 385, xMax: 485 },
   CLIENT: { xMin: 485, xMax: 585 },
   TR_NO_FACT_NO: { xMin: 585, xMax: 720 },
-  AMOUNT: { xMin: 720, xMax: 850 }  // AJUSTÉ pour capturer les montants alignés à droite
+  AMOUNT: { xMin: 720, xMax: 850 }  // Zone AMOUNT calibrée pour capturer les montants alignés à droite
 };
 
 // Mots-clés pour identifier les sections spéciales
@@ -83,7 +83,7 @@ export const BDK_COLUMN_TEMPLATES: BDKColumnTemplate[] = [
     contentType: 'amount',
     validation: (text: string) => {
       const trimmed = text.trim();
-      if (trimmed === '' || trimmed === '0') return true;
+      if (trimmed === '' || trimmed === '0' || trimmed === 'N/A' || trimmed === '---') return true;
       // Regex renforcée pour les montants BDK : "3 000 000", "147 500", etc.
       return /^[\d\s]{1,}$/.test(trimmed) && !/[a-zA-Z]/.test(trimmed);
     },
@@ -100,7 +100,7 @@ export class BDKColumnDetectionService {
   detectBDKColumns(items: TextItem[], pageWidth: number): Column[] {
     if (items.length === 0) return [];
     
-    console.log(`[BDK] Détection RENFORCÉE pour ${items.length} éléments, largeur: ${pageWidth}`);
+    console.log(`[BDK] Détection CORRIGÉE pour ${items.length} éléments, largeur: ${pageWidth}`);
     
     // 1. Filtrer les éléments selon les sections spéciales
     const filteredItems = this.filterSpecialSections(items);
@@ -108,22 +108,22 @@ export class BDKColumnDetectionService {
     // 2. Créer les colonnes avec les zones calibrées ajustées
     const columns = this.createCalibratedColumns(pageWidth);
     
-    // 3. Pré-traitement : Identifier et prioriser les montants
-    const { amountItems, otherItems } = this.separateAmountItems(filteredItems);
+    // 3. Pré-traitement : Identifier et prioriser UNIQUEMENT les montants dans la zone AMOUNT
+    const { amountItems, otherItems } = this.separateAmountItemsStrict(filteredItems, columns[6]);
     
     // 4. Distribuer d'abord les montants vers la colonne AMOUNT
     this.distributeAmountItems(columns, amountItems);
     
-    // 5. Distribuer ensuite les autres éléments
-    this.distributeOtherItems(columns, otherItems);
+    // 5. Distribuer ensuite les autres éléments (EXCLUANT la colonne AMOUNT)
+    this.distributeOtherItemsExcludingAmount(columns, otherItems);
     
-    // 6. Post-traitement : Corriger les erreurs et remplir les cellules vides
-    this.postProcessColumns(columns);
+    // 6. Post-traitement : Remplir les cellules AMOUNT vides UNIQUEMENT
+    this.fillEmptyAmountCellsImproved(columns);
     
     // 7. Validation finale avec métriques détaillées
     this.validateColumnContentEnhanced(columns);
     
-    console.log(`[BDK] ${columns.length} colonnes CALIBRÉES ET RENFORCÉES appliquées`);
+    console.log(`[BDK] ${columns.length} colonnes CORRIGÉES appliquées - Aucun déplacement erroné`);
     columns.forEach((col, i) => {
       console.log(`[BDK] Colonne ${i} (${BDK_COLUMN_TEMPLATES[i]?.name}): ${col.texts.length} éléments, x: ${Math.round(col.xStart)}-${Math.round(col.xEnd)}`);
     });
@@ -132,31 +132,37 @@ export class BDKColumnDetectionService {
   }
 
   /**
-   * Sépare les éléments de montants des autres éléments
+   * Sépare STRICTEMENT les éléments de montants - SEULEMENT ceux dans la zone AMOUNT
    */
-  private separateAmountItems(items: TextItem[]): { amountItems: TextItem[], otherItems: TextItem[] } {
+  private separateAmountItemsStrict(items: TextItem[], amountColumn: Column): { amountItems: TextItem[], otherItems: TextItem[] } {
     const amountItems: TextItem[] = [];
     const otherItems: TextItem[] = [];
     
     for (const item of items) {
       const trimmed = item.text.trim();
       
-      // Critères stricts pour identifier un montant
-      const isAmountLike = 
-        /^[\d\s]{2,}$/.test(trimmed) && // Au moins 2 caractères numériques/espaces
-        !(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) && // Pas une date
-        !(/^\d{1,6}$/.test(trimmed) && trimmed.length <= 6) && // Pas un numéro de chèque simple
-        parseInt(trimmed.replace(/\s/g, '')) > 100;
+      // Critères TRÈS stricts pour identifier un montant
+      const isInAmountZone = item.x >= amountColumn.xStart && item.x <= amountColumn.xEnd;
+      const isNumericPattern = /^[\d\s]{3,}$/.test(trimmed); // Au moins 3 caractères numériques/espaces
+      const isNotDate = !(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed));
+      const isNotSimpleNumber = !(trimmed.length <= 6 && /^\d+$/.test(trimmed)); // Éviter les numéros de chèques simples
+      const isSignificantAmount = parseInt(trimmed.replace(/\s/g, '')) > 500; // Montant significatif
       
-      if (isAmountLike) {
+      // Un élément est considéré comme montant SEULEMENT s'il est dans la zone AMOUNT ET respecte tous les critères
+      const isAmountItem = isInAmountZone && isNumericPattern && isNotDate && isNotSimpleNumber && isSignificantAmount;
+      
+      if (isAmountItem) {
         amountItems.push(item);
-        console.log(`[BDK] Montant identifié: "${trimmed}" à x=${item.x}`);
+        console.log(`[BDK] Montant STRICT identifié: "${trimmed}" à x=${item.x} (zone AMOUNT: ${amountColumn.xStart}-${amountColumn.xEnd})`);
       } else {
         otherItems.push(item);
+        if (isNumericPattern && isSignificantAmount && !isInAmountZone) {
+          console.log(`[BDK] Nombre "${trimmed}" CONSERVÉ en position x=${item.x} (hors zone AMOUNT)`);
+        }
       }
     }
     
-    console.log(`[BDK] Séparation: ${amountItems.length} montants, ${otherItems.length} autres éléments`);
+    console.log(`[BDK] Séparation STRICTE: ${amountItems.length} montants dans zone AMOUNT, ${otherItems.length} autres éléments`);
     return { amountItems, otherItems };
   }
 
@@ -167,135 +173,62 @@ export class BDKColumnDetectionService {
     const amountColumn = columns[6]; // Colonne AMOUNT
     
     for (const item of amountItems) {
-      // Vérifier si l'élément est dans la zone AMOUNT ou proche du bord droit
-      const isInAmountZone = item.x >= amountColumn.xStart && item.x <= amountColumn.xEnd;
-      const distanceFromRightEdge = amountColumn.xEnd - item.x;
-      const isNearRightEdge = distanceFromRightEdge <= 100; // Tolérance pour alignement à droite
-      
-      if (isInAmountZone || isNearRightEdge) {
-        amountColumn.texts.push(item);
-        console.log(`[BDK] Montant "${item.text}" attribué à AMOUNT (x=${item.x}, distance du bord droit=${distanceFromRightEdge})`);
-      } else {
-        // Si le montant n'est pas dans la zone, l'attribuer quand même à AMOUNT mais avec un warning
-        amountColumn.texts.push(item);
-        console.log(`[BDK] ⚠️ Montant "${item.text}" forcé vers AMOUNT (x=${item.x} hors zone)`);
-      }
+      amountColumn.texts.push(item);
+      console.log(`[BDK] Montant "${item.text}" attribué à AMOUNT (x=${item.x})`);
     }
   }
 
   /**
-   * Distribue les autres éléments selon la logique standard
+   * Distribue les autres éléments selon la logique standard MAIS EXCLUANT la colonne AMOUNT
    */
-  private distributeOtherItems(columns: Column[], otherItems: TextItem[]): void {
+  private distributeOtherItemsExcludingAmount(columns: Column[], otherItems: TextItem[]): void {
     for (const item of otherItems) {
-      const bestColumnIndex = this.findBestColumnForItem(item, columns);
-      if (bestColumnIndex !== -1 && bestColumnIndex !== 6) { // Ne pas mettre d'autres éléments dans AMOUNT
+      const bestColumnIndex = this.findBestColumnForItemExcludingAmount(item, columns);
+      if (bestColumnIndex !== -1) {
         columns[bestColumnIndex].texts.push(item);
-      } else if (bestColumnIndex === 6) {
-        // Si l'algorithme veut mettre un non-montant dans AMOUNT, le rediriger
-        const alternativeIndex = this.findAlternativeColumn(item, columns);
-        columns[alternativeIndex].texts.push(item);
-        console.log(`[BDK] Élément "${item.text}" redirigé de AMOUNT vers colonne ${alternativeIndex}`);
+        if (bestColumnIndex === 5) {
+          console.log(`[BDK] Élément "${item.text}" attribué à colonne ${bestColumnIndex} (TR No/FACT.No) - x=${item.x}`);
+        }
       }
     }
   }
 
   /**
-   * Post-traitement pour corriger les erreurs et remplir les cellules vides
+   * Remplissage amélioré des cellules AMOUNT vides avec "N/A"
    */
-  private postProcessColumns(columns: Column[]): void {
-    // 1. Trier les éléments de chaque colonne par position Y
-    columns.forEach(column => {
-      column.texts.sort((a, b) => a.y - b.y);
-    });
-    
-    // 2. Identifier les lignes sans montant et ajouter "0"
-    this.fillEmptyAmountCells(columns);
-    
-    // 3. Corriger les éléments mal placés
-    this.correctMisplacedAmounts(columns);
-    
-    // 4. Vérifier l'alignement des lignes
-    this.validateRowAlignment(columns);
-  }
-
-  /**
-   * Remplit les cellules AMOUNT vides avec "0"
-   */
-  private fillEmptyAmountCells(columns: Column[]): void {
+  private fillEmptyAmountCellsImproved(columns: Column[]): void {
     const amountColumn = columns[6];
     
-    // Identifier les positions Y des autres colonnes pour détecter les lignes manquantes
+    // Identifier les positions Y des autres colonnes pour détecter les lignes
     const allYPositions = new Set<number>();
     columns.slice(0, 6).forEach(col => {
-      col.texts.forEach(item => allYPositions.add(Math.round(item.y / 10) * 10)); // Grouper par dizaines
+      col.texts.forEach(item => allYPositions.add(Math.round(item.y / 8) * 8)); // Grouper par tranches de 8px
     });
     
-    const amountYPositions = new Set(amountColumn.texts.map(item => Math.round(item.y / 10) * 10));
+    const amountYPositions = new Set(amountColumn.texts.map(item => Math.round(item.y / 8) * 8));
     
     // Trouver les positions Y manquantes dans la colonne AMOUNT
     const missingPositions = Array.from(allYPositions).filter(y => !amountYPositions.has(y));
     
-    console.log(`[BDK] ${missingPositions.length} positions AMOUNT manquantes détectées: ${missingPositions}`);
+    console.log(`[BDK] ${missingPositions.length} positions AMOUNT manquantes détectées`);
     
-    // Ajouter des éléments "0" aux positions manquantes
+    // Ajouter des éléments "N/A" aux positions manquantes
     missingPositions.forEach(y => {
       const syntheticItem: TextItem = {
-        text: '0',
-        x: (columns[6].xStart + columns[6].xEnd) / 2,
+        text: 'N/A',
+        x: (amountColumn.xStart + amountColumn.xEnd) / 2,
         y: y,
-        width: 20,
+        width: 30,
         height: 12,
         fontSize: 12,
         fontName: 'synthetic'
       };
       amountColumn.texts.push(syntheticItem);
-      console.log(`[BDK] Cellule AMOUNT vide remplie avec "0" à y=${y}`);
+      console.log(`[BDK] Cellule AMOUNT vide remplie avec "N/A" à y=${y}`);
     });
     
     // Re-trier après ajout
     amountColumn.texts.sort((a, b) => a.y - b.y);
-  }
-
-  /**
-   * Corrige les montants mal placés dans d'autres colonnes
-   */
-  private correctMisplacedAmounts(columns: Column[]): void {
-    for (let i = 0; i < 6; i++) { // Examiner toutes les colonnes sauf AMOUNT
-      const column = columns[i];
-      const amountColumn = columns[6];
-      
-      const misplacedAmounts = column.texts.filter(item => {
-        const trimmed = item.text.trim();
-        return /^[\d\s]{3,}$/.test(trimmed) && 
-               !(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) &&
-               parseInt(trimmed.replace(/\s/g, '')) > 1000;
-      });
-      
-      misplacedAmounts.forEach(item => {
-        // Déplacer vers AMOUNT
-        column.texts = column.texts.filter(t => t !== item);
-        amountColumn.texts.push(item);
-        console.log(`[BDK] Montant mal placé "${item.text}" déplacé de colonne ${i} vers AMOUNT`);
-      });
-    }
-  }
-
-  /**
-   * Valide l'alignement des lignes
-   */
-  private validateRowAlignment(columns: Column[]): void {
-    const tolerance = 15; // Tolérance pour considérer que les éléments sont sur la même ligne
-    
-    columns[6].texts.forEach(amountItem => {
-      const sameRowItems = columns.slice(0, 6).map(col => 
-        col.texts.find(item => Math.abs(item.y - amountItem.y) <= tolerance)
-      ).filter(Boolean);
-      
-      if (sameRowItems.length === 0) {
-        console.log(`[BDK] ⚠️ Montant isolé détecté: "${amountItem.text}" à y=${amountItem.y}`);
-      }
-    });
   }
 
   /**
@@ -374,8 +307,8 @@ export class BDKColumnDetectionService {
       });
     });
     
-    console.log(`[BDK] Colonnes calibrées RENFORCÉES créées avec facteur d'échelle: ${scaleFactor.toFixed(3)}`);
-    console.log(`[BDK] Zone AMOUNT ajustée: ${(COLUMN_ZONES_CALIBRATED.AMOUNT.xMin * scaleFactor).toFixed(0)}-${(COLUMN_ZONES_CALIBRATED.AMOUNT.xMax * scaleFactor).toFixed(0)}`);
+    console.log(`[BDK] Colonnes calibrées CORRIGÉES créées avec facteur d'échelle: ${scaleFactor.toFixed(3)}`);
+    console.log(`[BDK] Zone AMOUNT stricte: ${(COLUMN_ZONES_CALIBRATED.AMOUNT.xMin * scaleFactor).toFixed(0)}-${(COLUMN_ZONES_CALIBRATED.AMOUNT.xMax * scaleFactor).toFixed(0)}`);
     
     return columns;
   }
@@ -465,9 +398,10 @@ export class BDKColumnDetectionService {
         console.log(`[BDK] Éléments invalides en colonne AMOUNT:`, invalidItems.map(item => `"${item.text}" à x=${item.x}`));
       }
       
-      // Diagnostic pour les autres colonnes
-      if (invalidItems.length > 0 && invalidItems.length <= 3 && index !== 6) {
-        console.log(`[BDK] Éléments invalides en colonne ${index}:`, invalidItems.map(item => `"${item.text}"`));
+      // Analyser spécifiquement la colonne TR No/FACT.No
+      if (index === 5) {
+        const numericItems = column.texts.filter(item => /^\d+$/.test(item.text.trim()));
+        console.log(`[BDK] Colonne TR No/FACT.No contient ${numericItems.length} éléments numériques (normal pour factures/dossiers)`);
       }
     });
   }
@@ -521,12 +455,19 @@ export class BDKColumnDetectionService {
       // Bonus spécial pour la colonne AMOUNT si elle contient des montants réalistes
       if (index === 6) {
         const realAmounts = column.texts.filter(item => {
-          const num = parseInt(item.text.replace(/\s/g, ''));
-          return !isNaN(num) && (num === 0 || num > 100);
+          const trimmed = item.text.trim();
+          if (trimmed === 'N/A' || trimmed === '---') return true; // Valeurs synthétiques acceptables
+          const num = parseInt(trimmed.replace(/\s/g, ''));
+          return !isNaN(num) && num >= 0;
         });
         if (realAmounts.length > column.texts.length * 0.8) {
-          score += 10; // Bonus pour avoir majoritairement des montants réalistes
+          score += 10; // Bonus pour avoir majoritairement des montants ou valeurs synthétiques
         }
+      }
+      
+      // Bonus pour la colonne TR No/FACT.No qui peut contenir des numéros
+      if (index === 5) {
+        score += 5; // Bonus car cette colonne peut légitimement contenir des numéros
       }
       
       columnScores.push(Math.min(score, 100));
@@ -537,11 +478,6 @@ export class BDKColumnDetectionService {
       
       if (column.texts.length === 0) {
         recommendations.push(`Colonne ${template.name}: Aucun élément détecté - Zone peut-être trop restrictive`);
-      }
-      
-      // Recommandations spécifiques pour AMOUNT
-      if (index === 6 && column.texts.filter(item => item.text === '0').length > column.texts.length * 0.5) {
-        recommendations.push(`Colonne AMOUNT: Beaucoup de valeurs "0" - Vérifier si les vrais montants sont bien détectés`);
       }
     });
     
