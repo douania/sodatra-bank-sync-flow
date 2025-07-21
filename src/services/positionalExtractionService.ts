@@ -95,7 +95,7 @@ export class PositionalExtractionService {
     // Créer la structure tabulaire
     const tableData = this.createTableStructure(rows, columns);
     
-    return tableData.length > 0 ? [tableData] : [];
+    return tableData.columns.length > 0 && tableData.rows.length > 0 ? [tableData] : [];
   }
   
   /**
