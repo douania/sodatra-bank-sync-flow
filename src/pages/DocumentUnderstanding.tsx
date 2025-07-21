@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertCircle } from 'lucide-react';
+import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertCircle, Eye } from 'lucide-react';
 import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
@@ -14,6 +14,8 @@ import { toast } from '@/components/ui/sonner';
 import UniversalBankParser from '@/components/UniversalBankParser';
 import BDKDetailedReport from '@/components/BDKDetailedReport';
 import { RapportBancaire } from '@/types/banking-universal';
+import PositionalPDFViewer from '@/components/PositionalPDFViewer';
+import { enhancedBDKExtractionService, EnhancedBDKResult } from '@/services/enhancedBDKExtractionService';
 
 const DocumentUnderstanding = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -24,6 +26,7 @@ const DocumentUnderstanding = () => {
   const [parsedData, setParsedData] = useState<any | null>(null);
   const [bdkDetailedData, setBdkDetailedData] = useState<BDKParsedData | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
+  const [enhancedBDKResult, setEnhancedBDKResult] = useState<EnhancedBDKResult | null>(null);
 
   const handleParseComplete = (rapport: RapportBancaire) => {
     console.log('Rapport traité avec le parser universel:', rapport);
@@ -85,40 +88,49 @@ const DocumentUnderstanding = () => {
       
       setRawText(extractedText);
 
-      // 3. Process based on detected type - avec le nouveau parser BDK
+      // 3. Process based on detected type - avec extraction positionnelle pour BDK
       if (detection.detectedType === 'collectionReport') {
         const result = await excelProcessingService.processCollectionReportExcel(selectedFile);
         if (result.success && result.data) {
           setParsedData({
             type: 'Collection Report',
-            collections: result.data.slice(0, 10), // Limit to first 10 for display
+            collections: result.data.slice(0, 10),
             totalCollections: result.data.length
           });
         }
       } else if (detection.detectedType === 'bankAnalysis' || detection.detectedType === 'bankStatement') {
-        // Essayer d'abord le nouveau parser BDK si c'est un PDF BDK
+        // Essayer l'extraction BDK avancée avec comparaison positionnelle
         if (selectedFile.type === 'application/pdf' && extractedText.toUpperCase().includes('BDK')) {
           try {
-            const bdkData = bdkExtractionService.extractBDKData(extractedText);
-            setBdkDetailedData(bdkData);
+            const enhancedResult = await enhancedBDKExtractionService.extractBDKWithPositional(selectedFile);
+            setEnhancedBDKResult(enhancedResult);
+            
+            // Utiliser la meilleure méthode d'extraction
+            const bestResult = enhancedResult.isPositionalBetter ? 
+              enhancedResult.positionalExtraction : 
+              enhancedResult.basicExtraction;
+            
+            setBdkDetailedData(bestResult);
             setParsedData({
-              type: 'BDK Bank Report (Advanced)',
+              type: 'BDK Bank Report (Enhanced)',
               bankName: 'BDK',
-              date: bdkData.reportDate,
-              openingBalance: bdkData.openingBalance.amount,
-              closingBalance: bdkData.closingBalance,
-              totalDeposits: bdkData.totalDeposits,
-              totalChecks: bdkData.totalChecks,
-              validation: bdkData.validation,
-              facilities: bdkData.facilities,
-              impayes: bdkData.impayes
+              date: bestResult.reportDate,
+              openingBalance: bestResult.openingBalance.amount,
+              closingBalance: bestResult.closingBalance,
+              totalDeposits: bestResult.totalDeposits,
+              totalChecks: bestResult.totalChecks,
+              validation: bestResult.validation,
+              facilities: bestResult.facilities,
+              impayes: bestResult.impayes,
+              extractionMethod: enhancedResult.isPositionalBetter ? 'Positionnelle' : 'Basique',
+              confidence: enhancedResult.confidence
             });
             
             toast.success('Analyse BDK avancée terminée', {
-              description: `Validation: ${bdkData.validation.isValid ? '✅ Valide' : '⚠️ Écart détecté'}`,
+              description: `Méthode: ${enhancedResult.isPositionalBetter ? 'Positionnelle' : 'Basique'} (${enhancedResult.confidence})`,
             });
           } catch (error) {
-            console.error('Erreur parser BDK avancé:', error);
+            console.error('Erreur extraction BDK avancée:', error);
             // Fallback sur l'ancien système
             const result = await bankReportProcessingService.processBankReportExcel(selectedFile);
             if (result.success && result.data) {
@@ -249,13 +261,23 @@ const DocumentUnderstanding = () => {
     if (!parsedData) return null;
 
     // Affichage spécial pour les données BDK avancées
-    if (parsedData.type === 'BDK Bank Report (Advanced)' && bdkDetailedData) {
+    if (parsedData.type === 'BDK Bank Report (Enhanced)' && bdkDetailedData) {
       return (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-medium">Rapport BDK Avancé: {parsedData.bankName}</h3>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-500">Date: {parsedData.date}</span>
+              <Badge variant="outline">
+                {parsedData.extractionMethod}
+              </Badge>
+              <Badge className={
+                parsedData.confidence === 'high' ? 'bg-green-100 text-green-800' :
+                parsedData.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                'bg-red-100 text-red-800'
+              }>
+                {parsedData.confidence}
+              </Badge>
               <Badge className={parsedData.validation.isValid ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}>
                 {parsedData.validation.isValid ? '✅ Validé' : '⚠️ Écart'}
               </Badge>
@@ -312,6 +334,33 @@ const DocumentUnderstanding = () => {
               </CardContent>
             </Card>
           </div>
+          
+          {enhancedBDKResult && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center space-x-2 mb-2">
+                <Eye className="h-5 w-5 text-blue-600" />
+                <span className="font-medium text-blue-800">Comparaison des Méthodes</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-medium">Extraction Basique:</span>
+                  <div className="ml-2 text-gray-600">
+                    {enhancedBDKResult.basicExtraction.deposits.length} dépôts, {enhancedBDKResult.basicExtraction.checks.length} chèques
+                  </div>
+                </div>
+                <div>
+                  <span className="font-medium">Extraction Positionnelle:</span>
+                  <div className="ml-2 text-gray-600">
+                    {enhancedBDKResult.positionalExtraction.deposits.length} dépôts, {enhancedBDKResult.positionalExtraction.checks.length} chèques
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 text-sm text-blue-700">
+                <strong>Méthode sélectionnée:</strong> {enhancedBDKResult.isPositionalBetter ? 'Positionnelle' : 'Basique'} 
+                (confiance: {enhancedBDKResult.confidence})
+              </div>
+            </div>
+          )}
           
           {!parsedData.validation.isValid && (
             <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
@@ -541,6 +590,7 @@ const DocumentUnderstanding = () => {
           <Tabs defaultValue="universal" className="space-y-4">
             <TabsList>
               <TabsTrigger value="universal">Parser Universel</TabsTrigger>
+              <TabsTrigger value="positional">Extraction Positionnelle</TabsTrigger>
               <TabsTrigger value="legacy">Système Legacy</TabsTrigger>
             </TabsList>
             
@@ -549,6 +599,24 @@ const DocumentUnderstanding = () => {
                 onParseComplete={handleParseComplete}
                 onError={handleParseError}
               />
+            </TabsContent>
+            
+            <TabsContent value="positional" className="space-y-4">
+              {selectedFile && selectedFile.type === 'application/pdf' ? (
+                <PositionalPDFViewer 
+                  file={selectedFile}
+                  onTableDetected={(tables) => {
+                    console.log('Tables détectées:', tables);
+                  }}
+                />
+              ) : (
+                <div className="text-center py-12">
+                  <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground">
+                    Sélectionnez un fichier PDF pour voir l'extraction positionnelle
+                  </p>
+                </div>
+              )}
             </TabsContent>
             
             <TabsContent value="legacy" className="space-y-4">
