@@ -7,8 +7,9 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Eye, Grid, Table, FileText, Zap } from 'lucide-react';
-import { positionalExtractionService, PositionalData, TextItem, TableData } from '@/services/positionalExtractionService';
+import { positionalExtractionService, PositionalData, TextItem, TableData, Column } from '@/services/positionalExtractionService';
 import { BDK_COLUMN_TEMPLATES, bdkColumnDetectionService } from '@/services/bdkColumnDetectionService';
+import BDKDebugPanel from './BDKDebugPanel';
 
 interface PositionalPDFViewerProps {
   file: File;
@@ -27,6 +28,7 @@ export const PositionalPDFViewer: React.FC<PositionalPDFViewerProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [highlightedTable, setHighlightedTable] = useState<number | null>(null);
   const [isBDKDocument, setIsBDKDocument] = useState(false);
+  const [adjustedColumns, setAdjustedColumns] = useState<Column[]>([]);
 
   useEffect(() => {
     extractPositionalData();
@@ -291,6 +293,25 @@ export const PositionalPDFViewer: React.FC<PositionalPDFViewerProps> = ({
     );
   }
 
+  const handleColumnsChanged = (newColumns: Column[]) => {
+    setAdjustedColumns(newColumns);
+    
+    // Update the current page's table data
+    if (positionalData[selectedPage]) {
+      const updatedPositionalData = [...positionalData];
+      if (updatedPositionalData[selectedPage].tables.length > 0) {
+        updatedPositionalData[selectedPage].tables[0].columns = newColumns;
+      }
+      setPositionalData(updatedPositionalData);
+      
+      // Notify parent about the updated tables
+      if (onTableDetected) {
+        const allTables = updatedPositionalData.flatMap(page => page.tables);
+        onTableDetected(allTables);
+      }
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -336,6 +357,9 @@ export const PositionalPDFViewer: React.FC<PositionalPDFViewerProps> = ({
             <TabsTrigger value="stats">Statistiques</TabsTrigger>
             {isBDKDocument && (
               <TabsTrigger value="bdk-debug">Debug BDK</TabsTrigger>
+            )}
+            {isBDKDocument && (
+              <TabsTrigger value="bdk-advanced">Debug Avancé</TabsTrigger>
             )}
           </TabsList>
           
@@ -506,6 +530,15 @@ export const PositionalPDFViewer: React.FC<PositionalPDFViewerProps> = ({
                   </div>
                 )}
               </div>
+            </TabsContent>
+          )}
+
+          {isBDKDocument && (
+            <TabsContent value="bdk-advanced" className="space-y-4">
+              <BDKDebugPanel
+                positionalData={positionalData}
+                onColumnsChanged={handleColumnsChanged}
+              />
             </TabsContent>
           )}
         </Tabs>
