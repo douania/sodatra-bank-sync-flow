@@ -2,94 +2,125 @@
 import { TextItem, Column } from './positionalExtractionService';
 import { columnClusteringService } from './columnClusteringService';
 
+// Zones de colonnes calibrées basées sur l'analyse du PDF BDK réel
+const COLUMN_ZONES_CALIBRATED = {
+  DATE: { xMin: 45, xMax: 115 },
+  CH_NO: { xMin: 115, xMax: 195 },
+  DESCRIPTION: { xMin: 195, xMax: 375 },
+  VENDOR_PROVIDER: { xMin: 375, xMax: 475 },
+  CLIENT: { xMin: 475, xMax: 575 },
+  TR_NO_FACT_NO: { xMin: 575, xMax: 675 },    // CRITIQUE
+  AMOUNT: { xMin: 675, xMax: 795 }             // CRITIQUE
+};
+
 export interface BDKColumnTemplate {
   name: string;
   expectedWidth: number;
   contentType: 'date' | 'number' | 'text' | 'amount';
   validation: (text: string) => boolean;
+  zone: { xMin: number; xMax: number };
 }
 
 export const BDK_COLUMN_TEMPLATES: BDKColumnTemplate[] = [
   {
     name: 'Date',
-    expectedWidth: 80,
+    expectedWidth: 70,
     contentType: 'date',
-    validation: (text: string) => /^\d{2}\/\d{2}\/\d{4}$/.test(text.trim())
+    validation: (text: string) => /^\d{2}\/\d{2}\/\d{4}$/.test(text.trim()),
+    zone: COLUMN_ZONES_CALIBRATED.DATE
   },
   {
     name: 'CH.NO',
-    expectedWidth: 60,
+    expectedWidth: 80,
     contentType: 'number',
-    validation: (text: string) => /^\d+$/.test(text.trim()) || text.trim() === ''
+    validation: (text: string) => /^\d+$/.test(text.trim()) || text.trim() === '',
+    zone: COLUMN_ZONES_CALIBRATED.CH_NO
   },
   {
     name: 'Description',
-    expectedWidth: 200,
+    expectedWidth: 180,
     contentType: 'text',
-    validation: (text: string) => text.trim().length > 0
+    validation: (text: string) => text.trim().length > 0,
+    zone: COLUMN_ZONES_CALIBRATED.DESCRIPTION
   },
   {
     name: 'Vendor Provider',
-    expectedWidth: 120,
+    expectedWidth: 100,
     contentType: 'text',
-    validation: (text: string) => text.trim().length >= 0
+    validation: (text: string) => text.trim().length >= 0,
+    zone: COLUMN_ZONES_CALIBRATED.VENDOR_PROVIDER
   },
   {
     name: 'Client',
     expectedWidth: 100,
     contentType: 'text',
-    validation: (text: string) => text.trim().length >= 0
+    validation: (text: string) => text.trim().length >= 0,
+    zone: COLUMN_ZONES_CALIBRATED.CLIENT
   },
   {
     name: 'TR No/FACT.No',
     expectedWidth: 100,
     contentType: 'text',
-    validation: (text: string) => text.trim().length >= 0
+    validation: (text: string) => text.trim().length >= 0,
+    zone: COLUMN_ZONES_CALIBRATED.TR_NO_FACT_NO
   },
   {
     name: 'Amount',
-    expectedWidth: 100,
+    expectedWidth: 120,
     contentType: 'amount',
-    validation: (text: string) => /^\d+(\s+\d+)*$/.test(text.trim()) || text.trim() === ''
+    validation: (text: string) => /^\d+(\s+\d+)*$/.test(text.trim()) || text.trim() === '',
+    zone: COLUMN_ZONES_CALIBRATED.AMOUNT
   }
 ];
 
 export class BDKColumnDetectionService {
   
   /**
-   * Détecte spécifiquement 7 colonnes pour les documents BDK
+   * Détecte spécifiquement 7 colonnes pour les documents BDK avec zones calibrées
    */
   detectBDKColumns(items: TextItem[], pageWidth: number): Column[] {
     if (items.length === 0) return [];
     
-    console.log(`[BDK] Détection de colonnes pour ${items.length} éléments, largeur: ${pageWidth}`);
+    console.log(`[BDK] Détection de colonnes CALIBRÉES pour ${items.length} éléments, largeur: ${pageWidth}`);
     
-    // 1. Détecter les en-têtes de colonnes BDK
-    const headers = this.detectColumnHeaders(items);
-    console.log(`[BDK] En-têtes détectés:`, headers);
+    // 1. Créer les colonnes avec les zones calibrées
+    const columns = this.createCalibratedColumns(pageWidth);
     
-    // 2. Si on a des en-têtes, les utiliser pour définir les colonnes
-    let columns: Column[];
-    if (headers.length >= 3) {
-      columns = this.createColumnsFromHeaders(headers, items, pageWidth);
-    } else {
-      // 3. Sinon, diviser uniformément en 7 colonnes
-      columns = this.createUniformColumns(items, pageWidth);
-    }
-    
-    // 4. S'assurer qu'on a exactement 7 colonnes
-    this.ensureSevenColumns(columns, pageWidth);
-    
-    // 5. Distribuer les éléments dans les colonnes
+    // 2. Distribuer les éléments dans les colonnes calibrées
     this.distributeItemsToColumns(columns, items);
     
-    // 6. Validation finale
+    // 3. Validation finale
     this.validateColumnContent(columns);
     
-    console.log(`[BDK] ${columns.length} colonnes finales détectées`);
+    console.log(`[BDK] ${columns.length} colonnes CALIBRÉES appliquées`);
     columns.forEach((col, i) => {
       console.log(`[BDK] Colonne ${i} (${BDK_COLUMN_TEMPLATES[i]?.name || 'Unknown'}): ${col.texts.length} éléments, x: ${Math.round(col.xStart)}-${Math.round(col.xEnd)}`);
     });
+    
+    return columns;
+  }
+
+  /**
+   * Crée les colonnes avec les zones calibrées
+   */
+  private createCalibratedColumns(pageWidth: number): Column[] {
+    const columns: Column[] = [];
+    
+    // Calculer le facteur d'échelle basé sur la largeur de la page
+    // Les zones calibrées sont basées sur une largeur de référence d'environ 840px
+    const referencePage = 840;
+    const scaleFactor = pageWidth / referencePage;
+    
+    BDK_COLUMN_TEMPLATES.forEach((template, index) => {
+      columns.push({
+        xStart: template.zone.xMin * scaleFactor,
+        xEnd: template.zone.xMax * scaleFactor,
+        index,
+        texts: []
+      });
+    });
+    
+    console.log(`[BDK] Colonnes calibrées créées avec facteur d'échelle: ${scaleFactor.toFixed(3)}`);
     
     return columns;
   }
