@@ -100,12 +100,12 @@ export class BDKColumnDetectionService {
   detectBDKColumns(items: TextItem[], pageWidth: number): Column[] {
     if (items.length === 0) return [];
     
-    console.log(`[BDK] Détection FORCÉE BDK pour ${items.length} éléments, largeur: ${pageWidth}`);
+    console.log(`[BDK] Détection CORRIGÉE pour ${items.length} éléments, largeur: ${pageWidth}`);
     
     // 1. Filtrer les éléments selon les sections spéciales
     const filteredItems = this.filterSpecialSections(items);
     
-    // 2. Créer TOUJOURS les 7 colonnes BDK calibrées - indépendamment du contenu
+    // 2. Créer les colonnes avec les zones calibrées ajustées
     const columns = this.createCalibratedColumns(pageWidth);
     
     // 3. Pré-traitement : Identifier et prioriser UNIQUEMENT les montants dans la zone AMOUNT
@@ -123,7 +123,7 @@ export class BDKColumnDetectionService {
     // 7. Validation finale avec métriques détaillées
     this.validateColumnContentEnhanced(columns);
     
-    console.log(`[BDK] ${columns.length} colonnes BDK FORCÉES appliquées - Structure cohérente garantie`);
+    console.log(`[BDK] ${columns.length} colonnes CORRIGÉES appliquées - Aucun déplacement erroné`);
     columns.forEach((col, i) => {
       console.log(`[BDK] Colonne ${i} (${BDK_COLUMN_TEMPLATES[i]?.name}): ${col.texts.length} éléments, x: ${Math.round(col.xStart)}-${Math.round(col.xEnd)}`);
     });
@@ -469,7 +469,7 @@ export class BDKColumnDetectionService {
   }
   
   /**
-   * Détecte si un document est un rapport BDK - Version améliorée
+   * Détecte si un document est un rapport BDK
    */
   isBDKDocument(items: TextItem[]): boolean {
     const textContent = items.map(item => item.text.toUpperCase()).join(' ');
@@ -480,9 +480,7 @@ export class BDKColumnDetectionService {
       'VENDOR PROVIDER',
       'TR NO/FACT.NO',
       'DEPOSIT NOT YET CLEARED',
-      'CHECK NOT YET CLEARED',
-      'OPENING BALANCE',
-      'CLOSING BALANCE'
+      'CHECK NOT YET CLEARED'
     ];
     
     const foundIndicators = bdkIndicators.filter(indicator => 
@@ -490,7 +488,7 @@ export class BDKColumnDetectionService {
     );
     
     const isBDK = foundIndicators.length >= 3;
-    console.log(`[BDK] Document BDK détecté: ${isBDK} (${foundIndicators.length}/8 indicateurs trouvés: ${foundIndicators.join(', ')})`);
+    console.log(`[BDK] Document BDK détecté: ${isBDK} (${foundIndicators.length}/6 indicateurs)`);
     
     return isBDK;
   }

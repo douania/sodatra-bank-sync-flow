@@ -6,11 +6,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Eye, Grid, Table, FileText, Zap, Info } from 'lucide-react';
+import { Eye, Grid, Table, FileText, Zap } from 'lucide-react';
 import { positionalExtractionService, PositionalData, TextItem, TableData, Column } from '@/services/positionalExtractionService';
 import { BDK_COLUMN_TEMPLATES, bdkColumnDetectionService } from '@/services/bdkColumnDetectionService';
 import BDKDebugPanel from './BDKDebugPanel';
-import PositionDetailsPanel from './PositionDetailsPanel';
 
 interface PositionalPDFViewerProps {
   file: File;
@@ -355,7 +354,6 @@ export const PositionalPDFViewer: React.FC<PositionalPDFViewerProps> = ({
           <TabsList>
             <TabsTrigger value="visual">Vue Visuelle</TabsTrigger>
             <TabsTrigger value="tables">Tables Détectées</TabsTrigger>
-            <TabsTrigger value="positions">Détails Positions</TabsTrigger>
             <TabsTrigger value="stats">Statistiques</TabsTrigger>
             {isBDKDocument && (
               <TabsTrigger value="bdk-debug">Debug BDK</TabsTrigger>
@@ -407,21 +405,6 @@ export const PositionalPDFViewer: React.FC<PositionalPDFViewerProps> = ({
               <div className="text-center py-8">
                 <Table className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-muted-foreground">Aucune table détectée sur cette page</p>
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="positions" className="space-y-4">
-            {currentPage?.tables.length > 0 ? (
-              <PositionDetailsPanel
-                items={currentPage.items}
-                columns={currentPage.tables[0].columns}
-                isBDKDocument={isBDKDocument}
-              />
-            ) : (
-              <div className="text-center py-8">
-                <Info className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">Aucune donnée de position disponible</p>
               </div>
             )}
           </TabsContent>
