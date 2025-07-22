@@ -1,9 +1,8 @@
-
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle, AlertCircle, Calculator, TrendingUp, TrendingDown } from 'lucide-react';
+import { CheckCircle, AlertCircle, Calculator, TrendingUp, TrendingDown, Database, Info } from 'lucide-react';
 import { BDKParsedData } from '@/services/bdkExtractionService';
 
 interface BDKDetailedReportProps {
@@ -11,6 +10,15 @@ interface BDKDetailedReportProps {
 }
 
 export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) => {
+  console.log('🖥️ [BDKDetailedReport] Rendu avec données:', {
+    deposits: data.deposits.length,
+    checks: data.checks.length,
+    facilities: data.facilities.length,
+    impayes: data.impayes.length,
+    validation: data.validation,
+    timestamp: new Date().toISOString()
+  });
+
   const formatAmount = (amount: number) => amount.toLocaleString() + ' FCFA';
 
   const ValidationBadge = ({ isValid, discrepancy }: { isValid: boolean; discrepancy: number }) => (
@@ -31,18 +39,40 @@ export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) =>
 
   return (
     <div className="space-y-6">
-      {/* En-tête avec validation */}
+      {/* En-tête avec validation et informations sur la source des données */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-xl">Relevé BDK - {data.reportDate}</CardTitle>
-              <CardDescription>Analyse complète avec validation automatique</CardDescription>
+              <CardDescription>Analyse complète avec validation automatique (Extraction Positionnelle)</CardDescription>
             </div>
-            <ValidationBadge isValid={data.validation.isValid} discrepancy={data.validation.discrepancy} />
+            <div className="flex items-center space-x-2">
+              <Badge variant="outline" className="flex items-center space-x-1">
+                <Database className="h-3 w-3" />
+                <span>Données Positionnelles</span>
+              </Badge>
+              <ValidationBadge isValid={data.validation.isValid} discrepancy={data.validation.discrepancy} />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
+          {/* Panneau d'informations sur la source des données */}
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center space-x-2 mb-2">
+              <Info className="h-4 w-4 text-blue-600" />
+              <span className="text-sm font-medium text-blue-800">Source des Données</span>
+            </div>
+            <div className="text-sm text-blue-700">
+              <p>Les données affichées proviennent de l'extraction positionnelle calibrée. Les montants sont strictement séparés des numéros de référence.</p>
+              <p className="mt-1">
+                <strong>Dépôts:</strong> {data.deposits.length} lignes extraites | 
+                <strong> Chèques:</strong> {data.checks.length} lignes extraites | 
+                <strong> Validation:</strong> {data.validation.isValid ? 'Équilibrée' : 'Écart détecté'}
+              </p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-blue-50 p-4 rounded-lg">
               <div className="flex items-center space-x-2">
@@ -148,7 +178,7 @@ export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) =>
         <CardHeader>
           <CardTitle>Dépôts Non Crédités ({data.deposits.length})</CardTitle>
           <CardDescription>
-            Total: {formatAmount(data.totalDeposits)}
+            Total: {formatAmount(data.totalDeposits)} - Extraction positionnelle par colonnes calibrées
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -160,7 +190,7 @@ export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) =>
                 <TableHead>Description</TableHead>
                 <TableHead>Vendor</TableHead>
                 <TableHead>Client</TableHead>
-                <TableHead className="text-right">Montant</TableHead>
+                <TableHead className="text-right">Montant (FCFA)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -190,7 +220,7 @@ export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) =>
         <CardHeader>
           <CardTitle>Chèques Non Débités ({data.checks.length})</CardTitle>
           <CardDescription>
-            Total: {formatAmount(data.totalChecks)}
+            Total: {formatAmount(data.totalChecks)} - Séparation stricte numéros/montants
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -202,17 +232,17 @@ export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) =>
                 <TableHead>Description</TableHead>
                 <TableHead>Client</TableHead>
                 <TableHead>Référence</TableHead>
-                <TableHead className="text-right">Montant</TableHead>
+                <TableHead className="text-right">Montant (FCFA)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.checks.map((check, index) => (
                 <TableRow key={index} className={new Date(check.date.split('/').reverse().join('-')) < new Date('2020-01-01') ? 'bg-yellow-50' : ''}>
                   <TableCell>{check.date}</TableCell>
-                  <TableCell className="font-mono">{check.checkNumber}</TableCell>
+                  <TableCell className="font-mono text-blue-600">{check.checkNumber}</TableCell>
                   <TableCell>{check.description}</TableCell>
                   <TableCell>{check.client}</TableCell>
-                  <TableCell>{check.reference}</TableCell>
+                  <TableCell className="font-mono text-gray-600">{check.reference}</TableCell>
                   <TableCell className="text-right font-bold text-red-700">
                     {formatAmount(check.amount)}
                   </TableCell>
@@ -220,6 +250,13 @@ export const BDKDetailedReport: React.FC<BDKDetailedReportProps> = ({ data }) =>
               ))}
             </TableBody>
           </Table>
+          
+          {data.checks.length === 0 && (
+            <div className="text-center py-8 text-gray-500">
+              <p>Aucun chèque non débité détecté</p>
+              <p className="text-xs mt-1">Vérifiez que la section "CHECK Not yet cleared" est présente dans le document</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

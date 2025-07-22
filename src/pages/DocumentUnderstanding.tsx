@@ -27,6 +27,7 @@ const DocumentUnderstanding = () => {
   const [bdkDetailedData, setBdkDetailedData] = useState<BDKParsedData | null>(null);
   const [bankType, setBankType] = useState<string | null>(null);
   const [enhancedBDKResult, setEnhancedBDKResult] = useState<EnhancedBDKResult | null>(null);
+  const [analysisDebugInfo, setAnalysisDebugInfo] = useState<any>(null);
 
   const handleParseComplete = (rapport: RapportBancaire) => {
     console.log('Rapport traité avec le parser universel:', rapport);
@@ -65,16 +66,44 @@ const DocumentUnderstanding = () => {
     multiple: false
   });
 
+  const refreshAnalysis = async () => {
+    if (!selectedFile) return;
+    
+    console.log('🔄 [UI] Rafraîchissement forcé de l\'analyse');
+    
+    // Réinitialiser toutes les données
+    setFileType(null);
+    setConfidence(null);
+    setRawText(null);
+    setParsedData(null);
+    setBdkDetailedData(null);
+    setBankType(null);
+    setEnhancedBDKResult(null);
+    setAnalysisDebugInfo(null);
+    
+    // Relancer l'analyse
+    await analyzeFile();
+  };
+
   const analyzeFile = async () => {
     if (!selectedFile) return;
 
     setIsAnalyzing(true);
+    const analysisStartTime = Date.now();
+    console.log('🚀 [UI] Début de l\'analyse du fichier:', selectedFile.name);
+    
     try {
       // 1. Detect file type
       const detection = await enhancedFileProcessingService.detectFileType(selectedFile);
       setFileType(detection.detectedType);
       setConfidence(detection.confidence);
       setBankType(detection.bankType || null);
+      
+      console.log('🔍 [UI] Type détecté:', {
+        type: detection.detectedType,
+        confidence: detection.confidence,
+        bankType: detection.bankType
+      });
 
       // 2. Extract raw text
       const buffer = await selectedFile.arrayBuffer();
@@ -88,7 +117,7 @@ const DocumentUnderstanding = () => {
       
       setRawText(extractedText);
 
-      // 3. Process based on detected type - avec extraction positionnelle pour BDK
+      // 3. Process based on detected type - TOUJOURS utiliser l'extraction positionnelle pour BDK
       if (detection.detectedType === 'collectionReport') {
         const result = await excelProcessingService.processCollectionReportExcel(selectedFile);
         if (result.success && result.data) {
@@ -99,16 +128,33 @@ const DocumentUnderstanding = () => {
           });
         }
       } else if (detection.detectedType === 'bankAnalysis' || detection.detectedType === 'bankStatement') {
-        // Essayer l'extraction BDK avancée avec comparaison positionnelle
-        if (selectedFile.type === 'application/pdf' && extractedText.toUpperCase().includes('BDK')) {
+        // FORCER l'utilisation de l'extraction BDK avancée pour TOUS les PDF contenant BDK
+        if (selectedFile.type === 'application/pdf' && (extractedText.toUpperCase().includes('BDK') || detection.bankType === 'BDK')) {
+          console.log('🎯 [UI] Forçage de l\'extraction BDK avancée pour', selectedFile.name);
+          
           try {
             const enhancedResult = await enhancedBDKExtractionService.extractBDKWithPositional(selectedFile);
             setEnhancedBDKResult(enhancedResult);
+            setAnalysisDebugInfo(enhancedResult.debugInfo);
             
-            // Utiliser la meilleure méthode d'extraction
-            const bestResult = enhancedResult.isPositionalBetter ? 
+            console.log('📊 [UI] Résultats de l\'extraction BDK:', {
+              selectedMethod: enhancedResult.debugInfo.extractionMethod,
+              confidence: enhancedResult.confidence,
+              tables: enhancedResult.detectedTables.length,
+              timestamp: enhancedResult.debugInfo.timestamp
+            });
+            
+            // TOUJOURS utiliser la méthode positionnelle si disponible
+            const bestResult = enhancedResult.positionalExtraction.deposits.length > 0 ? 
               enhancedResult.positionalExtraction : 
               enhancedResult.basicExtraction;
+            
+            console.log('✅ [UI] Méthode sélectionnée pour l\'affichage:', {
+              method: enhancedResult.positionalExtraction.deposits.length > 0 ? 'Positionnelle' : 'Basique',
+              deposits: bestResult.deposits.length,
+              checks: bestResult.checks.length,
+              validation: bestResult.validation
+            });
             
             setBdkDetailedData(bestResult);
             setParsedData({
@@ -122,20 +168,26 @@ const DocumentUnderstanding = () => {
               validation: bestResult.validation,
               facilities: bestResult.facilities,
               impayes: bestResult.impayes,
-              extractionMethod: enhancedResult.isPositionalBetter ? 'Positionnelle' : 'Basique',
-              confidence: enhancedResult.confidence
+              extractionMethod: enhancedResult.debugInfo.extractionMethod,
+              confidence: enhancedResult.confidence,
+              debugInfo: enhancedResult.debugInfo
             });
             
-            toast.success('Analyse BDK avancée terminée', {
-              description: `Méthode: ${enhancedResult.isPositionalBetter ? 'Positionnelle' : 'Basique'} (${enhancedResult.confidence})`,
+            const analysisTime = Date.now() - analysisStartTime;
+            toast.success('Analyse BDK terminée', {
+              description: `Méthode: ${enhancedResult.debugInfo.extractionMethod} en ${analysisTime}ms`,
             });
           } catch (error) {
-            console.error('Erreur extraction BDK avancée:', error);
+            console.error('❌ [UI] Erreur extraction BDK avancée:', error);
+            toast.error('Erreur lors de l\'extraction BDK', {
+              description: error instanceof Error ? error.message : 'Erreur inconnue',
+            });
+            
             // Fallback sur l'ancien système
             const result = await bankReportProcessingService.processBankReportExcel(selectedFile);
             if (result.success && result.data) {
               setParsedData({
-                type: 'Bank Report',
+                type: 'Bank Report (Fallback)',
                 bankName: result.data.bank,
                 date: result.data.date,
                 openingBalance: result.data.openingBalance,
@@ -163,11 +215,14 @@ const DocumentUnderstanding = () => {
         }
       }
 
+      const totalAnalysisTime = Date.now() - analysisStartTime;
+      console.log('🏁 [UI] Analyse terminée en', totalAnalysisTime, 'ms');
+      
       toast.success('Analyse terminée', {
-        description: `Type détecté: ${detection.detectedType} (${detection.confidence})`,
+        description: `Type: ${detection.detectedType} (${detection.confidence}) en ${totalAnalysisTime}ms`,
       });
     } catch (error) {
-      console.error('Erreur analyse:', error);
+      console.error('❌ [UI] Erreur analyse:', error);
       toast.error('Erreur lors de l\'analyse', {
         description: error instanceof Error ? error.message : 'Erreur inconnue',
       });
@@ -281,8 +336,44 @@ const DocumentUnderstanding = () => {
               <Badge className={parsedData.validation.isValid ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}>
                 {parsedData.validation.isValid ? '✅ Validé' : '⚠️ Écart'}
               </Badge>
+              <Button
+                onClick={refreshAnalysis}
+                size="sm"
+                variant="outline"
+                disabled={isAnalyzing}
+              >
+                🔄 Actualiser
+              </Button>
             </div>
           </div>
+          
+          {/* Debug Info Panel */}
+          {analysisDebugInfo && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center space-x-2 mb-2">
+                <Eye className="h-5 w-5 text-blue-600" />
+                <span className="font-medium text-blue-800">Informations de Debug</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-medium">Extraction Basique:</span>
+                  <div className="ml-2 text-gray-600">
+                    {analysisDebugInfo.basicDepositsCount} dépôts, {analysisDebugInfo.basicChecksCount} chèques
+                  </div>
+                </div>
+                <div>
+                  <span className="font-medium">Extraction Positionnelle:</span>
+                  <div className="ml-2 text-gray-600">
+                    {analysisDebugInfo.positionalDepositsCount} dépôts, {analysisDebugInfo.positionalChecksCount} chèques
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 text-sm text-blue-700">
+                <strong>Méthode utilisée pour l'affichage:</strong> Positionnelle (forcée) | 
+                <strong> Timestamp:</strong> {new Date(analysisDebugInfo.timestamp).toLocaleTimeString()}
+              </div>
+            </div>
+          )}
           
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Card>
@@ -334,33 +425,6 @@ const DocumentUnderstanding = () => {
               </CardContent>
             </Card>
           </div>
-          
-          {enhancedBDKResult && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-center space-x-2 mb-2">
-                <Eye className="h-5 w-5 text-blue-600" />
-                <span className="font-medium text-blue-800">Comparaison des Méthodes</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="font-medium">Extraction Basique:</span>
-                  <div className="ml-2 text-gray-600">
-                    {enhancedBDKResult.basicExtraction.deposits.length} dépôts, {enhancedBDKResult.basicExtraction.checks.length} chèques
-                  </div>
-                </div>
-                <div>
-                  <span className="font-medium">Extraction Positionnelle:</span>
-                  <div className="ml-2 text-gray-600">
-                    {enhancedBDKResult.positionalExtraction.deposits.length} dépôts, {enhancedBDKResult.positionalExtraction.checks.length} chèques
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 text-sm text-blue-700">
-                <strong>Méthode sélectionnée:</strong> {enhancedBDKResult.isPositionalBetter ? 'Positionnelle' : 'Basique'} 
-                (confiance: {enhancedBDKResult.confidence})
-              </div>
-            </div>
-          )}
           
           {!parsedData.validation.isValid && (
             <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
@@ -571,9 +635,21 @@ const DocumentUnderstanding = () => {
             Analysez comment l'application interprète et traite chaque type de document
           </p>
         </div>
-        <Badge className="text-lg px-4 py-2 bg-blue-100 text-blue-800">
-          Outil de Diagnostic
-        </Badge>
+        <div className="flex items-center space-x-2">
+          <Badge className="text-lg px-4 py-2 bg-blue-100 text-blue-800">
+            Outil de Diagnostic
+          </Badge>
+          {selectedFile && (
+            <Button
+              onClick={refreshAnalysis}
+              disabled={isAnalyzing}
+              variant="outline"
+              size="sm"
+            >
+              {isAnalyzing ? 'Analyse...' : '🔄 Relancer'}
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card className="mb-8">
@@ -646,14 +722,26 @@ const DocumentUnderstanding = () => {
                         </p>
                       </div>
                     </div>
-                    <Button
-                      onClick={analyzeFile}
-                      disabled={isAnalyzing}
-                      className="flex items-center space-x-2"
-                    >
-                      <Brain className="h-4 w-4" />
-                      <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
-                    </Button>
+                    <div className="flex space-x-2">
+                      <Button
+                        onClick={analyzeFile}
+                        disabled={isAnalyzing}
+                        className="flex items-center space-x-2"
+                      >
+                        <Brain className="h-4 w-4" />
+                        <span>{isAnalyzing ? 'Analyse en cours...' : 'Analyser'}</span>
+                      </Button>
+                      {parsedData && (
+                        <Button
+                          onClick={refreshAnalysis}
+                          disabled={isAnalyzing}
+                          variant="outline"
+                          size="sm"
+                        >
+                          🔄
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

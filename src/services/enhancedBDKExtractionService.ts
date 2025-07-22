@@ -1,4 +1,3 @@
-
 import { bdkExtractionService, BDKParsedData } from './bdkExtractionService';
 import { positionalExtractionService, PositionalData, TextItem, TableData } from './positionalExtractionService';
 
@@ -8,6 +7,14 @@ export interface EnhancedBDKResult {
   isPositionalBetter: boolean;
   confidence: 'high' | 'medium' | 'low';
   detectedTables: TableData[];
+  debugInfo: {
+    basicDepositsCount: number;
+    positionalDepositsCount: number;
+    basicChecksCount: number;
+    positionalChecksCount: number;
+    extractionMethod: string;
+    timestamp: string;
+  };
 }
 
 export class EnhancedBDKExtractionService {
@@ -16,23 +23,51 @@ export class EnhancedBDKExtractionService {
    * Extraction BDK avec comparaison entre méthode basique et positionnelle
    */
   async extractBDKWithPositional(file: File): Promise<EnhancedBDKResult> {
+    console.log('🔍 [Enhanced BDK] Début de l\'extraction avec comparaison');
+    
     // Extraction basique (existante)
     const basicText = await this.extractTextFromPDF(file);
     const basicExtraction = bdkExtractionService.extractBDKData(basicText);
+    console.log('📊 [Enhanced BDK] Extraction basique terminée:', {
+      deposits: basicExtraction.deposits.length,
+      checks: basicExtraction.checks.length,
+      validation: basicExtraction.validation.isValid
+    });
     
     // Extraction positionnelle
     const positionalData = await positionalExtractionService.extractPositionalData(file);
     const positionalExtraction = await this.extractBDKFromPositional(positionalData);
+    console.log('🎯 [Enhanced BDK] Extraction positionnelle terminée:', {
+      deposits: positionalExtraction.deposits.length,
+      checks: positionalExtraction.checks.length,
+      validation: positionalExtraction.validation.isValid
+    });
     
     // Comparaison et sélection de la meilleure méthode
     const comparison = this.compareExtractions(basicExtraction, positionalExtraction);
+    
+    const debugInfo = {
+      basicDepositsCount: basicExtraction.deposits.length,
+      positionalDepositsCount: positionalExtraction.deposits.length,
+      basicChecksCount: basicExtraction.checks.length,
+      positionalChecksCount: positionalExtraction.checks.length,
+      extractionMethod: comparison.isPositionalBetter ? 'Positionnelle' : 'Basique',
+      timestamp: new Date().toISOString()
+    };
+    
+    console.log('✅ [Enhanced BDK] Résultat final:', {
+      selectedMethod: debugInfo.extractionMethod,
+      confidence: comparison.confidence,
+      debugInfo
+    });
     
     return {
       basicExtraction,
       positionalExtraction,
       isPositionalBetter: comparison.isPositionalBetter,
       confidence: comparison.confidence,
-      detectedTables: positionalData.flatMap(page => page.tables)
+      detectedTables: positionalData.flatMap(page => page.tables),
+      debugInfo
     };
   }
   
@@ -44,8 +79,11 @@ export class EnhancedBDKExtractionService {
       throw new Error('Aucune donnée positionnelle disponible');
     }
     
+    console.log('🔧 [Positional] Traitement de', positionalData.length, 'pages de données');
+    
     // Combiner tous les éléments de toutes les pages
     const allItems = positionalData.flatMap(page => page.items);
+    console.log('📝 [Positional] Total éléments à traiter:', allItems.length);
     
     // Extraire les sections spécifiques avec l'extraction positionnelle
     const openingBalanceItems = this.extractOpeningBalanceSection(allItems);
@@ -54,12 +92,27 @@ export class EnhancedBDKExtractionService {
     const facilitiesItems = this.extractFacilitiesSection(allItems);
     const impayesItems = this.extractImpayesSection(allItems);
     
+    console.log('📋 [Positional] Sections extraites:', {
+      openingBalance: openingBalanceItems.length,
+      deposits: depositsItems.length,
+      checks: checksItems.length,
+      facilities: facilitiesItems.length,
+      impayes: impayesItems.length
+    });
+    
     // Traiter chaque section
     const openingBalance = this.processOpeningBalance(openingBalanceItems);
     const deposits = this.processDeposits(depositsItems);
     const checks = this.processChecks(checksItems);
     const facilities = this.processFacilities(facilitiesItems);
     const impayes = this.processImpayes(impayesItems);
+    
+    console.log('⚡ [Positional] Sections traitées:', {
+      depositsCount: deposits.length,
+      checksCount: checks.length,
+      facilitiesCount: facilities.length,
+      impayesCount: impayes.length
+    });
     
     // Extraire la date du rapport
     const reportDate = this.extractReportDate(allItems);
@@ -75,7 +128,7 @@ export class EnhancedBDKExtractionService {
     const isValid = Math.abs(calculatedClosing - closingBalance) < 1000;
     const discrepancy = calculatedClosing - closingBalance;
     
-    return {
+    const result = {
       reportDate,
       openingBalance,
       deposits,
@@ -97,6 +150,16 @@ export class EnhancedBDKExtractionService {
         discrepancy
       }
     };
+    
+    console.log('🎯 [Positional] Résultat final généré:', {
+      deposits: result.deposits.length,
+      checks: result.checks.length,
+      totalDeposits: result.totalDeposits,
+      totalChecks: result.totalChecks,
+      validation: result.validation
+    });
+    
+    return result;
   }
   
   /**
@@ -139,8 +202,6 @@ export class EnhancedBDKExtractionService {
    */
   private processOpeningBalance(items: TextItem[]) {
     const text = positionalExtractionService.itemsToStructuredText(items);
-    
-    // Utiliser la méthode existante du service BDK
     return bdkExtractionService['extractOpeningBalance'](text);
   }
   
@@ -148,8 +209,11 @@ export class EnhancedBDKExtractionService {
    * Traite la section des dépôts avec une meilleure détection positionnelle
    */
   private processDeposits(items: TextItem[]) {
+    console.log('💰 [Deposits] Traitement de', items.length, 'éléments pour les dépôts');
+    
     // Grouper les éléments par lignes basées sur la position Y
     const rows = this.groupItemsByRows(items);
+    console.log('📊 [Deposits]', rows.length, 'lignes détectées');
     
     const deposits = [];
     
@@ -176,11 +240,18 @@ export class EnhancedBDKExtractionService {
             amount: this.parseAmount(sortedItems[sortedItems.length - 1].text)
           };
           
+          console.log('✅ [Deposits] Dépôt valide trouvé:', {
+            date: deposit.dateOperation,
+            amount: deposit.amount,
+            client: deposit.client
+          });
+          
           deposits.push(deposit);
         }
       }
     }
     
+    console.log('💰 [Deposits] Total dépôts extraits:', deposits.length);
     return deposits;
   }
   
@@ -188,7 +259,11 @@ export class EnhancedBDKExtractionService {
    * Traite la section des chèques avec une meilleure détection positionnelle
    */
   private processChecks(items: TextItem[]) {
+    console.log('💳 [Checks] Traitement de', items.length, 'éléments pour les chèques');
+    
     const rows = this.groupItemsByRows(items);
+    console.log('📊 [Checks]', rows.length, 'lignes détectées');
+    
     const checks = [];
     
     for (const row of rows) {
@@ -218,14 +293,23 @@ export class EnhancedBDKExtractionService {
             date: sortedItems[0].text,
             checkNumber: sortedItems[1].text,
             description: description || 'N/A',
+            client: '',
+            reference: '',
             amount: amount
           };
+          
+          console.log('✅ [Checks] Chèque valide trouvé:', {
+            date: check.date,
+            number: check.checkNumber,
+            amount: check.amount
+          });
           
           checks.push(check);
         }
       }
     }
     
+    console.log('💳 [Checks] Total chèques extraits:', checks.length);
     return checks;
   }
   
@@ -330,6 +414,11 @@ export class EnhancedBDKExtractionService {
     let positionalScore = 0;
     let basicScore = 0;
     
+    console.log('⚖️ [Comparison] Comparaison des méthodes:', {
+      basic: { deposits: basic.deposits.length, checks: basic.checks.length, valid: basic.validation.isValid },
+      positional: { deposits: positional.deposits.length, checks: positional.checks.length, valid: positional.validation.isValid }
+    });
+    
     // Comparer le nombre d'éléments extraits
     if (positional.deposits.length > basic.deposits.length) positionalScore++;
     else if (basic.deposits.length > positional.deposits.length) basicScore++;
@@ -355,6 +444,12 @@ export class EnhancedBDKExtractionService {
     
     if (scoreDiff >= 3) confidence = 'high';
     else if (scoreDiff <= 1) confidence = 'low';
+    
+    console.log('🏆 [Comparison] Résultat:', {
+      winner: isPositionalBetter ? 'Positionnelle' : 'Basique',
+      scores: { positional: positionalScore, basic: basicScore },
+      confidence
+    });
     
     return { isPositionalBetter, confidence };
   }
