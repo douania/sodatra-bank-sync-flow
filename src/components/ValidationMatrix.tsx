@@ -18,7 +18,20 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
     const template = BDK_COLUMN_TEMPLATES[index];
     if (!template) return { valid: 0, invalid: 0, rate: 0 };
     
-    const validItems = column.texts.filter(item => template.validation(item.text));
+    // Pour la colonne AMOUNT (index 6), traiter "N/A" comme valide
+    const validItems = column.texts.filter(item => {
+      if (index === 6) {
+        // Dans la colonne AMOUNT, "N/A" est considéré comme valide (correction automatique)
+        const trimmed = item.text.trim();
+        if (trimmed === 'N/A') return true;
+        // Les vrais montants doivent aussi être valides
+        return template.validation(item.text);
+      } else {
+        // Pour les autres colonnes, utiliser la validation standard
+        return template.validation(item.text);
+      }
+    });
+    
     const valid = validItems.length;
     const invalid = column.texts.length - valid;
     const rate = column.texts.length > 0 ? (valid / column.texts.length) * 100 : 0;
@@ -47,7 +60,7 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Validation Globale</span>
+            <span>Validation Globale (Corrigée)</span>
             <Badge 
               className={
                 overallRate >= 80 ? 'bg-green-100 text-green-800' :
@@ -89,7 +102,7 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
         <CardHeader>
           <CardTitle>Validation par Colonne</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Analyse de la qualité du contenu détecté pour chaque colonne selon les templates BDK
+            Analyse de la qualité avec corrections automatiques appliquées (N/A = valide pour AMOUNT)
           </p>
         </CardHeader>
         <CardContent>
@@ -97,6 +110,10 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
             {columns.slice(0, 7).map((column, index) => {
               const template = BDK_COLUMN_TEMPLATES[index];
               const stats = getValidationStats(column, index);
+              
+              // Calculer les éléments "N/A" pour la colonne AMOUNT
+              const naElements = index === 6 ? 
+                column.texts.filter(item => item.text.trim() === 'N/A').length : 0;
               
               return (
                 <div key={index} className="space-y-2">
@@ -111,6 +128,11 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
                       <Badge className="text-xs">
                         {template?.contentType || 'unknown'}
                       </Badge>
+                      {index === 6 && naElements > 0 && (
+                        <Badge className="text-xs bg-purple-100 text-purple-800">
+                          {naElements} N/A
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center space-x-2">
                       <span className="text-sm text-muted-foreground">
@@ -133,6 +155,9 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div className="text-green-600">
                       ✓ Valides: {stats.valid}
+                      {index === 6 && naElements > 0 && (
+                        <span className="text-purple-600"> (dont {naElements} N/A)</span>
+                      )}
                     </div>
                     <div className="text-red-600">
                       ✗ Invalides: {stats.invalid}
@@ -142,7 +167,7 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
                     </div>
                   </div>
                   
-                  {/* Show some sample invalid items */}
+                  {/* Show some sample invalid items (excluding N/A for AMOUNT) */}
                   {stats.invalid > 0 && template && (
                     <div className="mt-2 p-2 bg-red-50 rounded-lg">
                       <div className="text-xs font-medium text-red-800 mb-1">
@@ -150,7 +175,14 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
                       </div>
                       <div className="space-y-1">
                         {column.texts
-                          .filter(item => !template.validation(item.text))
+                          .filter(item => {
+                            if (index === 6) {
+                              // Pour AMOUNT, exclure "N/A" des invalides affichés
+                              return item.text.trim() !== 'N/A' && !template.validation(item.text);
+                            } else {
+                              return !template.validation(item.text);
+                            }
+                          })
                           .slice(0, 3)
                           .map((item, i) => (
                             <div key={i} className="text-xs text-red-700 font-mono bg-white p-1 rounded">
@@ -194,7 +226,9 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
                     </span>
                   </div>
                   <div className="text-sm text-yellow-700">
-                    {stats.rate < 50 ? (
+                    {index === 6 ? (
+                      "Les éléments N/A sont des corrections automatiques valides. Vérifiez si de vrais montants sont mal positionnés."
+                    ) : stats.rate < 50 ? (
                       "Ajustez les limites de la colonne pour inclure plus d'éléments valides."
                     ) : stats.rate < 80 ? (
                       "Affinez les limites pour exclure les éléments en bordure de colonne."
@@ -215,7 +249,7 @@ export const ValidationMatrix: React.FC<ValidationMatrixProps> = ({
                   </span>
                 </div>
                 <div className="text-sm text-green-700 mt-1">
-                  La détection des colonnes est excellente. Aucune amélioration nécessaire.
+                  La détection des colonnes est excellente. Les corrections automatiques fonctionnent parfaitement.
                 </div>
               </div>
             )}

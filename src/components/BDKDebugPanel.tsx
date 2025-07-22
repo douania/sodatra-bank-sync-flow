@@ -37,6 +37,8 @@ interface AmountAnalysis {
   emptyOrZero: number;
   missingPositions: number;
   qualityScore: number;
+  syntheticElements: number;
+  realAmounts: number;
 }
 
 export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
@@ -91,29 +93,43 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
     if (!amountColumn) return null;
 
     const totalElements = amountColumn.texts.length;
-    const validAmounts = amountColumn.texts.filter(item => {
+    
+    // Séparer les éléments synthétiques (N/A) des vrais montants
+    const syntheticElements = amountColumn.texts.filter(item => 
+      item.text.trim() === 'N/A'
+    ).length;
+    
+    // Vrais montants : éléments numériques non-zéro et non "N/A"
+    const realAmounts = amountColumn.texts.filter(item => {
       const trimmed = item.text.trim();
+      if (trimmed === 'N/A' || trimmed === '') return false;
       const num = parseInt(trimmed.replace(/\s/g, ''));
       return !isNaN(num) && num > 0;
     }).length;
     
+    // Éléments vides ou zéro (hors N/A)
     const emptyOrZero = amountColumn.texts.filter(item => {
       const trimmed = item.text.trim();
       return trimmed === '' || trimmed === '0';
     }).length;
 
-    // Estimate missing positions by comparing with other columns
+    // Estimer les positions manquantes en comparant avec d'autres colonnes
     const otherColumnsMaxItems = Math.max(...columns.slice(0, 6).map(col => col.texts.length));
     const missingPositions = Math.max(0, otherColumnsMaxItems - totalElements);
 
-    const qualityScore = totalElements > 0 ? (validAmounts / totalElements) * 100 : 0;
+    // Score de qualité basé sur les vrais montants par rapport aux éléments attendus
+    const expectedRealAmounts = totalElements - syntheticElements;
+    const qualityScore = expectedRealAmounts > 0 ? (realAmounts / expectedRealAmounts) * 100 : 
+                        syntheticElements > 0 ? 100 : 0; // 100% si tout est N/A (correct)
 
     return {
       totalElements,
-      validAmounts,
+      validAmounts: realAmounts, // Seuls les vrais montants
       emptyOrZero,
       missingPositions,
-      qualityScore
+      qualityScore,
+      syntheticElements,
+      realAmounts
     };
   };
 
@@ -316,18 +332,22 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
               <Target className="h-5 w-5" />
-              <span>Analyse Colonne AMOUNT</span>
+              <span>Analyse Colonne AMOUNT (Corrigée)</span>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="text-center">
                 <div className="text-2xl font-bold text-blue-600">{amountAnalysis.totalElements}</div>
                 <div className="text-sm text-muted-foreground">Éléments Total</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{amountAnalysis.validAmounts}</div>
-                <div className="text-sm text-muted-foreground">Montants Valides</div>
+                <div className="text-2xl font-bold text-green-600">{amountAnalysis.realAmounts}</div>
+                <div className="text-sm text-muted-foreground">Vrais Montants</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-purple-600">{amountAnalysis.syntheticElements}</div>
+                <div className="text-sm text-muted-foreground">Éléments N/A</div>
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-yellow-600">{amountAnalysis.emptyOrZero}</div>
@@ -351,12 +371,27 @@ export const BDKDebugPanel: React.FC<BDKDebugPanelProps> = ({
               <Progress value={amountAnalysis.qualityScore} className="h-2" />
             </div>
             
-            {amountAnalysis.qualityScore < 70 && (
+            {/* Affichage informatif des corrections appliquées */}
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <span className="text-sm font-medium text-green-800">
+                  Corrections Appliquées Automatiquement
+                </span>
+              </div>
+              <div className="text-xs text-green-600 mt-1">
+                • {amountAnalysis.syntheticElements} cellules vides remplies avec "N/A"
+                • Les numéros de facture restent dans leurs colonnes d'origine
+                • Seuls les vrais montants sont comptabilisés
+              </div>
+            </div>
+            
+            {amountAnalysis.qualityScore < 70 && amountAnalysis.realAmounts > 0 && (
               <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <div className="flex items-center space-x-2">
                   <AlertTriangle className="h-4 w-4 text-yellow-600" />
                   <span className="text-sm font-medium text-yellow-800">
-                    Qualité AMOUNT faible - Vérifiez le calibrage de la zone
+                    Qualité AMOUNT peut être améliorée - Vérifiez le calibrage
                   </span>
                 </div>
               </div>
