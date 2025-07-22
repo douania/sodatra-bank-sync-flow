@@ -166,28 +166,60 @@ export class EnhancedBDKExtractionService {
    * Extrait la section du solde d'ouverture
    */
   private extractOpeningBalanceSection(items: TextItem[]): TextItem[] {
-    return positionalExtractionService.extractSection(items, 'OPENING BALANCE');
+    console.log('🔍 [Sections] Recherche section OPENING BALANCE...');
+    const section = positionalExtractionService.extractSection(items, 'OPENING BALANCE');
+    console.log(`📋 [Sections] Section OPENING BALANCE: ${section.length} éléments trouvés`);
+    return section;
   }
   
   /**
-   * Extrait la section des dépôts
+   * Extrait la section des dépôts - CORRIGÉ
    */
   private extractDepositsSection(items: TextItem[]): TextItem[] {
-    return positionalExtractionService.extractSection(items, 'DEPOSIT NOT YET CLEARED', 'TOTAL DEPOSIT');
+    console.log('🔍 [Sections] Recherche section DEPOSIT NOT YET CLEARED...');
+    // Utiliser les bons mots-clés vus dans les logs
+    const section = positionalExtractionService.extractSection(items, 'DEPOSIT NOT YET CLEARED', 'TOTAL DEPOSIT');
+    console.log(`📋 [Sections] Section DEPOSITS: ${section.length} éléments trouvés`);
+    
+    if (section.length === 0) {
+      console.log('⚠️ [Sections] Tentative avec mots-clés alternatifs pour les dépôts...');
+      // Essayer des variations alternatives
+      const altSection = positionalExtractionService.extractSection(items, 'ADD : DEPOSIT NOT YET CLEARED', 'TOTAL DEPOSIT');
+      console.log(`📋 [Sections] Section DEPOSITS (alternative): ${altSection.length} éléments trouvés`);
+      return altSection;
+    }
+    
+    return section;
   }
   
   /**
-   * Extrait la section des chèques
+   * Extrait la section des chèques - CORRIGÉ
    */
   private extractChecksSection(items: TextItem[]): TextItem[] {
-    return positionalExtractionService.extractSection(items, 'CHECK Not yet cleared', 'TOTAL (B)');
+    console.log('🔍 [Sections] Recherche section CHECK NOT YET CLEARED...');
+    // Utiliser les bons mots-clés vus dans les logs
+    const section = positionalExtractionService.extractSection(items, 'CHECK NOT YET CLEARED', 'TOTAL (B)');
+    console.log(`📋 [Sections] Section CHECKS: ${section.length} éléments trouvés`);
+    
+    if (section.length === 0) {
+      console.log('⚠️ [Sections] Tentative avec mots-clés alternatifs pour les chèques...');
+      // Essayer des variations alternatives
+      const altSection = positionalExtractionService.extractSection(items, 'LESS : CHECK NOT YET CLEARED', 'TOTAL (B)');
+      console.log(`📋 [Sections] Section CHECKS (alternative): ${altSection.length} éléments trouvés`);
+      return altSection;
+    }
+    
+    return section;
   }
   
   /**
-   * Extrait la section des facilités
+   * Extrait la section des facilités - CORRIGÉ
    */
   private extractFacilitiesSection(items: TextItem[]): TextItem[] {
-    return positionalExtractionService.extractSection(items, 'BANK FACILITY');
+    console.log('🔍 [Sections] Recherche section BANK FACILITY...');
+    const section = positionalExtractionService.extractSection(items, 'BANK FACILITY');
+    console.log(`📋 [Sections] Section BANK FACILITY: ${section.length} éléments trouvés`);
+    return section;
   }
   
   /**

@@ -272,26 +272,67 @@ export class PositionalExtractionService {
   }
   
   /**
-   * Extrait une section spécifique basée sur des mots-clés
+   * Extrait une section spécifique basée sur des mots-clés - AMÉLIORÉ
    */
   extractSection(items: TextItem[], startKeyword: string, endKeyword?: string): TextItem[] {
-    const startIndex = items.findIndex(item => 
-      item.text.toUpperCase().includes(startKeyword.toUpperCase())
-    );
+    console.log(`🔍 [Section] Recherche de "${startKeyword}" vers "${endKeyword || 'fin'}"`);
     
-    if (startIndex === -1) return [];
+    // Recherche insensible à la casse avec correspondance partielle
+    const startIndex = items.findIndex(item => {
+      const itemUpper = item.text.toUpperCase().trim();
+      const keywordUpper = startKeyword.toUpperCase().trim();
+      
+      // Vérifier si le texte contient le mot-clé (correspondance partielle)
+      const contains = itemUpper.includes(keywordUpper);
+      
+      if (contains) {
+        console.log(`✅ [Section] Début trouvé: "${item.text}" (contient "${startKeyword}")`);
+      }
+      
+      return contains;
+    });
+    
+    if (startIndex === -1) {
+      console.log(`❌ [Section] Mot-clé de début "${startKeyword}" non trouvé`);
+      return [];
+    }
     
     let endIndex = items.length;
     if (endKeyword) {
-      const foundEndIndex = items.findIndex((item, index) => 
-        index > startIndex && item.text.toUpperCase().includes(endKeyword.toUpperCase())
-      );
+      const foundEndIndex = items.findIndex((item, index) => {
+        if (index <= startIndex) return false;
+        
+        const itemUpper = item.text.toUpperCase().trim();
+        const endKeywordUpper = endKeyword.toUpperCase().trim();
+        
+        const contains = itemUpper.includes(endKeywordUpper);
+        
+        if (contains) {
+          console.log(`✅ [Section] Fin trouvée: "${item.text}" (contient "${endKeyword}")`);
+        }
+        
+        return contains;
+      });
+      
       if (foundEndIndex !== -1) {
         endIndex = foundEndIndex;
+      } else {
+        console.log(`⚠️ [Section] Mot-clé de fin "${endKeyword}" non trouvé, utilisation de la fin du document`);
       }
     }
     
-    return items.slice(startIndex, endIndex);
+    const section = items.slice(startIndex, endIndex);
+    console.log(`📋 [Section] Section extraite: ${section.length} éléments (indices ${startIndex} à ${endIndex})`);
+    
+    // Afficher quelques éléments de la section pour débogage
+    if (section.length > 0) {
+      console.log('📝 [Section] Premiers éléments de la section:');
+      section.slice(0, Math.min(5, section.length)).forEach((item, i) => {
+        console.log(`  ${i}: "${item.text}" (x:${item.x.toFixed(1)}, y:${item.y.toFixed(1)})`);
+      });
+    }
+    
+    return section;
   }
   
   /**
