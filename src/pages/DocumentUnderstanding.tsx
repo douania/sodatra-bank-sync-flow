@@ -10,6 +10,7 @@ import { enhancedFileProcessingService } from '@/services/enhancedFileProcessing
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
 import { bdkExtractionService, BDKParsedData } from '@/services/bdkExtractionService';
+import { bdkColumnDetectionService } from '@/services/bdkColumnDetectionService';
 import { toast } from '@/components/ui/sonner';
 import UniversalBankParser from '@/components/UniversalBankParser';
 import BDKDetailedReport from '@/components/BDKDetailedReport';
@@ -117,7 +118,15 @@ const DocumentUnderstanding = () => {
       
       setRawText(extractedText);
 
-      // 3. Process based on detected type - TOUJOURS utiliser l'extraction positionnelle pour BDK
+      // 3. Vérifier si c'est un document BDK en analysant le contenu
+      const isBDKDocument = selectedFile.type === 'application/pdf' && 
+        (extractedText.toUpperCase().includes('BDK') || 
+         detection.bankType === 'BDK' ||
+         bdkColumnDetectionService.isBDKDocument([{ text: extractedText, x: 0, y: 0, width: 0, height: 0, fontSize: 12, fontName: '' }]));
+
+      console.log('🎯 [UI] Document BDK détecté:', isBDKDocument);
+
+      // 4. Process based on detected type - FORCER l'extraction BDK positionnelle pour TOUS les documents BDK
       if (detection.detectedType === 'collectionReport') {
         const result = await excelProcessingService.processCollectionReportExcel(selectedFile);
         if (result.success && result.data) {
@@ -128,9 +137,9 @@ const DocumentUnderstanding = () => {
           });
         }
       } else if (detection.detectedType === 'bankAnalysis' || detection.detectedType === 'bankStatement') {
-        // FORCER l'utilisation de l'extraction BDK avancée pour TOUS les PDF contenant BDK
-        if (selectedFile.type === 'application/pdf' && (extractedText.toUpperCase().includes('BDK') || detection.bankType === 'BDK')) {
-          console.log('🎯 [UI] Forçage de l\'extraction BDK avancée pour', selectedFile.name);
+        // FORCER l'utilisation de l'extraction BDK avancée pour TOUS les documents BDK identifiés
+        if (isBDKDocument) {
+          console.log('🎯 [UI] Forçage de l\'extraction BDK positionnelle pour', selectedFile.name);
           
           try {
             const enhancedResult = await enhancedBDKExtractionService.extractBDKWithPositional(selectedFile);
@@ -138,44 +147,35 @@ const DocumentUnderstanding = () => {
             setAnalysisDebugInfo(enhancedResult.debugInfo);
             
             console.log('📊 [UI] Résultats de l\'extraction BDK:', {
-              selectedMethod: enhancedResult.debugInfo.extractionMethod,
+              selectedMethod: 'Positionnelle (forcé pour BDK)',
               confidence: enhancedResult.confidence,
               tables: enhancedResult.detectedTables.length,
               timestamp: enhancedResult.debugInfo.timestamp
             });
             
-            // TOUJOURS utiliser la méthode positionnelle si disponible
-            const bestResult = enhancedResult.positionalExtraction.deposits.length > 0 ? 
-              enhancedResult.positionalExtraction : 
-              enhancedResult.basicExtraction;
+            // TOUJOURS utiliser la méthode positionnelle pour les documents BDK
+            console.log('✅ [UI] Utilisation FORCÉE de la méthode positionnelle pour document BDK');
             
-            console.log('✅ [UI] Méthode sélectionnée pour l\'affichage:', {
-              method: enhancedResult.positionalExtraction.deposits.length > 0 ? 'Positionnelle' : 'Basique',
-              deposits: bestResult.deposits.length,
-              checks: bestResult.checks.length,
-              validation: bestResult.validation
-            });
-            
-            setBdkDetailedData(bestResult);
+            setBdkDetailedData(enhancedResult.positionalExtraction);
             setParsedData({
               type: 'BDK Bank Report (Enhanced)',
               bankName: 'BDK',
-              date: bestResult.reportDate,
-              openingBalance: bestResult.openingBalance.amount,
-              closingBalance: bestResult.closingBalance,
-              totalDeposits: bestResult.totalDeposits,
-              totalChecks: bestResult.totalChecks,
-              validation: bestResult.validation,
-              facilities: bestResult.facilities,
-              impayes: bestResult.impayes,
-              extractionMethod: enhancedResult.debugInfo.extractionMethod,
+              date: enhancedResult.positionalExtraction.reportDate,
+              openingBalance: enhancedResult.positionalExtraction.openingBalance.amount,
+              closingBalance: enhancedResult.positionalExtraction.closingBalance,
+              totalDeposits: enhancedResult.positionalExtraction.totalDeposits,
+              totalChecks: enhancedResult.positionalExtraction.totalChecks,
+              validation: enhancedResult.positionalExtraction.validation,
+              facilities: enhancedResult.positionalExtraction.facilities,
+              impayes: enhancedResult.positionalExtraction.impayes,
+              extractionMethod: 'Positionnelle (BDK Forcé)',
               confidence: enhancedResult.confidence,
               debugInfo: enhancedResult.debugInfo
             });
             
             const analysisTime = Date.now() - analysisStartTime;
             toast.success('Analyse BDK terminée', {
-              description: `Méthode: ${enhancedResult.debugInfo.extractionMethod} en ${analysisTime}ms`,
+              description: `Méthode: Positionnelle (BDK Forcé) en ${analysisTime}ms`,
             });
           } catch (error) {
             console.error('❌ [UI] Erreur extraction BDK avancée:', error);
@@ -183,7 +183,7 @@ const DocumentUnderstanding = () => {
               description: error instanceof Error ? error.message : 'Erreur inconnue',
             });
             
-            // Fallback sur l'ancien système
+            // Fallback sur l'ancien système SEULEMENT en cas d'erreur
             const result = await bankReportProcessingService.processBankReportExcel(selectedFile);
             if (result.success && result.data) {
               setParsedData({
@@ -369,7 +369,7 @@ const DocumentUnderstanding = () => {
                 </div>
               </div>
               <div className="mt-2 text-sm text-blue-700">
-                <strong>Méthode utilisée pour l'affichage:</strong> Positionnelle (forcée) | 
+                <strong>Méthode utilisée pour l'affichage:</strong> Positionnelle (BDK forcé) | 
                 <strong> Timestamp:</strong> {new Date(analysisDebugInfo.timestamp).toLocaleTimeString()}
               </div>
             </div>
