@@ -1,10 +1,28 @@
-
+import { useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Building2, BarChart3, AlertTriangle, FileText, Users, TrendingUp, Upload } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Index = () => {
+  const navigate = useNavigate();
+  const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading && user) {
+      navigate('/dashboard');
+    }
+  }, [user, loading, navigate]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="container mx-auto px-6 py-12">
@@ -13,9 +31,21 @@ const Index = () => {
           <h1 className="text-4xl font-bold text-gray-900 mb-4">
             SODATRA - Système de Gestion Financière Multi-Banques
           </h1>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+          <p className="text-xl text-gray-600 max-w-3xl mx-auto mb-6">
             Plateforme de surveillance et d'analyse consolidée des positions bancaires en temps réel
           </p>
+          <div className="flex justify-center gap-4">
+            <Link to="/auth">
+              <Button size="lg" className="bg-blue-600 hover:bg-blue-700">
+                Se Connecter
+              </Button>
+            </Link>
+            <Link to="/auth">
+              <Button size="lg" variant="outline">
+                Créer un Compte
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Main Navigation Cards */}

@@ -4,8 +4,11 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./contexts/AuthContext";
 import Layout from "./components/Layout";
+import ProtectedRoute from "./components/ProtectedRoute";
 import Index from "./pages/Index";
+import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import FileUpload from "./pages/FileUpload";
 import FileUploadBulk from "./pages/FileUploadBulk";
@@ -26,23 +29,26 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/upload" element={<FileUpload />} />
-            <Route path="/upload-bulk" element={<FileUploadBulk />} />
-            <Route path="/consolidated" element={<ConsolidatedDashboard />} />
-            <Route path="/reconciliation" element={<Reconciliation />} />
-            <Route path="/document-understanding" element={<DocumentUnderstanding />} />
-        <Route path="/banking/dashboard" element={<BankingDashboard />} />
-        <Route path="/banking/reports" element={<BankingReports />} />
-        <Route path="/consolidated-dashboard" element={<ConsolidatedDashboard />} />
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/quality-control" element={<QualityControl />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Layout>
+        <AuthProvider>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/upload" element={<ProtectedRoute><FileUpload /></ProtectedRoute>} />
+              <Route path="/upload-bulk" element={<ProtectedRoute><FileUploadBulk /></ProtectedRoute>} />
+              <Route path="/consolidated" element={<ProtectedRoute><ConsolidatedDashboard /></ProtectedRoute>} />
+              <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
+              <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
+              <Route path="/banking/dashboard" element={<ProtectedRoute><BankingDashboard /></ProtectedRoute>} />
+              <Route path="/banking/reports" element={<ProtectedRoute><BankingReports /></ProtectedRoute>} />
+              <Route path="/consolidated-dashboard" element={<ProtectedRoute><ConsolidatedDashboard /></ProtectedRoute>} />
+              <Route path="/alerts" element={<ProtectedRoute><Alerts /></ProtectedRoute>} />
+              <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Layout>
+        </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
