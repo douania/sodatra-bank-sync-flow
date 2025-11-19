@@ -21,7 +21,7 @@ export type Database = {
           created_at: string | null
           details: Json | null
           id: string
-          ip_address: unknown | null
+          ip_address: unknown
           report_date: string | null
           user_id: string | null
         }
@@ -31,7 +31,7 @@ export type Database = {
           created_at?: string | null
           details?: Json | null
           id?: string
-          ip_address?: unknown | null
+          ip_address?: unknown
           report_date?: string | null
           user_id?: string | null
         }
@@ -41,7 +41,7 @@ export type Database = {
           created_at?: string | null
           details?: Json | null
           id?: string
-          ip_address?: unknown | null
+          ip_address?: unknown
           report_date?: string | null
           user_id?: string | null
         }
