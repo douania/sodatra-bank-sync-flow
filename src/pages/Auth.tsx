@@ -6,6 +6,21 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Lock, Mail } from 'lucide-react';
+import { z } from 'zod';
+import { toast } from 'sonner';
+
+const authSchema = z.object({
+  email: z.string()
+    .trim()
+    .email('Invalid email address')
+    .max(255, 'Email must be less than 255 characters'),
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(100, 'Password must be less than 100 characters')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one number')
+});
 
 const Auth = () => {
   const { signIn, signUp } = useAuth();
@@ -17,9 +32,18 @@ const Auth = () => {
     e.preventDefault();
     if (!email || !password) return;
     
+    // Validate input
+    const validation = authSchema.safeParse({ email, password });
+    if (!validation.success) {
+      toast.error(validation.error.issues[0].message);
+      return;
+    }
+    
     setLoading(true);
     try {
       await signIn(email, password);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to sign in');
     } finally {
       setLoading(false);
     }
@@ -29,15 +53,21 @@ const Auth = () => {
     e.preventDefault();
     if (!email || !password) return;
     
-    if (password.length < 6) {
+    // Validate input
+    const validation = authSchema.safeParse({ email, password });
+    if (!validation.success) {
+      toast.error(validation.error.issues[0].message);
       return;
     }
     
     setLoading(true);
     try {
       await signUp(email, password);
+      toast.success('Account created! Please check your email to verify your account.');
       setEmail('');
       setPassword('');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to create account');
     } finally {
       setLoading(false);
     }
@@ -134,7 +164,7 @@ const Auth = () => {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Password must be at least 6 characters
+                    Password must be at least 8 characters with uppercase, lowercase, and number
                   </p>
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
