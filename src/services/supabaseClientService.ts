@@ -1,31 +1,7 @@
+import { supabase } from '@/integrations/supabase/client';
 
-import { createClient } from '@supabase/supabase-js';
-import type { Database } from '@/integrations/supabase/types';
-
-const SUPABASE_URL = "https://leakcdbbawzysfqyqsnr.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxlYWtjZGJiYXd6eXNmcXlxc25yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA0Njc1MDYsImV4cCI6MjA2NjA0MzUwNn0.zLVhHBNTovKRP0CZohIvpkxamA04kiPdL6qIQ7-ZemM";
-
-// ⭐ CLIENT SUPABASE OPTIMISÉ avec timeouts étendus et retry
-export const supabaseOptimized = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  db: {
-    schema: 'public',
-  },
-  auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-  },
-  global: {
-    headers: {
-      'X-Client-Info': 'sodatra-optimized',
-    },
-  },
-  // ⭐ TIMEOUTS ÉTENDUS
-  realtime: {
-    params: {
-      eventsPerSecond: 10,
-    },
-  },
-});
+// ⭐ Utiliser le client Supabase partagé pour bénéficier de la session d'authentification
+export const supabaseOptimized = supabase;
 
 // ⭐ SERVICE DE RETRY AUTOMATIQUE
 interface RetryConfig {
