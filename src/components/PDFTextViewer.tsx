@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import DOMPurify from 'dompurify';
 import { Eye, EyeOff, Copy, Search, FileText } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -145,7 +146,7 @@ const PDFTextViewer: React.FC<PDFTextViewerProps> = ({
                 className="text-sm font-mono whitespace-pre-wrap max-h-96 overflow-y-auto leading-relaxed"
                 style={{ fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}
                 dangerouslySetInnerHTML={{ 
-                  __html: highlightedText || rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                  __html: DOMPurify.sanitize(highlightedText || rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;'))
                 }}
               />
             </div>
