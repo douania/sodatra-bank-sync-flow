@@ -1,19 +1,21 @@
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertTriangle, CheckCircle, X, Clock, RefreshCw } from 'lucide-react';
-import { databaseService } from '@/services/databaseService';
-import { BankReport, FundPosition } from '@/types/banking';
-import AlertsManager from '@/components/AlertsManager';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
 
 const Alerts = () => {
-  const [bankReports, setBankReports] = useState<BankReport[]>([]);
-  const [fundPosition, setFundPosition] = useState<FundPosition | null>(null);
-  const [loading, setLoading] = useState(true);
+  return (
+    <div className="space-y-6 p-6">
+      <h1 className="text-3xl font-bold text-gray-900">Alertes</h1>
+      <Alert className="border-orange-300 bg-orange-50">
+        <AlertTriangle className="h-5 w-5 text-orange-600" />
+        <AlertDescription className="text-orange-800 font-medium">
+          ⚠️ Module non connecté aux données réelles. Les alertes affichées sur cette page sont des données de démonstration fictives et ne doivent pas être utilisées en production.
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+};
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   useEffect(() => {

@@ -1,19 +1,21 @@
 
 import React, { useState, useEffect } from 'react';
-import { databaseService } from '@/services/databaseService';
-import { dashboardMetricsService } from '@/services/dashboardMetricsService';
-import { crossBankAnalysisService } from '@/services/crossBankAnalysisService';
-import { BankReport } from '@/types/banking';
-import ConsolidatedBankView from '@/components/ConsolidatedBankView';
-import ConsolidatedMetrics from '@/components/ConsolidatedMetrics';
-import ConsolidatedCharts from '@/components/ConsolidatedCharts';
-import CriticalAlertsPanel from '@/components/CriticalAlertsPanel';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
 
 const ConsolidatedDashboard = () => {
-  const [bankReports, setBankReports] = useState<BankReport[]>([]);
-  const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<any>(null);
-  const [dashboardMetrics, setDashboardMetrics] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  return (
+    <div className="space-y-6 p-6">
+      <h1 className="text-3xl font-bold text-gray-900">Vue Consolidée Multi-Banques</h1>
+      <Alert className="border-orange-300 bg-orange-50">
+        <AlertTriangle className="h-5 w-5 text-orange-600" />
+        <AlertDescription className="text-orange-800 font-medium">
+          ⚠️ Module non connecté aux données réelles. Les données consolidées affichées sur cette page ne doivent pas être utilisées en production. Veuillez vérifier la connexion aux données avant tout usage.
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+};
 
   useEffect(() => {
     loadData();
