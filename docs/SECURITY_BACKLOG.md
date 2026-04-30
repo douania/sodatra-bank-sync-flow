@@ -51,7 +51,7 @@ Le linter Supabase détecte **60 warnings** :
 **État** : À confirmer en Lot 2
 **Contexte** : Aucune table (sauf `universal_bank_reports`) n'a de `user_id`. L'architecture actuelle est de facto mono-société.
 **Décision préliminaire CTO** : mono-société / invite-only.
-**Impact** : Si mono-société, les policies deviennent `has_role(auth.uid(), 'user')` minimum. Si multi-tenant, il faut ajouter `organization_id` partout.
+**Impact** : Si mono-société, les policies doivent vérifier un rôle valide parmi admin, manager, auditor ou user. Ne pas supposer qu'un admin possède aussi le rôle user. Si multi-tenant, il faut ajouter `organization_id` partout.
 
 ### SEC-04 : Auditer les utilisateurs existants
 
