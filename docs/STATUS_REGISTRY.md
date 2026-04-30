@@ -62,7 +62,7 @@
 
 ## DOC-1 — Documentation CTO minimale
 
-**Statut : IN_PROGRESS**
+**Statut : CLOSED**
 
 **Objectif** : Créer la documentation interne pour tracer l'état réel du projet.
 
