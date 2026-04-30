@@ -146,7 +146,7 @@ export class SupabaseRetryService {
 
 // ⭐ HEARTBEAT SERVICE pour maintenir la connexion
 export class HeartbeatService {
-  private static intervalId: NodeJS.Timeout | null = null;
+  private static intervalId: ReturnType<typeof setInterval> | null = null;
   private static isActive = false;
 
   static start(intervalMs = 30000) { // 30 secondes
