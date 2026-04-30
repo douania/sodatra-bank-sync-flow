@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
 import { BankReconciliationEngine } from '@/components/BankReconciliationEngine';
 import CollectionsManager from '@/components/CollectionsManager';
 import IntelligentSyncManager from '@/components/IntelligentSyncManager';
@@ -16,7 +18,7 @@ const Reconciliation = () => {
 
   const handleSyncComplete = (result: SyncResult) => {
     console.log('✅ Synchronisation terminée:', result);
-    handleRefresh(); // Rafraîchir les autres composants
+    handleRefresh();
   };
 
   return (
@@ -24,6 +26,13 @@ const Reconciliation = () => {
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900">Rapprochement Bancaire</h1>
       </div>
+
+      <Alert className="border-orange-300 bg-orange-50">
+        <AlertTriangle className="h-5 w-5 text-orange-600" />
+        <AlertDescription className="text-orange-800 font-medium">
+          ⚠️ Module de rapprochement non connecté à des transactions bancaires réelles. Les résultats affichés peuvent être simulés et ne doivent pas être utilisés en production.
+        </AlertDescription>
+      </Alert>
 
       <Tabs defaultValue="sync" className="space-y-4">
         <TabsList className="grid w-full grid-cols-4">
