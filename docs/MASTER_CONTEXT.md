@@ -53,8 +53,8 @@ Excel/PDF → Upload (FileUpload.tsx) → Parsing client-side → Supabase table
 | Module | Page | Notes |
 |---|---|---|
 | Import fichiers Excel | `/upload` | Fonctionnel mais parsing permissif (voir DEFERRED_BACKLOG) |
-| Import bulk | `/upload-bulk` | Variante batch |
-| Dashboard principal | `/dashboard` | Affiche données réelles depuis Supabase |
+| Import bulk | `/upload-bulk` | Partiellement fiable / à vérifier — pipelines d'import divergents |
+| Dashboard principal | `/dashboard` | Connecté à Supabase, mais dépend de la fiabilité des données importées et de la correction des RLS |
 | Contrôle qualité | `/quality-control` | Analyse les données importées |
 | Analyse documents | `/document-understanding` | Extraction PDF |
 
