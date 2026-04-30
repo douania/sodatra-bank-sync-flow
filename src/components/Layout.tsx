@@ -47,7 +47,6 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
-    { name: 'Rapprochement', href: '/reconciliation', icon: GitMerge },
   ];
 
   return (
