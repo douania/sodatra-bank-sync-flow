@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
 
@@ -16,18 +15,8 @@ const Alerts = () => {
     </div>
   );
 };
-  const [lastRefresh, setLastRefresh] = useState(new Date());
 
-  useEffect(() => {
-    loadAlertsData();
-  }, []);
-
-  const loadAlertsData = async () => {
-    setLoading(true);
-    try {
-      const [reports, position] = await Promise.all([
-        databaseService.getLatestBankReports(),
-        databaseService.getLatestFundPosition()
+export default Alerts;
       ]);
       
       setBankReports(reports);
