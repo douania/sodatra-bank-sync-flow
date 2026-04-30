@@ -40,6 +40,18 @@ interface ModeleRapport {
 }
 
 const BankingReports: React.FC = () => {
+  return (
+    <div className="space-y-6 p-6">
+      <h1 className="text-3xl font-bold text-gray-900">Rapports Bancaires</h1>
+      <Alert className="border-orange-300 bg-orange-50">
+        <AlertTriangle className="h-5 w-5 text-orange-600" />
+        <AlertDescription className="text-orange-800 font-medium">
+          ⚠️ Module non connecté aux données réelles. Les rapports générés sur cette page utilisent des données de démonstration fictives et ne doivent pas être utilisés en production.
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+
   const [config, setConfig] = useState<RapportConfig>({
     type: 'executif',
     format: 'pdf',

@@ -23,19 +23,27 @@ const passwordSchema = z.object({
 });
 
 const ResetPassword = () => {
-  const { updatePassword, session } = useAuth();
+  const { updatePassword, session, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Redirect if no session (user hasn't clicked the reset link)
+    if (authLoading) return;
     if (!session) {
       toast.error('Invalid or expired reset link. Please request a new one.');
       navigate('/auth');
     }
-  }, [session, navigate]);
+  }, [session, authLoading, navigate]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();

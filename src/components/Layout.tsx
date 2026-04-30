@@ -47,11 +47,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
-    { name: 'Banking Dashboard', href: '/banking/dashboard', icon: Building2 },
-    { name: 'Rapports Bancaires', href: '/banking/reports', icon: FileText },
     { name: 'Rapprochement', href: '/reconciliation', icon: GitMerge },
-    { name: 'Vue Consolidée', href: '/consolidated', icon: BarChart3 },
-    { name: 'Alertes', href: '/alerts', icon: AlertTriangle },
   ];
 
   return (
