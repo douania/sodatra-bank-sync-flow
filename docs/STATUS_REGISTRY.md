@@ -74,20 +74,48 @@
 
 ---
 
-## Lot 2 — Sécurité Supabase / RLS
+## Lot 2B — Sécurité Supabase / RLS (migration additive)
 
-**Statut : PLANNED**
+**Statut : CLOSED_PENDING_FUNCTIONAL_TESTS**
 
-**Objectif** : Sécuriser réellement l'accès aux données.
+**Objectif** : Durcir réellement l'accès aux données via RLS additives, sans casser l'existant.
 
-**Périmètre prévu** :
-- Désactiver sign-up côté Supabase Dashboard (action manuelle)
-- Auditer les utilisateurs existants dans auth.users
-- Confirmer le modèle mono-société invite-only
-- Corriger les RLS `USING(true)` / `WITH CHECK(true)` sur les 10 tables concernées
-- Nettoyer les policies dupliquées
-- Révoquer l'accès GraphQL anon
-- Restreindre `has_role` EXECUTE à authenticated
+**Migration versionnée** :
+`supabase/migrations/20260430150428_04e86234-f4a5-447b-8638-8f85518fa4ef.sql`
+
+Le repo GitHub est aligné avec l'état réel Supabase. Aucune ré-exécution n'est nécessaire.
+
+**Contenu de la migration** (transaction `BEGIN/COMMIT`, idempotente) :
+- Promotion admin **additive** pour `sodatrasn@gmail.com` (`9539d4f5-a600-4bf7-931f-315e597e4441`) via `INSERT ... ON CONFLICT DO NOTHING` — le rôle `user` est conservé.
+- `REVOKE EXECUTE ON FUNCTION public.has_role(uuid, app_role) FROM PUBLIC` + `GRANT ... TO authenticated, service_role`.
+- `REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC` (aucun grant à `authenticated`).
+- `DROP POLICY IF EXISTS` + `CREATE POLICY` pour 11 tables métier (`bank_reports`, `bank_facilities`, `bank_evolution_tracking`, `collection_report`, `client_reconciliation`, `deposits_not_cleared`, `fund_position`, `fund_position_detail`, `fund_position_hold`, `impayes`, `universal_bank_reports`).
+- Modèle de droits :
+  - **SELECT** : `admin`, `manager`, `auditor` ou `user`.
+  - **INSERT / UPDATE** : `admin` ou `manager` (avec `WITH CHECK` explicite).
+  - **DELETE** : `admin` uniquement.
+- `universal_bank_reports` : les rapports orphelins (`user_id IS NULL`) restent visibles uniquement par `admin` et `manager`.
+
+**Vérifications post-migration effectuées** :
+- `sodatrasn@gmail.com` possède bien `user` + `admin`.
+- 0 policy `USING(true)` ou `WITH CHECK(true)` restante en schéma `public`.
+- Les fonctions `SECURITY DEFINER` ne sont plus exécutables par `anon` / `PUBLIC`.
+
+**Note importante** : la "distribution uniforme 4 policies × 13 tables" n'est **pas** un objectif. `user_roles`, `bank_audit_log` et `universal_bank_reports` ont volontairement des policies spécifiques à leur usage (admin-only, append-only audit, scoping par `user_id`).
+
+**Reste à faire avant `CLOSED`** :
+1. **SEC-01 — action manuelle utilisateur** : désactiver le sign-up dans le Dashboard Supabase
+   → Authentication → Providers → Email → *Disable sign ups*.
+   Lien : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/auth/providers
+2. **Tests fonctionnels** avec `sodatrasn@gmail.com` :
+   - Login OK.
+   - Dashboard chargé sans erreur console.
+   - Lecture `collection_report` OK.
+   - Import simple OK.
+   - Console navigateur : aucune erreur RLS / `42501`.
+   - Logs Supabase : aucun `permission denied for table ...`.
+
+Une fois les deux conditions remplies, passer le statut à `CLOSED` et ouvrir Lot 3.
 
 ---
 
