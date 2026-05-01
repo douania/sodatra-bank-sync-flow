@@ -82,6 +82,7 @@ Ces pages affichent un bandeau d'avertissement et ne sont plus accessibles depui
 2. **Modèle d'accès** : mono-société (SODATRA uniquement) — à confirmer formellement en Lot 2.
 3. **Pas de refactoring global** : corrections par micro-lots chirurgicaux, vérifiables et réversibles.
 4. **Ordre de priorité** : Sécurité → Intégrité données → Nettoyage → Fonctionnalités.
+5. **Lot 2B (2026-04-30)** : RLS durcies pour 11 tables métier via migration additive versionnée (`supabase/migrations/20260430150428_04e86234-f4a5-447b-8638-8f85518fa4ef.sql`). Modèle mono-société invite-only acté. Statut : `CLOSED_PENDING_FUNCTIONAL_TESTS` — reste à désactiver le sign-up Supabase (action manuelle) et à valider par tests applicatifs avec `sodatrasn@gmail.com`.
 
 ## Base de données
 
