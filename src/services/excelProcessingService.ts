@@ -72,35 +72,40 @@ class ExcelProcessingService {
           
           // Mapper vers le format CollectionReport
           const mappedData = excelMappingService.mapExcelRowToCollection(rowData);
-          
-          // ⭐ PLUS DE VÉRIFICATION BLOQUANTE - Juste un avertissement
-          if (!mappedData.excelFilename || !mappedData.excelSourceRow) {
-            warnings.push(`Ligne ${rowIndex + 1}: Traçabilité manquante (non-bloquant)`);
-          }
-          
+
+          // ⭐ Lot 3B.1 — la traçabilité est désormais garantie par le mapper (throw si absente).
+          // Si on arrive ici, mappedData.excelFilename / excelSourceRow sont valides.
           collections.push(mappedData);
           
         } catch (error) {
-          // ⭐ ERREUR NON-BLOQUANTE - Continuer le traitement
-          const errorMsg = `Ligne ${rowIndex + 1}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
-          console.warn('⚠️ Erreur non-bloquante:', errorMsg);
-          warnings.push(errorMsg); // Avertissement au lieu d'erreur
-          
-          // Continuer le traitement même avec des erreurs
+          // ⭐ Lot 3B.1 — Une erreur de traçabilité est BLOQUANTE pour la ligne concernée.
+          // La ligne est rejetée (errors[]), pas mise en warning silencieux.
+          // Les autres lignes continuent d'être traitées (pas d'arrêt global).
+          const rawMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+          const isTraceabilityError = /Traçabilité Excel manquante/i.test(rawMsg);
+          const errorMsg = `Ligne ${rowIndex + 1}: ${rawMsg}`;
+          if (isTraceabilityError) {
+            console.error('❌ Erreur traçabilité (bloquante pour la ligne):', errorMsg);
+            errors.push(errorMsg);
+          } else {
+            console.warn('⚠️ Erreur non-bloquante:', errorMsg);
+            warnings.push(errorMsg);
+          }
           continue;
         }
       }
       
-      console.log('📊 RÉSULTAT TRAITEMENT EXCEL (MODE TOLÉRANT):', {
+      console.log('📊 RÉSULTAT TRAITEMENT EXCEL:', {
         totalLignes: rawData.length - 1,
         collectionsTraitées: collections.length,
         erreurs: errors.length,
         avertissements: warnings.length
       });
       
-      // ⭐ SUCCÈS même avec des avertissements
+      // ⭐ Lot 3B.1 — succès uniquement si AUCUNE erreur critique de traçabilité.
+      // Les warnings non-bloquants n'invalident pas le succès global.
       return {
-        success: collections.length > 0, // Succès si au moins une collection est traitée
+        success: errors.length === 0 && collections.length > 0,
         data: collections,
         errors: errors.length > 0 ? errors : undefined,
         warnings: warnings.length > 0 ? warnings : undefined,
