@@ -403,24 +403,24 @@ export class IntelligentSyncService {
 
   // ⭐ UPSERT POUR ÉVITER LES VIOLATIONS DE CONTRAINTES
   private async upsertNewCollection(excelRow: any): Promise<void> {
-    // Vérifier si les champs de traçabilité Excel sont présents
-    if (!excelRow.excelFilename || !excelRow.excelSourceRow) {
-      console.warn('⚠️ Traçabilité Excel manquante:', {
-        filename: excelRow.excelFilename,
-        row: excelRow.excelSourceRow,
-        client: excelRow.clientCode
-      });
-      
-      // Générer des valeurs par défaut pour éviter les erreurs
-      excelRow.excelFilename = excelRow.excelFilename || `IMPORT_${new Date().toISOString().split('T')[0]}`;
-      excelRow.excelSourceRow = excelRow.excelSourceRow || Math.floor(Math.random() * 1000000);
-      
-      console.log('🔧 Valeurs de traçabilité générées:', {
-        filename: excelRow.excelFilename,
-        row: excelRow.excelSourceRow
-      });
+    // ⭐ Lot 3B.1 — Traçabilité OBLIGATOIRE. Aucune génération artificielle.
+    // Le mapper (excelMappingService) garantit déjà la présence des champs ;
+    // cette vérification est une seconde barrière pour les éventuels appelants directs.
+    if (!excelRow.excelFilename || typeof excelRow.excelFilename !== 'string') {
+      throw new Error(
+        `upsertNewCollection: excelFilename manquant pour clientCode="${excelRow.clientCode ?? ''}"`
+      );
     }
-    
+    if (
+      !excelRow.excelSourceRow ||
+      typeof excelRow.excelSourceRow !== 'number' ||
+      excelRow.excelSourceRow <= 0
+    ) {
+      throw new Error(
+        `upsertNewCollection: excelSourceRow manquant ou invalide pour clientCode="${excelRow.clientCode ?? ''}" / file="${excelRow.excelFilename}"`
+      );
+    }
+
     const collectionData = {
       report_date: excelRow.reportDate,
       client_code: excelRow.clientCode,
@@ -435,9 +435,9 @@ export class IntelligentSyncService {
       cheque_number: excelRow.chequeNumber || null,
       cheque_status: excelRow.chequeStatus || null,
       
-      // ⭐ TRAÇABILITÉ AMÉLIORÉE
-      excel_filename: excelRow.excelFilename || 'DAILY_IMPORT',
-      excel_source_row: excelRow.excelSourceRow || 0,
+      // ⭐ Lot 3B.1 — Traçabilité réelle, validée plus haut, jamais falsifiée.
+      excel_filename: excelRow.excelFilename,
+      excel_source_row: excelRow.excelSourceRow,
       excel_processed_at: new Date().toISOString(),
       
       // Tous les champs disponibles
