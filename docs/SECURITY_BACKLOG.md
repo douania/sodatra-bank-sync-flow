@@ -20,14 +20,14 @@ Le linter Supabase détecte **60 warnings** :
 
 ### SEC-01 : Sign-up public toujours actif côté Supabase
 
-**État** : `MANUAL_PENDING` — action manuelle utilisateur requise dans le Dashboard Supabase.
+**État** : `CLOSED` — Vérification visuelle 2026-05-04 — toggle *Allow new users to sign up* = OFF dans Authentication → Sign In / Providers.
 **Risque** : N'importe qui peut créer un compte et accéder à toutes les données bancaires (combiné avec RLS permissives).
 **Action** : Désactiver "Enable sign ups" dans Authentication → Providers → Email dans le dashboard Supabase.
 **Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/auth/providers
 
 ### SEC-02 : RLS permissives sur 10 tables
 
-**État** : `CLOSED_PENDING_FUNCTIONAL_TESTS` — corrigé par la migration Lot 2B (`supabase/migrations/20260430150428_04e86234-f4a5-447b-8638-8f85518fa4ef.sql`). Vérification post-migration : 0 policy `USING(true)` / `WITH CHECK(true)` restante en schéma `public`. Clôture définitive après tests applicatifs.
+**État** : `CLOSED` — corrigé par la migration Lot 2B (`supabase/migrations/20260430150428_04e86234-f4a5-447b-8638-8f85518fa4ef.sql`). Vérification post-migration : 0 policy `USING(true)` / `WITH CHECK(true)` restante en schéma `public`. Tests fonctionnels validés 2026-05-04 : login `sodatrasn@gmail.com`, dashboard, lecture `collection_report`, import simple, console sans `42501`/RLS, logs Postgres sans `permission denied`.
 **Risque** : Tout utilisateur authentifié peut lire, écrire, modifier et supprimer toutes les données de toutes les tables (sauf `user_roles`, `bank_audit_log`, `universal_bank_reports` qui ont des policies correctes).
 
 **Tables concernées** :
@@ -55,7 +55,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### SEC-04 : Auditer les utilisateurs existants
 
-**État** : `IN_PROGRESS` — promotion admin additive faite pour `sodatrasn@gmail.com` via Lot 2B. Reste à confirmer la liste complète de `auth.users` et supprimer d'éventuels comptes non autorisés.
+**État** : `CLOSED` — `auth.users` ne contient qu'un seul utilisateur, `sodatrasn@gmail.com`, portant les rôles `user` + `admin` (vérifié 2026-05-04). Aucun compte non autorisé à supprimer.
 **Action** : Vérifier quels comptes existent dans `auth.users`, supprimer les comptes non autorisés, s'assurer que les rôles sont correctement assignés.
 **Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/auth/users
 
