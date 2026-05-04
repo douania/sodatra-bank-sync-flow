@@ -521,42 +521,35 @@ export class IntelligentSyncService {
         );
         
         if (existingData?.id) {
-          // Mise à jour si existe
-          console.log(`🔄 Mise à jour de l'enregistrement existant (ID: ${existingData.id})`);
+          // ⭐ Lot 3B.1 — Doublon de traçabilité connu : import IDEMPOTENT.
+          // Update contrôlé sur l'enregistrement existant (même excel_filename + excel_source_row).
+          // Aucune nouvelle ligne créée, aucune traçabilité modifiée.
+          console.log(
+            `♻️ Doublon idempotent — update contrôlé (ID: ${existingData.id}, ` +
+            `file: ${collectionData.excel_filename}, row: ${collectionData.excel_source_row})`
+          );
           await SupabaseRetryService.executeWithRetry(
             async () => {
               const { error: updateError } = await supabaseOptimized
                 .from('collection_report')
                 .update(collectionData)
                 .eq('id', existingData.id);
-                
+
               if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
               return { success: true };
             }
           );
           return;
         } else {
-          // ⭐ FALLBACK ULTIME: Générer une nouvelle traçabilité unique
-          console.log(`🔄 Génération d'une nouvelle traçabilité unique pour éviter le conflit`);
-          
-          // Modifier la traçabilité pour éviter le conflit
-          const timestamp = Date.now();
-          collectionData.excel_filename = `${collectionData.excel_filename}_${timestamp}`;
-          collectionData.excel_source_row = Math.floor(Math.random() * 1000000);
-          
-          console.log(`🔧 Nouvelle traçabilité: ${collectionData.excel_filename}, ligne ${collectionData.excel_source_row}`);
-          
-          await SupabaseRetryService.executeWithRetry(
-            async () => {
-              const { error: insertError } = await supabaseOptimized
-                .from('collection_report')
-                .insert(collectionData);
-                
-              if (insertError) throw new Error(`Erreur insertion: ${insertError.message}`);
-              return { success: true };
-            }
+          // ⭐ Lot 3B.1 — Conflit unique signalé par Postgres mais aucun enregistrement
+          // trouvé via (excel_filename, excel_source_row). C'est une vraie incohérence.
+          // Aucune génération artificielle de traçabilité (plus de Date.now / Math.random).
+          throw new Error(
+            `Conflit unique_excel_traceability non résolu pour ` +
+            `file="${collectionData.excel_filename}" row=${collectionData.excel_source_row}. ` +
+            `Aucun enregistrement existant trouvé via (excel_filename, excel_source_row). ` +
+            `Investigation manuelle requise — pas de traçabilité artificielle générée.`
           );
-          return;
         }
       }
       
