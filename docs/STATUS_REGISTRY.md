@@ -113,14 +113,45 @@ Le repo GitHub est aligné avec l'état réel Supabase. Aucune ré-exécution n'
 
 ## Lot 3 — Import Excel fiable
 
-**Statut : PLANNED**
+**Statut : IN_PROGRESS** (ouvert 2026-05-04)
 
-**Périmètre prévu** :
-- Interdire les dates fallback "du jour" automatiques
-- Interdire les lignes sans traçabilité Excel
-- Interdire Math.random() pour contourner les contraintes d'unicité
-- Ne plus tronquer les montants avec Math.trunc
-- Valider les headers Excel avant import
+**Objectif** : fiabiliser l'import Excel bancaire pour empêcher la création de données fausses, non traçables, non idempotentes ou silencieusement corrompues.
+
+### Lot 3A — Audit & plan
+
+**Statut : CLOSED** (2026-05-04)
+
+Diagnostic du pipeline d'import Excel réellement actif et plan de découpage en micro-patches. Aucun runtime modifié.
+
+**Pipeline actif confirmé** :
+- `pages/FileUpload.tsx` → `fileProcessingService` → `excelProcessingService` → `excelMappingService` → `intelligentSyncService` → `collection_report`.
+- `pages/FileUploadBulk.tsx` → `enhancedFileProcessingService` (même chaîne aval).
+- `databaseService.saveBankReport` / `saveFundPosition` : insertions multi-tables séquentielles non transactionnelles.
+- Services PDF/BDK (`extractionService*`, `bdkExtractionService*`, `positionalExtractionService`, `advancedExtractionService`) **hors scope** Lot 3.
+
+**P0 confirmés (preuves dans le code, voir SECURITY_BACKLOG)** :
+1. **Traçabilité Excel falsifiée** par `UNKNOWN_FILE`, `0`, `Math.random()`, `Date.now()` (`excelMappingService` L. 104-105 ; `intelligentSyncService` L. 415-416, 543-545).
+2. **Dates invalides remplacées par la date du jour** (`excelMappingService.parseDate` L. 90, 192, 198, 204).
+3. **Montants tronqués silencieusement** par `Math.trunc` / `Math.floor(Math.abs(...))` (`excelMappingService` L. 216, 224 ; `databaseService.safeValue` L. 640).
+4. **Headers Excel non validés** (`excelProcessingService` L. 42-43 ; mapping `includes` partiel L. 204).
+5. **Mode "tolérant"** transformant les erreurs en warnings, succès si ≥ 1 ligne traitée (`excelProcessingService` L. 83-103).
+
+**P2 noté pour DEFERRED** : sauvegardes multi-tables non transactionnelles dans `databaseService` ; doublon de pipelines `fileProcessingService` / `enhancedFileProcessingService`.
+
+### Lot 3B — Exécution par micro-patches
+
+Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible, testable isolément.
+
+| Micro-lot | Périmètre | Statut |
+|---|---|---|
+| **3B.0** | Documentation de lancement (ce patch). | `CLOSED` (2026-05-04) |
+| **3B.1** | Traçabilité Excel obligatoire — supprimer `UNKNOWN_FILE` / `0` / `Math.random` / `Date.now` ; en cas de doublon `unique_excel_traceability` traiter comme idempotent (skip ou update contrôlé), jamais générer de traçabilité artificielle. Fichiers : `excelProcessingService.ts`, `excelMappingService.ts`, `intelligentSyncService.ts`. | `PLANNED` |
+| **3B.2** | Dates sans fallback silencieux — `parseDate` retourne `null` au lieu de `new Date()` ; ligne rejetée en erreur explicite si `reportDate` invalide. | `PLANNED` |
+| **3B.3** | Headers obligatoires — validation stricte avant parsing ; mapping exact case-insensitive ; matrice headers à confirmer métier. | `PLANNED` |
+| **3B.4** | Montants — supprimer `Math.trunc` silencieux ; règle différenciée : décimales nulles (`100000.00`) acceptées, décimales significatives (`100000.50`) rejetées pour `bigint`, conservées pour `numeric` (`taux`, `interet`, `commission`, `tob`, etc.). | `PLANNED` |
+| **3B.5** | Tests manuels finaux + documentation de clôture Lot 3. | `PLANNED` |
+
+**Interdictions Lot 3** : aucun refactor global, aucune migration, aucun changement RLS / auth / schéma Supabase, aucun service legacy supprimé sans preuve d'inutilisation, aucun fallback masquant les erreurs, aucune donnée par défaut artificielle.
 
 ---
 
