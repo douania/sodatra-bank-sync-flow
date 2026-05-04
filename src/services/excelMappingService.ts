@@ -85,7 +85,20 @@ class ExcelMappingService {
     const noChqBdValue = row.noChqBd;
     const typeResult = this.detectCollectionType(noChqBdValue);
     
-    // ⭐ MODE TOLÉRANT - Traçabilité optionnelle
+    // ⭐ Lot 3B.1 — Traçabilité Excel OBLIGATOIRE.
+    // La traçabilité (excel_filename + excel_source_row) doit avoir été assignée
+    // en amont par excelProcessingService.parseExcelRow. Aucun fallback toléré.
+    if (!row.excel_filename || typeof row.excel_filename !== 'string') {
+      throw new Error(
+        `Traçabilité Excel manquante (excel_filename) pour clientCode="${row.clientCode ?? ''}"`
+      );
+    }
+    if (!row.excel_source_row || typeof row.excel_source_row !== 'number' || row.excel_source_row <= 0) {
+      throw new Error(
+        `Traçabilité Excel manquante (excel_source_row) pour clientCode="${row.clientCode ?? ''}" / file="${row.excel_filename}"`
+      );
+    }
+
     const collection: CollectionReport = {
       reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
       clientCode: this.parseString(row.clientCode) || 'UNKNOWN',
@@ -100,9 +113,9 @@ class ExcelMappingService {
       chequeNumber: typeResult.chequeNumber,
       chequeStatus: typeResult.type === 'CHEQUE' ? 'PENDING' : undefined,
       
-      // ⭐ TRAÇABILITÉ OPTIONNELLE - Ne plus bloquer le traitement
-      excelFilename: row.excel_filename || 'UNKNOWN_FILE',
-      excelSourceRow: row.excel_source_row || 0,
+      // ⭐ TRAÇABILITÉ OBLIGATOIRE — validée plus haut, pas de fallback.
+      excelFilename: row.excel_filename,
+      excelSourceRow: row.excel_source_row,
       excelProcessedAt: new Date().toISOString(),
       
       // Champs optionnels
@@ -127,17 +140,8 @@ class ExcelMappingService {
       
       processingStatus: 'NEW'
     };
-    
-    // ⭐ AVERTISSEMENT au lieu d'erreur bloquante
-    if (!collection.excelFilename || !collection.excelSourceRow) {
-      console.warn('⚠️ TRAÇABILITÉ MANQUANTE (non-bloquant):', {
-        client: collection.clientCode,
-        filename: collection.excelFilename,
-        row: collection.excelSourceRow
-      });
-    }
-    
-    console.log('✅ Collection mappée (mode tolérant):', {
+
+    console.log('✅ Collection mappée:', {
       client: collection.clientCode,
       filename: collection.excelFilename,
       row: collection.excelSourceRow
