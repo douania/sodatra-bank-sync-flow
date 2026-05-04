@@ -76,7 +76,7 @@
 
 ## Lot 2B — Sécurité Supabase / RLS (migration additive)
 
-**Statut : CLOSED_PENDING_FUNCTIONAL_TESTS**
+**Statut : CLOSED** — clôturé le 2026-05-04.
 
 **Objectif** : Durcir réellement l'accès aux données via RLS additives, sans casser l'existant.
 
@@ -103,19 +103,11 @@ Le repo GitHub est aligné avec l'état réel Supabase. Aucune ré-exécution n'
 
 **Note importante** : la "distribution uniforme 4 policies × 13 tables" n'est **pas** un objectif. `user_roles`, `bank_audit_log` et `universal_bank_reports` ont volontairement des policies spécifiques à leur usage (admin-only, append-only audit, scoping par `user_id`).
 
-**Reste à faire avant `CLOSED`** :
-1. **SEC-01 — action manuelle utilisateur** : désactiver le sign-up dans le Dashboard Supabase
-   → Authentication → Providers → Email → *Disable sign ups*.
-   Lien : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/auth/providers
-2. **Tests fonctionnels** avec `sodatrasn@gmail.com` :
-   - Login OK.
-   - Dashboard chargé sans erreur console.
-   - Lecture `collection_report` OK.
-   - Import simple OK.
-   - Console navigateur : aucune erreur RLS / `42501`.
-   - Logs Supabase : aucun `permission denied for table ...`.
-
-Une fois les deux conditions remplies, passer le statut à `CLOSED` et ouvrir Lot 3.
+**Clôture validée le 2026-05-04** :
+- Tests fonctionnels OK : login `sodatrasn@gmail.com`, dashboard, lecture `collection_report`, import simple.
+- Console navigateur : 0 erreur `42501` / RLS.
+- Logs Postgres : 0 `permission denied for table`.
+- Sign-up Supabase désactivé visuellement : Authentication → Sign In / Providers → *Allow new users to sign up* = OFF.
 
 ---
 
