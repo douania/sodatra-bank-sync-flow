@@ -21,9 +21,11 @@ class ExcelMappingService {
     
     // Détection : DATE = EFFET
     if (this.isDate(noChqBdValue)) {
+      // ⭐ Lot 3B.2 — date optionnelle (effetEcheanceDate). Pas de fallback "aujourd'hui".
+      const parsed = this.parseDate(noChqBdValue, { required: false, fieldName: 'noChqBd' });
       return {
         type: 'EFFET',
-        effetEcheanceDate: this.parseDate(noChqBdValue) ? new Date(this.parseDate(noChqBdValue)!) : null,
+        effetEcheanceDate: parsed ? new Date(parsed) : null,
         chequeNumber: null,
         rawValue: String(noChqBdValue)
       };
@@ -107,8 +109,17 @@ class ExcelMappingService {
       );
     }
 
+    // ⭐ Lot 3B.2 — reportDate OBLIGATOIRE. Plus de fallback "date du jour".
+    // throw si invalide → la ligne est rejetée par excelProcessingService (errors[]).
+    const rowContext = `file="${row.excel_filename}", row=${row.excel_source_row}`;
+    const parsedReportDate = this.parseDate(row.reportDate, {
+      required: true,
+      fieldName: 'reportDate',
+      rowContext,
+    });
+
     const collection: CollectionReport = {
-      reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
+      reportDate: parsedReportDate as string, // garanti non-null par required:true
       clientCode: parsedClientCode,
       collectionAmount: this.parseNumber(row.collectionAmount) || 0,
       bankName: this.parseString(row.bankName),
@@ -126,8 +137,12 @@ class ExcelMappingService {
       excelSourceRow: row.excel_source_row,
       excelProcessedAt: new Date().toISOString(),
       
-      // Champs optionnels
-      dateOfValidity: this.parseDate(row.dateOfValidity),
+      // ⭐ Lot 3B.2 — Champs date optionnels : null/undefined + warning, jamais "aujourd'hui".
+      dateOfValidity: this.parseDate(row.dateOfValidity, {
+        required: false,
+        fieldName: 'dateOfValidity',
+        rowContext,
+      }) ?? undefined,
       factureNo: this.parseString(row.factureNo),
       noChqBd: this.parseString(row.noChqBd),
       bankNameDisplay: this.parseString(row.bankNameDisplay),
@@ -142,7 +157,11 @@ class ExcelMappingService {
       sgOrFaNo: this.parseString(row.sgOrFaNo),
       dNAmount: this.parseNumber(row.dNAmount),
       income: this.parseNumber(row.income),
-      dateOfImpay: this.parseDate(row.dateOfImpay),
+      dateOfImpay: this.parseDate(row.dateOfImpay, {
+        required: false,
+        fieldName: 'dateOfImpay',
+        rowContext,
+      }) ?? undefined,
       reglementImpaye: this.parseString(row.reglementImpaye),
       remarques: this.parseString(row.remarques),
       
@@ -157,64 +176,132 @@ class ExcelMappingService {
     
     return collection;
   }
-  
-  private parseDate(value: any): string | undefined {
-    if (!value) return undefined;
-    
-    try {
-      let date: Date;
-      
-      if (value instanceof Date) {
-        date = value;
-      } else if (typeof value === 'number') {
-        // Excel date serial number
-        date = new Date((value - 25569) * 86400 * 1000);
-      } else if (typeof value === 'string') {
-        // ⭐ AMÉLIORATION - Détecter le format français DD/MM/YYYY
-        const trimmedValue = value.trim();
-        
-        // Détection format français DD/MM/YYYY ou DD/MM/YY
-        const frenchDateRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
-        const frenchMatch = trimmedValue.match(frenchDateRegex);
-        
-        if (frenchMatch) {
-          const [, day, month, year] = frenchMatch;
-          
-          // Conversion vers le format ISO YYYY-MM-DD
-          let fullYear = parseInt(year);
-          if (fullYear < 100) {
-            // Gérer les années à 2 chiffres (25 -> 2025, 95 -> 1995)
-            fullYear += fullYear < 50 ? 2000 : 1900;
-          }
-          
-          const isoDate = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-          console.log(`📅 Date française détectée: ${trimmedValue} -> ${isoDate}`);
-          
-          const parsed = new Date(isoDate);
-          if (!isNaN(parsed.getTime())) {
-            date = parsed;
-          } else {
-            throw new Error(`Date française invalide après conversion: ${isoDate}`);
-          }
-        } else {
-          // Essayer le parsing standard pour les autres formats
-          const parsed = new Date(trimmedValue);
-          if (isNaN(parsed.getTime())) {
-            console.warn('⚠️ Date invalide, utilisation de la date du jour:', trimmedValue);
-            return new Date().toISOString().split('T')[0];
-          }
-          date = parsed;
-        }
-      } else {
-        console.warn('⚠️ Format de date non reconnu, utilisation de la date du jour:', value);
-        return new Date().toISOString().split('T')[0];
+
+  /**
+   * ⭐ Lot 3B.2 — parseDate strict, sans fallback "date du jour".
+   *
+   * Formats acceptés :
+   *  - Date JS valide
+   *  - Excel serial number (1 ≤ n < 80000)
+   *  - DD/MM/YYYY et DD/MM/YY (pivot 50 : <50 → 20xx, ≥50 → 19xx)
+   *  - YYYY-MM-DD (ISO)
+   *
+   * Comportement :
+   *  - required:true + invalide/absent → throw Error explicite (ligne rejetée).
+   *  - required:false + invalide → null + warning console (ligne acceptée).
+   *  - required:false + absent → null silencieux (champ vide légitime).
+   *
+   * Validation calendaire stricte : 31/02/2026 est rejeté.
+   */
+  private parseDate(
+    value: any,
+    opts: { required: boolean; fieldName: string; rowContext?: string }
+  ): string | null {
+    const { required, fieldName, rowContext } = opts;
+    const ctx = rowContext ? ` (${rowContext})` : '';
+
+    // Absence
+    if (value === null || value === undefined || value === '') {
+      if (required) {
+        throw new Error(`${fieldName} obligatoire mais absent${ctx}.`);
       }
-      
-      return date.toISOString().split('T')[0];
-    } catch (error) {
-      console.warn('⚠️ Erreur parsing date, utilisation de la date du jour:', value, error);
-      return new Date().toISOString().split('T')[0];
+      return null;
     }
+
+    const isoDate = this.tryParseDateStrict(value);
+
+    if (!isoDate) {
+      const raw = typeof value === 'string' ? value : String(value);
+      if (required) {
+        throw new Error(
+          `${fieldName} obligatoire mais invalide${ctx}. Valeur reçue: "${raw}". ` +
+            `Formats acceptés : Date, Excel serial, DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD.`
+        );
+      }
+      console.warn(
+        `⚠️ ${fieldName} invalide${ctx} — valeur="${raw}" — champ laissé vide (null).`
+      );
+      return null;
+    }
+
+    return isoDate;
+  }
+
+  /**
+   * Tente de parser une valeur en date ISO YYYY-MM-DD.
+   * Retourne null si invalide. Pas de side effect, pas de fallback.
+   */
+  private tryParseDateStrict(value: any): string | null {
+    let date: Date | null = null;
+
+    if (value instanceof Date) {
+      if (isNaN(value.getTime())) return null;
+      date = value;
+    } else if (typeof value === 'number') {
+      // Excel serial number — plage raisonnable [1, 80000) ≈ [1900, 2119]
+      if (!isFinite(value) || value < 1 || value >= 80000) return null;
+      date = new Date((value - 25569) * 86400 * 1000);
+      if (isNaN(date.getTime())) return null;
+    } else if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+
+      // ISO YYYY-MM-DD strict
+      const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoMatch) {
+        const [, y, m, d] = isoMatch;
+        return this.buildIsoIfValid(parseInt(y), parseInt(m), parseInt(d));
+      }
+
+      // DD/MM/YYYY ou DD/MM/YY (pivot 50)
+      const frMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (frMatch) {
+        const [, dStr, mStr, yStr] = frMatch;
+        let year = parseInt(yStr);
+        if (year < 100) {
+          year += year < 50 ? 2000 : 1900;
+        }
+        return this.buildIsoIfValid(year, parseInt(mStr), parseInt(dStr));
+      }
+
+      // Tout autre format string → REJET (plus de new Date(string) permissif)
+      return null;
+    } else {
+      return null;
+    }
+
+    // Cas Date / Excel serial : conversion en composantes UTC pour valider et formater.
+    const y = date.getUTCFullYear();
+    const m = date.getUTCMonth() + 1;
+    const d = date.getUTCDate();
+    return this.buildIsoIfValid(y, m, d);
+  }
+
+  /**
+   * Construit une date ISO YYYY-MM-DD si la combinaison Y/M/D est calendairement valide.
+   * Rejette 31/02, 31/04, etc.
+   */
+  private buildIsoIfValid(year: number, month: number, day: number): string | null {
+    if (
+      !Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) ||
+      year < 1900 || year > 2119 ||
+      month < 1 || month > 12 ||
+      day < 1 || day > 31
+    ) {
+      return null;
+    }
+    // Validation calendaire : reconstruire et comparer
+    const test = new Date(Date.UTC(year, month - 1, day));
+    if (
+      test.getUTCFullYear() !== year ||
+      test.getUTCMonth() !== month - 1 ||
+      test.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    const mm = String(month).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    return `${year}-${mm}-${dd}`;
   }
   
   private parseNumber(value: any): number | undefined {
