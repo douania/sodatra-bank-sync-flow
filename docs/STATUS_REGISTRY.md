@@ -216,6 +216,31 @@ Aucun runtime modifié pendant 3B.5 (phase de validation + documentation uniquem
 
 ---
 
+## Post-Lot 3 / DEF-15 — `reglement_impaye` typé `date`
+
+**Statut : `CLOSED` (2026-05-05)**
+**Hors numérotation Lot 3B** (Lot 3 déjà clôturé, non rouvert).
+
+**Périmètre runtime** : un seul fichier modifié — `src/services/excelMappingService.ts`. Le mapping
+`reglementImpaye: this.parseString(row.reglementImpaye)` est remplacé par
+`reglementImpaye: this.parseDate(row.reglementImpaye, { required: false, fieldName: 'reglementImpaye', rowContext }) ?? undefined`.
+Aligné sur le pattern `dateOfImpay` / `dateOfValidity` (Lot 3B.2). Pas de migration : audit DB pré-patch confirme `non_null = 0` sur 1 653 lignes — colonne `collection_report.reglement_impaye` conservée en `date`.
+
+**Non modifié** : `src/services/intelligentSyncService.ts`, `src/types/banking.ts`, schéma, RLS, auth, edge functions, `databaseService.safeValue` (DEF-10 inchangée).
+
+**Tests T1/T5 (réimport `COLLECTION REPORT-2026.xlsx`, validation SQL)** :
+- `total_file = 648`
+- `total_amount = 8 395 386 484`
+- `unknowns = 0`
+- `reglement_non_null = 0`
+- `duplicates_by_traceability = 0`
+
+**Tests T2/T3/T4** : acceptés par héritage des tests `parseDate` validés en Lot 3B.2 (date valide `15/06/2026` → `2026-06-15` ; texte invalide → warning console + `NULL` ; vide → `NULL` silencieux). Le patch ne crée pas de nouvelle logique, il raccorde `reglementImpaye` à `parseDate` existant.
+
+Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` historiques (DEF-14) hors périmètre.
+
+---
+
 ## Lot 4 — Nettoyage code mock / code mort
 
 **Statut : DEFERRED**
