@@ -250,3 +250,31 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 - Supprimer les fichiers orphelins (`ProcessingResultsDetailed copy.tsx`, `extractionService_PRODUCTION.ts`)
 - Nettoyer les imports inutilisés
 - Supprimer les migrations historiques discardées
+
+---
+
+## SEC-ENV-1 — Supabase env vars + hygiène configuration
+
+**Statut runtime/config : `CLOSED` (2026-05-05)**
+**Réserve** : rotation manuelle de la clé anon Supabase pending (à effectuer dans le dashboard Supabase par le CTO — clé publishable mais exposée dans des zips/commits historiques).
+
+**Objectif** : externaliser l'URL Supabase et la clé anon hardcodées dans `src/integrations/supabase/client.ts` vers des variables d'environnement Vite, sans toucher au reste.
+
+**Fichiers modifiés (runtime)** :
+- `src/integrations/supabase/client.ts` — lecture via `import.meta.env.VITE_SUPABASE_URL` et `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY`, `throw` explicite si absente.
+- `src/vite-env.d.ts` — typage `ImportMetaEnv` pour `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
+- `.env.example` — créé, noms de variables uniquement, aucune valeur réelle.
+
+**Non modifié (volontaire)** :
+- `.gitignore` — `.env` et `*.local` déjà ignorés, pas de risque de régression Git type Dakar Cargo Quotes.
+- `.env` — auto-peuplé par Lovable, non touché.
+- `src/integrations/supabase/types.ts`, `intelligentSyncService.ts`, `excelMappingService.ts`, `fileProcessingService.ts`, `enhancedFileProcessingService.ts`.
+- Supabase / migrations / RLS / auth / schéma / pipeline Excel / UX-SYNC-COUNTERS / Lot 4.
+
+**Validation runtime (2026-05-05)** :
+- `.env` présent avec les 3 variables attendues.
+- Vite démarre sans erreur `Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY`.
+- `/upload` à confirmer par rechargement complet navigateur côté CTO (warning HMR `useAuth must be used within an AuthProvider` considéré transitoire suite à `page reload src/vite-env.d.ts`).
+- Warning `Unknown message type: RESET_BLANK_CHECK` non lié (harness Lovable).
+
+**Suite** : voir P0-01 dans `docs/SECURITY_BACKLOG.md` — statut `CLOSED_PENDING_KEY_ROTATION`.
