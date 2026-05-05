@@ -6,6 +6,8 @@
 
 ## Import Excel
 
+> **Statut Lot 3 (clôturé 2026-05-05)** : DEF-01, DEF-02, DEF-03, DEF-04 = `CLOSED` via les micro-lots 3B.1 → 3B.4. Validation finale Lot 3B.5 (tests T1–T8) confirmée. Restent ouverts dans cette section : DEF-05 (pipelines divergents → Lot 4), DEF-14 (125 lignes UNKNOWN historiques → lot dédié), DEF-15 (`reglement_impaye` typage → sous-lot dédié).
+
 ### DEF-01 : Dates fallback "du jour" automatiques
 
 **Fichier** : `src/services/excelMappingService.ts`
