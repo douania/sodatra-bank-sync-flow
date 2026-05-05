@@ -308,21 +308,65 @@ class ExcelMappingService {
     if (value === null || value === undefined || value === '') {
       return undefined;
     }
-    
+
     try {
+      // ⭐ Lot 3B.4 — préserver décimales ET signe ; pas de Math.trunc, pas de Math.abs.
       if (typeof value === 'number') {
-        // ⭐ TRONQUER pour éviter les erreurs de type integer avec des valeurs comme "72.0"
-        return isNaN(value) ? undefined : Math.trunc(value);
+        return Number.isFinite(value) ? value : undefined;
       }
-      
+
       if (typeof value === 'string') {
-        // Nettoyer la chaîne (espaces, virgules comme séparateurs de milliers)
-        const cleaned = value.replace(/[\s,]/g, '').replace(',', '.');
-        const parsed = parseFloat(cleaned);
-        // ⭐ TRONQUER pour garantir un entier sans partie décimale
-        return isNaN(parsed) ? undefined : Math.trunc(parsed);
+        // 1. Trim + suppression espaces (incl. insécables U+00A0, fines U+202F).
+        let s = value.trim().replace(/[\s\u00A0\u202F]/g, '');
+        if (s === '') return undefined;
+
+        // 2. Normalisation séparateurs.
+        const hasComma = s.includes(',');
+        const hasDot = s.includes('.');
+
+        if (hasComma && hasDot) {
+          // Le séparateur le plus à droite est le décimal ; l'autre = milliers.
+          const lastComma = s.lastIndexOf(',');
+          const lastDot = s.lastIndexOf('.');
+          if (lastComma > lastDot) {
+            // Format européen : "1.000.000,75" → "1000000.75"
+            s = s.replace(/\./g, '').replace(',', '.');
+          } else {
+            // Format anglo : "1,000,000.75" → "1000000.75"
+            s = s.replace(/,/g, '');
+          }
+        } else if (hasComma) {
+          // Seulement ",". Heuristique : si plusieurs "," et groupes de 3 chiffres → milliers ;
+          // sinon → décimal.
+          const commaCount = (s.match(/,/g) || []).length;
+          const looksLikeThousands =
+            commaCount > 1 && /^[+-]?\d{1,3}(,\d{3})+$/.test(s);
+          if (looksLikeThousands) {
+            s = s.replace(/,/g, '');
+          } else {
+            s = s.replace(',', '.');
+          }
+        } else if (hasDot) {
+          // Seulement ".". Idem heuristique.
+          const dotCount = (s.match(/\./g) || []).length;
+          const looksLikeThousands =
+            dotCount > 1 && /^[+-]?\d{1,3}(\.\d{3})+$/.test(s);
+          if (looksLikeThousands) {
+            s = s.replace(/\./g, '');
+          }
+          // sinon : déjà décimal au format anglo, rien à faire.
+        }
+
+        // 3. Validation stricte (pas de parseFloat permissif).
+        if (!/^[+-]?\d+(\.\d+)?$/.test(s)) {
+          console.warn('⚠️ parseNumber: format invalide après normalisation:', value);
+          return undefined;
+        }
+
+        const parsed = Number(s);
+        return Number.isFinite(parsed) ? parsed : undefined;
       }
-      
+
       return undefined;
     } catch (error) {
       console.warn('⚠️ Erreur parsing nombre (non-bloquant):', value, error);
