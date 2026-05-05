@@ -11,6 +11,23 @@ export interface ExcelProcessingResult {
   totalProcessed?: number;
 }
 
+// ⭐ Lot 3B.3 — Matrice headers obligatoires / optionnels.
+// Décision CTO : DATE + CLIENT NAME + AMOUNT + BANK NAME obligatoires.
+// FACTURE N° / No.CHq /Bd / Date of VAlidity restent optionnels (warning si absents).
+// Matching strict trim + lowercase. Aucun `includes` partiel. Aucun fallback silencieux.
+const MANDATORY_HEADERS: { canonical: string; aliases: string[] }[] = [
+  { canonical: 'DATE', aliases: ['date', 'report date'] },
+  { canonical: 'CLIENT NAME', aliases: ['client name', 'client', 'client code', 'code client'] },
+  { canonical: 'AMOUNT', aliases: ['amount', 'montant', 'collection amount'] },
+  { canonical: 'BANK NAME', aliases: ['bank name', 'bank', 'banque'] },
+];
+
+const OPTIONAL_HEADERS: { canonical: string; aliases: string[] }[] = [
+  { canonical: 'FACTURE N°', aliases: ['facture n°', 'facture no', 'invoice no'] },
+  { canonical: 'No.CHq /Bd', aliases: ['no.chq /bd', 'no chèque/bd', 'chèque bd'] },
+  { canonical: 'Date of VAlidity', aliases: ['date of validity', 'date of valitidy', 'date of valitity', 'date validité'] },
+];
+
 class ExcelProcessingService {
   async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
     try {
@@ -56,10 +73,27 @@ class ExcelProcessingService {
       const headers = rawData[0] as string[];
       console.log('📊 En-têtes détectés:', headers);
       
+      // ⭐ Lot 3B.3 — Validation stricte des headers obligatoires AVANT parsing ligne par ligne.
+      const headerCheck = this.validateMandatoryHeaders(headers);
+      if (!headerCheck.ok) {
+        const msg = `Headers obligatoires manquants: ${headerCheck.missing.join(', ')}. Import annulé.`;
+        console.error('❌ Lot 3B.3 — rejet global du fichier:', msg);
+        return {
+          success: false,
+          errors: [msg],
+          sourceFile: file.name,
+        };
+      }
+
       // ⭐ MODE TOLÉRANT - Traiter les données même avec des erreurs
       const collections: CollectionReport[] = [];
       const errors: string[] = [];
       const warnings: string[] = [];
+
+      // ⭐ Lot 3B.3 — Headers optionnels manquants → warnings non bloquants.
+      for (const opt of headerCheck.missingOptional) {
+        warnings.push(`Header optionnel absent: ${opt} — colonne ignorée.`);
+      }
       
       for (let rowIndex = 1; rowIndex < rawData.length; rowIndex++) {
         const row = rawData[rowIndex] as any[];
