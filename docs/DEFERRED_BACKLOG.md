@@ -126,3 +126,15 @@
 - Lot dédié post-Lot 3B.5.
 - Rapport **avant** toute suppression.
 **Lot probable** : Lot dédié post-3B.5.
+
+### DEF-15 : `reglementImpaye` traité comme string alors que la colonne DB est `date`
+
+**Fichier runtime** : `src/services/excelMappingService.ts` (mapping `reglementImpaye: this.parseString(row.reglementImpaye)`)
+**Table** : `collection_report.reglement_impaye` (type `date`, nullable)
+**Problème** : Le mapper traite `reglementImpaye` via `parseString`, mais la colonne Postgres est de type `date`. Selon le contenu Excel, l'insertion peut échouer (cast string→date refusé) ou stocker une valeur incohérente.
+**Risque** : Erreurs d'insertion silencieuses ou données mal typées sur un champ métier (date de règlement d'impayé).
+**Pourquoi différé** : identifié pendant Lot 3B.2 (Dates) mais hors périmètre strict — éviter d'élargir 3B.2 et garder le micro-patch chirurgical.
+**Action future** :
+1. Audit : interroger `collection_report` pour voir la distribution réelle de `reglement_impaye` (nombre de lignes non null, valeurs).
+2. Décider : (a) corriger le mapper pour utiliser `parseDate(..., { required: false, fieldName: 'reglementImpaye' })`, ou (b) si seulement du texte libre est attendu, migrer la colonne en `text`.
+**Lot probable** : sous-lot dédié après Lot 3B.2 (avant ou après 3B.3, à arbitrer).
