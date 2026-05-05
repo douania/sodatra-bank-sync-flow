@@ -278,3 +278,46 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 - Warning `Unknown message type: RESET_BLANK_CHECK` non lié (harness Lovable).
 
 **Suite** : voir P0-01 dans `docs/SECURITY_BACKLOG.md` — statut `CLOSED_PENDING_KEY_ROTATION`.
+
+---
+
+## DB-INVENTORY-1 — Audit inventaire DB read-only
+
+**Statut : `REPORT_ONLY` (2026-05-05)**
+
+9 requêtes `SELECT` exécutées via `supabase--read_query`. Aucun fichier modifié, aucune migration créée.
+
+**Conclusions** :
+- DB prod opérationnellement saine. RLS cohérente (0 policy `USING(true)` / `WITH CHECK(true)` sur 52).
+- `collection_report` : 1 653 lignes, 0 doublon par `(excel_filename, excel_source_row)`, 740 `unique_excel_traceability NULL` historiques, 125 `client_code='UNKNOWN'` (DEF-14).
+- Divergence repo ↔ DB sur `collection_report.unique_excel_traceability` : déclarée `GENERATED ALWAYS` dans `cold_shore` / `shiny_waterfall`, mais `text` simple en DB réelle.
+- Source canonique d'idempotence métier = `idx_collection_excel_source` (UNIQUE partiel sur `excel_filename, excel_source_row`).
+
+---
+
+## DB-FREEZE-1 — PLAN_REVIEW migration de vérité DB
+
+**Statut : `PLAN_REVIEW` (2026-05-05)**
+
+Plan en deux étapes validé CTO : DB-FREEZE-1A (documentation) immédiat, DB-FREEZE-1B (migration réelle) différé jusqu'à staging.
+
+---
+
+## DB-FREEZE-1A — Documentation vérité DB
+
+**Statut : `CLOSED` (2026-05-05)**
+
+**Périmètre** : `docs/DB_TRUTH.md` (créé) + `docs/STATUS_REGISTRY.md` (mis à jour) uniquement.
+
+**Mentions** :
+- DB-FREEZE-1B (migration réelle) **différé jusqu'à staging**. Brouillon SQL inclus dans `docs/DB_TRUTH.md` §5, **non exécuté**.
+- Lot 4 reste **fermé**.
+- Aucun SQL exécuté, aucune migration créée, aucun runtime modifié.
+- `cold_shore` et `shiny_waterfall` documentées comme **historiques non-reproductibles**, conservées.
+- Règle canonique : idempotence portée par `idx_collection_excel_source`, `unique_excel_traceability` legacy.
+
+**Conditions d'ouverture DB-FREEZE-1B** :
+1. GO CTO sur le brouillon SQL.
+2. Environnement staging Supabase disponible.
+3. T-pré + T-post verts en staging.
+4. Snapshot prod pris.
