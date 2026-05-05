@@ -145,13 +145,18 @@ Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible
 | Micro-lot | Périmètre | Statut |
 |---|---|---|
 | **3B.0** | Documentation de lancement (ce patch). | `CLOSED` (2026-05-04) |
-| **3B.1** | Traçabilité Excel obligatoire — supprimer `UNKNOWN_FILE` / `0` / `Math.random` / `Date.now` ; en cas de doublon `unique_excel_traceability` traiter comme idempotent (skip ou update contrôlé), jamais générer de traçabilité artificielle. Fichiers : `excelProcessingService.ts`, `excelMappingService.ts`, `intelligentSyncService.ts`. | `PLANNED` |
+| **3B.1** | Traçabilité Excel obligatoire — supprimer `UNKNOWN_FILE` / `0` / `Math.random` / `Date.now` ; en cas de doublon `unique_excel_traceability` traiter comme idempotent (skip ou update contrôlé), jamais générer de traçabilité artificielle. Fichiers : `excelProcessingService.ts`, `excelMappingService.ts`, `intelligentSyncService.ts`. | `CLOSED` (2026-05-05) |
+| **3B.1.bis** | Optimisation idempotence — suppression du flux `upsert(onConflict) → 409 → retries → fallback` dans `upsertNewCollection`. Remplacé par `SELECT` par `(excel_filename, excel_source_row)` puis `UPDATE` ciblé si trouvé / `INSERT` simple sinon ; gestion 23505 résiduel via re-SELECT + UPDATE, sans retry sur INSERT. Fichier : `intelligentSyncService.ts`. | `CLOSED` (2026-05-05) |
 | **3B.2** | Dates sans fallback silencieux — `parseDate` retourne `null` au lieu de `new Date()` ; ligne rejetée en erreur explicite si `reportDate` invalide. | `PLANNED` |
 | **3B.3** | Headers obligatoires — validation stricte avant parsing ; mapping exact case-insensitive ; matrice headers à confirmer métier. | `PLANNED` |
 | **3B.4** | Montants — supprimer `Math.trunc` silencieux ; règle différenciée : décimales nulles (`100000.00`) acceptées, décimales significatives (`100000.50`) rejetées pour `bigint`, conservées pour `numeric` (`taux`, `interet`, `commission`, `tob`, etc.). | `PLANNED` |
 | **3B.5** | Tests manuels finaux + documentation de clôture Lot 3. | `PLANNED` |
 
 **Interdictions Lot 3** : aucun refactor global, aucune migration, aucun changement RLS / auth / schéma Supabase, aucun service legacy supprimé sans preuve d'inutilisation, aucun fallback masquant les erreurs, aucune donnée par défaut artificielle.
+
+**Note Lot 3B.1 (clôture 2026-05-05)** : Traçabilité Excel obligatoire validée — aucun `UNKNOWN_FILE`, `DAILY_IMPORT`, `IMPORT_`, `Math.random`, `Date.now` ; `excel_filename` réel + `excel_source_row > 0` obligatoires. Tests manuels (import + réimport) passés.
+
+**Note Lot 3B.1.bis (clôture 2026-05-05)** : Optimisation idempotence validée — suppression du flux `upsert → 409 → retries` ; réimport identique = `GET` par traçabilité puis `PATCH` ciblé ; aucun 409 ; aucune duplication ; aucun log `Upsert collection avec index fixe` ni `Supabase Operation échec définitif`.
 
 ---
 

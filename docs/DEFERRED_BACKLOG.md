@@ -27,7 +27,7 @@
 **Problème** : Quand la traçabilité manque (`excel_filename`, `excel_source_row`), le service génère des valeurs aléatoires pour contourner les contraintes d'unicité.
 **Risque** : Import non idempotent. Doublons possibles. Piste d'audit cassée.
 **Précisions Lot 3A** : fallbacks confirmés `IMPORT_<date>` + `Math.floor(Math.random()*1_000_000)` (L. 415-416), `Date.now()` + `Math.random()` en fallback ultime de conflit (L. 543-545), `excelMappingService` L. 104-105 (`UNKNOWN_FILE` / `0`).
-**Lot probable** : Lot 3 — **traité en priorité dans Lot 3B.1** (`IN_PROGRESS` depuis 2026-05-04, prochain micro-patch après 3B.0).
+**Lot probable** : Lot 3 — **traité par Lot 3B.1 + Lot 3B.1.bis** (`CLOSED` 2026-05-05). Traçabilité obligatoire (`excel_filename` réel + `excel_source_row > 0`) ; flux idempotent `SELECT` puis `UPDATE`/`INSERT` sans `upsert`/409/retries. Voir STATUS_REGISTRY.
 
 ### DEF-04 : Validation headers Excel
 
