@@ -147,6 +147,8 @@ Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible
 | **3B.0** | Documentation de lancement (ce patch). | `CLOSED` (2026-05-04) |
 | **3B.1** | Traçabilité Excel obligatoire — supprimer `UNKNOWN_FILE` / `0` / `Math.random` / `Date.now` ; en cas de doublon `unique_excel_traceability` traiter comme idempotent (skip ou update contrôlé), jamais générer de traçabilité artificielle. Fichiers : `excelProcessingService.ts`, `excelMappingService.ts`, `intelligentSyncService.ts`. | `CLOSED` (2026-05-05) |
 | **3B.1.bis** | Optimisation idempotence — suppression du flux `upsert(onConflict) → 409 → retries → fallback` dans `upsertNewCollection`. Remplacé par `SELECT` par `(excel_filename, excel_source_row)` puis `UPDATE` ciblé si trouvé / `INSERT` simple sinon ; gestion 23505 résiduel via re-SELECT + UPDATE, sans retry sur INSERT. Fichier : `intelligentSyncService.ts`. | `CLOSED` (2026-05-05) |
+| **3B.1.ter** | clientCode obligatoire (suppression du fallback `'UNKNOWN'`) + sélection intelligente de feuille (Feuil1 vs Feuil3 pivot) + matching headers strict case-insensitive. Fichiers : `excelMappingService.ts`, `excelProcessingService.ts`. | `CLOSED` (2026-05-05) |
+| **3B.1.quater** | Migration `collection_report` : conversion `varchar(50/100/20) → text` pour 7 colonnes (`facture_no`, `no_chq_bd`, `bank_name_display`, `depo_ref`, `sg_or_fa_no`, `match_method`, `processing_status`) ; trigger `trg_detect_collection_type` (dépendant de `no_chq_bd`) recréé à l'identique. Aucun runtime modifié. Migration : `supabase/migrations/20260505113550_5ad181bc-a3fe-4e63-9426-69c8c8077e74.sql`. | `CLOSED` (2026-05-05) |
 | **3B.2** | Dates sans fallback silencieux — `parseDate` retourne `null` au lieu de `new Date()` ; ligne rejetée en erreur explicite si `reportDate` invalide. | `PLANNED` |
 | **3B.3** | Headers obligatoires — validation stricte avant parsing ; mapping exact case-insensitive ; matrice headers à confirmer métier. | `PLANNED` |
 | **3B.4** | Montants — supprimer `Math.trunc` silencieux ; règle différenciée : décimales nulles (`100000.00`) acceptées, décimales significatives (`100000.50`) rejetées pour `bigint`, conservées pour `numeric` (`taux`, `interet`, `commission`, `tob`, etc.). | `PLANNED` |
@@ -157,6 +159,10 @@ Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible
 **Note Lot 3B.1 (clôture 2026-05-05)** : Traçabilité Excel obligatoire validée — aucun `UNKNOWN_FILE`, `DAILY_IMPORT`, `IMPORT_`, `Math.random`, `Date.now` ; `excel_filename` réel + `excel_source_row > 0` obligatoires. Tests manuels (import + réimport) passés.
 
 **Note Lot 3B.1.bis (clôture 2026-05-05)** : Optimisation idempotence validée — suppression du flux `upsert → 409 → retries` ; réimport identique = `GET` par traçabilité puis `PATCH` ciblé ; aucun 409 ; aucune duplication ; aucun log `Upsert collection avec index fixe` ni `Supabase Operation échec définitif`.
+
+**Note Lot 3B.1.ter (clôture 2026-05-05)** : Sélection intelligente de feuille validée — Feuil1 sélectionnée (vraies données détaillées), Feuil3 (pivot agrégé) rejetée. Mapping headers strict case-insensitive (suppression du `includes` partiel). `clientCode` obligatoire, plus de fallback `'UNKNOWN'`. Tests SQL post-import : `total_file = 648`, `unknown_in_file = 0`, `unknown_last_hour = 0`, `duplicates_by_traceability = 0`. Aucune migration, aucune RLS modifiée.
+
+**Note Lot 3B.1.quater (clôture 2026-05-05)** : Migration `collection_report` varchar → text appliquée (7 colonnes). Plus d'erreur `value too long for type character varying(50)`. Import complet `COLLECTION REPORT-2026.xlsx` validé : 648/648 lignes, 100 % succès, total réel 8 395 386 484 FCFA. Trigger `trg_detect_collection_type` recréé à l'identique. Aucune donnée touchée, aucune RLS modifiée, aucun fichier runtime modifié. Migration : `supabase/migrations/20260505113550_5ad181bc-a3fe-4e63-9426-69c8c8077e74.sql`.
 
 ---
 
