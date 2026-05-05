@@ -99,9 +99,17 @@ class ExcelMappingService {
       );
     }
 
+    // ⭐ Lot 3B.1.ter — clientCode OBLIGATOIRE. Plus de fallback 'UNKNOWN'.
+    const parsedClientCode = this.parseString(row.clientCode);
+    if (!parsedClientCode) {
+      throw new Error(
+        `clientCode manquant ou vide (file="${row.excel_filename}", row=${row.excel_source_row}). Ligne rejetée.`
+      );
+    }
+
     const collection: CollectionReport = {
       reportDate: this.parseDate(row.reportDate) || new Date().toISOString().split('T')[0], // Date par défaut si parsing échoue
-      clientCode: this.parseString(row.clientCode) || 'UNKNOWN',
+      clientCode: parsedClientCode,
       collectionAmount: this.parseNumber(row.collectionAmount) || 0,
       bankName: this.parseString(row.bankName),
       status: 'pending',

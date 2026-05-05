@@ -26,7 +26,21 @@ class ExcelProcessingService {
         };
       }
       
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      // ⭐ Lot 3B.1.ter — Sélection intelligente de la feuille de données.
+      // Ne plus utiliser SheetNames[0] aveuglément (Feuil3 = pivot agrégé).
+      // Identifier la feuille contenant les vrais headers obligatoires.
+      const selectedSheetName = this.selectDataSheet(workbook);
+      if (!selectedSheetName) {
+        return {
+          success: false,
+          errors: [
+            'Aucune feuille de données valide trouvée. Headers obligatoires requis: ' +
+            'date (DATE/Report Date), client (CLIENT NAME/Client/Code Client), montant (AMOUNT/Montant).'
+          ]
+        };
+      }
+      console.log(`📑 Feuille de données sélectionnée: ${selectedSheetName}`);
+      const worksheet = workbook.Sheets[selectedSheetName];
       const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
       
       console.log(`📊 Données brutes extraites: ${rawData.length} lignes`);
@@ -122,6 +136,33 @@ class ExcelProcessingService {
     }
   }
   
+  // ⭐ Lot 3B.1.ter — Sélection intelligente de feuille.
+  private selectDataSheet(workbook: XLSX.WorkBook): string | null {
+    const dateKeys = ['date', 'report date'];
+    const clientKeys = ['client name', 'client', 'client code', 'code client'];
+    const amountKeys = ['amount', 'montant', 'collection amount'];
+
+    for (const sheetName of workbook.SheetNames) {
+      const ws = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+      if (!rows.length) continue;
+      const headers = (rows[0] || [])
+        .filter((h: any) => h !== null && h !== undefined)
+        .map((h: any) => String(h).trim().toLowerCase());
+      if (!headers.length) continue;
+
+      const hasDate = dateKeys.some(k => headers.includes(k));
+      const hasClient = clientKeys.some(k => headers.includes(k));
+      const hasAmount = amountKeys.some(k => headers.includes(k));
+
+      if (hasDate && hasClient && hasAmount) {
+        return sheetName;
+      }
+      console.log(`📑 Feuille "${sheetName}" rejetée (date=${hasDate}, client=${hasClient}, amount=${hasAmount})`);
+    }
+    return null;
+  }
+
   private parseExcelRow(headers: string[], row: any[], rowNumber: number): any {
     const rowData: any = {
       _sourceRowNumber: rowNumber // Pour debug
@@ -154,20 +195,26 @@ class ExcelProcessingService {
     const headerMappings: { [key: string]: string } = {
       'Date': 'reportDate',
       'Report Date': 'reportDate',
+      'CLIENT NAME': 'clientCode',
       'Client Code': 'clientCode',
       'Client': 'clientCode',
       'Code Client': 'clientCode',
       'Amount': 'collectionAmount',
+      'AMOUNT': 'collectionAmount',
       'Collection Amount': 'collectionAmount',
       'Montant': 'collectionAmount',
       'Bank': 'bankName',
       'Banque': 'bankName',
       'Bank Name': 'bankName',
+      'BANK NAME': 'bankName',
       'Date of Validity': 'dateOfValidity',
+      'Date of VAlidity': 'dateOfValidity',
       'Date Validité': 'dateOfValidity',
       'Facture No': 'factureNo',
+      'FACTURE N°': 'factureNo',
       'Invoice No': 'factureNo',
       'No Chèque/BD': 'noChqBd',
+      'No.CHq /Bd': 'noChqBd',
       'Chèque BD': 'noChqBd',
       'Bank Name Display': 'bankNameDisplay',
       'Depot Ref': 'depoRef',
@@ -180,6 +227,7 @@ class ExcelProcessingService {
       'Commission': 'commission',
       'TOB': 'tob',
       'Frais Escompte': 'fraisEscompte',
+      'frais escompte': 'fraisEscompte',
       'Bank Commission': 'bankCommission',
       'SG or FA No': 'sgOrFaNo',
       'D/N Amount': 'dNAmount',
@@ -190,27 +238,17 @@ class ExcelProcessingService {
       'Remarques': 'remarques',
       'Comments': 'remarques'
     };
-    
-    // Recherche exacte
-    if (headerMappings[header]) {
-      return headerMappings[header];
-    }
-    
-    // Recherche insensible à la casse
-    const lowerHeader = header.toLowerCase();
+
+    // ⭐ Lot 3B.1.ter — Matching strict : trim + exact case-insensitive uniquement.
+    // Plus de `includes` partiel (créait des faux positifs ex: "Somme de AMOUNT" → Amount).
+    const normalized = String(header || '').trim().toLowerCase();
+    if (!normalized) return null;
+
     for (const [key, value] of Object.entries(headerMappings)) {
-      if (key.toLowerCase() === lowerHeader) {
+      if (key.trim().toLowerCase() === normalized) {
         return value;
       }
     }
-    
-    // Recherche partielle
-    for (const [key, value] of Object.entries(headerMappings)) {
-      if (lowerHeader.includes(key.toLowerCase()) || key.toLowerCase().includes(lowerHeader)) {
-        return value;
-      }
-    }
-    
     return null;
   }
 }
