@@ -28,6 +28,7 @@ export interface CollectionComparison {
 
 export interface SyncResult {
   new_collections: number;
+  idempotent_updates: number;
   enriched_collections: number;
   ignored_collections: number;
   errors: Array<{ collection: any; error: string }>;
@@ -323,6 +324,7 @@ export class IntelligentSyncService {
     
     const result: SyncResult = {
       new_collections: 0,
+      idempotent_updates: 0,
       enriched_collections: 0,
       ignored_collections: 0,
       errors: [],
@@ -354,8 +356,12 @@ export class IntelligentSyncService {
         try {
           switch (comparison.status) {
             case CollectionStatus.NEW:
-              await this.upsertNewCollection(comparison.excelRow);
-              result.new_collections++;
+              const outcome = await this.upsertNewCollection(comparison.excelRow);
+              if (outcome === 'inserted') {
+                result.new_collections++;
+              } else {
+                result.idempotent_updates++;
+              }
               break;
               
             case CollectionStatus.EXISTS_INCOMPLETE:
@@ -389,10 +395,15 @@ export class IntelligentSyncService {
       }
     }
 
-    result.summary.total_processed = result.new_collections + result.enriched_collections + result.ignored_collections;
+    result.summary.total_processed =
+      result.new_collections +
+      result.idempotent_updates +
+      result.enriched_collections +
+      result.ignored_collections;
     
     console.log('📊 SYNCHRONISATION QUOTIDIENNE TERMINÉE:', {
-      nouvelles: result.new_collections,
+      ajoutées_réellement: result.new_collections,
+      mises_à_jour_idempotentes: result.idempotent_updates,
       enrichies: result.enriched_collections,
       ignorées: result.ignored_collections,
       erreurs: result.errors.length
@@ -402,7 +413,7 @@ export class IntelligentSyncService {
   }
 
   // ⭐ UPSERT POUR ÉVITER LES VIOLATIONS DE CONTRAINTES
-  private async upsertNewCollection(excelRow: any): Promise<void> {
+  private async upsertNewCollection(excelRow: any): Promise<'inserted' | 'updated_idempotent'> {
     // ⭐ Lot 3B.1 — Traçabilité OBLIGATOIRE. Aucune génération artificielle.
     // Le mapper (excelMappingService) garantit déjà la présence des champs ;
     // cette vérification est une seconde barrière pour les éventuels appelants directs.
@@ -508,7 +519,7 @@ export class IntelligentSyncService {
         if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
         return { success: true };
       });
-      return;
+      return 'updated_idempotent';
     }
 
     // 3) Si absent : INSERT simple (pas de retry sur 23505 — déterministe)
@@ -521,7 +532,7 @@ export class IntelligentSyncService {
         `✨ Nouvelle collection insérée (file: ${collectionData.excel_filename}, ` +
         `row: ${collectionData.excel_source_row})`
       );
-      return;
+      return 'inserted';
     } catch (insertError: any) {
       // 4) Race condition rare : une autre exécution a inséré entre notre SELECT et notre INSERT.
       // On ne retry PAS l'INSERT (23505 est déterministe). On re-SELECT puis UPDATE.
@@ -566,6 +577,7 @@ export class IntelligentSyncService {
         if (updateError) throw new Error(`Erreur mise à jour (race): ${updateError.message}`);
         return { success: true };
       });
+      return 'updated_idempotent';
     }
   }
   

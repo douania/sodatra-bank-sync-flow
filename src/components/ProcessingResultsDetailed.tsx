@@ -215,9 +215,10 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                 <div className="mt-3 p-3 bg-blue-50 rounded-lg">
                   <p className="text-sm font-medium text-blue-800">Enrichissement Intelligent</p>
                   <div className="text-xs text-blue-600 mt-1">
-                    <div>Nouvelles: {results.data.syncResult.new_collections || 0}</div>
+                    <div>Ajoutées réellement: {results.data.syncResult.new_collections || 0}</div>
+                    <div>Mises à jour idempotentes: {results.data.syncResult.idempotent_updates || 0}</div>
                     <div>Enrichies: {results.data.syncResult.enriched_collections || 0}</div>
-                    <div>Ignorées: {results.data.syncResult.ignored_collections || 0}</div>
+                    <div>Ignorées / préservées: {results.data.syncResult.ignored_collections || 0}</div>
                   </div>
                 </div>
               )}
