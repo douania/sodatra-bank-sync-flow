@@ -153,7 +153,7 @@ Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible
 | **3B.2.bis** | Succès partiel contrôlé — `success: collections.length > 0`. Les lignes valides importées même si certaines lignes rejetées ; rejets listés dans `errors[]`. Cas test : 5 lignes synthétiques, 2 collections, 3 erreurs, 1 avertissement. | `CLOSED` (2026-05-05) |
 | **3B.3** | Headers obligatoires — validation stricte avant parsing ; mapping exact case-insensitive ; matrice headers à confirmer métier. | `CLOSED` (2026-05-05) |
 | **3B.4** | Montants — supprimer `Math.trunc` silencieux et `Math.abs` ; conserver les décimales et le signe ; validation regex stricte (pas de `parseFloat` permissif) ; heuristique séparateur le plus à droite pour formats mixtes ; normalisation espaces/NBSP/NNBSP. Périmètre `collection_report` : toutes les colonnes montant sont `numeric` (pas de `bigint`), donc décimales conservées telles quelles. | `CLOSED` (2026-05-05) |
-| **3B.5** | Tests manuels finaux + documentation de clôture Lot 3. | `PLANNED` |
+| **3B.5** | Tests finaux croisés (T1–T8) + documentation de clôture Lot 3. Aucun runtime modifié. | `CLOSED` (2026-05-05) |
 
 **Interdictions Lot 3** : aucun refactor global, aucune migration, aucun changement RLS / auth / schéma Supabase, aucun service legacy supprimé sans preuve d'inutilisation, aucun fallback masquant les erreurs, aucune donnée par défaut artificielle.
 
