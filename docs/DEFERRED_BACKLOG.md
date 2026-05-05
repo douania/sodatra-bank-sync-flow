@@ -12,7 +12,7 @@
 **Problème** : Quand une date est manquante ou invalide dans l'Excel, le service utilise `new Date()` comme fallback silencieux. Pour une application bancaire, cela crée des enregistrements avec des dates fausses.
 **Risque** : Données bancaires datées incorrectement → rapprochements faux, reporting erroné.
 **Raison du report** : Nécessite une décision métier sur le comportement correct (rejeter la ligne ? demander à l'utilisateur ?).
-**Lot probable** : Lot 3 — **traité dans Lot 3B.2** (`IN_PROGRESS` depuis 2026-05-04, voir STATUS_REGISTRY)
+**Lot probable** : Lot 3 — **traité dans Lot 3B.2** (`CLOSED` 2026-05-05). Le fallback `new Date()` comme date du jour automatique est supprimé du runtime. Les dates obligatoires invalides/absentes rejettent la ligne en erreur explicite. Les dates optionnelles invalides sont laissées à `NULL` avec warning. Voir STATUS_REGISTRY pour les preuves (T1–T7).
 
 ### DEF-02 : Math.trunc sur les montants
 
