@@ -178,6 +178,36 @@ class ExcelProcessingService {
   
   // ⭐ Lot 3B.1.ter — Sélection intelligente de feuille.
   private selectDataSheet(workbook: XLSX.WorkBook): string | null {
+    // (corps inchangé ci-dessous)
+    return this._selectDataSheetImpl(workbook);
+  }
+
+  // ⭐ Lot 3B.3 — Validation stricte des headers obligatoires/optionnels.
+  private validateMandatoryHeaders(headers: any[]): {
+    ok: boolean;
+    missing: string[];
+    missingOptional: string[];
+  } {
+    const normalized = (headers || [])
+      .filter((h: any) => h !== null && h !== undefined)
+      .map((h: any) => String(h).trim().toLowerCase());
+
+    const missing: string[] = [];
+    for (const { canonical, aliases } of MANDATORY_HEADERS) {
+      const found = aliases.some(a => normalized.includes(a));
+      if (!found) missing.push(canonical);
+    }
+
+    const missingOptional: string[] = [];
+    for (const { canonical, aliases } of OPTIONAL_HEADERS) {
+      const found = aliases.some(a => normalized.includes(a));
+      if (!found) missingOptional.push(canonical);
+    }
+
+    return { ok: missing.length === 0, missing, missingOptional };
+  }
+
+  private _selectDataSheetImpl(workbook: XLSX.WorkBook): string | null {
     const dateKeys = ['date', 'report date'];
     const clientKeys = ['client name', 'client', 'client code', 'code client'];
     const amountKeys = ['amount', 'montant', 'collection amount'];
