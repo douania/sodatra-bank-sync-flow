@@ -26,7 +26,21 @@ class ExcelProcessingService {
         };
       }
       
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      // ⭐ Lot 3B.1.ter — Sélection intelligente de la feuille de données.
+      // Ne plus utiliser SheetNames[0] aveuglément (Feuil3 = pivot agrégé).
+      // Identifier la feuille contenant les vrais headers obligatoires.
+      const selectedSheetName = this.selectDataSheet(workbook);
+      if (!selectedSheetName) {
+        return {
+          success: false,
+          errors: [
+            'Aucune feuille de données valide trouvée. Headers obligatoires requis: ' +
+            'date (DATE/Report Date), client (CLIENT NAME/Client/Code Client), montant (AMOUNT/Montant).'
+          ]
+        };
+      }
+      console.log(`📑 Feuille de données sélectionnée: ${selectedSheetName}`);
+      const worksheet = workbook.Sheets[selectedSheetName];
       const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
       
       console.log(`📊 Données brutes extraites: ${rawData.length} lignes`);
