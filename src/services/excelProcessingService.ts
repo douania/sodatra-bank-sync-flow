@@ -136,11 +136,6 @@ class ExcelProcessingService {
     }
   }
   
-  private parseExcelRow(headers: string[], row: any[], rowNumber: number): any {
-    // (méthode existante)
-    return this._parseExcelRowImpl(headers, row, rowNumber);
-  }
-
   // ⭐ Lot 3B.1.ter — Sélection intelligente de feuille.
   private selectDataSheet(workbook: XLSX.WorkBook): string | null {
     const dateKeys = ['date', 'report date'];
@@ -168,7 +163,7 @@ class ExcelProcessingService {
     return null;
   }
 
-  private _parseExcelRowImpl(headers: string[], row: any[], rowNumber: number): any {
+  private parseExcelRow(headers: string[], row: any[], rowNumber: number): any {
     const rowData: any = {
       _sourceRowNumber: rowNumber // Pour debug
     };
@@ -200,20 +195,26 @@ class ExcelProcessingService {
     const headerMappings: { [key: string]: string } = {
       'Date': 'reportDate',
       'Report Date': 'reportDate',
+      'CLIENT NAME': 'clientCode',
       'Client Code': 'clientCode',
       'Client': 'clientCode',
       'Code Client': 'clientCode',
       'Amount': 'collectionAmount',
+      'AMOUNT': 'collectionAmount',
       'Collection Amount': 'collectionAmount',
       'Montant': 'collectionAmount',
       'Bank': 'bankName',
       'Banque': 'bankName',
       'Bank Name': 'bankName',
+      'BANK NAME': 'bankName',
       'Date of Validity': 'dateOfValidity',
+      'Date of VAlidity': 'dateOfValidity',
       'Date Validité': 'dateOfValidity',
       'Facture No': 'factureNo',
+      'FACTURE N°': 'factureNo',
       'Invoice No': 'factureNo',
       'No Chèque/BD': 'noChqBd',
+      'No.CHq /Bd': 'noChqBd',
       'Chèque BD': 'noChqBd',
       'Bank Name Display': 'bankNameDisplay',
       'Depot Ref': 'depoRef',
@@ -226,6 +227,7 @@ class ExcelProcessingService {
       'Commission': 'commission',
       'TOB': 'tob',
       'Frais Escompte': 'fraisEscompte',
+      'frais escompte': 'fraisEscompte',
       'Bank Commission': 'bankCommission',
       'SG or FA No': 'sgOrFaNo',
       'D/N Amount': 'dNAmount',
@@ -236,27 +238,17 @@ class ExcelProcessingService {
       'Remarques': 'remarques',
       'Comments': 'remarques'
     };
-    
-    // Recherche exacte
-    if (headerMappings[header]) {
-      return headerMappings[header];
-    }
-    
-    // Recherche insensible à la casse
-    const lowerHeader = header.toLowerCase();
+
+    // ⭐ Lot 3B.1.ter — Matching strict : trim + exact case-insensitive uniquement.
+    // Plus de `includes` partiel (créait des faux positifs ex: "Somme de AMOUNT" → Amount).
+    const normalized = String(header || '').trim().toLowerCase();
+    if (!normalized) return null;
+
     for (const [key, value] of Object.entries(headerMappings)) {
-      if (key.toLowerCase() === lowerHeader) {
+      if (key.trim().toLowerCase() === normalized) {
         return value;
       }
     }
-    
-    // Recherche partielle
-    for (const [key, value] of Object.entries(headerMappings)) {
-      if (lowerHeader.includes(key.toLowerCase()) || key.toLowerCase().includes(lowerHeader)) {
-        return value;
-      }
-    }
-    
     return null;
   }
 }
