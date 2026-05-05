@@ -519,7 +519,7 @@ export class IntelligentSyncService {
         if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
         return { success: true };
       });
-      return;
+      return 'updated_idempotent';
     }
 
     // 3) Si absent : INSERT simple (pas de retry sur 23505 — déterministe)
@@ -532,7 +532,7 @@ export class IntelligentSyncService {
         `✨ Nouvelle collection insérée (file: ${collectionData.excel_filename}, ` +
         `row: ${collectionData.excel_source_row})`
       );
-      return;
+      return 'inserted';
     } catch (insertError: any) {
       // 4) Race condition rare : une autre exécution a inséré entre notre SELECT et notre INSERT.
       // On ne retry PAS l'INSERT (23505 est déterministe). On re-SELECT puis UPDATE.
@@ -577,6 +577,7 @@ export class IntelligentSyncService {
         if (updateError) throw new Error(`Erreur mise à jour (race): ${updateError.message}`);
         return { success: true };
       });
+      return 'updated_idempotent';
     }
   }
   
