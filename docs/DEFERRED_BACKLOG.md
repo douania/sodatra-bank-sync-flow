@@ -28,6 +28,9 @@
 **Risque** : Import non idempotent. Doublons possibles. Piste d'audit cassée.
 **Précisions Lot 3A** : fallbacks confirmés `IMPORT_<date>` + `Math.floor(Math.random()*1_000_000)` (L. 415-416), `Date.now()` + `Math.random()` en fallback ultime de conflit (L. 543-545), `excelMappingService` L. 104-105 (`UNKNOWN_FILE` / `0`).
 **Lot probable** : Lot 3 — **traité par Lot 3B.1 + Lot 3B.1.bis** (`CLOSED` 2026-05-05). Traçabilité obligatoire (`excel_filename` réel + `excel_source_row > 0`) ; flux idempotent `SELECT` puis `UPDATE`/`INSERT` sans `upsert`/409/retries. Voir STATUS_REGISTRY.
+**Compléments 2026-05-05** :
+- Mauvaise feuille lue (Feuil3 pivot agrégé au lieu de Feuil1 données détaillées) + lignes `client_code = 'UNKNOWN'` créées par fallback : **traité par Lot 3B.1.ter** (`CLOSED` 2026-05-05).
+- Erreur Postgres `value too long for type character varying(50)` sur colonnes longues de Feuil1 : **traité par Lot 3B.1.quater** (`CLOSED` 2026-05-05) — migration varchar → text.
 
 ### DEF-04 : Validation headers Excel
 
@@ -105,3 +108,21 @@
 
 **Problème** : Après le Lot 1, plusieurs fichiers ont des imports non utilisés (icônes, composants retirés). Non bloquant mais pollue le code.
 **Lot probable** : Lot 4
+
+---
+
+## Données historiques
+
+### DEF-14 : Nettoyage des 125 lignes `client_code = 'UNKNOWN'` historiques
+
+**Table** : `collection_report`
+**Problème** : 125 lignes avec `client_code = 'UNKNOWN'` héritées de l'ancien flux (avant Lot 3B.1.ter). Le runtime actuel n'en crée plus (`unknown_in_file = 0`, `unknown_last_hour = 0` confirmés post-3B.1.ter).
+**Risque** : Pollution des totaux, agrégats et dashboards si ces lignes sont incluses dans des calculs métier. Certaines peuvent avoir été utilisées dans des rapports antérieurs.
+**Action différée** :
+1. Rapport SQL détaillé : ventilation par `excel_filename`, période (`report_date`), `collection_amount`, traçabilité (`excel_source_row`, `excel_processed_at`).
+2. Décision métier : suppression / archivage / réimport ciblé du fichier source.
+**Contraintes** :
+- Ne **pas** traiter pendant Lot 3B.2, 3B.3, 3B.4.
+- Lot dédié post-Lot 3B.5.
+- Rapport **avant** toute suppression.
+**Lot probable** : Lot dédié post-3B.5.
