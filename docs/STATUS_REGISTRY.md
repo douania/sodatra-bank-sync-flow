@@ -113,7 +113,7 @@ Le repo GitHub est aligné avec l'état réel Supabase. Aucune ré-exécution n'
 
 ## Lot 3 — Import Excel fiable
 
-**Statut : IN_PROGRESS** (ouvert 2026-05-04)
+**Statut : CLOSED** (ouvert 2026-05-04, clôturé 2026-05-05)
 
 **Objectif** : fiabiliser l'import Excel bancaire pour empêcher la création de données fausses, non traçables, non idempotentes ou silencieusement corrompues.
 
@@ -191,6 +191,28 @@ Choix volontaires :
 - `databaseService.safeValue` (`Math.floor(Math.abs(...))` dans `saveBankReport` / `saveFundPosition`) est **hors périmètre 3B.4**, rattaché à DEF-10 (transactionnalisation multi-tables).
 
 Runtime modifié : `src/services/excelMappingService.ts` uniquement. Aucune migration, aucune RLS, aucun schéma touché.
+
+**Note Lot 3B.5 (clôture 2026-05-05)** : Tests finaux croisés T1–T8 validés, aucune régression détectée. Lot 3 clôturé.
+
+- **T1 / T2 / T3 / T8** validés directement par SQL final sur `COLLECTION REPORT-2026.xlsx` :
+  - `total = 648`
+  - `total_amount = 8 395 386 484`
+  - `unknowns = 0` (sur le fichier)
+  - `bad_filenames = 0` (aucun `NULL`, `IMPORT_*`, `UNKNOWN_FILE`, `DAILY_IMPORT`)
+  - `bad_rows = 0` (aucun `excel_source_row` `NULL` ou `<= 0`)
+  - `doublons par (excel_filename, excel_source_row) = 0`
+  - `today_rows` (parasites `CURRENT_DATE`) `= 0`
+  - `min_amount = 5 436`, `max_amount = 51 912 624` (pas de troncature à zéro)
+- **T4 / T5 / T6 / T7** acceptés par héritage des preuves déjà documentées :
+  - T4 (sélection feuille Feuil1 vs Feuil3 pivot) couvert par Lot 3B.1.ter
+  - T5 (rejet global headers obligatoires manquants) couvert par Lot 3B.3
+  - T6 (dates invalides rejetées sans fallback `CURRENT_DATE`) couvert par Lot 3B.2
+  - T7 (succès partiel contrôlé `success: collections.length > 0`) couvert par Lot 3B.2.bis
+- Vérification globale DB (toutes lignes confondues) : `bad_filenames_global = 0`, `bad_rows_global = 0`. Les 125 `client_code = 'UNKNOWN'` globaux restants sont des lignes historiques pré-3B.1.ter, rattachées à **DEF-14** et hors périmètre 3B.5.
+
+Aucun runtime modifié pendant 3B.5 (phase de validation + documentation uniquement). Aucune migration, aucune RLS, aucun changement schéma, aucune edge function.
+
+**Récapitulatif final Lot 3** : 9 micro-lots clôturés (`3B.0`, `3B.1`, `3B.1.bis`, `3B.1.ter`, `3B.1.quater`, `3B.2`, `3B.2.bis`, `3B.3`, `3B.4`, `3B.5`). Tous les P0 du Lot 3A traités : traçabilité Excel obligatoire (DEF-03), dates sans fallback silencieux (DEF-01), montants sans troncature (DEF-02), validation headers obligatoires (DEF-04), succès partiel contrôlé. Restent ouverts hors périmètre Lot 3 : DEF-05 (pipelines divergents → Lot 4), DEF-10 (transactionnalisation + `databaseService.safeValue` → Lot 5), DEF-14 (125 lignes UNKNOWN historiques → lot dédié), DEF-15 (`reglement_impaye` typage → sous-lot dédié).
 
 ---
 
