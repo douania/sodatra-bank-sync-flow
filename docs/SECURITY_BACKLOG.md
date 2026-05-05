@@ -18,6 +18,29 @@ Le linter Supabase détecte **60 warnings** :
 
 ## P0 — Critique
 
+### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
+
+**État** : `CLOSED_PENDING_KEY_ROTATION` (2026-05-05)
+
+**Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé anon est publishable (frontend) mais a été exposée dans plusieurs zips et commits historiques, justifiant une hygiène de configuration et une rotation manuelle.
+
+**Action runtime appliquée (lot SEC-ENV-1)** :
+- `src/integrations/supabase/client.ts` lit désormais `import.meta.env.VITE_SUPABASE_URL` et `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY`, avec `throw` explicite si l'une des deux est absente au démarrage.
+- `src/vite-env.d.ts` typé pour `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
+- `.env.example` créé à la racine, sans valeur réelle.
+- `.gitignore` non modifié (volontaire) : `.env` et `*.local` déjà ignorés.
+
+**Action manuelle restante (hors périmètre Lovable)** :
+- Rotation de la clé anon Supabase dans le dashboard (Settings → API → rotate anon key).
+- Mise à jour du `.env` après rotation.
+- Une fois fait : passer P0-01 à `CLOSED`.
+
+**Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api
+
+**Voir aussi** : `docs/STATUS_REGISTRY.md` → `SEC-ENV-1`.
+
+---
+
 ### SEC-01 : Sign-up public toujours actif côté Supabase
 
 **État** : `CLOSED` — Vérification visuelle 2026-05-04 — toggle *Allow new users to sign up* = OFF dans Authentication → Sign In / Providers.
