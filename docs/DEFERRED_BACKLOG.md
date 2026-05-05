@@ -6,7 +6,7 @@
 
 ## Import Excel
 
-> **Statut Lot 3 (clôturé 2026-05-05)** : DEF-01, DEF-02, DEF-03, DEF-04 = `CLOSED` via les micro-lots 3B.1 → 3B.4. Validation finale Lot 3B.5 (tests T1–T8) confirmée. Restent ouverts dans cette section : DEF-05 (pipelines divergents → Lot 4), DEF-14 (125 lignes UNKNOWN historiques → lot dédié), DEF-15 (`reglement_impaye` typage → sous-lot dédié).
+> **Statut Lot 3 (clôturé 2026-05-05)** : DEF-01, DEF-02, DEF-03, DEF-04 = `CLOSED` via les micro-lots 3B.1 → 3B.4. Validation finale Lot 3B.5 (tests T1–T8) confirmée. **DEF-15** = `CLOSED` via **Post-Lot 3 / DEF-15** (2026-05-05, hors numérotation Lot 3B). Restent ouverts dans cette section : DEF-05 (pipelines divergents → Lot 4), DEF-14 (125 lignes UNKNOWN historiques → lot dédié).
 
 ### DEF-01 : Dates fallback "du jour" automatiques
 
@@ -131,14 +131,11 @@
 - Rapport **avant** toute suppression.
 **Lot probable** : Lot dédié post-3B.5.
 
-### DEF-15 : `reglementImpaye` traité comme string alors que la colonne DB est `date`
+### DEF-15 : `reglementImpaye` traité comme string alors que la colonne DB est `date` — `CLOSED` (2026-05-05)
 
-**Fichier runtime** : `src/services/excelMappingService.ts` (mapping `reglementImpaye: this.parseString(row.reglementImpaye)`)
-**Table** : `collection_report.reglement_impaye` (type `date`, nullable)
-**Problème** : Le mapper traite `reglementImpaye` via `parseString`, mais la colonne Postgres est de type `date`. Selon le contenu Excel, l'insertion peut échouer (cast string→date refusé) ou stocker une valeur incohérente.
-**Risque** : Erreurs d'insertion silencieuses ou données mal typées sur un champ métier (date de règlement d'impayé).
-**Pourquoi différé** : identifié pendant Lot 3B.2 (Dates) mais hors périmètre strict — éviter d'élargir 3B.2 et garder le micro-patch chirurgical.
-**Action future** :
-1. Audit : interroger `collection_report` pour voir la distribution réelle de `reglement_impaye` (nombre de lignes non null, valeurs).
-2. Décider : (a) corriger le mapper pour utiliser `parseDate(..., { required: false, fieldName: 'reglementImpaye' })`, ou (b) si seulement du texte libre est attendu, migrer la colonne en `text`.
-**Lot probable** : sous-lot dédié après Lot 3B.2 (avant ou après 3B.3, à arbitrer).
+**Statut** : `CLOSED` via **Post-Lot 3 / DEF-15** (2026-05-05). Hors numérotation Lot 3B (Lot 3 déjà clôturé, non rouvert).
+**Fichier runtime modifié** : `src/services/excelMappingService.ts` uniquement.
+**Correction choisie** : option (a) — mapper vers `parseDate({ required: false, fieldName: 'reglementImpaye', rowContext }) ?? undefined`. Colonne DB `collection_report.reglement_impaye` conservée en `date`. Aucune migration nécessaire (audit pré-patch : `non_null = 0` sur 1 653 lignes).
+**Non modifié** : `src/services/intelligentSyncService.ts` (insert `excelRow.reglementImpaye || null` déjà compatible), `src/types/banking.ts` (type `string` ISO compatible Postgres `date`), schéma, RLS, auth, edge functions, `databaseService.safeValue`.
+**T2/T3/T4** acceptés par héritage des tests `parseDate` validés en Lot 3B.2 (date valide → ISO ; invalide → warning + `NULL` ; vide → `NULL` silencieux).
+**T1/T5** verts post-réimport `COLLECTION REPORT-2026.xlsx` : `total_file = 648`, `total_amount = 8 395 386 484`, `unknowns = 0`, `reglement_non_null = 0`, `duplicates_by_traceability = 0`. Voir `docs/STATUS_REGISTRY.md` (section Post-Lot 3 / DEF-15) pour les preuves.
