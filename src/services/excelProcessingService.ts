@@ -97,9 +97,13 @@ class ExcelProcessingService {
           // Les autres lignes continuent d'être traitées (pas d'arrêt global).
           const rawMsg = error instanceof Error ? error.message : 'Erreur inconnue';
           const isTraceabilityError = /Traçabilité Excel manquante/i.test(rawMsg);
+          // ⭐ Lot 3B.2 — reportDate obligatoire invalide/absent → bloquant pour la ligne.
+          const isMandatoryDateError = /reportDate obligatoire/i.test(rawMsg);
+          // ⭐ Lot 3B.1.ter — clientCode obligatoire absent → bloquant pour la ligne.
+          const isMandatoryClientError = /clientCode manquant/i.test(rawMsg);
           const errorMsg = `Ligne ${rowIndex + 1}: ${rawMsg}`;
-          if (isTraceabilityError) {
-            console.error('❌ Erreur traçabilité (bloquante pour la ligne):', errorMsg);
+          if (isTraceabilityError || isMandatoryDateError || isMandatoryClientError) {
+            console.error('❌ Erreur bloquante (ligne rejetée):', errorMsg);
             errors.push(errorMsg);
           } else {
             console.warn('⚠️ Erreur non-bloquante:', errorMsg);
