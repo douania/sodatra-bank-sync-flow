@@ -120,10 +120,12 @@ class ExcelProcessingService {
         avertissements: warnings.length
       });
       
-      // ⭐ Lot 3B.1 — succès uniquement si AUCUNE erreur critique de traçabilité.
-      // Les warnings non-bloquants n'invalident pas le succès global.
+      // ⭐ Lot 3B.2.bis — Succès partiel contrôlé (Option A validée CTO).
+      // Une ligne rejetée légitimement (TOTAL, footer, ligne sans clientCode/reportDate)
+      // ne doit pas bloquer l'import des lignes valides. Les erreurs restent listées
+      // dans errors[] pour visibilité utilisateur.
       return {
-        success: errors.length === 0 && collections.length > 0,
+        success: collections.length > 0,
         data: collections,
         errors: errors.length > 0 ? errors : undefined,
         warnings: warnings.length > 0 ? warnings : undefined,
