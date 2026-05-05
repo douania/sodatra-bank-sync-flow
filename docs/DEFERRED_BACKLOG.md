@@ -36,7 +36,8 @@
 
 **Problème** : Aucune validation stricte des en-têtes de colonnes avant import. Un fichier avec des colonnes manquantes ou mal nommées est importé avec des valeurs nulles/par défaut.
 **Risque** : Données corrompues silencieusement.
-**Lot probable** : Lot 3 — **traité dans Lot 3B.3** (`IN_PROGRESS` depuis 2026-05-04). Matrice headers obligatoires/optionnels à confirmer métier avant patch.
+**Lot probable** : Lot 3 — **traité dans Lot 3B.3** (`CLOSED` 2026-05-05). Matrice validée CTO : 4 headers obligatoires (`DATE`, `CLIENT NAME`, `AMOUNT`, `BANK NAME`) → rejet global avant parsing si absent ; 3 headers optionnels (`FACTURE N°`, `No.CHq /Bd`, `Date of VAlidity`) → warnings non bloquants. Tests T1–T6 passés. Voir STATUS_REGISTRY pour les preuves.
+**Dette UX différée** : message d'erreur T3/T4 encore générique (`Aucune feuille de données valide trouvée`) au lieu de lister précisément les headers obligatoires manquants. Comportement métier correct (rejet global, 0 ligne DB), amélioration UX du wording différée à un lot séparé.
 
 ### DEF-05 : Pipelines d'import divergents
 
