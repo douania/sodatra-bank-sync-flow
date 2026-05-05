@@ -137,6 +137,38 @@ class ExcelProcessingService {
   }
   
   private parseExcelRow(headers: string[], row: any[], rowNumber: number): any {
+    // (méthode existante)
+    return this._parseExcelRowImpl(headers, row, rowNumber);
+  }
+
+  // ⭐ Lot 3B.1.ter — Sélection intelligente de feuille.
+  private selectDataSheet(workbook: XLSX.WorkBook): string | null {
+    const dateKeys = ['date', 'report date'];
+    const clientKeys = ['client name', 'client', 'client code', 'code client'];
+    const amountKeys = ['amount', 'montant', 'collection amount'];
+
+    for (const sheetName of workbook.SheetNames) {
+      const ws = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+      if (!rows.length) continue;
+      const headers = (rows[0] || [])
+        .filter((h: any) => h !== null && h !== undefined)
+        .map((h: any) => String(h).trim().toLowerCase());
+      if (!headers.length) continue;
+
+      const hasDate = dateKeys.some(k => headers.includes(k));
+      const hasClient = clientKeys.some(k => headers.includes(k));
+      const hasAmount = amountKeys.some(k => headers.includes(k));
+
+      if (hasDate && hasClient && hasAmount) {
+        return sheetName;
+      }
+      console.log(`📑 Feuille "${sheetName}" rejetée (date=${hasDate}, client=${hasClient}, amount=${hasAmount})`);
+    }
+    return null;
+  }
+
+  private _parseExcelRowImpl(headers: string[], row: any[], rowNumber: number): any {
     const rowData: any = {
       _sourceRowNumber: rowNumber // Pour debug
     };
