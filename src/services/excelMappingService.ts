@@ -162,7 +162,13 @@ class ExcelMappingService {
         fieldName: 'dateOfImpay',
         rowContext,
       }) ?? undefined,
-      reglementImpaye: this.parseString(row.reglementImpaye),
+      // ⭐ Post-Lot 3 / DEF-15 — colonne DB `reglement_impaye` est de type `date`.
+      // On bascule de parseString vers parseDate strict (optionnel, pattern 3B.2).
+      reglementImpaye: this.parseDate(row.reglementImpaye, {
+        required: false,
+        fieldName: 'reglementImpaye',
+        rowContext,
+      }) ?? undefined,
       remarques: this.parseString(row.remarques),
       
       processingStatus: 'NEW'
