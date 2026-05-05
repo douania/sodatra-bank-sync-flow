@@ -19,7 +19,8 @@
 **Fichier** : `src/services/excelMappingService.ts`
 **Problème** : Les montants sont tronqués avec `Math.trunc()`, supprimant les centimes.
 **Risque** : Perte de précision financière. Écarts dans les rapprochements.
-**Lot probable** : Lot 3 — **traité dans Lot 3B.4** (`IN_PROGRESS` depuis 2026-05-04). Règle métier validée CTO : décimales nulles (`100000.00`) acceptées sur champs `bigint`, décimales significatives rejetées explicitement, décimales conservées sur champs `numeric` (`taux`, `interet`, `commission`, `tob`, `frais_escompte`, `bank_commission`, `nj`, `d_n_amount`, `income`).
+**Lot probable** : Lot 3 — **traité dans Lot 3B.4** (`CLOSED` 2026-05-05) pour `excelMappingService.parseNumber`. Schéma réel `collection_report` : toutes les colonnes montant du périmètre (`collection_amount`, `taux`, `interet`, `commission`, `tob`, `frais_escompte`, `bank_commission`, `nj`, `d_n_amount`, `income`) sont `numeric` — aucune n'est `bigint`. 3B.4 conserve donc les décimales et le signe sans règle de rejet différenciée. Suppression de `Math.trunc` et `Math.abs`, validation regex stricte, heuristique séparateur le plus à droite pour formats mixtes (`1,000,000.75` / `1.000.000,75`), normalisation espaces/NBSP/NNBSP. Tests unitaires 23/23 verts ; réimport `COLLECTION REPORT-2026.xlsx` : 648 lignes, total `8 395 386 484`, idempotence conservée.
+**Dette restante (hors 3B.4)** : `databaseService.safeValue` (`Math.floor(Math.abs(...))` dans `saveBankReport` / `saveFundPosition`) reste **hors périmètre**, maintenue dans **DEF-10** (transactionnalisation multi-tables via RPC `SECURITY DEFINER`).
 
 ### DEF-03 : Math.random() pour traçabilité Excel
 
