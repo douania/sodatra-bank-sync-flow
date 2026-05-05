@@ -152,7 +152,7 @@ Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible
 | **3B.2** | Dates sans fallback silencieux — `parseDate` retourne `null` au lieu de `new Date()` ; ligne rejetée en erreur explicite si `reportDate` invalide ; dates optionnelles invalides → `null` + warning. Validation calendaire stricte (31/02 rejeté). Pivot DD/MM/YY = 50. Fichiers : `excelMappingService.ts`, `excelProcessingService.ts`. | `CLOSED` (2026-05-05) |
 | **3B.2.bis** | Succès partiel contrôlé — `success: collections.length > 0`. Les lignes valides importées même si certaines lignes rejetées ; rejets listés dans `errors[]`. Cas test : 5 lignes synthétiques, 2 collections, 3 erreurs, 1 avertissement. | `CLOSED` (2026-05-05) |
 | **3B.3** | Headers obligatoires — validation stricte avant parsing ; mapping exact case-insensitive ; matrice headers à confirmer métier. | `CLOSED` (2026-05-05) |
-| **3B.4** | Montants — supprimer `Math.trunc` silencieux ; règle différenciée : décimales nulles (`100000.00`) acceptées, décimales significatives (`100000.50`) rejetées pour `bigint`, conservées pour `numeric` (`taux`, `interet`, `commission`, `tob`, etc.). | `PLANNED` |
+| **3B.4** | Montants — supprimer `Math.trunc` silencieux et `Math.abs` ; conserver les décimales et le signe ; validation regex stricte (pas de `parseFloat` permissif) ; heuristique séparateur le plus à droite pour formats mixtes ; normalisation espaces/NBSP/NNBSP. Périmètre `collection_report` : toutes les colonnes montant sont `numeric` (pas de `bigint`), donc décimales conservées telles quelles. | `CLOSED` (2026-05-05) |
 | **3B.5** | Tests manuels finaux + documentation de clôture Lot 3. | `PLANNED` |
 
 **Interdictions Lot 3** : aucun refactor global, aucune migration, aucun changement RLS / auth / schéma Supabase, aucun service legacy supprimé sans preuve d'inutilisation, aucun fallback masquant les erreurs, aucune donnée par défaut artificielle.
@@ -170,6 +170,27 @@ Aucun patch à exécuter en bloc. Chaque micro-lot est indépendant, réversible
 **Note Lot 3B.2.bis (clôture 2026-05-05)** : Succès partiel contrôlé validé — `success: collections.length > 0`. Les lignes valides sont importées même si certaines lignes sont rejetées ; les rejets restent visibles dans `errors[]`. Cas test : `COLLECTION_REPORT_TEST_3B2.xlsx` traité avec 2 collections valides, 3 erreurs, 1 avertissement, sans échec global.
 
 **Note Lot 3B.3 (clôture 2026-05-05)** : Headers obligatoires validés : `DATE`, `CLIENT NAME`, `AMOUNT`, `BANK NAME`. Rejet global avant parsing si un header obligatoire est absent. Headers optionnels `FACTURE N°`, `No.CHq /Bd`, `Date of VAlidity` = warnings non bloquants. Tests T1–T6 passés : T1 fichier réel `COLLECTION REPORT-2026.xlsx` OK (idempotent), T2 import minimal 4 headers obligatoires OK, T3 rejet global si `BANK NAME` manque (0 ligne DB), T4 rejet global si `DATE` + `AMOUNT` manquent (0 ligne DB), T5 alias/casse (`date`, `client name`, `Montant`, `bank name`) OK, T6 header inconnu supplémentaire ignoré silencieusement (import OK). Runtime modifié : `src/services/excelProcessingService.ts` uniquement (3B.3 + micro-correction 3B.3.a alignant `selectDataSheet` sur `BANK NAME`). Dette UX mineure différée : message d'erreur T3/T4 reste générique (`Aucune feuille de données valide trouvée`) au lieu de lister précisément les headers manquants — comportement métier correct, wording à améliorer dans un lot UX séparé.
+
+**Note Lot 3B.4 (clôture 2026-05-05)** : `parseNumber()` corrigé dans `src/services/excelMappingService.ts` :
+- suppression de `Math.trunc` ;
+- suppression de `Math.abs` ;
+- signe négatif préservé ;
+- décimales conservées ;
+- validation regex stricte avant conversion (pas de `parseFloat` permissif — `Number(s)` après normalisation) ;
+- heuristique séparateur le plus à droite pour formats mixtes (`1,000,000.75` US et `1.000.000,75` EU) ;
+- normalisation espaces standards, NBSP (`\u00A0`) et NNBSP (`\u202F`).
+
+Schéma réel : toutes les colonnes montant du périmètre `collection_report` (`collection_amount`, `taux`, `interet`, `commission`, `tob`, `frais_escompte`, `bank_commission`, `nj`, `d_n_amount`, `income`) sont `numeric` — aucune n'est `bigint`. Les décimales sont donc conservées sans règle de rejet différenciée.
+
+Preuves :
+- Tests unitaires `parseNumber` : **23/23 verts** (T2a/T2b nombres natifs, T3 FR `"1 000 000,50"`, T4 US `"1,000,000.75"`, T4bis EU `"1.000.000,75"`, T5 `0.1234`, T6 `"ABC"` → `undefined`, T7 vide/null → `undefined`, T8 `1.999999999` préservé côté JS, T9 négatifs `-1000.50` / `"-1000,50"` / `"-1.000,50"` préservés, edge cases NBSP, `Infinity`/`NaN` → `undefined`, `"100abc"` → `undefined`).
+- Test in-vivo réimport `COLLECTION REPORT-2026.xlsx` via UI : `total_file = 648`, `unknown_in_file = 0`, `duplicates_by_traceability = 0`, `total_amount = 8 395 386 484`, idempotence conservée.
+
+Choix volontaires :
+- Le fallback `collectionAmount: this.parseNumber(row.collectionAmount) || 0` est **conservé** pour ce lot (T6/T7 importent la ligne avec montant `0`, sans rejet).
+- `databaseService.safeValue` (`Math.floor(Math.abs(...))` dans `saveBankReport` / `saveFundPosition`) est **hors périmètre 3B.4**, rattaché à DEF-10 (transactionnalisation multi-tables).
+
+Runtime modifié : `src/services/excelMappingService.ts` uniquement. Aucune migration, aucune RLS, aucun schéma touché.
 
 ---
 
