@@ -173,9 +173,10 @@ export class FileProcessingService {
           
           console.log('✅ === RÉSUMÉ SYNCHRONISATION INTELLIGENTE PAR BATCH ===');
           console.log(`📊 Collections analysées: ${allCollections.length}`);
-          console.log(`✅ Nouvelles ajoutées: ${syncResult.new_collections}`);
+          console.log(`✅ Ajoutées réellement: ${syncResult.new_collections}`);
+          console.log(`♻️ Mises à jour idempotentes: ${syncResult.idempotent_updates}`);
           console.log(`⚡ Enrichies: ${syncResult.enriched_collections}`);
-          console.log(`🔒 Préservées: ${syncResult.ignored_collections}`);
+          console.log(`🔒 Ignorées / préservées: ${syncResult.ignored_collections}`);
           console.log(`❌ Erreurs: ${syncResult.errors.length}`);
           console.log(`⏱️ Temps de traitement: ${Math.round(batchSyncResult.processingTime/1000)}s`);
           
@@ -489,6 +490,7 @@ export class FileProcessingService {
   private aggregateBatchResults(batchResults: any[]): any {
     const aggregated = {
       new_collections: 0,
+      idempotent_updates: 0,
       enriched_collections: 0,
       ignored_collections: 0,
       errors: [] as any[],
@@ -505,6 +507,7 @@ export class FileProcessingService {
     batchResults.forEach(result => {
       if (result) {
         aggregated.new_collections += result.new_collections || 0;
+        aggregated.idempotent_updates += result.idempotent_updates || 0;
         aggregated.enriched_collections += result.enriched_collections || 0;
         aggregated.ignored_collections += result.ignored_collections || 0;
         
