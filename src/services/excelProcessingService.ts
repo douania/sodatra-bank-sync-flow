@@ -211,6 +211,8 @@ class ExcelProcessingService {
     const dateKeys = ['date', 'report date'];
     const clientKeys = ['client name', 'client', 'client code', 'code client'];
     const amountKeys = ['amount', 'montant', 'collection amount'];
+    // ⭐ Lot 3B.3.a — BANK NAME devient critère de sélection de feuille (aligné MANDATORY_HEADERS).
+    const bankKeys = ['bank name', 'bank', 'banque'];
 
     for (const sheetName of workbook.SheetNames) {
       const ws = workbook.Sheets[sheetName];
@@ -224,11 +226,12 @@ class ExcelProcessingService {
       const hasDate = dateKeys.some(k => headers.includes(k));
       const hasClient = clientKeys.some(k => headers.includes(k));
       const hasAmount = amountKeys.some(k => headers.includes(k));
+      const hasBank = bankKeys.some(k => headers.includes(k));
 
-      if (hasDate && hasClient && hasAmount) {
+      if (hasDate && hasClient && hasAmount && hasBank) {
         return sheetName;
       }
-      console.log(`📑 Feuille "${sheetName}" rejetée (date=${hasDate}, client=${hasClient}, amount=${hasAmount})`);
+      console.log(`📑 Feuille "${sheetName}" rejetée (date=${hasDate}, client=${hasClient}, amount=${hasAmount}, bank=${hasBank})`);
     }
     return null;
   }
