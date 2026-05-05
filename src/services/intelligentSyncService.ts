@@ -464,96 +464,108 @@ export class IntelligentSyncService {
       processed_at: new Date().toISOString()
     };
     
-    try {
-      // ⭐ UTILISER UPSERT AVEC LE NOUVEL INDEX FIXE
-      console.log('🔄 Tentative UPSERT avec traçabilité Excel:', {
-        filename: collectionData.excel_filename,
-        row: collectionData.excel_source_row
-      });
-      
-      // Détecter le type de collection si non spécifié
-      if (!collectionData.collection_type && collectionData.no_chq_bd) {
-        const typeResult = excelMappingService.detectCollectionType(collectionData.no_chq_bd);
-        collectionData.collection_type = typeResult.type;
-        collectionData.effet_echeance_date = typeResult.effetEcheanceDate ? 
-          typeResult.effetEcheanceDate.toISOString().split('T')[0] : null;
-        collectionData.effet_status = typeResult.type === 'EFFET' ? 'PENDING' : null;
-        collectionData.cheque_number = typeResult.chequeNumber;
-        collectionData.cheque_status = typeResult.type === 'CHEQUE' ? 'PENDING' : null;
-      }
-      
-      await SupabaseRetryService.executeWithRetry(
-        async () => {
-          console.log('🔄 UPSERT avec contrainte unique_excel_traceability');
-          const { error } = await supabaseOptimized
-            .from('collection_report')
-            .upsert(collectionData, {
-              onConflict: 'unique_excel_traceability',
-              ignoreDuplicates: false
-            });
-          
-          if (error) throw error;
-          return { success: true };
-        }
-      );
-      
-    } catch (error: any) {
-      console.warn(`⚠️ Upsert collection avec index fixe:`, error.message);
-      
-      // ⭐ FALLBACK AMÉLIORÉ: Vérifier si l'enregistrement existe déjà
-      // en utilisant excel_filename et excel_source_row
-      if (error.message.includes('constraint') || error.message.includes('unique') || error.message.includes('conflict')) {
-        console.log(`🔄 Fallback: Vérification existence par traçabilité Excel`);
-        
-        // Vérifier si l'enregistrement existe déjà
-        const existingData = await SupabaseRetryService.executeWithRetry(
-          async () => {
-            const { data, error: selectError } = await supabaseOptimized
-              .from('collection_report')
-              .select('id')
-              .eq('excel_filename', collectionData.excel_filename)
-              .eq('excel_source_row', collectionData.excel_source_row)
-              .maybeSingle();
-            
-            if (selectError) throw new Error(`Erreur sélection: ${selectError.message}`);
-            return data;
-          }
-        );
-        
-        if (existingData?.id) {
-          // ⭐ Lot 3B.1 — Doublon de traçabilité connu : import IDEMPOTENT.
-          // Update contrôlé sur l'enregistrement existant (même excel_filename + excel_source_row).
-          // Aucune nouvelle ligne créée, aucune traçabilité modifiée.
-          console.log(
-            `♻️ Doublon idempotent — update contrôlé (ID: ${existingData.id}, ` +
-            `file: ${collectionData.excel_filename}, row: ${collectionData.excel_source_row})`
-          );
-          await SupabaseRetryService.executeWithRetry(
-            async () => {
-              const { error: updateError } = await supabaseOptimized
-                .from('collection_report')
-                .update(collectionData)
-                .eq('id', existingData.id);
+    // Détecter le type de collection si non spécifié
+    if (!collectionData.collection_type && collectionData.no_chq_bd) {
+      const typeResult = excelMappingService.detectCollectionType(collectionData.no_chq_bd);
+      collectionData.collection_type = typeResult.type;
+      collectionData.effet_echeance_date = typeResult.effetEcheanceDate
+        ? typeResult.effetEcheanceDate.toISOString().split('T')[0]
+        : null;
+      collectionData.effet_status = typeResult.type === 'EFFET' ? 'PENDING' : null;
+      collectionData.cheque_number = typeResult.chequeNumber;
+      collectionData.cheque_status = typeResult.type === 'CHEQUE' ? 'PENDING' : null;
+    }
 
-              if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
-              return { success: true };
-            }
-          );
-          return;
-        } else {
-          // ⭐ Lot 3B.1 — Conflit unique signalé par Postgres mais aucun enregistrement
-          // trouvé via (excel_filename, excel_source_row). C'est une vraie incohérence.
-          // Aucune génération artificielle de traçabilité (plus de Date.now / Math.random).
-          throw new Error(
-            `Conflit unique_excel_traceability non résolu pour ` +
-            `file="${collectionData.excel_filename}" row=${collectionData.excel_source_row}. ` +
-            `Aucun enregistrement existant trouvé via (excel_filename, excel_source_row). ` +
-            `Investigation manuelle requise — pas de traçabilité artificielle générée.`
-          );
-        }
+    // ⭐ Lot 3B.1.bis — SELECT-then-INSERT/UPDATE explicite.
+    // Plus aucun upsert(onConflict=...) : il provoquait systématiquement un 409
+    // (l'index actif est `idx_collection_excel_source`, pas `unique_excel_traceability`)
+    // déclenchant 5 retries inutiles + logs trompeurs avant le fallback fonctionnel.
+    // Le flux normal ne doit plus jamais produire de 23505.
+
+    // 1) Existence par (excel_filename, excel_source_row)
+    const existing = await SupabaseRetryService.executeWithRetry(async () => {
+      const { data, error: selectError } = await supabaseOptimized
+        .from('collection_report')
+        .select('id')
+        .eq('excel_filename', collectionData.excel_filename)
+        .eq('excel_source_row', collectionData.excel_source_row)
+        .maybeSingle();
+      if (selectError) throw new Error(`Erreur sélection traçabilité: ${selectError.message}`);
+      return data;
+    });
+
+    // 2) Si trouvé : UPDATE contrôlé (idempotent)
+    if (existing?.id) {
+      console.log(
+        `♻️ Doublon idempotent — update contrôlé (ID: ${existing.id}, ` +
+        `file: ${collectionData.excel_filename}, row: ${collectionData.excel_source_row})`
+      );
+      await SupabaseRetryService.executeWithRetry(async () => {
+        const { error: updateError } = await supabaseOptimized
+          .from('collection_report')
+          .update(collectionData)
+          .eq('id', existing.id);
+        if (updateError) throw new Error(`Erreur mise à jour: ${updateError.message}`);
+        return { success: true };
+      });
+      return;
+    }
+
+    // 3) Si absent : INSERT simple (pas de retry sur 23505 — déterministe)
+    try {
+      const { error: insertError } = await supabaseOptimized
+        .from('collection_report')
+        .insert(collectionData);
+      if (insertError) throw insertError;
+      console.log(
+        `✨ Nouvelle collection insérée (file: ${collectionData.excel_filename}, ` +
+        `row: ${collectionData.excel_source_row})`
+      );
+      return;
+    } catch (insertError: any) {
+      // 4) Race condition rare : une autre exécution a inséré entre notre SELECT et notre INSERT.
+      // On ne retry PAS l'INSERT (23505 est déterministe). On re-SELECT puis UPDATE.
+      const code = insertError?.code ?? '';
+      const msg = insertError?.message ?? '';
+      const isDuplicate =
+        code === '23505' || /duplicate key|unique constraint/i.test(msg);
+
+      if (!isDuplicate) {
+        throw new Error(`Erreur insertion collection: ${msg || 'inconnue'}`);
       }
-      
-      throw new Error(`Erreur upsert: ${error.message}`);
+
+      const raced = await SupabaseRetryService.executeWithRetry(async () => {
+        const { data, error: selectError } = await supabaseOptimized
+          .from('collection_report')
+          .select('id')
+          .eq('excel_filename', collectionData.excel_filename)
+          .eq('excel_source_row', collectionData.excel_source_row)
+          .maybeSingle();
+        if (selectError) throw new Error(`Erreur re-sélection après race: ${selectError.message}`);
+        return data;
+      });
+
+      if (!raced?.id) {
+        // Conflit unique signalé mais aucun enregistrement retrouvé → vraie incohérence.
+        throw new Error(
+          `Conflit unique non résolu pour file="${collectionData.excel_filename}" ` +
+          `row=${collectionData.excel_source_row}. Aucun enregistrement retrouvé. ` +
+          `Investigation manuelle requise — pas de traçabilité artificielle générée.`
+        );
+      }
+
+      console.log(
+        `♻️ Race résolue — update contrôlé (ID: ${raced.id}, ` +
+        `file: ${collectionData.excel_filename}, row: ${collectionData.excel_source_row})`
+      );
+      await SupabaseRetryService.executeWithRetry(async () => {
+        const { error: updateError } = await supabaseOptimized
+          .from('collection_report')
+          .update(collectionData)
+          .eq('id', raced.id);
+        if (updateError) throw new Error(`Erreur mise à jour (race): ${updateError.message}`);
+        return { success: true };
+      });
     }
   }
   
