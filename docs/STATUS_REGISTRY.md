@@ -321,3 +321,37 @@ Plan en deux étapes validé CTO : DB-FREEZE-1A (documentation) immédiat, DB-FR
 2. Environnement staging Supabase disponible.
 3. T-pré + T-post verts en staging.
 4. Snapshot prod pris.
+
+---
+
+## LOT-4A — Audit read-only des pipelines d'import
+
+**Statut : `CLOSED` (REPORT_ONLY) (2026-05-06)**
+
+**Livrable** : `docs/LOT4A_PIPELINES_AUDIT.md` (créé). Aucun fichier `src/` modifié, aucune migration, aucun SQL.
+
+**Pipelines confirmés** :
+- `/upload` → `fileProcessingService` → `extractionService`
+- `/upload-bulk` → `enhancedFileProcessingService` (pipeline canonique)
+- `/document-understanding` → `enhancedFileProcessingService` + chaîne BDK (`bdkExtractionService`, `enhancedBDKExtractionService`, `positionalExtractionService`, `bdkColumnDetectionService`)
+
+**Orphelins probables (0 import entrant)** : `extractionService_PRODUCTION.ts`, `advancedExtractionService.ts`, `ProcessingResultsDetailed copy.tsx`. À vérifier : `bankReportDetectionService`, `batchProcessingService`, `specializedMatchingService`, composants debug BDK (`BDKDebugPanel`, `BDKCalibrationInsights`, `DataViewer`, `ValidationMatrix`).
+
+**Doublon DEF-05 confirmé** : `fileProcessingService.ts` (715 l) ↔ `enhancedFileProcessingService.ts` (820 l). Incohérence de typage : `ProcessingResultsDetailed` consomme le type `ProcessingResult` exporté par `enhancedFileProcessingService` mais `/upload` exécute `fileProcessingService`.
+
+**Mocks vrais** : `Alerts.tsx`, `ConsolidatedDashboard.tsx`. **Faux mocks** (importent services réels) : `BankingDashboard.tsx`, `QualityControl.tsx`. **Hybrides à confirmer** : `BankingReports.tsx`, `Reconciliation.tsx`. Doublon de route `/consolidated` ↔ `/consolidated-dashboard`.
+
+---
+
+## LOT-4B / 4C / 4D / 4E — PROPOSED
+
+**Statut : `PLANNED` — awaiting CTO GO**
+
+- **4B** : suppression code mort prouvé (3 candidats certains + 3 à vérifier).
+- **4C** : clarification pages mockées, doublon de route, composants debug BDK.
+- **4D** : consolidation `fileProcessingService` ↔ `enhancedFileProcessingService` (DEF-05). Diff obligatoire avant fusion. Test runtime `/upload` requis.
+- **4E** : UX wording bandeaux mock (différé).
+
+**LOT-4 global** : reste ouvert, aucun changement de code.
+
+**Interdits permanents (Lot 4 entier)** : pas de modification `cold_shore`/`shiny_waterfall`/pipeline Excel ; pas de réouverture Lot 1/2B/3/SEC-ENV-1/DB-FREEZE-1A ; DB-FREEZE-1B reste différé jusqu'à staging ; DEF-10 et DEF-14 hors périmètre.
