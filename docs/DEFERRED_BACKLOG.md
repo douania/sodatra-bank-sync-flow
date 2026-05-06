@@ -70,7 +70,7 @@
 
 **Fichiers** : `BankingDashboard.tsx`, `BankingReports.tsx`, `Alerts.tsx`, `ConsolidatedDashboard.tsx`
 **Problème** : Le code mock reste dans les fichiers (derrière early return ou réécrit avec bandeau). Il devra être supprimé ou remplacé par de vraies connexions données.
-**Lot probable** : Lot 4
+**Lot probable** : Lot 4 — **partiellement avancé Lot 4C.1 (2026-05-06)**. Supprimés : `Alerts.tsx`, `ConsolidatedDashboard.tsx` (page), `BankingReports.tsx` + routes `/alerts`, `/consolidated`, `/consolidated-dashboard`, `/banking/reports`. Reste : `BankingDashboard.tsx` (HYBRIDE_A_DECIDER → Lot 4C.2) et nettoyage liens `Index.tsx` (Lot 4E UX).
 
 ### DEF-08 : Fichiers orphelins
 
@@ -78,8 +78,8 @@
 - ~~`src/components/ProcessingResultsDetailed copy.tsx`~~ — supprimé Lot 4B (2026-05-06)
 - ~~`src/services/extractionService_PRODUCTION.ts`~~ — supprimé Lot 4B (2026-05-06)
 - ~~`src/services/advancedExtractionService.ts`~~ — supprimé Lot 4B (2026-05-06)
-- `src/components/ConsolidatedDashboard.tsx` — composant avec mock, non routé
-**Lot probable** : Lot 4 — **partiellement traité Lot 4B**. Reste : `ConsolidatedDashboard.tsx` (Lot 4C/4E).
+- `src/components/ConsolidatedDashboard.tsx` — composant avec mock, non routé (page parente supprimée Lot 4C.1, le composant subsiste)
+**Lot probable** : Lot 4 — **partiellement traité Lot 4B + Lot 4C.1**. Reste : `src/components/ConsolidatedDashboard.tsx` (composant non routé, Lot 4C.2/4E).
 
 ### DEF-09 : Migrations historiques discardées
 
