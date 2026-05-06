@@ -381,3 +381,45 @@ Plan en deux étapes validé CTO : DB-FREEZE-1A (documentation) immédiat, DB-FR
 **Hors scope (rappel CTO)** : `bankReportDetectionService`, `batchProcessingService`, `specializedMatchingService`, `BDKDebugPanel`, `BDKCalibrationInsights`, `DataViewer`, `ValidationMatrix`, `fileProcessingService`, `enhancedFileProcessingService`, `extractionService`, `bdkExtractionService`, `excelMappingService`, `excelProcessingService`, `intelligentSyncService`, `databaseService`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 reste OPEN / partiellement avancé. `DB_TRUTH.md`, `LOT4A_PIPELINES_AUDIT.md`, `LOT4B0_ORPHAN_VERIFICATION.md` non modifiés.
 
 **LOT-4 global** : toujours ouvert ; LOT-4C / 4D / 4E restent `PLANNED`.
+
+---
+
+## LOT-4C — Audit read-only pages mockées / routes / debug
+
+**Statut : `CLOSED` (REPORT_ONLY) (2026-05-06)**
+
+**Livrable** : `docs/LOT4C_PAGES_ROUTES_AUDIT.md`. Aucun code modifié.
+
+---
+
+## LOT-4C.1 — Suppression mocks purs et routes fantômes
+
+**Statut : CLOSED (2026-05-06)**
+
+**Préalable** : `docs/LOT4C_PAGES_ROUTES_AUDIT.md` classe `Alerts.tsx`, `ConsolidatedDashboard.tsx`, `BankingReports.tsx` comme `MOCK_SUPPRIMABLE`.
+
+**Fichiers supprimés (3)** :
+- `src/pages/Alerts.tsx`
+- `src/pages/ConsolidatedDashboard.tsx`
+- `src/pages/BankingReports.tsx`
+
+**Routes retirées de `src/App.tsx` (4)** :
+- `/alerts`
+- `/consolidated`
+- `/consolidated-dashboard`
+- `/banking/reports`
+
+Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) également retirés de `src/App.tsx`.
+
+**Vérifications post-suppression** :
+- `rg "pages/Alerts|pages/ConsolidatedDashboard|pages/BankingReports" src/` → 0 résultat
+- `App.tsx` ne contient plus `/alerts`, `/consolidated`, `/consolidated-dashboard`, `/banking/reports`
+- Build TypeScript vert (`tsc --noEmit` → 0 erreur)
+
+**Réserves UX (à traiter en Lot 4C.2 / 4E, hors périmètre 4C.1)** :
+- `src/pages/Index.tsx` contient encore 3 `<Link>` (deux vers `/consolidated`, un vers `/alerts`) qui mèneront désormais à `NotFound`.
+- `src/components/RealtimeManager.tsx:205` contient encore la chaîne littérale `'/banking/reports'` (non bloquante).
+
+**Hors scope (rappel CTO)** : `BankingDashboard.tsx`, `Reconciliation.tsx`, `QualityControl.tsx`, composants debug BDK (`BDKDebugPanel`, `BDKCalibrationInsights`, `DataViewer`, `ValidationMatrix`), `PositionalPDFViewer`, `fileProcessingService`, `enhancedFileProcessingService`. Aucune migration, aucun SQL, aucune RLS/auth/schéma. DEF-10 / DEF-14 / UX-SYNC-COUNTERS non traités. `DB_TRUTH.md`, `LOT4A_PIPELINES_AUDIT.md`, `LOT4B0_ORPHAN_VERIFICATION.md`, `LOT4C_PAGES_ROUTES_AUDIT.md` non modifiés. Lot 4D non ouvert. DEF-05 reste `OPEN / partiellement avancé`.
+
+**LOT-4 global** : toujours ouvert ; LOT-4C.2 / 4D / 4E restent `PLANNED`. DEF-07 partiellement avancé.
