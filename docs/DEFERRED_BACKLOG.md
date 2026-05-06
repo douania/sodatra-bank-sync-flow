@@ -48,6 +48,7 @@
 **Précisions Lot 3A** : services PDF/BDK (extraction) confirmés **hors pipeline Excel**. Les pipelines Excel actifs sont `fileProcessingService` (FileUpload) et `enhancedFileProcessingService` (FileUploadBulk), redondants à ~90 %.
 **Risque** : Comportement imprévisible selon le chemin d'exécution.
 **Lot probable** : Lot 4 (fusion `fileProcessingService` / `enhancedFileProcessingService`, suppression services PDF orphelins)
+**Statut : OPEN — partiellement avancé (Lot 4B, 2026-05-06)**. Les orphelins `extractionService_PRODUCTION.ts` et `advancedExtractionService.ts` ont été supprimés (cf. STATUS_REGISTRY → LOT-4B). Cela **ne résout pas** la divergence centrale : `fileProcessingService` (utilisé par `/upload`) et `enhancedFileProcessingService` (utilisé par `/upload-bulk` et `/document-understanding`) restent en parallèle. La fusion reste l'objet de **Lot 4D**, non ouvert. DEF-05 reste **OPEN**.
 
 ---
 
@@ -74,10 +75,11 @@
 ### DEF-08 : Fichiers orphelins
 
 **Fichiers** :
-- `src/components/ProcessingResultsDetailed copy.tsx` — copie non nettoyée
-- `src/services/extractionService_PRODUCTION.ts` — version alternative
+- ~~`src/components/ProcessingResultsDetailed copy.tsx`~~ — supprimé Lot 4B (2026-05-06)
+- ~~`src/services/extractionService_PRODUCTION.ts`~~ — supprimé Lot 4B (2026-05-06)
+- ~~`src/services/advancedExtractionService.ts`~~ — supprimé Lot 4B (2026-05-06)
 - `src/components/ConsolidatedDashboard.tsx` — composant avec mock, non routé
-**Lot probable** : Lot 4
+**Lot probable** : Lot 4 — **partiellement traité Lot 4B**. Reste : `ConsolidatedDashboard.tsx` (Lot 4C/4E).
 
 ### DEF-09 : Migrations historiques discardées
 
