@@ -423,3 +423,23 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 **Hors scope (rappel CTO)** : `BankingDashboard.tsx`, `Reconciliation.tsx`, `QualityControl.tsx`, composants debug BDK (`BDKDebugPanel`, `BDKCalibrationInsights`, `DataViewer`, `ValidationMatrix`), `PositionalPDFViewer`, `fileProcessingService`, `enhancedFileProcessingService`. Aucune migration, aucun SQL, aucune RLS/auth/schéma. DEF-10 / DEF-14 / UX-SYNC-COUNTERS non traités. `DB_TRUTH.md`, `LOT4A_PIPELINES_AUDIT.md`, `LOT4B0_ORPHAN_VERIFICATION.md`, `LOT4C_PAGES_ROUTES_AUDIT.md` non modifiés. Lot 4D non ouvert. DEF-05 reste `OPEN / partiellement avancé`.
 
 **LOT-4 global** : toujours ouvert ; LOT-4C.2 / 4D / 4E restent `PLANNED`. DEF-07 partiellement avancé.
+
+---
+
+## LOT-4C.1.bis — Correction liens morts post-suppression mocks
+
+**Statut : CLOSED (2026-05-06)**
+
+**Contexte** : Lot 4C.1 a supprimé les routes `/alerts`, `/consolidated`, `/consolidated-dashboard`, `/banking/reports`. Réserve documentée : `src/pages/Index.tsx` contenait encore 3 `<Link>` cliquables vers `/consolidated` (×2) et `/alerts`.
+
+**Fichier modifié (1)** : `src/pages/Index.tsx`
+- Carte « Vue Consolidée » → réorientée « Dashboard Principal » → `/dashboard`
+- Carte « Alertes Critiques » → réorientée « Contrôle Qualité » → `/quality-control`
+- CTA bas de page « Accéder à la Vue Consolidée » → « Accéder au Dashboard Principal » → `/dashboard`
+
+**Vérifications post-modification** :
+- `rg "/alerts|/consolidated|/consolidated-dashboard|/banking/reports" src/` → un seul résultat restant : `src/components/RealtimeManager.tsx:205` — chaîne littérale `currentPage: '/banking/reports'` dans un objet mock `UserPresence.currentPage` (champ d'affichage, **pas un lien cliquable**, pas de `<Link>`/`navigate`/`href`). Conservée telle quelle (non bloquante, à nettoyer dans un futur lot UX si `RealtimeManager` est démockifié).
+- Aucune route supprimée n'a été réintroduite dans `src/App.tsx`.
+- Build TypeScript vert (`tsc --noEmit` → 0 erreur).
+
+**Hors scope** : `BankingDashboard`, `Reconciliation`, `QualityControl` (page), `fileProcessingService`, `enhancedFileProcessingService`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. `DEFERRED_BACKLOG.md` non modifié.
