@@ -70,7 +70,7 @@
 
 **Fichiers** : `BankingDashboard.tsx`, `BankingReports.tsx`, `Alerts.tsx`, `ConsolidatedDashboard.tsx`
 **Problème** : Le code mock reste dans les fichiers (derrière early return ou réécrit avec bandeau). Il devra être supprimé ou remplacé par de vraies connexions données.
-**Lot probable** : Lot 4 — **partiellement avancé Lot 4C.1 + 4C.2.bis (2026-05-06)**. Supprimés Lot 4C.1 : `Alerts.tsx`, `ConsolidatedDashboard.tsx` (page), `BankingReports.tsx` + routes `/alerts`, `/consolidated`, `/consolidated-dashboard`, `/banking/reports`. Supprimés Lot 4C.2.bis : `BankingDashboard.tsx` + `EvolutionAnalysis.tsx` + `IntelligenceMetier.tsx` + `RealtimeManager.tsx` + route `/banking/dashboard`. Reste : nettoyage `src/components/ConsolidatedDashboard.tsx` (composant orphelin) et liens `Index.tsx` (Lot 4E UX).
+**Lot probable** : Lot 4 — **partiellement avancé Lot 4C.1 + 4C.2.bis + 4C.3.bis (2026-05-06)**. Supprimés Lot 4C.1 : `Alerts.tsx`, `ConsolidatedDashboard.tsx` (page), `BankingReports.tsx` + routes `/alerts`, `/consolidated`, `/consolidated-dashboard`, `/banking/reports`. Supprimés Lot 4C.2.bis : `BankingDashboard.tsx` + `EvolutionAnalysis.tsx` + `IntelligenceMetier.tsx` + `RealtimeManager.tsx` + route `/banking/dashboard`. Allégé Lot 4C.3.bis : `Reconciliation.tsx` (onglets `engine` + `statistics` retirés) + suppression `BankReconciliationEngine.tsx`. Reste : nettoyage `src/components/ConsolidatedDashboard.tsx` (composant orphelin).
 
 ### DEF-08 : Fichiers orphelins
 
