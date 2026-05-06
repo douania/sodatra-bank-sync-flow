@@ -14,7 +14,7 @@ import {
   DollarSign,
   Database
 } from 'lucide-react';
-import { ProcessingResult } from '@/services/enhancedFileProcessingService';
+import { ProcessingResult } from '@/types/processing';
 
 interface ProcessingResultsDetailedProps {
   results: ProcessingResult;

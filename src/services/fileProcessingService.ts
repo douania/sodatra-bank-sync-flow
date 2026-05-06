@@ -7,19 +7,8 @@ import { SupabaseRetryService } from './supabaseClientService';
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 import { progressService } from './progressService';
-
-export interface ProcessingResult {
-  success: boolean;
-  data?: {
-    bankReports: BankReport[];
-    fundPosition?: FundPosition;
-    clientReconciliation?: ClientReconciliation[];
-    collectionReports?: CollectionReport[];
-    syncResult?: any;
-  };
-  errors?: string[];
-  debugInfo?: any;
-}
+import type { ProcessingResult } from '@/types/processing';
+export type { ProcessingResult } from '@/types/processing';
 
 export class FileProcessingService {
   async processFiles(files: File[]): Promise<ProcessingResult> {
