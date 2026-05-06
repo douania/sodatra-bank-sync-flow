@@ -443,3 +443,38 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 - Build TypeScript vert (`tsc --noEmit` → 0 erreur).
 
 **Hors scope** : `BankingDashboard`, `Reconciliation`, `QualityControl` (page), `fileProcessingService`, `enhancedFileProcessingService`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. `DEFERRED_BACKLOG.md` non modifié.
+
+---
+
+## LOT-4C.2 — Audit ciblé BankingDashboard (REPORT_ONLY)
+
+**Statut : CLOSED / REPORT_ONLY (2026-05-06)**
+
+**Livrable unique** : `docs/LOT4C2_BANKING_DASHBOARD_AUDIT.md`. Aucun code modifié, aucune suppression, aucune route modifiée.
+
+**Conclusions** : `BankingDashboard.tsx` = mock pur (return précoce ligne 37-47, ~439 lignes unreachable, appel `bankingUniversalService.generateConsolidatedReport` commenté). `EvolutionAnalysis`, `IntelligenceMetier`, `RealtimeManager` importés exclusivement par `BankingDashboard`. `bankingUniversalService` à conserver (usage runtime réel via `UniversalBankParser.saveReport` → `DocumentUnderstanding`).
+
+---
+
+## LOT-4C.2.bis — Suppression chirurgicale BankingDashboard et cascade exclusive
+
+**Statut : CLOSED (2026-05-06)**
+
+**Fichiers supprimés (4)** :
+- `src/pages/BankingDashboard.tsx`
+- `src/components/EvolutionAnalysis.tsx`
+- `src/components/IntelligenceMetier.tsx`
+- `src/components/RealtimeManager.tsx`
+
+**Fichier modifié (1)** : `src/App.tsx`
+- Import `BankingDashboard` retiré
+- Route `/banking/dashboard` retirée
+
+**Vérifications post-suppression** :
+- `rg "BankingDashboard|EvolutionAnalysis|IntelligenceMetier|RealtimeManager" src/` → 0 résultat
+- `rg "/banking/dashboard" src/` → 0 résultat
+- Build TypeScript vert (`tsc --noEmit` → 0 erreur)
+
+**Conservé (non touché)** : `src/services/bankingUniversalService.ts` (usage réel via `UniversalBankParser.saveReport`), `src/components/UniversalBankParser.tsx`, `src/components/ConsolidatedDashboard.tsx` (composant — A_VERIFIER, hors scope).
+
+**Hors scope** : `Reconciliation`, `QualityControl`, `fileProcessingService`, `enhancedFileProcessingService`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. DEF-07 partiellement avancé.
