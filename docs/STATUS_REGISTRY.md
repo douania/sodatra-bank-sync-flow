@@ -565,3 +565,22 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 - Re-exports type conservés sur les deux services pour préserver la compatibilité des imports existants (ex. `FileUploadBulk.tsx` importe `ProcessingResult` depuis `enhancedFileProcessingService`).
 
 **Hors scope** : `HeartbeatService`, `BatchProcessingService`, `intelligentSyncService`, `excelProcessingService`, `excelMappingService`, `FileUpload.tsx`, `FileUploadBulk.tsx`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D.2 / 4D.3 / 4D.4 non ouverts. DEF-05 reste **OPEN** (préparé, non résolu). DEF-07 partiellement avancé. UX-SYNC-COUNTERS, DEF-10, DEF-14 non traités.
+
+---
+
+## LOT-4D.1.bis — CLOSED (2026-05-06) — Nettoyage wording `ProcessingResultsDetailed`
+
+**Type** : micro-patch UX wording, aucun changement logique.
+
+**Travail effectué** dans `src/components/ProcessingResultsDetailed.tsx` :
+- "Résumé du Traitement (Corrigé)" → "Résumé du traitement"
+- Description : "Résultats de l'importation et de la synchronisation des données"
+- Bloc "Corrections Automatiques Appliquées" → "Traitement contrôlé" avec puces neutres (traçabilité Excel, idempotence, montants valides)
+- "Données extraites avec corrections automatiques" → "Données extraites et synchronisées"
+- Actions recommandées : suppression mentions AMOUNT/N/A/tableau de bord consolidé, remplacées par avertissements / lignes rejetées / dashboard principal ou Collections.
+
+**Vérifications** :
+- Build TypeScript vert.
+- `rg "N/A|Vue Consolidée|tableau de bord consolidé|Corrections Automatiques|Corrigé"` → seul résultat = commentaire interne ligne 59 (`exclure les éléments synthétiques comme "N/A"`), justifié (logique de filtrage existante, hors périmètre wording UI).
+
+**Hors scope** : aucun changement de calcul, JSX structurel ou compteur. Aucune modification de `ProcessingResult`, services, SQL, migrations, RLS. DEF-05 inchangé. Lot 4D.2 non ouvert.
