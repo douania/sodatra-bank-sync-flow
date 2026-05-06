@@ -48,7 +48,7 @@
 **Précisions Lot 3A** : services PDF/BDK (extraction) confirmés **hors pipeline Excel**. Les pipelines Excel actifs sont `fileProcessingService` (FileUpload) et `enhancedFileProcessingService` (FileUploadBulk), redondants à ~90 %.
 **Risque** : Comportement imprévisible selon le chemin d'exécution.
 **Lot probable** : Lot 4 (fusion `fileProcessingService` / `enhancedFileProcessingService`, suppression services PDF orphelins)
-**Statut : OPEN — partiellement avancé (Lot 4B, 2026-05-06)**. Les orphelins `extractionService_PRODUCTION.ts` et `advancedExtractionService.ts` ont été supprimés (cf. STATUS_REGISTRY → LOT-4B). Cela **ne résout pas** la divergence centrale : `fileProcessingService` (utilisé par `/upload`) et `enhancedFileProcessingService` (utilisé par `/upload-bulk` et `/document-understanding`) restent en parallèle. La fusion reste l'objet de **Lot 4D**, non ouvert. DEF-05 reste **OPEN**.
+**Statut : OPEN — partiellement avancé (Lot 4B + Lot 4D.1, 2026-05-06)**. Les orphelins `extractionService_PRODUCTION.ts` et `advancedExtractionService.ts` ont été supprimés (cf. STATUS_REGISTRY → LOT-4B). **Lot 4D.1 (2026-05-06)** a extrait les types partagés `ProcessingResult` et `FileDetectionResult` dans `src/types/processing.ts` (micro-patch typage, aucun changement runtime) — préparation propre avant fusion. Cela **ne résout pas** la divergence centrale : `fileProcessingService` (utilisé par `/upload`) et `enhancedFileProcessingService` (utilisé par `/upload-bulk` et `/document-understanding`) restent en parallèle. La fusion reste l'objet de **Lot 4D.2 / 4D.3 / 4D.4**, non ouverts. DEF-05 reste **OPEN**.
 
 ---
 
