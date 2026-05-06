@@ -96,11 +96,11 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             {getStatusIcon(results.success)}
-            <span>Résumé du Traitement (Corrigé)</span>
+            <span>Résumé du traitement</span>
             {getStatusBadge(results.success)}
           </CardTitle>
           <CardDescription>
-            Résultats de l'importation avec corrections automatiques appliquées
+            Résultats de l'importation et de la synchronisation des données
             {processingTime && ` • Durée: ${Math.round(processingTime / 1000)}s`}
           </CardDescription>
         </CardHeader>
@@ -173,13 +173,13 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
             <div className="flex items-center space-x-2">
               <CheckCircle className="h-4 w-4 text-blue-600" />
               <span className="text-sm font-medium text-blue-800">
-                Corrections Automatiques Appliquées
+                Traitement contrôlé
               </span>
             </div>
             <div className="text-xs text-blue-600 mt-1">
-              • Colonnes AMOUNT corrigées (cellules vides remplies avec "N/A")
-              • Numéros de facture maintenus dans leurs colonnes d'origine
-              • Statistiques ajustées pour refléter les vrais montants uniquement
+              • Données importées avec traçabilité Excel
+              • Idempotence contrôlée par fichier et ligne source
+              • Statistiques calculées sur les montants valides
             </div>
           </div>
         </CardContent>
@@ -194,7 +194,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
               <span>Collection Report</span>
             </CardTitle>
             <CardDescription>
-              Données extraites avec corrections automatiques
+              Données extraites et synchronisées
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -375,13 +375,12 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
               <>
                 <div className="flex items-center space-x-2 text-green-600">
                   <CheckCircle className="h-4 w-4" />
-                  <span className="text-sm">Traitement et corrections terminés avec succès</span>
+                  <span className="text-sm">Traitement terminé avec succès</span>
                 </div>
                 <div className="text-sm text-gray-600">
-                  • Les colonnes AMOUNT ont été automatiquement corrigées
-                  • Les statistiques reflètent maintenant les vrais montants uniquement
-                  • Les numéros de facture sont maintenus dans leurs colonnes d'origine
-                  • Consultez le tableau de bord consolidé pour une vue d'ensemble
+                  • Vérifier les éventuels avertissements
+                  • Contrôler les lignes rejetées si présentes
+                  • Consulter le dashboard principal ou la page Collections
                 </div>
               </>
             ) : (
