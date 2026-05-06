@@ -345,7 +345,7 @@ Plan en deux étapes validé CTO : DB-FREEZE-1A (documentation) immédiat, DB-FR
 
 ## LOT-4B / 4C / 4D / 4E — PROPOSED
 
-**Statut : `PLANNED` — awaiting CTO GO**
+**Statut : `PLANNED` — awaiting CTO GO** (sauf 4B ci-dessous)
 
 - **4B** : suppression code mort prouvé (3 candidats certains + 3 à vérifier).
 - **4C** : clarification pages mockées, doublon de route, composants debug BDK.
@@ -355,3 +355,29 @@ Plan en deux étapes validé CTO : DB-FREEZE-1A (documentation) immédiat, DB-FR
 **LOT-4 global** : reste ouvert, aucun changement de code.
 
 **Interdits permanents (Lot 4 entier)** : pas de modification `cold_shore`/`shiny_waterfall`/pipeline Excel ; pas de réouverture Lot 1/2B/3/SEC-ENV-1/DB-FREEZE-1A ; DB-FREEZE-1B reste différé jusqu'à staging ; DEF-10 et DEF-14 hors périmètre.
+
+---
+
+## LOT-4B — Suppression chirurgicale code mort confirmé
+
+**Statut : CLOSED (2026-05-06)**
+
+**Préalable** : `docs/LOT4B0_ORPHAN_VERIFICATION.md` (REPORT_ONLY) confirme 0 référence runtime, 0 import dynamique, 0 route pour les 3 fichiers.
+
+**Fichiers supprimés (3)** :
+- `src/services/extractionService_PRODUCTION.ts`
+- `src/services/advancedExtractionService.ts`
+- `src/components/ProcessingResultsDetailed copy.tsx`
+
+**Vérifications post-suppression** :
+- `rg extractionService_PRODUCTION src/` → 0 résultat
+- `rg advancedExtractionService src/` → 0 résultat
+- `rg "ProcessingResultsDetailed copy" src/` → 0 résultat
+- Tous les imports de `extractBankReport` pointent vers `src/services/extractionService.ts` (jamais `_PRODUCTION`) — confirmé : `fileProcessingService.ts:1` et `enhancedFileProcessingService.ts:1` importent depuis `./extractionService`.
+- Build TypeScript vert.
+
+**Fichiers documentation modifiés** : `docs/STATUS_REGISTRY.md`, `docs/DEFERRED_BACKLOG.md` uniquement.
+
+**Hors scope (rappel CTO)** : `bankReportDetectionService`, `batchProcessingService`, `specializedMatchingService`, `BDKDebugPanel`, `BDKCalibrationInsights`, `DataViewer`, `ValidationMatrix`, `fileProcessingService`, `enhancedFileProcessingService`, `extractionService`, `bdkExtractionService`, `excelMappingService`, `excelProcessingService`, `intelligentSyncService`, `databaseService`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 reste OPEN / partiellement avancé. `DB_TRUTH.md`, `LOT4A_PIPELINES_AUDIT.md`, `LOT4B0_ORPHAN_VERIFICATION.md` non modifiés.
+
+**LOT-4 global** : toujours ouvert ; LOT-4C / 4D / 4E restent `PLANNED`.
