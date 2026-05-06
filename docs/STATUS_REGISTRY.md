@@ -542,3 +542,26 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 **Conservé (non touché)** : `ConsolidatedMetrics`, `ConsolidatedCharts`, `CriticalAlertsPanel`, `bankingUniversalService`, `UniversalBankParser`, `DocumentUnderstanding`, `Reconciliation`, `QualityControl`, `fileProcessingService`, `enhancedFileProcessingService`.
 
 **Hors scope** : aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. DEF-07 partiellement avancé. UX-SYNC-COUNTERS, DEF-10, DEF-14 non traités.
+
+---
+
+## LOT-4D.1 — CLOSED (2026-05-06) — Extraction type partagé `ProcessingResult` / `FileDetectionResult`
+
+**Type** : micro-patch typage, aucun changement runtime.
+
+**Contexte** : Lot 4D.0 (REPORT_ONLY) a confirmé que les interfaces `ProcessingResult` exportées par `fileProcessingService` et `enhancedFileProcessingService` étaient strictement identiques, et que `ProcessingResultsDetailed` importait le type depuis `enhancedFileProcessingService` alors qu'il pouvait recevoir un résultat issu de `fileProcessingService` (couplage fragile).
+
+**Travail effectué** :
+- Créé `src/types/processing.ts` exportant `ProcessingResult` et `FileDetectionResult` (copie exacte des champs existants, aucun renommage, aucun ajout, aucun retrait).
+- `src/services/fileProcessingService.ts` : interface locale `ProcessingResult` supprimée → import + re-export type depuis `@/types/processing`.
+- `src/services/enhancedFileProcessingService.ts` : interfaces locales `ProcessingResult` et `FileDetectionResult` supprimées → import + re-export type depuis `@/types/processing`.
+- `src/components/ProcessingResultsDetailed.tsx` : import `ProcessingResult` désormais depuis `@/types/processing`.
+
+**Vérifications** :
+- `rg "interface ProcessingResult" src/` → uniquement `src/types/processing.ts` (et `ProcessingResultsDetailedProps`, qui est une interface de props distincte).
+- `rg "interface FileDetectionResult" src/` → uniquement `src/types/processing.ts`.
+- Build TypeScript vert (`tsc --noEmit` → 0 erreur).
+- Aucun changement runtime, aucune logique modifiée dans `processFiles` / `processFilesArray`.
+- Re-exports type conservés sur les deux services pour préserver la compatibilité des imports existants (ex. `FileUploadBulk.tsx` importe `ProcessingResult` depuis `enhancedFileProcessingService`).
+
+**Hors scope** : `HeartbeatService`, `BatchProcessingService`, `intelligentSyncService`, `excelProcessingService`, `excelMappingService`, `FileUpload.tsx`, `FileUploadBulk.tsx`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D.2 / 4D.3 / 4D.4 non ouverts. DEF-05 reste **OPEN** (préparé, non résolu). DEF-07 partiellement avancé. UX-SYNC-COUNTERS, DEF-10, DEF-14 non traités.
