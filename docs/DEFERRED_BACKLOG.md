@@ -78,8 +78,9 @@
 - ~~`src/components/ProcessingResultsDetailed copy.tsx`~~ — supprimé Lot 4B (2026-05-06)
 - ~~`src/services/extractionService_PRODUCTION.ts`~~ — supprimé Lot 4B (2026-05-06)
 - ~~`src/services/advancedExtractionService.ts`~~ — supprimé Lot 4B (2026-05-06)
-- `src/components/ConsolidatedDashboard.tsx` — composant avec mock, non routé (page parente supprimée Lot 4C.1, le composant subsiste)
-**Lot probable** : Lot 4 — **partiellement traité Lot 4B + Lot 4C.1**. Reste : `src/components/ConsolidatedDashboard.tsx` (composant non routé, Lot 4C.2/4E).
+- ~~`src/components/ConsolidatedDashboard.tsx`~~ — supprimé Lot 4C.4.bis (2026-05-06)
+- ~~`src/components/ConsolidatedBankView.tsx`~~ — supprimé Lot 4C.4.bis (2026-05-06, cascade exclusive)
+**Lot probable** : Lot 4 — **traité Lot 4B + Lot 4C.1 + Lot 4C.4.bis**. Aucun orphelin résiduel connu.
 
 ### DEF-09 : Migrations historiques discardées
 
