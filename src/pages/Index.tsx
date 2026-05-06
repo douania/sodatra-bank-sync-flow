@@ -73,16 +73,16 @@ const Index = () => {
             <CardHeader>
               <CardTitle className="flex items-center space-x-2 text-green-600">
                 <Building2 className="h-6 w-6" />
-                <span>Vue Consolidée</span>
+                <span>Dashboard Principal</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-gray-600 mb-4">
-                Analyse cross-bank avancée avec détection automatique des risques multi-banques
+                Vue d'ensemble des positions bancaires avec analyses par banque
               </p>
-              <Link to="/consolidated">
+              <Link to="/dashboard">
                 <Button variant="outline" className="w-full border-green-600 text-green-600 hover:bg-green-50">
-                  Vue Consolidée Multi-Banques
+                  Accéder au Dashboard
                 </Button>
               </Link>
             </CardContent>
@@ -92,16 +92,16 @@ const Index = () => {
             <CardHeader>
               <CardTitle className="flex items-center space-x-2 text-purple-600">
                 <AlertTriangle className="h-6 w-6" />
-                <span>Alertes Critiques</span>
+                <span>Contrôle Qualité</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-gray-600 mb-4">
-                Surveillance des alertes et incidents nécessitant une attention immédiate
+                Surveillance des contrôles qualité et anomalies sur les données importées
               </p>
-              <Link to="/alerts">
+              <Link to="/quality-control">
                 <Button variant="outline" className="w-full border-purple-600 text-purple-600 hover:bg-purple-50">
-                  Voir les Alertes
+                  Voir le Contrôle Qualité
                 </Button>
               </Link>
             </CardContent>
@@ -220,9 +220,9 @@ const Index = () => {
         {/* Quick Stats Preview */}
         <div className="text-center">
           <p className="text-gray-500 mb-4">Système opérationnel - Prêt pour l'analyse en temps réel</p>
-          <Link to="/consolidated">
+          <Link to="/dashboard">
             <Button size="lg" className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
-              🚀 Accéder à la Vue Consolidée Multi-Banques
+              🚀 Accéder au Dashboard Principal
             </Button>
           </Link>
         </div>
