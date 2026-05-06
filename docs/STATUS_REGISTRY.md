@@ -513,3 +513,32 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 - Build TypeScript vert (`tsc --noEmit` → 0 erreur)
 
 **Hors scope** : `fileProcessingService`, `enhancedFileProcessingService`, `App.tsx`, `Index.tsx`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. DEF-07 partiellement avancé. UX-SYNC-COUNTERS, DEF-10, DEF-14 non traités.
+
+---
+
+## LOT-4C.4 — Audit final composant `ConsolidatedDashboard` (REPORT_ONLY)
+
+**Statut : CLOSED / REPORT_ONLY (2026-05-06)**
+
+**Livrable unique** : `docs/LOT4C4_CONSOLIDATED_COMPONENT_AUDIT.md`. Aucun code modifié.
+
+**Conclusions** : `src/components/ConsolidatedDashboard.tsx` orphelin confirmé (1 seule occurrence = sa déclaration). `src/components/ConsolidatedBankView.tsx` importé exclusivement par `ConsolidatedDashboard` ⇒ SUPPRIMABLE cascade. `ConsolidatedMetrics`, `ConsolidatedCharts`, `CriticalAlertsPanel` conservés (utilisés par `Dashboard.tsx`).
+
+---
+
+## LOT-4C.4.bis — Suppression chirurgicale composant `ConsolidatedDashboard`
+
+**Statut : CLOSED (2026-05-06)**
+
+**Fichiers supprimés (2)** :
+- `src/components/ConsolidatedDashboard.tsx`
+- `src/components/ConsolidatedBankView.tsx`
+
+**Vérifications post-suppression** :
+- `rg "ConsolidatedDashboard|ConsolidatedBankView" src/` → 0 résultat
+- `ConsolidatedMetrics`, `ConsolidatedCharts`, `CriticalAlertsPanel` toujours présents et utilisés par `src/pages/Dashboard.tsx`
+- Build TypeScript vert (`tsc --noEmit` → 0 erreur)
+
+**Conservé (non touché)** : `ConsolidatedMetrics`, `ConsolidatedCharts`, `CriticalAlertsPanel`, `bankingUniversalService`, `UniversalBankParser`, `DocumentUnderstanding`, `Reconciliation`, `QualityControl`, `fileProcessingService`, `enhancedFileProcessingService`.
+
+**Hors scope** : aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. DEF-07 partiellement avancé. UX-SYNC-COUNTERS, DEF-10, DEF-14 non traités.
