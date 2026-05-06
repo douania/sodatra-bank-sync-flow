@@ -13,7 +13,6 @@ import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import FileUpload from "./pages/FileUpload";
 import FileUploadBulk from "./pages/FileUploadBulk";
-import ConsolidatedDashboard from "./pages/ConsolidatedDashboard";
 import Reconciliation from "./pages/Reconciliation";
 import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import QualityControl from "./pages/QualityControl";
