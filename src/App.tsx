@@ -16,7 +16,6 @@ import FileUploadBulk from "./pages/FileUploadBulk";
 import Reconciliation from "./pages/Reconciliation";
 import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import QualityControl from "./pages/QualityControl";
-import BankingDashboard from "./pages/BankingDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,7 +37,6 @@ const App = () => (
               <Route path="/upload-bulk" element={<ProtectedRoute><FileUploadBulk /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
               <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
-              <Route path="/banking/dashboard" element={<ProtectedRoute><BankingDashboard /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
