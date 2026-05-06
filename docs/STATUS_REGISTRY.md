@@ -478,3 +478,38 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 **Conservé (non touché)** : `src/services/bankingUniversalService.ts` (usage réel via `UniversalBankParser.saveReport`), `src/components/UniversalBankParser.tsx`, `src/components/ConsolidatedDashboard.tsx` (composant — A_VERIFIER, hors scope).
 
 **Hors scope** : `Reconciliation`, `QualityControl`, `fileProcessingService`, `enhancedFileProcessingService`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. DEF-07 partiellement avancé.
+
+---
+
+## LOT-4C.3 — Audit ciblé Reconciliation (REPORT_ONLY)
+
+**Statut : CLOSED / REPORT_ONLY (2026-05-06)**
+
+**Livrable unique** : `docs/LOT4C3_RECONCILIATION_AUDIT.md`. Aucun code modifié.
+
+**Conclusions** : `Reconciliation` = hybride. Onglets `sync` (`IntelligentSyncManager`) et `collections` (`CollectionsManager`) = ACTIF_REEL. Onglet `engine` (`BankReconciliationEngine`) = mock défectueux. Onglet `statistics` = MOCK pur hardcodé. Service `intelligentSyncService` = NE_PAS_TOUCHER (utilisé par `fileProcessingService` + `enhancedFileProcessingService`). Recommandation : Option B = allègement chirurgical.
+
+---
+
+## LOT-4C.3.bis — Allègement chirurgical Reconciliation
+
+**Statut : CLOSED (2026-05-06)**
+
+**Fichier modifié (1)** : `src/pages/Reconciliation.tsx`
+- Onglet `engine` (`BankReconciliationEngine`) supprimé
+- Onglet `statistics` (cartes hardcodées 85% / 425M / 80% / 65/25/10) supprimé
+- `TabsList` passé à `grid-cols-2`
+- Imports `Card/CardContent/CardHeader/CardTitle` et `BankReconciliationEngine` retirés
+- Bandeau d'avertissement adapté : précise que sync + collections sont actives, seul le moteur de rapprochement réel n'est pas connecté
+
+**Fichier supprimé (1)** : `src/components/BankReconciliationEngine.tsx`
+
+**Conservé (non touché)** : `IntelligentSyncManager`, `CollectionsManager`, `intelligentSyncService`, `databaseService`, `DuplicateAnalyzer`, route `/reconciliation`, lien `Index.tsx:166` vers `/reconciliation`.
+
+**Vérifications post-patch** :
+- `rg "BankReconciliationEngine" src/` → 0 résultat
+- `rg 'value="engine"|value="statistics"' src/pages/Reconciliation.tsx` → 0 résultat
+- `IntelligentSyncManager` + `CollectionsManager` toujours présents dans `Reconciliation.tsx`
+- Build TypeScript vert (`tsc --noEmit` → 0 erreur)
+
+**Hors scope** : `fileProcessingService`, `enhancedFileProcessingService`, `App.tsx`, `Index.tsx`. Aucun SQL, aucune migration, aucune RLS/auth/schéma. Lot 4D non ouvert. DEF-05 inchangé. DEF-07 partiellement avancé. UX-SYNC-COUNTERS, DEF-10, DEF-14 non traités.
