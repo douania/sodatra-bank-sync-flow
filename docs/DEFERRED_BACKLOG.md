@@ -142,3 +142,30 @@
 **Non modifié** : `src/services/intelligentSyncService.ts` (insert `excelRow.reglementImpaye || null` déjà compatible), `src/types/banking.ts` (type `string` ISO compatible Postgres `date`), schéma, RLS, auth, edge functions, `databaseService.safeValue`.
 **T2/T3/T4** acceptés par héritage des tests `parseDate` validés en Lot 3B.2 (date valide → ISO ; invalide → warning + `NULL` ; vide → `NULL` silencieux).
 **T1/T5** verts post-réimport `COLLECTION REPORT-2026.xlsx` : `total_file = 648`, `total_amount = 8 395 386 484`, `unknowns = 0`, `reglement_non_null = 0`, `duplicates_by_traceability = 0`. Voir `docs/STATUS_REGISTRY.md` (section Post-Lot 3 / DEF-15) pour les preuves.
+
+---
+
+## UX compteurs synchronisation
+
+### DEF-UX-COUNTERS-01 : T3 `enriched_collections` répété au réimport idempotent
+
+**Statut** : `OPEN` / **P3 mineur** (non bloquant, donnée saine).
+**Identifiant volontairement distinct de `DEF-06`** (déjà utilisé pour le moteur de rapprochement fictif).
+
+**Constat** (validé 2026-05-06 sur `COLLECTION REPORT-2026.xlsx` via `/upload` legacy) :
+- Pass 1 : T3 = 47.
+- Pass 2 (réimport strictement identique) : T3 = 47, alors que `T1 = 0` et somme = 656/656.
+- Contrôle SQL : `duplicates_by_traceability = 0` (aucune duplication réelle en BD).
+
+**Hypothèses à investiguer** :
+1. `intelligentSyncService` recompte une ligne en `enriched_collections` même quand l'enrichissement réapplique exactement les mêmes valeurs (pas de delta réel) — bug d'étiquetage du compteur.
+2. 47 lignes restent classées `EXISTS_INCOMPLETE` parce que les champs source Excel sont eux-mêmes incomplets, donc revues à chaque passe sans pouvoir être "complétées".
+
+**Impact** :
+- Donnée en BD : saine. Aucune duplication, aucune écriture parasite (T1 = 0 + SQL 0 doublon le prouvent).
+- UI compteur T3 : sous-optimal sur réimports successifs (suggère à tort un travail d'enrichissement neuf).
+- **Non bloquant** pour `LOT-4D.2.b.0` PLAN_REVIEW.
+
+**Action différée** : auditer `intelligentSyncService.determineCollectionStatusOptimized` / `enrichExistingCollection` dans un lot UX compteur séparé, postérieur à `LOT-4D.2.b`. Aucun patch runtime à ce stade.
+
+**Hors scope** : ne pas mélanger avec `LOT-4D.2.b` (Heartbeat + Batch enhanced) ni avec `LOT-4D.3` (bascule `/upload`).

@@ -584,3 +584,40 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 - `rg "N/A|Vue Consolidée|tableau de bord consolidé|Corrections Automatiques|Corrigé"` → seul résultat = commentaire interne ligne 59 (`exclure les éléments synthétiques comme "N/A"`), justifié (logique de filtrage existante, hors périmètre wording UI).
 
 **Hors scope** : aucun changement de calcul, JSX structurel ou compteur. Aucune modification de `ProcessingResult`, services, SQL, migrations, RLS. DEF-05 inchangé. Lot 4D.2 non ouvert.
+
+---
+
+## UX-SYNC-COUNTERS — PASS DÉFINITIF batch-safety legacy (2026-05-06)
+
+**Statut** : `CLOSED` — compteurs UX de synchronisation Excel validés sur le pipeline `/upload` legacy (`fileProcessingService` → `BatchProcessingService` → `intelligentSyncService`).
+
+**Contexte** : conditions de déblocage posées par `docs/LOT4D20_BATCH_SAFETY_AUDIT.md` (LOT-4D.2.0, REPORT_ONLY) — validation T2/T3 sur fichier Excel réel + contrôle SQL 0 doublon par traçabilité.
+
+**Preuves**
+
+- T1 (`new_collections`) : déjà vert avant ce lot.
+- Fichier du jour `COLLECTION REPORT-2026.xlsx` traité sur `/upload` legacy :
+  - **Pass 1** : 656 lignes, T1=8, T2=601, T3=47, T4=0, somme = 656.
+  - **Pass 2** (réimport identique) : 656 lignes, T1=0, T2=609, T3=47, T4=0, somme = 656.
+- Contrôle SQL doublons (read-only) :
+  - `SELECT excel_filename, excel_source_row, COUNT(*) ... WHERE excel_filename ILIKE '%COLLECTION REPORT%' HAVING COUNT(*) > 1` → **0 ligne**.
+  - `SELECT COUNT(*) FROM (... GROUP BY excel_filename, excel_source_row HAVING COUNT(*) > 1) d` (global) → `duplicates_by_traceability = 0`.
+  - Vérif par fichier : `rows == distinct_rows` sur tous les fichiers (`COLLECTION REPORT-2026.xlsx` 656/656, `COLLECTION REPORT-2025.xlsx` 913/913, etc.).
+
+**Conclusion**
+
+- Compteur **T1 `new_collections`** : fiable (0 sur réimport, conservation totale).
+- Compteur **T2 `idempotent_updates`** : fiable, monte de 601 à 609 entre les deux passes (cohérent avec les 8 nouvelles lignes de la pass 1 qui basculent en idempotent à la pass 2).
+- Compteur **T3 `enriched_collections`** : valeur **stable** (47 → 47) mais **non strictement idempotent** au réimport — voir `DEF-UX-COUNTERS-01` dans `DEFERRED_BACKLOG.md`. Donnée saine (T1=0 + 0 doublon SQL le prouvent), seule l'étiquette du compteur est sous-optimale.
+- Conservation Σ = 656/656 sur les deux passes.
+- Idempotence `(excel_filename, excel_source_row)` confirmée côté DB.
+
+**Effets sur le backlog**
+
+- **LOT-4D.2.b.0 PLAN_REVIEW** : **DÉBLOQUÉ** (extraction `aggregateBatchResults` → `src/services/syncResultAggregator.ts`, READ_ONLY prévu).
+- **LOT-4D.2.b runtime** : toujours **non ouvert**.
+- **LOT-4D.3** (bascule `/upload` vers `enhanced`) : **interdit**.
+- **DEF-05** : reste **OPEN** (la divergence des pipelines n'est pas résolue par cette validation).
+- **DEF-UX-COUNTERS-01** (nouveau, mineur) : créé dans `DEFERRED_BACKLOG.md`.
+
+**Hors scope** : aucun fichier `src/` modifié, aucun SQL correctif, aucune migration, aucune RLS/auth/schéma, aucun patch runtime, `LOT4D20_BATCH_SAFETY_AUDIT.md` non modifié.
