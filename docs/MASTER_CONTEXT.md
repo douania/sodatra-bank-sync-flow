@@ -1,97 +1,155 @@
 # MASTER CONTEXT — Bank Sync Flow (SODATRA)
 
-> Source de vérité pour le contexte projet. À lire avant toute intervention.
+> Source de vérité produit et technique courte.
+> À lire avant tout chantier.
+> Pour l'historique détaillé, voir `docs/STATUS_REGISTRY.md`.
 
 ## Objectif de l'application
 
-Bank Sync Flow est un outil interne de gestion bancaire pour SODATRA. Il vise à :
+Bank Sync Flow est une application interne SODATRA destinée à centraliser, importer, contrôler et exploiter les données bancaires issues d'imports manuels Excel/PDF.
 
-- Centraliser les rapports bancaires (BDK, SGS, BICIS, ATB, ORA, BIS) à partir de fichiers Excel et PDF importés manuellement.
-- Suivre les impayés, les collections, les facilités bancaires et la position de trésorerie.
-- Fournir des tableaux de bord consolidés et des alertes sur les risques.
+Sources attendues :
+- Collection Report
+- Fund Position
+- Client Reconciliation
+- relevés bancaires BDK, BIS, SGS/SGBS, BICIS, ORA, ATB
+- impayés
+- effets
+- chèques
 
-**Il n'y a aucune connexion API directe aux banques.** Toute donnée provient d'imports manuels Excel/PDF.
+Objectifs métier :
+- fiabiliser les imports ;
+- éviter les doublons ;
+- contrôler la qualité des données ;
+- suivre les positions et risques bancaires ;
+- préparer un dashboard Direction fiable.
 
-## État actuel
+Il n'y a aucune connexion API directe aux banques. Toute donnée provient d'imports manuels Excel/PDF.
 
-**Prototype / non production-ready.**
+## Statut CTO actuel
 
-L'application contient un mélange de :
-- Vraie logique métier fonctionnelle (import Excel, extraction PDF BDK, stockage Supabase).
-- Modules de démonstration avec données simulées (dashboards, rapprochement, alertes).
-- Sécurité insuffisante (RLS permissives, sign-up public).
+Statut : prototype avancé / non encore production-ready.
 
-**Règle CTO : aucune nouvelle fonctionnalité avant correction des P0 sécurité et intégrité.**
+Priorité actuelle :
+1. sécurité Supabase / RLS ;
+2. intégrité et idempotence des imports ;
+3. réduction des mocks et code mort ;
+4. stabilisation des pipelines ;
+5. dashboard Direction fiable ;
+6. fonctionnalités avancées.
 
-## Architecture
+Règle CTO permanente : aucune nouvelle fonctionnalité métier majeure avant stabilisation des P0/P1 documentés.
+
+## Architecture actuelle
 
 | Couche | Technologie |
 |---|---|
-| Frontend | React 18 + Vite 5 + TypeScript 5 + Tailwind CSS v3 |
-| UI | shadcn/ui |
-| Backend | Supabase (Auth, PostgreSQL, RLS) |
-| Hébergement | Lovable |
-| État | React Query + useState local |
+| Frontend | React 18 + Vite 5 + TypeScript |
+| UI | Tailwind CSS + shadcn/ui |
+| Backend | Supabase Auth + PostgreSQL + RLS |
+| Hébergement / runtime | Lovable |
+| État applicatif | React Query + état local |
+| Imports | Parsing client-side TypeScript |
 
-Pas de serveur backend custom. Pas d'Edge Functions déployées. Pas de CI/CD.
+Pas de serveur backend custom.
+Pas d'API bancaire directe.
 
-## Flux principal
+## Documents canoniques
 
-```
-Excel/PDF → Upload (FileUpload.tsx) → Parsing client-side → Supabase tables → Dashboard
-```
+| Sujet | Document |
+|---|---|
+| Contexte maître | `docs/MASTER_CONTEXT.md` |
+| État des lots | `docs/STATUS_REGISTRY.md` |
+| Contrat sécurité | `docs/SECURITY_CONTRACT.md` |
+| Backlog différé | `docs/DEFERRED_BACKLOG.md` |
+| Vérité DB actuelle | `docs/DB_TRUTH.md` |
+| Pipelines import | `docs/LOT4A_PIPELINES_AUDIT.md`, `docs/LOT4D0_PIPELINE_CONSOLIDATION_AUDIT.md` |
 
-1. L'utilisateur uploade un fichier Excel ou PDF.
-2. Le parsing est fait entièrement côté client (services TypeScript).
-3. Les données extraites sont insérées dans les tables Supabase.
-4. Le Dashboard affiche les données depuis Supabase.
+## Modules actifs
 
-## État des modules
-
-### Fiables (connectés aux données réelles)
-
-| Module | Page | Notes |
+| Module | Route | Statut |
 |---|---|---|
-| Import fichiers Excel | `/upload` | Fonctionnel mais parsing permissif (voir DEFERRED_BACKLOG) |
-| Import bulk | `/upload-bulk` | Partiellement fiable / à vérifier — pipelines d'import divergents |
-| Dashboard principal | `/dashboard` | Connecté à Supabase, mais dépend de la fiabilité des données importées et de la correction des RLS |
-| Contrôle qualité | `/quality-control` | Analyse les données importées |
-| Analyse documents | `/document-understanding` | Extraction PDF |
+| Dashboard principal | `/dashboard` | Actif, dépend de la qualité des imports et RLS |
+| Upload simple | `/upload` | Actif, pipeline legacy encore séparé |
+| Upload bulk | `/upload-bulk` | Actif, pipeline enhanced |
+| Document Understanding | `/document-understanding` | Actif, notamment BDK/PDF |
+| Quality Control | `/quality-control` | Actif |
+| Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
 
-### Mockés ou non connectés (retirés de la nav — Lot 1)
+## Modules supprimés / retirés
 
-| Module | Page | Problème |
-|---|---|---|
-| Banking Dashboard | `/banking/dashboard` | Données 100% simulées (`mockData`) |
-| Rapports Bancaires | `/banking/reports` | Génération simulée |
-| Vue Consolidée | `/consolidated` | Données simulées dans composant |
-| Alertes | `/alerts` | Alertes historiques simulées |
-| Rapprochement | `/reconciliation` | Moteur génère résultats fictifs client-side, pas de persistance |
+Les modules mockés purs ou routes fantômes ont été progressivement retirés dans Lot 4 :
+- `/alerts`
+- `/consolidated`
+- `/consolidated-dashboard`
+- `/banking/reports`
+- `/banking/dashboard`
 
-Ces pages affichent un bandeau d'avertissement et ne sont plus accessibles depuis la navigation principale. Les routes restent actives pour accès développeur.
+Les composants ou fichiers orphelins confirmés ont également été supprimés selon le registre de statut.
 
-### Composants orphelins ou dupliqués
+## Pipelines d'import
 
-- `src/components/ConsolidatedDashboard.tsx` — composant avec données simulées, non routé directement.
-- `src/components/ProcessingResultsDetailed copy.tsx` — copie non nettoyée.
-- `src/services/extractionService_PRODUCTION.ts` — version alternative non utilisée en production.
+Deux pipelines restent en parallèle :
 
-## Décisions CTO prises
+1. `/upload`
+   - `FileUpload.tsx`
+   - `fileProcessingService`
+   - pipeline legacy
 
-1. **Lot 1** : Retirer les modules mockés de la navigation, ajouter des bandeaux, supprimer le sign-up UI, corriger le reset password.
-2. **Modèle d'accès** : mono-société (SODATRA uniquement) — à confirmer formellement en Lot 2.
-3. **Pas de refactoring global** : corrections par micro-lots chirurgicaux, vérifiables et réversibles.
-4. **Ordre de priorité** : Sécurité → Intégrité données → Nettoyage → Fonctionnalités.
-5. **Lot 2B (2026-04-30, clôturé 2026-05-04)** : RLS durcies pour 11 tables métier via migration additive versionnée (`supabase/migrations/20260430150428_04e86234-f4a5-447b-8638-8f85518fa4ef.sql`). Modèle mono-société invite-only acté. Sign-up Supabase désactivé (Authentication → Sign In / Providers → *Allow new users to sign up* = OFF, vérifié visuellement). Tests fonctionnels validés avec `sodatrasn@gmail.com` (login, dashboard, lecture `collection_report`, import simple, console sans `42501`, logs Postgres sans `permission denied`). Statut : `CLOSED`.
-6. **Lot 3 (2026-05-04, clôturé 2026-05-05)** : sécurisation de l'import Excel `CLOSED`. Lot 3A (audit & plan) + Lot 3B découpé en micro-patches indépendants tous clôturés : `3B.0` docs, `3B.1` traçabilité obligatoire (+ `3B.1.bis` idempotence, `3B.1.ter` sélection feuille / clientCode obligatoire, `3B.1.quater` migration varchar→text), `3B.2` dates sans fallback (+ `3B.2.bis` succès partiel contrôlé), `3B.3` headers obligatoires, `3B.4` montants (suppression `Math.trunc`/`Math.abs`, décimales et signe préservés), `3B.5` tests finaux T1–T8 + clôture documentaire. Tous les P0 du Lot 3A traités. Restent ouverts hors périmètre : DEF-05, DEF-10, DEF-14, DEF-15. Détails : `docs/STATUS_REGISTRY.md`.
+2. `/upload-bulk`
+   - `FileUploadBulk.tsx`
+   - `enhancedFileProcessingService`
+   - pipeline enhanced
 
-## Base de données
+DEF-05 reste ouvert tant que la consolidation complète n'est pas terminée.
 
-13 tables Supabase. Schéma détaillé dans les types générés (`src/integrations/supabase/types.ts`).
+## Vérité DB / idempotence
 
-Tables principales : `bank_reports`, `collection_report`, `impayes`, `bank_facilities`, `deposits_not_cleared`, `fund_position`, `fund_position_detail`, `fund_position_hold`, `client_reconciliation`, `bank_evolution_tracking`, `bank_audit_log`, `universal_bank_reports`, `user_roles`.
+Pour `collection_report`, la source canonique d'idempotence métier est :
+`(excel_filename, excel_source_row)`
 
-## Audits réalisés
+La colonne `unique_excel_traceability` est legacy / auxiliaire.
+Les migrations historiques divergentes ne doivent pas être réécrites.
+Lire `docs/DB_TRUTH.md` avant tout chantier DB ou migration.
 
-- **Audit Claude (Phase 1)** : sécurité, RLS, imports, mock, migrations. Base de travail principale.
-- **Audit Manus** : confirme les constats Claude, ajoute le rapprochement fictif comme alerte.
+## Sécurité
+
+Modèle actuel : mono-société SODATRA, invite-only.
+
+Règles :
+- sign-up public désactivé ;
+- RLS durcies par Lot 2B ;
+- pas de policy `USING(true)` ou `WITH CHECK(true)` ;
+- pas de modification sécurité sans validation CTO ;
+- `SECURITY_CONTRACT.md` est la référence stable.
+
+## FROZEN / interdits permanents
+
+Ne pas modifier sans justification CTO explicite :
+- migrations historiques liées à `unique_excel_traceability` ;
+- logique d'idempotence `(excel_filename, excel_source_row)` ;
+- RLS/Auth Supabase ;
+- pipeline Excel stabilisé Lot 3 ;
+- extraction BDK critique ;
+- DB-FREEZE-1B sans staging.
+
+## Backlog prioritaire
+
+Ouverts / différés :
+- DEF-05 : pipelines import divergents ;
+- DEF-10 : transactionnalisation `saveBankReport` / `saveFundPosition` ;
+- DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
+- DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
+- tests automatisés ;
+- documentation utilisateur.
+
+## Règle de travail
+
+Tout chantier doit commencer par :
+1. lire ce Master ;
+2. lire `STATUS_REGISTRY.md` ;
+3. lire `SECURITY_CONTRACT.md` si sécurité/RLS/Auth ;
+4. lire `DB_TRUTH.md` si DB/migration/import ;
+5. vérifier le repo avant toute conclusion ;
+6. proposer un plan ;
+7. attendre GO CTO avant patch.
