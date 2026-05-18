@@ -54,6 +54,9 @@ interface MoneySelection {
   issue?: InternalBookValidationIssue;
 }
 
+const EXCEL_SERIAL_DATE_MIN = 20000;
+const EXCEL_SERIAL_DATE_MAX = 60000;
+
 const SECTION_DEFINITIONS: SectionDefinition[] = [
   {
     key: 'openingBalance',
@@ -729,7 +732,7 @@ class InternalBookExcelParser {
     const candidates = row.cells.filter((cell) => cell.money).map((cell) => cell.money as InternalBookMoneyCell);
     const money = candidates[candidates.length - 1];
 
-    if (flagAmbiguity && candidates.length > 1) {
+    if (flagAmbiguity && candidates.length > 1 && !this.hasClearRightMostAmount(row, candidates)) {
       return {
         money,
         issue: this.createIssue(
@@ -747,6 +750,49 @@ class InternalBookExcelParser {
     return { money };
   }
 
+
+  private hasClearRightMostAmount(row: NormalizedRow, candidates: InternalBookMoneyCell[]): boolean {
+    if (candidates.length <= 1) {
+      return true;
+    }
+
+    const rightMostCandidate = candidates[candidates.length - 1];
+    const latestTextColumn = Math.max(
+      0,
+      ...row.cells
+        .filter((cell) => !cell.money && cell.normalizedText && !this.looksLikeDate(`${cell.raw ?? ''}`))
+        .map((cell) => cell.columnIndex),
+    );
+    const candidatesAfterLatestText = candidates.filter((candidate) => candidate.columnIndex > latestTextColumn);
+
+    if (latestTextColumn > 0 && candidatesAfterLatestText.length === 1 && candidatesAfterLatestText[0] === rightMostCandidate) {
+      return true;
+    }
+
+    return this.rowStartsWithDate(row) && candidates.length === 2;
+  }
+
+  private rowStartsWithDate(row: NormalizedRow): boolean {
+    const firstCell = row.cells[0];
+    if (!firstCell) {
+      return false;
+    }
+
+    if (this.looksLikeDate(`${firstCell.raw ?? ''}`)) {
+      return true;
+    }
+
+    return typeof firstCell.raw === 'number' && this.looksLikeExcelSerialDate(firstCell.raw);
+  }
+
+  private looksLikeZeroDash(value: string): boolean {
+    return /^[-–—]$/.test(value.trim());
+  }
+
+  private looksLikeExcelSerialDate(value: number): boolean {
+    return Number.isInteger(value) && value >= EXCEL_SERIAL_DATE_MIN && value <= EXCEL_SERIAL_DATE_MAX;
+  }
+
   private parseMoneyCell(
     raw: unknown,
     sheetName: string,
@@ -759,6 +805,10 @@ class InternalBookExcelParser {
     }
 
     if (typeof raw === 'number' && Number.isFinite(raw)) {
+      if (columnIndex === 1 && this.looksLikeExcelSerialDate(raw)) {
+        return undefined;
+      }
+
       return { value: raw, raw, sheetName, rowIndex, columnIndex, address };
     }
 
@@ -769,6 +819,10 @@ class InternalBookExcelParser {
     const value = raw.trim();
     if (!value || this.looksLikeDate(value)) {
       return undefined;
+    }
+
+    if (this.looksLikeZeroDash(value)) {
+      return { value: 0, raw, sheetName, rowIndex, columnIndex, address };
     }
 
     const numericLike = value.match(/^\(?-?\s*[\d\s.,]+\)?$/);
