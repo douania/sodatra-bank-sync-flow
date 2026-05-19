@@ -52,4 +52,12 @@ test('aggregates post-0D characterization outcomes by fixture and issue code', (
   assert.equal(report.some((entry) => entry.bank === 'BICIS' && entry.status === 'needs_review'), true);
   assert.equal(report.some((entry) => entry.issueCodes.includes('IMPAYES_TOTAL_MISMATCH')), true);
   assert.equal(report.some((entry) => entry.issueCodes.includes('AMBIGUOUS_AMOUNT_COLUMN')), true);
+  assert.equal(
+    report.some(
+      (entry) =>
+        entry.sourceFile === '05-BDK 2026 real-shape amount1 zero totals.xlsx' &&
+        entry.issueCodes.includes('OPENING_PLUS_DEPOSITS_MISMATCH'),
+    ),
+    true,
+  );
 });
