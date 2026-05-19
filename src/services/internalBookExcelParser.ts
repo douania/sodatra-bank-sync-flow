@@ -61,6 +61,7 @@ const NON_AMOUNT_COLUMN_HEADERS = new Set(['DATE', 'CH NO', 'CH NO BD', 'TR NO',
 const AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT', 'AMOUNT 1', 'MONTANT 1']);
 const PRIMARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT']);
 const SECONDARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT 1', 'MONTANT 1']);
+const SUFFIXED_SECONDARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT 2', 'MONTANT 2']);
 
 const SECTION_DEFINITIONS: SectionDefinition[] = [
   {
@@ -790,15 +791,23 @@ class InternalBookExcelParser {
     const secondaryAmountCells = row.cells.filter(
       (cell) => cell.money && SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
     );
+    const suffixedSecondaryAmountCells = row.cells.filter(
+      (cell) => cell.money && SUFFIXED_SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
+    );
 
-    if (primaryAmountCells.length === 0 || secondaryAmountCells.length === 0) {
+    if (primaryAmountCells.length === 0 || (secondaryAmountCells.length === 0 && suffixedSecondaryAmountCells.length === 0)) {
       return undefined;
     }
 
     let preferredCells: NormalizedCell[] = [];
-    if (section === 'totalB') {
+    if (section === 'totalB' && secondaryAmountCells.length > 0) {
       preferredCells = secondaryAmountCells;
-    } else if (section === 'totalDeposits' || section === 'totalBalanceA' || section === 'closingBalanceC') {
+    } else if (
+      suffixedSecondaryAmountCells.length > 0 ||
+      section === 'totalDeposits' ||
+      section === 'totalBalanceA' ||
+      section === 'closingBalanceC'
+    ) {
       preferredCells = primaryAmountCells;
     }
 

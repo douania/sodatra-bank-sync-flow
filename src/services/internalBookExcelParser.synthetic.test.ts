@@ -189,6 +189,33 @@ test('selects BDK simple totals from AMOUNT while keeping TOTAL (B) on AMOUNT 1'
   assert.deepEqual(book.validation.issues.map((issue) => issue.code), []);
 });
 
+test('selects ORABANK simple totals from MONTANT when MONTANT 2 contains trailing zeros', () => {
+  const workbook = createWorkbookFromRows([
+    ['DATE', 'CH NO BD', 'DESCRIPTION', 'PROVIDER', 'CLIENT', 'REF', 'MONTANT', 'MONTANT 2'],
+    ['', '', 'SOLDE D OUVERTURE', '', '', '', 1_000_000, 0],
+    ['DEPOTS PAS ENCORE ENCAISSE'],
+    ['05/05/2026', '', 'Synthetic ORABANK deposit', 'Synthetic provider', 'Synthetic client', 'SYN-DEP-001', 100_000, 0],
+    ['', '', 'TOTAL DEPOSIT', '', '', '', 100_000, 0],
+    ['', '', 'TOTAL A', '', '', '', 1_100_000, 0],
+    ['LESS CHEQUES EMIS NON ENCAISSES'],
+    ['05/05/2026', 'SYN-CHK-001', 'Synthetic ORABANK check A', 'Synthetic provider', 'Synthetic client', 'SYN-REF-001', 50_000, 0],
+    ['05/05/2026', 'SYN-CHK-002', 'Synthetic ORABANK check B', 'Synthetic provider', 'Synthetic client', 'SYN-REF-002', 25_000, 0],
+    ['', '', 'TOTAL B', '', '', '', 75_000, 0],
+    ['', '', 'SOLDE DE CLOTURE SELON LE LIVRE C = A-B', '', '', '', 1_025_000, 0],
+  ]);
+
+  const result = parser.parseWorkbook(workbook, '05- ORABANK 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.openingBalance?.value, 1_000_000);
+  assert.equal(book.totalDeposits?.value, 100_000);
+  assert.equal(book.totalBalanceA?.value, 1_100_000);
+  assert.equal(book.totalB?.value, 75_000);
+  assert.equal(book.closingBalanceC?.value, 1_025_000);
+  assert.deepEqual(book.validation.issues.map((issue) => issue.code), []);
+});
+
 test('ignores an invalid non-daily sheet name', () => {
   const result = parser.parseWorkbook(createWorkbook(), '05-BIS 2026.xlsx');
 
