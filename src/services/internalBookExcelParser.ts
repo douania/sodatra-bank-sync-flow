@@ -33,6 +33,7 @@ interface NormalizedCell {
   rowIndex: number;
   columnIndex: number;
   address: string;
+  headerNormalizedText?: string;
   money?: InternalBookMoneyCell;
 }
 
@@ -56,6 +57,8 @@ interface MoneySelection {
 
 const EXCEL_SERIAL_DATE_MIN = 20000;
 const EXCEL_SERIAL_DATE_MAX = 60000;
+const NON_AMOUNT_COLUMN_HEADERS = new Set(['DATE', 'CH NO', 'CH NO BD', 'TR NO', 'FACT NO', 'REF', 'REFERENCE']);
+const AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT', 'AMOUNT 1', 'MONTANT 1']);
 
 const SECTION_DEFINITIONS: SectionDefinition[] = [
   {
@@ -71,6 +74,7 @@ const SECTION_DEFINITIONS: SectionDefinition[] = [
       'DEPOT NON ENCORE ENCAISSE',
       'DEPOTS NON ENCORE ENCAISSES',
       'DEPOTS PAS ENCORE ENCAISSES',
+      'DEPOTS PAS ENCORE ENCAISSE',
       'DEPOTS NON CREDITES',
     ],
     required: false,
@@ -82,7 +86,7 @@ const SECTION_DEFINITIONS: SectionDefinition[] = [
   },
   {
     key: 'totalBalanceA',
-    aliases: ['TOTAL BALANCE A', 'TOTAL BALANCE (A)', 'SOLDE TOTAL A', 'TOTAL SOLDE A'],
+    aliases: ['TOTAL BALANCE A', 'TOTAL BALANCE (A)', 'SOLDE TOTAL A', 'TOTAL SOLDE A', 'TOTAL A', 'TOTAL (A)'],
     required: true,
   },
   {
@@ -94,6 +98,8 @@ const SECTION_DEFINITIONS: SectionDefinition[] = [
       'CHEQUES NON ENCORE DEBITES',
       'CHEQUES NON DEBITES',
       'CHEQUES EN CIRCULATION',
+      'LESS CHEQUES EMIS NON ENCAISSES',
+      'CHEQUES EMIS NON ENCAISSES',
     ],
     required: false,
   },
@@ -366,7 +372,7 @@ class InternalBookExcelParser {
 
     const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, raw: true, defval: null });
 
-    return rawRows
+    const normalizedRows = rawRows
       .map((rawRow, rowOffset) => {
         const rowIndex = rowOffset + 1;
         const cells = rawRow.map((raw, columnOffset) => {
@@ -385,6 +391,20 @@ class InternalBookExcelParser {
         };
       })
       .filter((row) => row.cells.some((cell) => cell.raw !== null && cell.raw !== undefined && `${cell.raw}`.trim() !== ''));
+
+    let currentHeaders: string[] = [];
+    for (const row of normalizedRows) {
+      if (this.isHeaderLikeRow(row)) {
+        currentHeaders = row.cells.map((cell) => cell.normalizedText);
+        continue;
+      }
+
+      row.cells.forEach((cell, index) => {
+        cell.headerNormalizedText = currentHeaders[index] ?? '';
+      });
+    }
+
+    return normalizedRows;
   }
 
   private findSectionAnchors(rows: NormalizedRow[]): SectionAnchor[] {
@@ -729,7 +749,9 @@ class InternalBookExcelParser {
     section: InternalBookSection,
     flagAmbiguity: boolean,
   ): MoneySelection {
-    const candidates = row.cells.filter((cell) => cell.money).map((cell) => cell.money as InternalBookMoneyCell);
+    const moneyCells = row.cells.filter((cell) => cell.money);
+    const candidateCells = flagAmbiguity ? this.filterAmountCandidateCells(moneyCells) : moneyCells;
+    const candidates = candidateCells.map((cell) => cell.money as InternalBookMoneyCell);
     const money = candidates[candidates.length - 1];
 
     if (flagAmbiguity && candidates.length > 1 && !this.hasClearRightMostAmount(row, candidates)) {
@@ -748,6 +770,16 @@ class InternalBookExcelParser {
     }
 
     return { money };
+  }
+
+  private filterAmountCandidateCells(cells: NormalizedCell[]): NormalizedCell[] {
+    const nonAmountFiltered = cells.filter((cell) => !this.isHeaderedNonAmountCell(cell));
+    const amountHeaderCandidates = nonAmountFiltered.filter((cell) => AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''));
+    return amountHeaderCandidates.length > 0 ? amountHeaderCandidates : nonAmountFiltered;
+  }
+
+  private isHeaderedNonAmountCell(cell: NormalizedCell): boolean {
+    return NON_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? '');
   }
 
 
@@ -979,7 +1011,7 @@ class InternalBookExcelParser {
 
   private extractLabel(row: NormalizedRow): string | undefined {
     return row.cells
-      .filter((cell) => !cell.money && cell.normalizedText)
+      .filter((cell) => (!cell.money || this.isHeaderedNonAmountCell(cell)) && cell.normalizedText)
       .map((cell) => `${cell.raw}`.trim())
       .join(' ')
       .trim() || undefined;
@@ -990,7 +1022,13 @@ class InternalBookExcelParser {
   }
 
   private extractReference(row: NormalizedRow): string | undefined {
-    const candidate = row.cells.find((cell) => !cell.money && /\d/.test(cell.normalizedText) && !this.looksLikeDate(`${cell.raw}`));
+    const candidate = row.cells.find(
+      (cell) =>
+        (!cell.money || this.isHeaderedNonAmountCell(cell)) &&
+        cell.headerNormalizedText !== 'DATE' &&
+        /\d/.test(cell.normalizedText) &&
+        !this.looksLikeDate(`${cell.raw}`),
+    );
     return candidate ? `${candidate.raw}`.trim() : undefined;
   }
 
