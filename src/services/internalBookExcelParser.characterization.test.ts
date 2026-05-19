@@ -6,7 +6,7 @@ import { characterizationFixtures } from './internalBookExcelParser.characteriza
 const parser = new InternalBookExcelParser();
 
 for (const fixture of characterizationFixtures) {
-  test(`characterizes anonymized ${fixture.bank} internal book fixture`, () => {
+  test(`characterizes anonymized ${fixture.bank} internal book fixture from ${fixture.sourceFile}`, () => {
     const result = parser.parseWorkbook(fixture.workbook, fixture.sourceFile, {
       parsedAt: '2026-05-18T00:00:00.000Z',
     });
