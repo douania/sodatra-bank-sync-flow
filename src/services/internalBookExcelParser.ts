@@ -59,6 +59,8 @@ const EXCEL_SERIAL_DATE_MIN = 20000;
 const EXCEL_SERIAL_DATE_MAX = 60000;
 const NON_AMOUNT_COLUMN_HEADERS = new Set(['DATE', 'CH NO', 'CH NO BD', 'TR NO', 'FACT NO', 'REF', 'REFERENCE']);
 const AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT', 'AMOUNT 1', 'MONTANT 1']);
+const PRIMARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT']);
+const SECONDARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT 1', 'MONTANT 1']);
 
 const SECTION_DEFINITIONS: SectionDefinition[] = [
   {
@@ -449,7 +451,7 @@ class InternalBookExcelParser {
     }
 
     const row = rows[anchor.rowPosition];
-    const selection = this.selectRightMostMoney(row, sheetName, section, false);
+    const selection = this.selectSingleTotalMoney(row, sheetName, section);
     if (selection.issue) {
       issues.push(selection.issue);
     }
@@ -770,6 +772,37 @@ class InternalBookExcelParser {
     }
 
     return { money };
+  }
+
+  private selectSingleTotalMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {
+    const structuredMoney = this.selectStructuredSingleTotalMoney(row, section);
+    if (structuredMoney) {
+      return { money: structuredMoney };
+    }
+
+    return this.selectRightMostMoney(row, sheetName, section, false);
+  }
+
+  private selectStructuredSingleTotalMoney(row: NormalizedRow, section: InternalBookSection): InternalBookMoneyCell | undefined {
+    const primaryAmountCells = row.cells.filter(
+      (cell) => cell.money && PRIMARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
+    );
+    const secondaryAmountCells = row.cells.filter(
+      (cell) => cell.money && SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
+    );
+
+    if (primaryAmountCells.length === 0 || secondaryAmountCells.length === 0) {
+      return undefined;
+    }
+
+    let preferredCells: NormalizedCell[] = [];
+    if (section === 'totalB') {
+      preferredCells = secondaryAmountCells;
+    } else if (section === 'totalDeposits' || section === 'totalBalanceA' || section === 'closingBalanceC') {
+      preferredCells = primaryAmountCells;
+    }
+
+    return preferredCells.length === 1 ? preferredCells[0].money : undefined;
   }
 
   private filterAmountCandidateCells(cells: NormalizedCell[]): NormalizedCell[] {

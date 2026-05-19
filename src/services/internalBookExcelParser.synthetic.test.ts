@@ -164,6 +164,31 @@ test('preserves residual ambiguous amount column issues after header filtering',
   assert.equal(result.books[0].validation.issues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN'), true);
 });
 
+test('selects BDK simple totals from AMOUNT while keeping TOTAL (B) on AMOUNT 1', () => {
+  const workbook = createWorkbookFromRows([
+    ['OPENING BALANCE', '', '', '', '', '', 1_000_000, ''],
+    ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+    ['DEPOSIT NOT YET CLEARED'],
+    ['05/05/2026', '', 'Synthetic BDK deposit', 'Synthetic vendor', 'Synthetic client', 260581, 100_000, ''],
+    ['', '', '', 'TOTAL DEPOSIT', '', '', 100_000, 0],
+    ['', '', '', 'TOTAL BALANCE (A)', '', '', 1_100_000, ''],
+    ['CHECK NOT YET CLEARED'],
+    ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+    ['05/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, '', 75_000],
+    ['', '', '', 'TOTAL (B)', '', '', '', 75_000],
+    ['', '', '', 'CLOSING BALANCE', '', '', 1_025_000, ''],
+  ]);
+
+  const result = parser.parseWorkbook(workbook, '05-BDK 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.totalDeposits?.value, 100_000);
+  assert.equal(book.totalB?.value, 75_000);
+  assert.equal(book.closingBalanceC?.value, 1_025_000);
+  assert.deepEqual(book.validation.issues.map((issue) => issue.code), []);
+});
+
 test('ignores an invalid non-daily sheet name', () => {
   const result = parser.parseWorkbook(createWorkbook(), '05-BIS 2026.xlsx');
 

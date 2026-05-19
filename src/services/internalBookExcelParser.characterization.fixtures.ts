@@ -201,8 +201,8 @@ export const characterizationFixtures: CharacterizationFixture[] = [
       ['', '', '', 'CLOSING BALANCE', '', '', 1_025_000, ''],
     ]),
     expected: {
-      status: 'needs_review',
-      issueCodes: ['OPENING_PLUS_DEPOSITS_MISMATCH'],
+      status: 'valid',
+      issueCodes: [],
       deposits: 1,
       checks: 2,
       facilities: 0,
