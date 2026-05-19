@@ -184,6 +184,32 @@ export const characterizationFixtures: CharacterizationFixture[] = [
     },
   },
   {
+    bank: 'BDK',
+    sourceFile: '05-BDK 2026 real-shape amount1 zero totals.xlsx',
+    workbook: createWorkbook([
+      ['OPENING BALANCE 04/05/2026', '', '', '', '', '', 1_000_000, ''],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['05/05/2026', '', 'Synthetic BDK deposit', 'Synthetic vendor', 'Synthetic client', 260581, 100_000, ''],
+      ['', '', '', 'TOTAL DEPOSIT', '', '', 100_000, 0],
+      ['', '', '', 'TOTAL  BALANCE  (A)', '', '', 1_100_000, ''],
+      ['CHECK Not yet cleared'],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['05/05/2026', 1001, 'Synthetic BDK check A', 'Synthetic vendor', 'Synthetic client', 87035, '', 50_000],
+      ['05/05/2026', 1002, 'Synthetic BDK check B', 'Synthetic vendor', '', '', '', 25_000],
+      ['', '', '', 'TOTAL (B)', '', '', '', 75_000],
+      ['', '', '', 'CLOSING BALANCE', '', '', 1_025_000, ''],
+    ]),
+    expected: {
+      status: 'needs_review',
+      issueCodes: ['OPENING_PLUS_DEPOSITS_MISMATCH'],
+      deposits: 1,
+      checks: 2,
+      facilities: 0,
+      impayes: 0,
+    },
+  },
+  {
     bank: 'ORABANK',
     sourceFile: '05- ORABANK 2026.xlsx',
     workbook: createWorkbook([
