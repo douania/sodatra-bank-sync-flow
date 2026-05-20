@@ -285,8 +285,16 @@ class InternalBookExcelParser {
     const openingBalance = this.extractSingleAmount(context.rows, context.anchors, 'openingBalance', context.sheetName, issues);
     const totalDeposits = this.extractSingleAmount(context.rows, context.anchors, 'totalDeposits', context.sheetName, issues);
     const totalBalanceA = this.extractSingleAmount(context.rows, context.anchors, 'totalBalanceA', context.sheetName, issues);
-    const totalB = this.extractSingleAmount(context.rows, context.anchors, 'totalB', context.sheetName, issues);
     const closingBalanceC = this.extractSingleAmount(context.rows, context.anchors, 'closingBalanceC', context.sheetName, issues);
+    const totalB = this.extractTotalBAmount(
+      context.rows,
+      context.anchors,
+      context.sheetName,
+      issues,
+      totalBalanceA,
+      closingBalanceC,
+      context.tolerance,
+    );
 
     const depositsNotYetCleared = this.extractAmountLines(
       sectionRows.depositsNotYetCleared ?? [],
@@ -468,6 +476,42 @@ class InternalBookExcelParser {
           `Montant requis absent pour la section ${section}.`,
           sheetName,
           section,
+          row.rowIndex,
+        ),
+      );
+    }
+
+    return selection.money;
+  }
+
+  private extractTotalBAmount(
+    rows: NormalizedRow[],
+    anchors: SectionAnchor[],
+    sheetName: string,
+    issues: InternalBookValidationIssue[],
+    totalBalanceA: InternalBookMoneyCell | undefined,
+    closingBalanceC: InternalBookMoneyCell | undefined,
+    tolerance: number,
+  ): InternalBookMoneyCell | undefined {
+    const anchor = anchors.find((candidate) => candidate.key === 'totalB');
+    if (!anchor) {
+      return undefined;
+    }
+
+    const row = rows[anchor.rowPosition];
+    const selection = this.selectTotalBMoney(row, sheetName, totalBalanceA, closingBalanceC, tolerance);
+    if (selection.issue) {
+      issues.push(selection.issue);
+    }
+
+    if (!selection.money && !selection.issue) {
+      issues.push(
+        this.createIssue(
+          'MISSING_REQUIRED_AMOUNT',
+          'error',
+          'Montant requis absent pour la section totalB.',
+          sheetName,
+          'totalB',
           row.rowIndex,
         ),
       );
@@ -818,6 +862,66 @@ class InternalBookExcelParser {
     section: InternalBookSection,
   ): { money: InternalBookMoneyCell; issue?: InternalBookValidationIssue } | undefined {
     return this.selectExpectedAmountCell(row, section);
+  }
+
+  private selectTotalBMoney(
+    row: NormalizedRow,
+    sheetName: string,
+    totalBalanceA: InternalBookMoneyCell | undefined,
+    closingBalanceC: InternalBookMoneyCell | undefined,
+    tolerance: number,
+  ): MoneySelection {
+    const consistencySelection = this.selectTotalBByClosingBalance(row, sheetName, totalBalanceA, closingBalanceC, tolerance);
+    return consistencySelection ?? this.selectSingleTotalMoney(row, sheetName, 'totalB');
+  }
+
+  private selectTotalBByClosingBalance(
+    row: NormalizedRow,
+    sheetName: string,
+    totalBalanceA: InternalBookMoneyCell | undefined,
+    closingBalanceC: InternalBookMoneyCell | undefined,
+    tolerance: number,
+  ): MoneySelection | undefined {
+    if (!totalBalanceA || !closingBalanceC) {
+      return undefined;
+    }
+
+    const amountCells = row.cells.filter(
+      (cell) => cell.money && (this.hasPrimaryAmountHeader(cell) || this.hasSecondaryAmountHeader(cell)),
+    );
+    const hasPrimaryAmountCell = amountCells.some((cell) => this.hasPrimaryAmountHeader(cell));
+    const hasSecondaryAmountCell = amountCells.some((cell) => this.hasSecondaryAmountHeader(cell));
+    if (amountCells.length <= 1 || !hasPrimaryAmountCell || !hasSecondaryAmountCell) {
+      return undefined;
+    }
+
+    const candidates = amountCells.map((cell) => cell.money as InternalBookMoneyCell);
+    const matchingCandidates = candidates.filter(
+      (candidate) => Math.abs(totalBalanceA.value - candidate.value - closingBalanceC.value) <= tolerance,
+    );
+
+    if (matchingCandidates.length === 1) {
+      const money = matchingCandidates[0];
+      return {
+        money,
+        issue: this.createUnexpectedMoneyIssue(row, sheetName, 'totalB', [money]),
+      };
+    }
+
+    const selected = candidates[candidates.length - 1];
+    return {
+      issue: this.createIssue(
+        'AMBIGUOUS_AMOUNT_COLUMN',
+        'error',
+        matchingCandidates.length === 0
+          ? 'Plusieurs colonnes montant metier detectees pour totalB; aucune ne respecte TOTAL BALANCE (A) - TOTAL (B) = CLOSING BALANCE.'
+          : 'Plusieurs colonnes montant metier detectees pour totalB; plusieurs respectent TOTAL BALANCE (A) - TOTAL (B) = CLOSING BALANCE.',
+        sheetName,
+        'totalB',
+        selected.rowIndex,
+        selected.columnIndex,
+      ),
+    };
   }
 
   private selectLineMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {

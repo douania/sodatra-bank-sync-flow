@@ -189,6 +189,100 @@ test('selects BDK simple totals from AMOUNT while keeping TOTAL (B) on AMOUNT 1'
   assert.deepEqual(book.validation.issues.map((issue) => issue.code), []);
 });
 
+test('resolves BDK TOTAL (B) from AMOUNT when AMOUNT 1 breaks closing balance consistency', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', '', '', '', '', '', 178_080_138, ''],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['', '', '', 'TOTAL DEPOSIT', '', '', 0, ''],
+      ['', '', '', 'TOTAL BALANCE (A)', '', '', 178_080_138, ''],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, 117_265_013, ''],
+      ['', '', '', 'TOTAL (B)', '', '', 117_265_013, 15_606_507],
+      ['', '', '', 'CLOSING BALANCE', '', '', 60_815_125, ''],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BDK 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.reportDate, '2026-05-18');
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.totalB?.value, 117_265_013);
+  assert.equal(book.closingBalanceC?.value, 60_815_125);
+  assert.equal(
+    book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'),
+    false,
+  );
+  assert.equal(
+    book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'closingBalanceC'),
+    false,
+  );
+});
+
+test('preserves BDK TOTAL (B) from AMOUNT 1 when it matches closing balance consistency', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', '', '', '', '', '', 1_000_000, ''],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['', '', '', 'TOTAL DEPOSIT', '', '', 0, ''],
+      ['', '', '', 'TOTAL BALANCE (A)', '', '', 1_000_000, ''],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, '', 600_000],
+      ['', '', '', 'TOTAL (B)', '', '', 123_456, 600_000],
+      ['', '', '', 'CLOSING BALANCE', '', '', 400_000, ''],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BDK 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.totalB?.value, 600_000);
+  assert.equal(book.closingBalanceC?.value, 400_000);
+  assert.equal(
+    book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'),
+    false,
+  );
+  assert.equal(
+    book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'closingBalanceC'),
+    false,
+  );
+});
+
+test('keeps BDK TOTAL (B) unresolved when no amount candidate matches closing balance consistency', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', '', '', '', '', '', 1_000_000, ''],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['', '', '', 'TOTAL DEPOSIT', '', '', 0, ''],
+      ['', '', '', 'TOTAL BALANCE (A)', '', '', 1_000_000, ''],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, 600_000, ''],
+      ['', '', '', 'TOTAL (B)', '', '', 500_000, 700_000],
+      ['', '', '', 'CLOSING BALANCE', '', '', 400_000, ''],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BDK 2026.xlsx');
+  const [book] = result.books;
+  const totalBIssues = book.validation.issues.filter((issue) => issue.section === 'totalB');
+
+  assert.equal(book.validation.status, 'needs_review');
+  assert.equal(book.totalB, undefined);
+  assert.equal(totalBIssues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' && issue.severity === 'error'), true);
+  assert.equal(totalBIssues.some((issue) => issue.code === 'MISSING_REQUIRED_AMOUNT'), false);
+});
+
 test('selects ORABANK simple totals from MONTANT when MONTANT 2 contains trailing zeros', () => {
   const workbook = createWorkbookFromRows([
     ['DATE', 'CH NO BD', 'DESCRIPTION', 'PROVIDER', 'CLIENT', 'REF', 'MONTANT', 'MONTANT 2'],
