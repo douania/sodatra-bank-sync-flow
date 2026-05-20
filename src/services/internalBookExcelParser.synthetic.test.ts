@@ -280,6 +280,7 @@ test('keeps BDK TOTAL (B) unresolved when no amount candidate matches closing ba
   assert.equal(book.validation.status, 'needs_review');
   assert.equal(book.totalB, undefined);
   assert.equal(totalBIssues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' && issue.severity === 'error'), true);
+  assert.equal(totalBIssues.some((issue) => issue.code === 'MISSING_REQUIRED_AMOUNT'), false);
 });
 
 test('selects ORABANK simple totals from MONTANT when MONTANT 2 contains trailing zeros', () => {

@@ -504,7 +504,7 @@ class InternalBookExcelParser {
       issues.push(selection.issue);
     }
 
-    if (!selection.money) {
+    if (!selection.money && !selection.issue) {
       issues.push(
         this.createIssue(
           'MISSING_REQUIRED_AMOUNT',
