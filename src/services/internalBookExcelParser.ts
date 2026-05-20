@@ -307,6 +307,7 @@ class InternalBookExcelParser {
       context.sheetName,
       'checksNotYetCleared',
       issues,
+      this.resolveTotalBAlignmentHeader(context.rows, totalB),
     );
     const impayesResult = this.extractImpayes(sectionRows.impayes ?? [], context.sheetName, issues);
     const facilitiesResult = this.extractFacilities(sectionRows.bankFacilities ?? [], context.sheetName, issues);
@@ -525,6 +526,7 @@ class InternalBookExcelParser {
     sheetName: string,
     section: InternalBookSection,
     issues: InternalBookValidationIssue[],
+    alignedAmountHeader?: string,
   ): InternalBookLine[] {
     const lines: InternalBookLine[] = [];
 
@@ -533,7 +535,7 @@ class InternalBookExcelParser {
         continue;
       }
 
-      const selection = this.selectLineMoney(row, sheetName, section);
+      const selection = this.selectLineMoney(row, sheetName, section, alignedAmountHeader);
       if (selection.issue) {
         issues.push(selection.issue);
       }
@@ -551,6 +553,20 @@ class InternalBookExcelParser {
     }
 
     return lines;
+  }
+
+  private resolveTotalBAlignmentHeader(rows: NormalizedRow[], money: InternalBookMoneyCell | undefined): string | undefined {
+    if (!money) {
+      return undefined;
+    }
+
+    const row = rows.find((candidate) => candidate.rowIndex === money.rowIndex);
+    const cell = row?.cells.find((candidate) => candidate.columnIndex === money.columnIndex);
+    const totalBHasPrimaryAndSecondary =
+      row?.cells.some((candidate) => candidate.money && this.hasPrimaryAmountHeader(candidate)) === true &&
+      row.cells.some((candidate) => candidate.money && this.hasSecondaryAmountHeader(candidate));
+    const header = cell?.headerNormalizedText;
+    return totalBHasPrimaryAndSecondary && header && AMOUNT_COLUMN_HEADERS.has(header) ? header : undefined;
   }
 
   private extractImpayes(
@@ -924,7 +940,16 @@ class InternalBookExcelParser {
     };
   }
 
-  private selectLineMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {
+  private selectLineMoney(
+    row: NormalizedRow,
+    sheetName: string,
+    section: InternalBookSection,
+    alignedAmountHeader?: string,
+  ): MoneySelection {
+    if (alignedAmountHeader) {
+      return this.selectLineMoneyByAlignedHeader(row, sheetName, section, alignedAmountHeader);
+    }
+
     const structuredMoney = this.selectExpectedAmountCell(row, section);
     if (structuredMoney) {
       return {
@@ -934,6 +959,30 @@ class InternalBookExcelParser {
     }
 
     return this.selectRightMostMoney(row, sheetName, section, true);
+  }
+
+  private selectLineMoneyByAlignedHeader(
+    row: NormalizedRow,
+    sheetName: string,
+    section: InternalBookSection,
+    alignedAmountHeader: string,
+  ): MoneySelection {
+    const alignedCell = row.cells.find((cell) => cell.money && cell.headerNormalizedText === alignedAmountHeader);
+    if (alignedCell?.money) {
+      return {
+        money: alignedCell.money,
+        issue: this.createUnexpectedMoneyIssue(row, sheetName, section, [alignedCell.money]),
+      };
+    }
+
+    const businessAmountCells = row.cells.filter((cell) => cell.money && this.hasAmountHeader(cell));
+    if (businessAmountCells.length > 0) {
+      return {
+        issue: this.createUnexpectedMoneyIssue(row, sheetName, section, []),
+      };
+    }
+
+    return this.selectLineMoney(row, sheetName, section);
   }
 
   private selectExpectedAmountCell(
