@@ -37,10 +37,10 @@ function createWorkbook(closingBalance = 117769578): XLSX.WorkBook {
   return workbook;
 }
 
-function createWorkbookFromRows(rows: unknown[][]): XLSX.WorkBook {
+function createWorkbookFromRows(rows: unknown[][], sheetName = '050526'): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, sheet, '050526');
+  XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
   return workbook;
 }
 
@@ -214,6 +214,100 @@ test('selects ORABANK simple totals from MONTANT when MONTANT 2 contains trailin
   assert.equal(book.totalB?.value, 75_000);
   assert.equal(book.closingBalanceC?.value, 1_025_000);
   assert.deepEqual(book.validation.issues.map((issue) => issue.code), []);
+});
+
+test('keeps official total amounts under AMOUNT when numeric parasites are farther right', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', '', '', 1_000_000],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT', 'CONTROL'],
+      ['TOTAL DEPOSIT', '', '', 0, 123_456],
+      ['TOTAL BALANCE (A)', '', '', 1_000_000, 234_567],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT', 'CONTROL'],
+      ['18/05/2026', 'CHK-SYN-001', 'Synthetic check', 600_000, 345_678],
+      ['TOTAL (B)', '', '', 600_000, 123_456],
+      ['CLOSING BALANCE C', '', '', 400_000, 456_789],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05 - BICIS 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.reportDate, '2026-05-18');
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.totalDeposits?.value, 0);
+  assert.equal(book.totalBalanceA?.value, 1_000_000);
+  assert.equal(book.totalB?.value, 600_000);
+  assert.equal(book.closingBalanceC?.value, 400_000);
+  assert.equal(book.checksNotYetCleared[0].amount.value, 600_000);
+  assert.equal(
+    book.validation.issues.some((issue) => issue.severity === 'error' && issue.section === 'totalB'),
+    false,
+  );
+  assert.equal(
+    book.validation.issues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' && issue.severity === 'warning'),
+    true,
+  );
+});
+
+test('keeps official detail amount under MONTANT and warns on unclassified numeric parasites', () => {
+  const workbook = createWorkbookFromRows([
+    ['OPENING BALANCE', '', '', 1_000_000],
+    ['DEPOTS PAS ENCORE ENCAISSE'],
+    ['DATE', 'TR NO', 'DESCRIPTION', 'MONTANT', 'CONTROL'],
+    ['18/05/2026', 123456, 'Synthetic deposit', 100_000, 987_654],
+    ['TOTAL DEPOSIT', '', '', 100_000],
+    ['TOTAL BALANCE (A)', '', '', 1_100_000],
+    ['CHECK NOT YET CLEARED'],
+    ['DATE', 'FACT NO', 'DESCRIPTION', 'MONTANT'],
+    ['18/05/2026', 654321, 'Synthetic check', 50_000],
+    ['TOTAL (B)', '', '', 50_000],
+    ['CLOSING BALANCE C', '', '', 1_050_000],
+  ]);
+
+  const result = parser.parseWorkbook(workbook, '05 - BICIS 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.depositsNotYetCleared[0].amount.value, 100_000);
+  assert.equal(book.depositsNotYetCleared[0].reference, '123456');
+  assert.equal(
+    book.validation.issues.some(
+      (issue) =>
+        issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
+        issue.severity === 'warning' &&
+        issue.section === 'depositsNotYetCleared',
+    ),
+    true,
+  );
+});
+
+test('extracts bank facility amounts by business headers while ignoring dates and references', () => {
+  const workbook = createWorkbookFromRows([
+    ['OPENING BALANCE', 1_000_000],
+    ['DEPOSIT NOT YET CLEARED'],
+    ['TOTAL DEPOSIT', 0],
+    ['TOTAL BALANCE (A)', 1_000_000],
+    ['CHECK NOT YET CLEARED'],
+    ['TOTAL (B)', 0],
+    ['CLOSING BALANCE C', 1_000_000],
+    ['BANK FACILITY'],
+    ['FACILITY', 'DATE', 'REF', 'LIMIT', 'USED', 'BALANCE'],
+    ['Synthetic facility', 46147, 123456, 1_000_000, 400_000, 600_000],
+    ['TOTAL', 46147, 123456, 1_000_000, 400_000, 600_000],
+  ]);
+
+  const result = parser.parseWorkbook(workbook, '05-BIS 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.bankFacilities[0].limit?.value, 1_000_000);
+  assert.equal(book.bankFacilities[0].used?.value, 400_000);
+  assert.equal(book.bankFacilities[0].balance?.value, 600_000);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN'), false);
 });
 
 test('ignores an invalid non-daily sheet name', () => {

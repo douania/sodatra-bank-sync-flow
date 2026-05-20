@@ -62,6 +62,9 @@ const AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT', 'AMOUNT 1', 'MONTANT
 const PRIMARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT']);
 const SECONDARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT 1', 'MONTANT 1']);
 const SUFFIXED_SECONDARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT 2', 'MONTANT 2']);
+const FACILITY_LIMIT_COLUMN_HEADERS = new Set(['LIMIT', 'LIMITE']);
+const FACILITY_USED_COLUMN_HEADERS = new Set(['USED', 'UTILISE']);
+const FACILITY_BALANCE_COLUMN_HEADERS = new Set(['BALANCE', 'DISPONIBLE']);
 
 const SECTION_DEFINITIONS: SectionDefinition[] = [
   {
@@ -486,7 +489,7 @@ class InternalBookExcelParser {
         continue;
       }
 
-      const selection = this.selectRightMostMoney(row, sheetName, section, true);
+      const selection = this.selectLineMoney(row, sheetName, section);
       if (selection.issue) {
         issues.push(selection.issue);
       }
@@ -515,7 +518,9 @@ class InternalBookExcelParser {
     let declaredTotal: InternalBookMoneyCell | undefined;
 
     for (const row of rows) {
-      const selection = this.selectRightMostMoney(row, sheetName, 'impayes', !this.isTotalRow(row));
+      const selection = this.isTotalRow(row)
+        ? this.selectSingleTotalMoney(row, sheetName, 'impayes')
+        : this.selectLineMoney(row, sheetName, 'impayes');
       if (selection.issue) {
         issues.push(selection.issue);
       }
@@ -562,19 +567,38 @@ class InternalBookExcelParser {
         label: this.extractLabel(row) || 'BANK FACILITY',
         rawRow: row.rawRow,
       };
-      const lastThree = moneyCells.slice(-3);
+      const structuredFacilityLine = this.selectStructuredFacilityMoney(row);
 
-      if (lastThree.length >= 1) {
-        facilityLine.limit = lastThree[0];
-      }
-      if (lastThree.length >= 2) {
-        facilityLine.used = lastThree[1];
-      }
-      if (lastThree.length >= 3) {
-        facilityLine.balance = lastThree[2];
+      if (structuredFacilityLine.limit || structuredFacilityLine.used || structuredFacilityLine.balance) {
+        facilityLine.limit = structuredFacilityLine.limit;
+        facilityLine.used = structuredFacilityLine.used;
+        facilityLine.balance = structuredFacilityLine.balance;
+      } else {
+        const lastThree = this.filterAmountCandidateCells(row.cells.filter((cell) => cell.money)).map(
+          (cell) => cell.money as InternalBookMoneyCell,
+        ).slice(-3);
+
+        if (lastThree.length >= 1) {
+          facilityLine.limit = lastThree[0];
+        }
+        if (lastThree.length >= 2) {
+          facilityLine.used = lastThree[1];
+        }
+        if (lastThree.length >= 3) {
+          facilityLine.balance = lastThree[2];
+        }
       }
 
-      if (moneyCells.length > 3) {
+      const unexpectedIssue = this.createUnexpectedMoneyIssue(row, sheetName, 'bankFacilities', [
+        facilityLine.limit,
+        facilityLine.used,
+        facilityLine.balance,
+      ]);
+      if (unexpectedIssue) {
+        issues.push(unexpectedIssue);
+      }
+
+      if (!structuredFacilityLine.limit && !structuredFacilityLine.used && !structuredFacilityLine.balance && moneyCells.length > 3) {
         issues.push(
           this.createIssue(
             'AMBIGUOUS_AMOUNT_COLUMN',
@@ -778,50 +802,181 @@ class InternalBookExcelParser {
   private selectSingleTotalMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {
     const structuredMoney = this.selectStructuredSingleTotalMoney(row, section);
     if (structuredMoney) {
-      return { money: structuredMoney };
+      return {
+        money: structuredMoney,
+        issue: this.createUnexpectedMoneyIssue(row, sheetName, section, [structuredMoney]),
+      };
     }
 
     return this.selectRightMostMoney(row, sheetName, section, false);
   }
 
   private selectStructuredSingleTotalMoney(row: NormalizedRow, section: InternalBookSection): InternalBookMoneyCell | undefined {
-    const primaryAmountCells = row.cells.filter(
-      (cell) => cell.money && PRIMARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
-    );
-    const secondaryAmountCells = row.cells.filter(
-      (cell) => cell.money && SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
-    );
-    const suffixedSecondaryAmountCells = row.cells.filter(
-      (cell) => cell.money && SUFFIXED_SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''),
-    );
+    const selection = this.selectExpectedAmountCell(row, section);
+    return selection?.money;
+  }
 
-    if (primaryAmountCells.length === 0 || (secondaryAmountCells.length === 0 && suffixedSecondaryAmountCells.length === 0)) {
+  private selectLineMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {
+    const structuredMoney = this.selectExpectedAmountCell(row, section);
+    if (structuredMoney) {
+      return {
+        money: structuredMoney.money,
+        issue: structuredMoney.issue ?? this.createUnexpectedMoneyIssue(row, sheetName, section, [structuredMoney.money]),
+      };
+    }
+
+    return this.selectRightMostMoney(row, sheetName, section, true);
+  }
+
+  private selectExpectedAmountCell(
+    row: NormalizedRow,
+    section: InternalBookSection,
+  ): { money: InternalBookMoneyCell; issue?: InternalBookValidationIssue } | undefined {
+    const primaryAmountCells = row.cells.filter((cell) => cell.money && this.hasPrimaryAmountHeader(cell));
+    const secondaryAmountCells = row.cells.filter((cell) => cell.money && this.hasSecondaryAmountHeader(cell));
+    const suffixedSecondaryAmountCells = row.cells.filter((cell) => cell.money && this.hasSuffixedSecondaryAmountHeader(cell));
+    const amountCells = [...primaryAmountCells, ...secondaryAmountCells];
+
+    if (section === 'totalB' && secondaryAmountCells.length === 1) {
+      return { money: secondaryAmountCells[0].money as InternalBookMoneyCell };
+    }
+
+    if (primaryAmountCells.length === 1) {
+      return { money: primaryAmountCells[0].money as InternalBookMoneyCell };
+    }
+
+    if (primaryAmountCells.length === 0 && secondaryAmountCells.length === 1) {
+      return { money: secondaryAmountCells[0].money as InternalBookMoneyCell };
+    }
+
+    if (primaryAmountCells.length === 0 && suffixedSecondaryAmountCells.length > 0) {
       return undefined;
     }
 
-    let preferredCells: NormalizedCell[] = [];
-    if (section === 'totalB' && secondaryAmountCells.length > 0) {
-      preferredCells = secondaryAmountCells;
-    } else if (
-      suffixedSecondaryAmountCells.length > 0 ||
-      section === 'totalDeposits' ||
-      section === 'totalBalanceA' ||
-      section === 'closingBalanceC'
-    ) {
-      preferredCells = primaryAmountCells;
+    if (amountCells.length > 1) {
+      const selected = amountCells[amountCells.length - 1].money as InternalBookMoneyCell;
+      return {
+        money: selected,
+        issue: this.createIssue(
+          'AMBIGUOUS_AMOUNT_COLUMN',
+          'error',
+          `Plusieurs colonnes montant métier détectées; revue requise pour ${section}.`,
+          selected.sheetName,
+          section,
+          selected.rowIndex,
+          selected.columnIndex,
+        ),
+      };
     }
 
-    return preferredCells.length === 1 ? preferredCells[0].money : undefined;
+    return undefined;
   }
 
   private filterAmountCandidateCells(cells: NormalizedCell[]): NormalizedCell[] {
-    const nonAmountFiltered = cells.filter((cell) => !this.isHeaderedNonAmountCell(cell));
-    const amountHeaderCandidates = nonAmountFiltered.filter((cell) => AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? ''));
+    const nonAmountFiltered = cells.filter((cell) => !this.isNonAmountCell(cell));
+    const amountHeaderCandidates = nonAmountFiltered.filter((cell) => this.hasAmountHeader(cell));
     return amountHeaderCandidates.length > 0 ? amountHeaderCandidates : nonAmountFiltered;
   }
 
   private isHeaderedNonAmountCell(cell: NormalizedCell): boolean {
-    return NON_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? '');
+    return this.hasNonAmountHeader(cell);
+  }
+
+  private isNonAmountCell(cell: NormalizedCell): boolean {
+    return this.hasNonAmountHeader(cell) || this.isExcelSerialDateCell(cell);
+  }
+
+  private hasAmountHeader(cell: NormalizedCell): boolean {
+    const header = cell.headerNormalizedText ?? '';
+    return (
+      AMOUNT_COLUMN_HEADERS.has(header) ||
+      PRIMARY_AMOUNT_COLUMN_HEADERS.has(header) ||
+      SECONDARY_AMOUNT_COLUMN_HEADERS.has(header) ||
+      SUFFIXED_SECONDARY_AMOUNT_COLUMN_HEADERS.has(header)
+    );
+  }
+
+  private hasPrimaryAmountHeader(cell: NormalizedCell): boolean {
+    return PRIMARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? '');
+  }
+
+  private hasSecondaryAmountHeader(cell: NormalizedCell): boolean {
+    return SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? '');
+  }
+
+  private hasSuffixedSecondaryAmountHeader(cell: NormalizedCell): boolean {
+    return SUFFIXED_SECONDARY_AMOUNT_COLUMN_HEADERS.has(cell.headerNormalizedText ?? '');
+  }
+
+  private hasNonAmountHeader(cell: NormalizedCell): boolean {
+    const header = cell.headerNormalizedText ?? '';
+    return (
+      NON_AMOUNT_COLUMN_HEADERS.has(header) ||
+      /\bDATE\b/.test(header) ||
+      /\bCH NO\b/.test(header) ||
+      /\bTR NO\b/.test(header) ||
+      /\bFACT NO\b/.test(header) ||
+      /\bREF\b/.test(header) ||
+      /\bREFERENCE\b/.test(header)
+    );
+  }
+
+  private isExcelSerialDateCell(cell: NormalizedCell): boolean {
+    return typeof cell.raw === 'number' && this.looksLikeExcelSerialDate(cell.raw);
+  }
+
+  private selectStructuredFacilityMoney(row: NormalizedRow): Pick<InternalBookFacilityLine, 'limit' | 'used' | 'balance'> {
+    return {
+      limit: this.findFacilityMoneyByHeader(row, FACILITY_LIMIT_COLUMN_HEADERS),
+      used: this.findFacilityMoneyByHeader(row, FACILITY_USED_COLUMN_HEADERS),
+      balance: this.findFacilityMoneyByHeader(row, FACILITY_BALANCE_COLUMN_HEADERS),
+    };
+  }
+
+  private findFacilityMoneyByHeader(row: NormalizedRow, headers: Set<string>): InternalBookMoneyCell | undefined {
+    const cell = row.cells.find((candidate) => candidate.money && headers.has(candidate.headerNormalizedText ?? ''));
+    return cell?.money;
+  }
+
+  private createUnexpectedMoneyIssue(
+    row: NormalizedRow,
+    sheetName: string,
+    section: InternalBookSection,
+    selectedMoneyCells: Array<InternalBookMoneyCell | undefined>,
+  ): InternalBookValidationIssue | undefined {
+    const selected = new Set(
+      selectedMoneyCells
+        .filter((money): money is InternalBookMoneyCell => money !== undefined)
+        .map((money) => `${money.rowIndex}:${money.columnIndex}`),
+    );
+    const unexpected = row.cells.find(
+      (cell) =>
+        cell.money &&
+        !selected.has(`${cell.rowIndex}:${cell.columnIndex}`) &&
+        !this.isNonAmountCell(cell) &&
+        !this.isIgnorableSecondaryAmountCell(cell),
+    );
+
+    if (!unexpected?.money) {
+      return undefined;
+    }
+
+    return this.createIssue(
+      'AMBIGUOUS_AMOUNT_COLUMN',
+      'warning',
+      `Cellule numérique hors colonne métier ignorée pour ${section}; revue conseillée.`,
+      sheetName,
+      section,
+      unexpected.rowIndex,
+      unexpected.columnIndex,
+    );
+  }
+
+  private isIgnorableSecondaryAmountCell(cell: NormalizedCell): boolean {
+    return (
+      this.hasSuffixedSecondaryAmountHeader(cell) ||
+      ((this.hasSecondaryAmountHeader(cell) || this.hasSuffixedSecondaryAmountHeader(cell)) && cell.money?.value === 0)
+    );
   }
 
 
