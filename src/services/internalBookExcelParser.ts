@@ -967,22 +967,42 @@ class InternalBookExcelParser {
     section: InternalBookSection,
     alignedAmountHeader: string,
   ): MoneySelection {
+    const businessAmountCells = row.cells.filter((cell) => cell.money && this.hasAmountHeader(cell));
+    const unalignedBusinessAmountCells = businessAmountCells.filter((cell) => cell.headerNormalizedText !== alignedAmountHeader);
     const alignedCell = row.cells.find((cell) => cell.money && cell.headerNormalizedText === alignedAmountHeader);
     if (alignedCell?.money) {
       return {
         money: alignedCell.money,
-        issue: this.createUnexpectedMoneyIssue(row, sheetName, section, [alignedCell.money]),
+        issue:
+          unalignedBusinessAmountCells.length > 0
+            ? this.createUnalignedCheckAmountIssue(unalignedBusinessAmountCells[0], sheetName, section)
+            : this.createUnexpectedMoneyIssue(row, sheetName, section, [alignedCell.money]),
       };
     }
 
-    const businessAmountCells = row.cells.filter((cell) => cell.money && this.hasAmountHeader(cell));
     if (businessAmountCells.length > 0) {
       return {
-        issue: this.createUnexpectedMoneyIssue(row, sheetName, section, []),
+        issue: this.createUnalignedCheckAmountIssue(businessAmountCells[0], sheetName, section),
       };
     }
 
     return this.selectLineMoney(row, sheetName, section);
+  }
+
+  private createUnalignedCheckAmountIssue(
+    cell: NormalizedCell,
+    sheetName: string,
+    section: InternalBookSection,
+  ): InternalBookValidationIssue {
+    return this.createIssue(
+      'AMBIGUOUS_AMOUNT_COLUMN',
+      'warning',
+      'Ligne de cheque ignoree car montant present hors colonne alignee avec TOTAL(B).',
+      sheetName,
+      section,
+      cell.rowIndex,
+      cell.columnIndex,
+    );
   }
 
   private selectExpectedAmountCell(

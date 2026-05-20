@@ -218,6 +218,16 @@ test('resolves BDK TOTAL (B) from AMOUNT when AMOUNT 1 breaks closing balance co
   assert.equal(book.validation.declaredTotalChecks, 117_265_013);
   assert.equal(book.closingBalanceC?.value, 60_815_125);
   assert.equal(
+    book.validation.issues.some(
+      (issue) =>
+        issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
+        issue.severity === 'warning' &&
+        issue.section === 'checksNotYetCleared' &&
+        issue.message.includes('hors colonne alignee avec TOTAL(B)'),
+    ),
+    true,
+  );
+  assert.equal(
     book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'),
     false,
   );
@@ -251,6 +261,16 @@ test('preserves BDK TOTAL (B) from AMOUNT 1 when it matches closing balance cons
   assert.equal(book.totalB?.value, 600_000);
   assert.equal(book.validation.calculatedTotalChecks, 600_000);
   assert.equal(book.closingBalanceC?.value, 400_000);
+  assert.equal(
+    book.validation.issues.some(
+      (issue) =>
+        issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
+        issue.severity === 'warning' &&
+        issue.section === 'checksNotYetCleared' &&
+        issue.message.includes('hors colonne alignee avec TOTAL(B)'),
+    ),
+    true,
+  );
   assert.equal(
     book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'),
     false,
