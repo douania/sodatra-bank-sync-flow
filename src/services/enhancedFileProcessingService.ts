@@ -8,7 +8,27 @@ import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from
 import { progressService } from './progressService';
 import * as XLSX from 'xlsx';
 import type { ProcessingResult, FileDetectionResult } from '@/types/processing';
+import {
+  appendInternalBookProcessingResult,
+  detectInternalBookRuntimeFile,
+  processInternalBookRuntimeFile,
+} from './internalBookRuntimeProcessingService';
 export type { ProcessingResult, FileDetectionResult } from '@/types/processing';
+
+interface DebugProcessingResult {
+  success?: boolean;
+  data?: unknown;
+}
+
+interface DebugAnalysisResult {
+  success: boolean;
+  detectedType?: string;
+  bankType?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  rawTextContent?: string;
+  parsedData?: unknown;
+  errors?: string[];
+}
 
 export class EnhancedFileProcessingService {
   
@@ -27,6 +47,17 @@ export class EnhancedFileProcessingService {
   async detectFileType(file: File): Promise<FileDetectionResult> {
     const filename = file.name.toUpperCase();
     const extension = file.name.toLowerCase().split('.').pop();
+
+    if (extension === 'xlsx' || extension === 'xls') {
+      const detection = await detectInternalBookRuntimeFile(file);
+      if (detection.isInternalBook) {
+        return {
+          file,
+          detectedType: 'internalBook',
+          confidence: detection.confidence
+        };
+      }
+    }
 
     // Détection du Collection Report
     if (filename.includes('COLLECTION') && filename.includes('REPORT') && (extension === 'xlsx' || extension === 'xls')) {
@@ -139,7 +170,7 @@ export class EnhancedFileProcessingService {
       return { detectedType: 'unknown', confidence: 'low' };
     }
     
-    const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+    const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
 
     // Check if data is valid and not empty
     if (!data || !Array.isArray(data) || data.length === 0) {
@@ -331,6 +362,18 @@ export class EnhancedFileProcessingService {
    */
   private async processOrganizedFiles(organizedFiles: { [key: string]: File[] }, results: ProcessingResult): Promise<void> {
     const { SupabaseRetryService } = await import('./supabaseClientService');
+
+    if (organizedFiles.internalBook && organizedFiles.internalBook.length > 0) {
+      progressService.startStep('internal_book_processing', 'Internal Book', 'Traitement des fichiers Internal Book');
+
+      for (const internalBookFile of organizedFiles.internalBook) {
+        const runtimeResult = await processInternalBookRuntimeFile(internalBookFile);
+        appendInternalBookProcessingResult(results, runtimeResult);
+      }
+
+      progressService.completeStep('internal_book_processing', 'Internal Book', 'Traitement Internal Book terminé',
+        `${organizedFiles.internalBook.length} fichier(s) traité(s)`);
+    }
 
     // Traitement du Collection Report
     if (organizedFiles.collectionReport && organizedFiles.collectionReport.length > 0) {
@@ -590,7 +633,7 @@ export class EnhancedFileProcessingService {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         const pageText = textContent.items
-          .map((item: any) => item.str)
+          .map((item: { str?: string }) => item.str ?? '')
           .join(' ');
         fullText += pageText + '\n';
       }
@@ -638,7 +681,7 @@ export class EnhancedFileProcessingService {
     fileType: string;
     confidence: 'high' | 'medium' | 'low';
     rawText: string;
-    parsedData: any;
+    parsedData: unknown;
   }> {
     try {
       console.log('🔍 Analyse de fichier unique pour debug:', file.name);
@@ -689,7 +732,7 @@ export class EnhancedFileProcessingService {
   /**
    * Analyzes a single file for debugging and understanding purposes
    */
-  async analyzeSingleFileForDebug(file: File): Promise<any> {
+  async analyzeSingleFileForDebug(file: File): Promise<DebugAnalysisResult> {
     try {
       console.log('🔍 DÉBUT ANALYSE FICHIER POUR DEBUG:', file.name);
       
@@ -713,22 +756,24 @@ export class EnhancedFileProcessingService {
       console.log(`📄 Contenu extrait: ${rawTextContent.length} caractères`);
       
       // Parse structured data based on file type
-      let parsedData = null;
+      let parsedData: unknown = null;
       
       switch (detection.detectedType) {
-        case 'collectionReport':
+        case 'collectionReport': {
           const excelResult = await this.processCollectionReportExcel(file);
           parsedData = excelResult.data;
           break;
+        }
           
         case 'bankAnalysis':
-        case 'bankStatement':
+        case 'bankStatement': {
           const { bankReportProcessingService } = await import('./bankReportProcessingService');
           const bankResult = await bankReportProcessingService.processBankReportExcel(file);
           parsedData = bankResult.data;
           break;
+        }
           
-        case 'fundsPosition':
+        case 'fundsPosition': {
           const buffer = await file.arrayBuffer();
           let textContent = '';
           
@@ -744,8 +789,9 @@ export class EnhancedFileProcessingService {
             parsedData = result.data;
           }
           break;
+        }
           
-        case 'clientReconciliation':
+        case 'clientReconciliation': {
           const clientBuffer = await file.arrayBuffer();
           let clientTextContent = '';
           
@@ -761,6 +807,7 @@ export class EnhancedFileProcessingService {
             parsedData = result.data;
           }
           break;
+        }
       }
       
       return {
@@ -784,7 +831,7 @@ export class EnhancedFileProcessingService {
   /**
    * Process a collection report Excel file for debug purposes
    */
-  private async processCollectionReportExcel(file: File): Promise<any> {
+  private async processCollectionReportExcel(file: File): Promise<DebugProcessingResult> {
     const { excelProcessingService } = await import('./excelProcessingService');
     return await excelProcessingService.processCollectionReportExcel(file);
   }
