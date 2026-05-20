@@ -44,6 +44,40 @@ function createWorkbookFromRows(rows: unknown[][], sheetName = '050526'): XLSX.W
   return workbook;
 }
 
+function createWorkbookWithImpayesRows(impayeRows: unknown[][], sourceRows: Partial<{
+  bankFacilityRows: unknown[][];
+  checksRows: unknown[][];
+}> = {}): XLSX.WorkBook {
+  return createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', 1_000_000],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      ['05/05/2026', 'DEP-SYN-001', 'Synthetic deposit', 100_000],
+      ['TOTAL DEPOSIT', 100_000],
+      ['TOTAL BALANCE (A)', 1_100_000],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      ...(sourceRows.checksRows ?? [
+        ['05/05/2026', 'CHK-SYN-001', 'Synthetic check A', 50_000],
+        ['05/05/2026', 'CHK-SYN-002', 'Synthetic check B', 25_000],
+      ]),
+      ['TOTAL (B)', 75_000],
+      ['CLOSING BALANCE C', 1_025_000],
+      ['BANK FACILITY'],
+      ['FACILITY', 'LIMIT', 'USED', 'BALANCE'],
+      ...(sourceRows.bankFacilityRows ?? [
+        ['Synthetic facility', 500_000, 0, 500_000],
+        ['TOTAL', 500_000, 0, 500_000],
+      ]),
+      ['IMPAYE'],
+      ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      ...impayeRows,
+    ],
+    '180526',
+  );
+}
+
 test('parses a synthetic BIS internal book workbook with dash zero totals and facilities', () => {
   const result = parser.parseWorkbook(createWorkbook(), '05-BIS 2026.xlsx', {
     parsedAt: '2026-05-18T00:00:00.000Z',
@@ -59,6 +93,91 @@ test('parses a synthetic BIS internal book workbook with dash zero totals and fa
   assert.equal(result.books[0].bankFacilities[0].used?.value, 0);
   assert.equal(result.errors.some((issue) => issue.section === 'totalDeposits'), false);
   assert.equal(result.books[0].validation.issues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN'), false);
+});
+
+test('recognizes an unlabeled single-amount IMPAYE total row without adding a false unpaid line', () => {
+  const result = parser.parseWorkbook(
+    createWorkbookWithImpayesRows([
+      ['05/05/2026', 'UNP-SYN-001', 'Synthetic unpaid A', 10_000],
+      ['05/05/2026', 'UNP-SYN-002', 'Synthetic unpaid B', 5_000],
+      ['', '', '', 15_000],
+    ]),
+    '05-BIS 2026.xlsx',
+  );
+
+  const [book] = result.books;
+
+  assert.equal(book.impayes.length, 2);
+  assert.deepEqual(book.impayes.map((line) => line.amount.value), [10_000, 5_000]);
+  assert.equal(book.validation.declaredTotalImpayes, 15_000);
+  assert.equal(book.validation.calculatedTotalImpayes, 15_000);
+  assert.equal(book.validation.status, 'valid');
+});
+
+test('keeps explicit TOTAL IMPAYE rows as declared totals', () => {
+  const result = parser.parseWorkbook(
+    createWorkbookWithImpayesRows([
+      ['05/05/2026', 'UNP-SYN-001', 'Synthetic unpaid A', 10_000],
+      ['05/05/2026', 'UNP-SYN-002', 'Synthetic unpaid B', 5_000],
+      ['TOTAL IMPAYE', 15_000],
+    ]),
+    '05-BIS 2026.xlsx',
+  );
+
+  const [book] = result.books;
+
+  assert.equal(book.impayes.length, 2);
+  assert.equal(book.validation.declaredTotalImpayes, 15_000);
+  assert.equal(book.validation.calculatedTotalImpayes, 15_000);
+  assert.equal(book.validation.status, 'valid');
+});
+
+test('flags an unlabeled single-amount IMPAYE row that does not match the previous unpaid sum', () => {
+  const result = parser.parseWorkbook(
+    createWorkbookWithImpayesRows([
+      ['05/05/2026', 'UNP-SYN-001', 'Synthetic unpaid A', 10_000],
+      ['05/05/2026', 'UNP-SYN-002', 'Synthetic unpaid B', 5_000],
+      ['', '', '', 99_999],
+    ]),
+    '05-BIS 2026.xlsx',
+  );
+
+  const [book] = result.books;
+  const impayesIssue = book.validation.issues.find((issue) => issue.code === 'IMPAYES_TOTAL_MISMATCH');
+
+  assert.equal(book.impayes.length, 3);
+  assert.equal(book.validation.declaredTotalImpayes, undefined);
+  assert.equal(book.validation.status, 'needs_review');
+  assert.equal(impayesIssue?.section, 'impayes');
+  assert.equal(impayesIssue?.actual, 99_999);
+  assert.equal(impayesIssue?.expected, 15_000);
+});
+
+test('keeps an ATLANTIK-shaped workbook valid with an unlabeled IMPAYE total row', () => {
+  const result = parser.parseWorkbook(
+    createWorkbookWithImpayesRows(
+      [
+        ['18/05/2026', 740001, 'Synthetic ATLANTIK unpaid A', 10_000],
+        ['18/05/2026', 740002, 'Synthetic ATLANTIK unpaid B', 5_000],
+        ['', '', '', 15_000],
+      ],
+      {
+        checksRows: [
+          [46160, 720001, 'Synthetic ATLANTIK check A', 50_000],
+          [46160, 720002, 'Synthetic ATLANTIK check B', 25_000],
+        ],
+      },
+    ),
+    '5-ATLANTIK BANK 2026.xlsx',
+  );
+
+  const [book] = result.books;
+
+  assert.equal(book.bank, 'ATLANTIK');
+  assert.equal(book.impayes.length, 2);
+  assert.equal(book.validation.declaredTotalImpayes, 15_000);
+  assert.equal(book.validation.calculatedTotalImpayes, 15_000);
+  assert.equal(book.validation.status, 'valid');
 });
 
 test('parses ORABANK aliases for deposits, total A, and issued checks sections', () => {
