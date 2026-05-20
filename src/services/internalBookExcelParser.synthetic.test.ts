@@ -199,7 +199,9 @@ test('resolves BDK TOTAL (B) from AMOUNT when AMOUNT 1 breaks closing balance co
       ['', '', '', 'TOTAL BALANCE (A)', '', '', 178_080_138, ''],
       ['CHECK NOT YET CLEARED'],
       ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
-      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, 117_265_013, ''],
+      ['18/05/2026', 1001, 'Synthetic BDK check A', 'Synthetic vendor', 'Synthetic client', 87035, 100_000_000, ''],
+      ['18/05/2026', 1002, 'Synthetic BDK check B', 'Synthetic vendor', 'Synthetic client', 87036, 17_265_013, ''],
+      ['18/05/2026', 1003, 'Synthetic BDK non official amount', 'Synthetic vendor', 'Synthetic client', 87037, '', 15_606_507],
       ['', '', '', 'TOTAL (B)', '', '', 117_265_013, 15_606_507],
       ['', '', '', 'CLOSING BALANCE', '', '', 60_815_125, ''],
     ],
@@ -212,7 +214,19 @@ test('resolves BDK TOTAL (B) from AMOUNT when AMOUNT 1 breaks closing balance co
   assert.equal(book.reportDate, '2026-05-18');
   assert.equal(book.validation.status, 'valid');
   assert.equal(book.totalB?.value, 117_265_013);
+  assert.equal(book.validation.calculatedTotalChecks, 117_265_013);
+  assert.equal(book.validation.declaredTotalChecks, 117_265_013);
   assert.equal(book.closingBalanceC?.value, 60_815_125);
+  assert.equal(
+    book.validation.issues.some(
+      (issue) =>
+        issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
+        issue.severity === 'warning' &&
+        issue.section === 'checksNotYetCleared' &&
+        issue.message.includes('Montant de cheque hors colonne alignee avec TOTAL(B) ignore'),
+    ),
+    true,
+  );
   assert.equal(
     book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'),
     false,
@@ -233,7 +247,7 @@ test('preserves BDK TOTAL (B) from AMOUNT 1 when it matches closing balance cons
       ['', '', '', 'TOTAL BALANCE (A)', '', '', 1_000_000, ''],
       ['CHECK NOT YET CLEARED'],
       ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
-      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, '', 600_000],
+      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, 123_456, 600_000],
       ['', '', '', 'TOTAL (B)', '', '', 123_456, 600_000],
       ['', '', '', 'CLOSING BALANCE', '', '', 400_000, ''],
     ],
@@ -245,7 +259,18 @@ test('preserves BDK TOTAL (B) from AMOUNT 1 when it matches closing balance cons
 
   assert.equal(book.validation.status, 'valid');
   assert.equal(book.totalB?.value, 600_000);
+  assert.equal(book.validation.calculatedTotalChecks, 600_000);
   assert.equal(book.closingBalanceC?.value, 400_000);
+  assert.equal(
+    book.validation.issues.some(
+      (issue) =>
+        issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
+        issue.severity === 'warning' &&
+        issue.section === 'checksNotYetCleared' &&
+        issue.message.includes('Montant de cheque hors colonne alignee avec TOTAL(B) ignore'),
+    ),
+    true,
+  );
   assert.equal(
     book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'),
     false,
@@ -266,7 +291,7 @@ test('keeps BDK TOTAL (B) unresolved when no amount candidate matches closing ba
       ['', '', '', 'TOTAL BALANCE (A)', '', '', 1_000_000, ''],
       ['CHECK NOT YET CLEARED'],
       ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
-      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, 600_000, ''],
+      ['18/05/2026', 1001, 'Synthetic BDK check', 'Synthetic vendor', 'Synthetic client', 87035, 600_000, 700_000],
       ['', '', '', 'TOTAL (B)', '', '', 500_000, 700_000],
       ['', '', '', 'CLOSING BALANCE', '', '', 400_000, ''],
     ],
