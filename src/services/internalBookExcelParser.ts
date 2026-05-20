@@ -800,20 +800,24 @@ class InternalBookExcelParser {
   }
 
   private selectSingleTotalMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {
-    const structuredMoney = this.selectStructuredSingleTotalMoney(row, section);
-    if (structuredMoney) {
+    const structuredSelection = this.selectStructuredSingleTotalMoney(row, section);
+    if (structuredSelection) {
       return {
-        money: structuredMoney,
-        issue: this.createUnexpectedMoneyIssue(row, sheetName, section, [structuredMoney]),
+        money: structuredSelection.money,
+        issue:
+          structuredSelection.issue ??
+          this.createUnexpectedMoneyIssue(row, sheetName, section, [structuredSelection.money]),
       };
     }
 
     return this.selectRightMostMoney(row, sheetName, section, false);
   }
 
-  private selectStructuredSingleTotalMoney(row: NormalizedRow, section: InternalBookSection): InternalBookMoneyCell | undefined {
-    const selection = this.selectExpectedAmountCell(row, section);
-    return selection?.money;
+  private selectStructuredSingleTotalMoney(
+    row: NormalizedRow,
+    section: InternalBookSection,
+  ): { money: InternalBookMoneyCell; issue?: InternalBookValidationIssue } | undefined {
+    return this.selectExpectedAmountCell(row, section);
   }
 
   private selectLineMoney(row: NormalizedRow, sheetName: string, section: InternalBookSection): MoneySelection {

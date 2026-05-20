@@ -285,6 +285,31 @@ test('keeps official detail amount under MONTANT and warns on unclassified numer
   );
 });
 
+test('flags ambiguous business amount columns on total rows as needs review', () => {
+  const workbook = createWorkbookFromRows([
+    ['OPENING BALANCE', '', '', 1_000_000],
+    ['DEPOSIT NOT YET CLEARED'],
+    ['TOTAL DEPOSIT', '', '', 0],
+    ['TOTAL BALANCE (A)', '', '', 1_000_000],
+    ['CHECK NOT YET CLEARED'],
+    ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+    ['05/05/2026', 'CHK-SYN-001', 'Synthetic check', 50_000],
+    ['LABEL', 'AMOUNT', 'MONTANT'],
+    ['TOTAL (B)', 50_000, 60_000],
+    ['CLOSING BALANCE C', '', '', 950_000],
+  ]);
+
+  const result = parser.parseWorkbook(workbook, '05-BIS 2026.xlsx');
+  const [book] = result.books;
+  const ambiguousTotalIssue = book.validation.issues.find(
+    (issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' && issue.section === 'totalB',
+  );
+
+  assert.equal(book.validation.status, 'needs_review');
+  assert.equal(ambiguousTotalIssue?.severity, 'error');
+  assert.equal(result.success, false);
+});
+
 test('extracts bank facility amounts by business headers while ignoring dates and references', () => {
   const workbook = createWorkbookFromRows([
     ['OPENING BALANCE', 1_000_000],
