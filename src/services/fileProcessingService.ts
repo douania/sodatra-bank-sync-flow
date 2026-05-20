@@ -8,7 +8,51 @@ import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 import { progressService } from './progressService';
 import type { ProcessingResult } from '@/types/processing';
+import {
+  appendInternalBookProcessingResult,
+  detectInternalBookRuntimeFile,
+  processInternalBookRuntimeFile,
+} from './internalBookRuntimeProcessingService';
 export type { ProcessingResult } from '@/types/processing';
+
+interface BatchSyncError {
+  collection: {
+    clientCode?: string;
+  };
+  error: string;
+}
+
+interface BatchSyncPartialResult {
+  new_collections?: number;
+  idempotent_updates?: number;
+  enriched_collections?: number;
+  ignored_collections?: number;
+  errors?: BatchSyncError[];
+  summary?: {
+    enrichments?: {
+      date_of_validity_added?: number;
+      bank_commissions_added?: number;
+      references_updated?: number;
+      statuses_updated?: number;
+    };
+  };
+}
+
+interface AggregatedBatchSyncResult {
+  new_collections: number;
+  idempotent_updates: number;
+  enriched_collections: number;
+  ignored_collections: number;
+  errors: BatchSyncError[];
+  summary: {
+    enrichments: {
+      date_of_validity_added: number;
+      bank_commissions_added: number;
+      references_updated: number;
+      statuses_updated: number;
+    };
+  };
+}
 
 export class FileProcessingService {
   async processFiles(files: File[]): Promise<ProcessingResult> {
@@ -49,6 +93,7 @@ export class FileProcessingService {
         `${files.length} fichiers analysés`);
       
       console.log('🔍 Fichiers catégorisés:', {
+        internalBooks: categorizedFiles.internalBooks.length,
         collectionReports: categorizedFiles.collectionReports.length,
         bankReports: categorizedFiles.bankReports.length,
         fundPosition: categorizedFiles.fundPosition ? 'Oui' : 'Non',
@@ -60,12 +105,26 @@ export class FileProcessingService {
       const hasBankStatements = categorizedFiles.bankReports.length > 0;
       const hasFundPosition = !!categorizedFiles.fundPosition;
       const hasClientReconciliation = !!categorizedFiles.clientReconciliation;
+      const hasInternalBooks = categorizedFiles.internalBooks.length > 0;
 
       console.log('🔍 Type de traitement détecté:');
+      console.log(`  - Internal Book: ${hasInternalBooks ? '✅' : '❌'}`);
       console.log(`  - Collection Report: ${hasCollectionReport ? '✅' : '❌'}`);
       console.log(`  - Relevés bancaires: ${hasBankStatements ? '✅' : '❌'}`);
       console.log(`  - Fund Position: ${hasFundPosition ? '✅' : '❌'}`);
       console.log(`  - Client Reconciliation: ${hasClientReconciliation ? '✅' : '❌'}`);
+
+      if (hasInternalBooks) {
+        progressService.startStep('internal_book_processing', 'Internal Book', 'Traitement des fichiers Internal Book');
+
+        for (const internalBookFile of categorizedFiles.internalBooks) {
+          const runtimeResult = await processInternalBookRuntimeFile(internalBookFile);
+          appendInternalBookProcessingResult(results, runtimeResult);
+        }
+
+        progressService.completeStep('internal_book_processing', 'Internal Book', 'Traitement Internal Book terminé',
+          `${categorizedFiles.internalBooks.length} fichier(s) traité(s)`);
+      }
 
       // 1. ⭐ TRAITEMENT OPTIMISÉ DU COLLECTION REPORT
       if (hasCollectionReport) {
@@ -78,7 +137,7 @@ export class FileProcessingService {
           `Traitement de ${categorizedFiles.collectionReports.length} fichier(s) Excel`);
         
         // Traiter tous les fichiers de collection
-        let allCollections: any[] = [];
+        let allCollections: CollectionReport[] = [];
         
         for (const collectionFile of categorizedFiles.collectionReports) {
           progressService.updateStepProgress('excel_processing', 'Traitement Excel', 
@@ -274,12 +333,14 @@ export class FileProcessingService {
 
   // ⭐ NOUVELLE MÉTHODE : Catégorisation intelligente des fichiers
   private async categorizeFiles(files: File[]): Promise<{
+    internalBooks: File[];
     collectionReports: File[];
     bankReports: File[];
     fundPosition: File | null;
     clientReconciliation: File | null;
   }> {
     const categorized = {
+      internalBooks: [] as File[],
       collectionReports: [] as File[],
       bankReports: [] as File[],
       fundPosition: null as File | null,
@@ -287,6 +348,12 @@ export class FileProcessingService {
     };
     
     for (const file of files) {
+      const internalBookDetection = await detectInternalBookRuntimeFile(file);
+      if (internalBookDetection.isInternalBook) {
+        categorized.internalBooks.push(file);
+        continue;
+      }
+
       const fileType = await this.detectFileTypeDetailed(file);
       
       switch (fileType) {
@@ -476,13 +543,13 @@ export class FileProcessingService {
   }
 
   // ⭐ NOUVELLE MÉTHODE : Agrégation des résultats de batch
-  private aggregateBatchResults(batchResults: any[]): any {
+  private aggregateBatchResults(batchResults: BatchSyncPartialResult[]): AggregatedBatchSyncResult {
     const aggregated = {
       new_collections: 0,
       idempotent_updates: 0,
       enriched_collections: 0,
       ignored_collections: 0,
-      errors: [] as any[],
+      errors: [] as BatchSyncError[],
       summary: {
         enrichments: {
           date_of_validity_added: 0,
@@ -621,7 +688,7 @@ export class FileProcessingService {
     }
 
     // Nettoyer la description
-    let cleanName = description.trim()
+    const cleanName = description.trim()
       // Supprimer les mots-clés courants qui ne font pas partie du nom
       .replace(/\b(EFFET|IMPAYE|CHEQUE|IMPAYÉ|BOUNCED|RETURNED|CHQ|FACTURE|INVOICE)\b/gi, '')
       // Supprimer les codes de banque
@@ -662,7 +729,7 @@ export class FileProcessingService {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         const pageText = textContent.items
-          .map((item: any) => item.str)
+          .map((item: { str?: string }) => item.str ?? '')
           .join(' ');
         fullText += pageText + '\n';
       }
