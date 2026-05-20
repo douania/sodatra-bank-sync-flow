@@ -309,7 +309,7 @@ class InternalBookExcelParser {
       issues,
       this.resolveTotalBAlignmentHeader(context.rows, totalB),
     );
-    const impayesResult = this.extractImpayes(sectionRows.impayes ?? [], context.sheetName, issues);
+    const impayesResult = this.extractImpayes(sectionRows.impayes ?? [], context.sheetName, issues, context.tolerance);
     const facilitiesResult = this.extractFacilities(sectionRows.bankFacilities ?? [], context.sheetName, issues);
 
     this.validateBookAmounts({
@@ -573,6 +573,7 @@ class InternalBookExcelParser {
     rows: NormalizedRow[],
     sheetName: string,
     issues: InternalBookValidationIssue[],
+    tolerance: number,
   ): { lines: InternalBookLine[]; declaredTotal?: InternalBookMoneyCell } {
     const lines: InternalBookLine[] = [];
     let declaredTotal: InternalBookMoneyCell | undefined;
@@ -588,6 +589,29 @@ class InternalBookExcelParser {
       if (this.isTotalRow(row)) {
         declaredTotal = selection.money ?? declaredTotal;
         continue;
+      }
+
+      const unlabeledSingleMoney = this.extractUnlabeledSingleMoney(row);
+      if (unlabeledSingleMoney && lines.length > 0 && !this.isHeaderLikeRow(row)) {
+        const currentTotal = this.sumLines(lines);
+        if (Math.abs(unlabeledSingleMoney.value - currentTotal) <= tolerance) {
+          declaredTotal = unlabeledSingleMoney;
+          continue;
+        }
+
+        issues.push({
+          code: 'IMPAYES_TOTAL_MISMATCH',
+          severity: 'error',
+          message: 'Ligne montant isolÃ©e sous IMPAYE incohÃ©rente avec la somme des lignes impayÃ©s prÃ©cÃ©dentes.',
+          section: 'impayes',
+          sheetName,
+          rowIndex: unlabeledSingleMoney.rowIndex,
+          columnIndex: unlabeledSingleMoney.columnIndex,
+          expected: currentTotal,
+          actual: unlabeledSingleMoney.value,
+          discrepancy: unlabeledSingleMoney.value - currentTotal,
+          tolerance,
+        });
       }
 
       if (selection.money && !this.isHeaderLikeRow(row)) {
@@ -1347,6 +1371,23 @@ class InternalBookExcelParser {
 
   private sumLines(lines: InternalBookLine[]): number {
     return lines.reduce((sum, line) => sum + line.amount.value, 0);
+  }
+
+  private extractUnlabeledSingleMoney(row: NormalizedRow): InternalBookMoneyCell | undefined {
+    const moneyCells = row.cells.filter((cell) => cell.money);
+    if (moneyCells.length !== 1) {
+      return undefined;
+    }
+
+    const hasBusinessText = row.cells.some((cell) => {
+      if (cell.money) {
+        return false;
+      }
+
+      return cell.raw !== null && cell.raw !== undefined && `${cell.raw}`.trim() !== '';
+    });
+
+    return hasBusinessText ? undefined : moneyCells[0].money;
   }
 
   private sumFacilities(lines: InternalBookFacilityLine[]): Required<InternalBookFacilityTotals> {
