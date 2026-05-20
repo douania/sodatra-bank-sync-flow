@@ -997,7 +997,7 @@ class InternalBookExcelParser {
     return this.createIssue(
       'AMBIGUOUS_AMOUNT_COLUMN',
       'warning',
-      'Ligne de cheque ignoree car montant present hors colonne alignee avec TOTAL(B).',
+      'Montant de cheque hors colonne alignee avec TOTAL(B) ignore; revue conseillee.',
       sheetName,
       section,
       cell.rowIndex,

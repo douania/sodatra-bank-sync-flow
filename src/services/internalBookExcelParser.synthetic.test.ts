@@ -223,7 +223,7 @@ test('resolves BDK TOTAL (B) from AMOUNT when AMOUNT 1 breaks closing balance co
         issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
         issue.severity === 'warning' &&
         issue.section === 'checksNotYetCleared' &&
-        issue.message.includes('hors colonne alignee avec TOTAL(B)'),
+        issue.message.includes('Montant de cheque hors colonne alignee avec TOTAL(B) ignore'),
     ),
     true,
   );
@@ -267,7 +267,7 @@ test('preserves BDK TOTAL (B) from AMOUNT 1 when it matches closing balance cons
         issue.code === 'AMBIGUOUS_AMOUNT_COLUMN' &&
         issue.severity === 'warning' &&
         issue.section === 'checksNotYetCleared' &&
-        issue.message.includes('hors colonne alignee avec TOTAL(B)'),
+        issue.message.includes('Montant de cheque hors colonne alignee avec TOTAL(B) ignore'),
     ),
     true,
   );
