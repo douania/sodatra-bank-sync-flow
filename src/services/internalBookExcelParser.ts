@@ -602,7 +602,7 @@ class InternalBookExcelParser {
         issues.push({
           code: 'IMPAYES_TOTAL_MISMATCH',
           severity: 'error',
-          message: 'Ligne montant isolÃ©e sous IMPAYE incohÃ©rente avec la somme des lignes impayÃ©s prÃ©cÃ©dentes.',
+          message: 'Ligne montant isolee sous IMPAYE incoherente avec la somme des lignes impayees precedentes.',
           section: 'impayes',
           sheetName,
           rowIndex: unlabeledSingleMoney.rowIndex,
