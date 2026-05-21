@@ -13,6 +13,10 @@ import {
   detectInternalBookRuntimeFile,
   processInternalBookRuntimeFile,
 } from './internalBookRuntimeProcessingService';
+import {
+  analyzeBDKBankStatementText,
+  type BDKBankStatementDiagnosticResult,
+} from './bdkBankStatementDiagnosticService';
 export type { ProcessingResult, FileDetectionResult } from '@/types/processing';
 
 interface DebugProcessingResult {
@@ -26,6 +30,7 @@ interface DebugAnalysisResult {
   bankType?: string;
   confidence?: 'high' | 'medium' | 'low';
   rawTextContent?: string;
+  bdkBankStatementDiagnostic?: BDKBankStatementDiagnosticResult;
   parsedData?: unknown;
   errors?: string[];
 }
@@ -754,6 +759,9 @@ export class EnhancedFileProcessingService {
       }
       
       console.log(`📄 Contenu extrait: ${rawTextContent.length} caractères`);
+      const bdkBankStatementDiagnostic = rawTextContent
+        ? analyzeBDKBankStatementText(rawTextContent)
+        : undefined;
       
       // Parse structured data based on file type
       let parsedData: unknown = null;
@@ -816,6 +824,7 @@ export class EnhancedFileProcessingService {
         bankType: detection.bankType,
         confidence: detection.confidence,
         rawTextContent: rawTextContent.substring(0, 10000), // Limit size for display
+        bdkBankStatementDiagnostic,
         parsedData
       };
       
