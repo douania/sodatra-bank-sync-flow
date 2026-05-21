@@ -1463,7 +1463,7 @@ class InternalBookExcelParser {
         this.createIssue(
           'STALE_OUTSTANDING_CHECK',
           'warning',
-          'Cheque ancien a regulariser exclu du TOTAL(B) operationnel et inclus dans le risque prudent.',
+          'Cheque ancien a regulariser detecte; inclus dans le risque prudent.',
           sheetName,
           'checksNotYetCleared',
           line.amount.rowIndex,
