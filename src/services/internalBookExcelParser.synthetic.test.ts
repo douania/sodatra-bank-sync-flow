@@ -727,7 +727,7 @@ test('preserves stale outstanding check classification for text row dates', () =
   assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 55_000);
 });
 
-test('extracts an Excel serial date from the first row cell without a DATE header', () => {
+test('extracts an Excel serial date from the first row cell with an empty header', () => {
   const workbook = createWorkbookFromRows(
     [
       ['OPENING BALANCE', 1_000_000],
@@ -735,7 +735,7 @@ test('extracts an Excel serial date from the first row cell without a DATE heade
       ['TOTAL DEPOSIT', 0],
       ['TOTAL BALANCE (A)', 1_000_000],
       ['CHECK NOT YET CLEARED'],
-      ['REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      ['', 'DESCRIPTION', 'AMOUNT'],
       [45064, 'Synthetic first-cell serial check', 30_000],
       ['TOTAL (B)', 0],
       ['CLOSING BALANCE C', 1_000_000],
@@ -749,6 +749,33 @@ test('extracts an Excel serial date from the first row cell without a DATE heade
   assert.equal(book.validation.status, 'valid');
   assert.equal(book.staleOutstandingChecks[0].date, '2023-05-18');
   assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 30_000);
+});
+
+test('keeps first-cell numeric references operational without treating them as Excel serial dates', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', 1_000_000],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['TOTAL DEPOSIT', 0],
+      ['TOTAL BALANCE (A)', 1_000_000],
+      ['CHECK NOT YET CLEARED'],
+      ['REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      [45064, 'Synthetic check', 30_000],
+      ['TOTAL (B)', 30_000],
+      ['CLOSING BALANCE C', 970_000],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BIS 2026.xlsx');
+  const [book] = result.books;
+  const [check] = book.checksNotYetCleared;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(check.date, undefined);
+  assert.equal(book.checksNotYetCleared.length, 1);
+  assert.equal(book.staleOutstandingChecks.length, 0);
+  assert.equal(book.validation.calculatedTotalChecksOperational, 30_000);
 });
 
 test('classifies stale checks by age for common Internal Book bank shapes', () => {

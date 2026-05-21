@@ -1627,8 +1627,9 @@ class InternalBookExcelParser {
       }
     }
 
-    if (dateColumnCells.length === 0) {
-      return this.parseExcelSerialDate(row.cells[0]?.raw);
+    const firstCell = row.cells[0];
+    if (dateColumnCells.length === 0 && firstCell && this.canUseFirstCellExcelSerialDateFallback(firstCell)) {
+      return this.parseExcelSerialDate(firstCell.raw);
     }
 
     return undefined;
@@ -1636,6 +1637,11 @@ class InternalBookExcelParser {
 
   private isDateColumnCell(cell: NormalizedCell): boolean {
     return /\bDATE\b/.test(cell.headerNormalizedText ?? '');
+  }
+
+  private canUseFirstCellExcelSerialDateFallback(cell: NormalizedCell): boolean {
+    const header = cell.headerNormalizedText ?? '';
+    return header === '' || this.isDateColumnCell(cell);
   }
 
   private parseExcelSerialDate(value: unknown): string | undefined {
