@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { extractBDKAccountStatement } from './bdkAccountStatementExtractor';
+import { analyzeBDKBankStatementText } from './bdkBankStatementDiagnosticService';
 import { bdkExtractionService } from './bdkExtractionService';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
 
@@ -123,6 +124,47 @@ test('BDK account statement synthetic fixture: isolated extractor accepts flatte
   assert.equal(result.totalCredits, 200_000);
   assert.equal(result.closingBalance, 900_000);
   assert.equal(result.success, true);
+});
+
+test('BDK account statement synthetic fixture: diagnostic service extracts detected account statement', () => {
+  const result = analyzeBDKBankStatementText(ACCOUNT_STATEMENT_TEXT);
+
+  assert.equal(result.detectedFormat, 'bdk_account_statement');
+  assert.equal(result.success, true);
+  assert.ok(result.accountStatement);
+  assert.equal(result.accountStatement.openingBalance, 1_000_000);
+  assert.equal(result.accountStatement.totalDebits, 300_000);
+  assert.equal(result.accountStatement.totalCredits, 200_000);
+  assert.equal(result.accountStatement.closingBalance, 900_000);
+  assert.equal(result.accountStatement.validation.isValid, true);
+});
+
+test('BDK account statement synthetic fixture: diagnostic service reports invalid detected account statement', () => {
+  const inconsistentText = ACCOUNT_STATEMENT_TEXT.replace(
+    'Solde (XOF) au 05/05/2026 : 900 000',
+    'Solde (XOF) au 05/05/2026 : 901 000'
+  );
+  const result = analyzeBDKBankStatementText(inconsistentText);
+
+  assert.equal(result.detectedFormat, 'bdk_account_statement');
+  assert.equal(result.success, false);
+  assert.ok(result.accountStatement);
+  assert.equal(result.accountStatement.validation.isValid, false);
+});
+
+test('BDK PDF synthetic baseline: diagnostic service detects analysis report without handling it', () => {
+  const result = analyzeBDKBankStatementText(SYNTHETIC_BDK_PDF_TEXT);
+
+  assert.equal(result.detectedFormat, 'bdk_analysis_report');
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /not handled by this diagnostic service/i);
+});
+
+test('BDK diagnostic service reports unknown synthetic text', () => {
+  const result = analyzeBDKBankStatementText('Synthetic text without BDK bank statement markers.');
+
+  assert.equal(result.detectedFormat, 'unknown');
+  assert.equal(result.success, false);
 });
 
 test('BDK account statement synthetic fixture: specialized parser documents current unsupported format', () => {
