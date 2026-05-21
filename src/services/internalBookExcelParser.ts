@@ -15,6 +15,8 @@ import type {
 
 const PARSER_VERSION = 'POC-INTERNAL-BOOK-0A';
 const DEFAULT_TOLERANCE = 1;
+const STALE_CHECK_AGE_YEARS = 3;
+const HIGH_RISK_STALE_CHECK_LABEL = /\b(?:DOUANE|DOUANES|TRESOR|TRESOR PUBLIC|DGD|ADMINISTRATION)\b/;
 
 interface InternalBookParserOptions {
   tolerance?: number;
@@ -302,13 +304,21 @@ class InternalBookExcelParser {
       'depositsNotYetCleared',
       issues,
     );
-    const checksNotYetCleared = this.extractAmountLines(
+    const extractedChecksNotYetCleared = this.extractAmountLines(
       sectionRows.checksNotYetCleared ?? [],
       context.sheetName,
       'checksNotYetCleared',
       issues,
       this.resolveTotalBAlignmentHeader(context.rows, totalB),
     );
+    const classifiedChecks = this.classifyOutstandingChecks(
+      extractedChecksNotYetCleared,
+      context.reportDate,
+      context.sheetName,
+      issues,
+    );
+    const checksNotYetCleared = classifiedChecks.operational;
+    const staleOutstandingChecks = classifiedChecks.stale;
     const impayesResult = this.extractImpayes(sectionRows.impayes ?? [], context.sheetName, issues, context.tolerance);
     const facilitiesResult = this.extractFacilities(sectionRows.bankFacilities ?? [], context.sheetName, issues);
 
@@ -320,6 +330,7 @@ class InternalBookExcelParser {
       closingBalanceC,
       depositsNotYetCleared,
       checksNotYetCleared,
+      staleOutstandingChecks,
       impayes: impayesResult.lines,
       declaredTotalImpayes: impayesResult.declaredTotal,
       bankFacilities: facilitiesResult.lines,
@@ -330,12 +341,18 @@ class InternalBookExcelParser {
     });
 
     const calculatedTotalDeposits = this.sumLines(depositsNotYetCleared);
-    const calculatedTotalChecks = this.sumLines(checksNotYetCleared);
+    const calculatedTotalChecksOperational = this.sumLines(checksNotYetCleared);
+    const calculatedStaleOutstandingChecksRiskTotal = this.sumLines(staleOutstandingChecks);
+    const calculatedTotalChecksPrudent =
+      calculatedTotalChecksOperational + calculatedStaleOutstandingChecksRiskTotal;
+    const calculatedTotalChecks = calculatedTotalChecksOperational;
     const calculatedTotalImpayes = this.sumLines(impayesResult.lines);
     const calculatedFacilitiesTotals = this.sumFacilities(facilitiesResult.lines);
     const calculatedTotalBalanceA = openingBalance ? openingBalance.value + calculatedTotalDeposits : undefined;
     const declaredOrCalculatedA = totalBalanceA?.value ?? calculatedTotalBalanceA;
-    const calculatedClosingBalanceC = declaredOrCalculatedA !== undefined ? declaredOrCalculatedA - calculatedTotalChecks : undefined;
+    const closingBalanceChecksTotal = totalB?.value ?? calculatedTotalChecks;
+    const calculatedClosingBalanceC =
+      declaredOrCalculatedA !== undefined ? declaredOrCalculatedA - closingBalanceChecksTotal : undefined;
     const status = this.resolveStatus(context.bank, issues);
 
     return {
@@ -348,6 +365,7 @@ class InternalBookExcelParser {
       totalDeposits,
       totalBalanceA,
       checksNotYetCleared,
+      staleOutstandingChecks,
       totalB,
       closingBalanceC,
       bankFacilities: facilitiesResult.lines,
@@ -363,6 +381,10 @@ class InternalBookExcelParser {
         calculatedTotalBalanceA,
         declaredTotalChecks: totalB?.value,
         calculatedTotalChecks,
+        calculatedTotalChecksOperational,
+        calculatedTotalChecksPrudent,
+        calculatedStaleOutstandingChecksRiskTotal,
+        highRiskStaleOutstandingChecksTotal: classifiedChecks.highRiskTotal || undefined,
         declaredClosingBalanceC: closingBalanceC?.value,
         calculatedClosingBalanceC,
         declaredTotalImpayes: impayesResult.declaredTotal?.value,
@@ -713,6 +735,7 @@ class InternalBookExcelParser {
     closingBalanceC?: InternalBookMoneyCell;
     depositsNotYetCleared: InternalBookLine[];
     checksNotYetCleared: InternalBookLine[];
+    staleOutstandingChecks: InternalBookLine[];
     impayes: InternalBookLine[];
     declaredTotalImpayes?: InternalBookMoneyCell;
     bankFacilities: InternalBookFacilityLine[];
@@ -722,7 +745,10 @@ class InternalBookExcelParser {
     sheetName: string;
   }): void {
     const calculatedTotalDeposits = this.sumLines(context.depositsNotYetCleared);
-    const calculatedTotalChecks = this.sumLines(context.checksNotYetCleared);
+    const calculatedTotalChecksOperational = this.sumLines(context.checksNotYetCleared);
+    const calculatedStaleOutstandingChecksRiskTotal = this.sumLines(context.staleOutstandingChecks);
+    const calculatedTotalChecksPrudent =
+      calculatedTotalChecksOperational + calculatedStaleOutstandingChecksRiskTotal;
     const calculatedTotalImpayes = this.sumLines(context.impayes);
     const calculatedFacilitiesTotals = this.sumFacilities(context.bankFacilities);
 
@@ -750,11 +776,20 @@ class InternalBookExcelParser {
       });
     }
 
+    const validatedTotalChecks = this.resolveValidatedTotalChecks({
+      operational: calculatedTotalChecksOperational,
+      prudent: calculatedTotalChecksPrudent,
+      declared: context.totalB,
+      issues: context.issues,
+      sheetName: context.sheetName,
+      tolerance: context.tolerance,
+    });
+
     this.compareOptionalTotals({
       code: 'A_MINUS_B_MISMATCH',
       section: 'totalB',
       declared: context.totalB?.value,
-      calculated: calculatedTotalChecks,
+      calculated: validatedTotalChecks,
       message: 'TOTAL (B) déclaré ne correspond pas à la somme des chèques non débités.',
       issues: context.issues,
       sheetName: context.sheetName,
@@ -762,11 +797,12 @@ class InternalBookExcelParser {
     });
 
     if (context.totalBalanceA && context.closingBalanceC) {
+      const closingBalanceChecksTotal = context.totalB?.value ?? calculatedTotalChecksOperational;
       this.compareOptionalTotals({
         code: 'A_MINUS_B_MISMATCH',
         section: 'closingBalanceC',
         declared: context.closingBalanceC.value,
-        calculated: context.totalBalanceA.value - calculatedTotalChecks,
+        calculated: context.totalBalanceA.value - closingBalanceChecksTotal,
         message: 'TOTAL BALANCE (A) - TOTAL (B) ne correspond pas au CLOSING BALANCE C.',
         issues: context.issues,
         sheetName: context.sheetName,
@@ -1371,6 +1407,123 @@ class InternalBookExcelParser {
 
   private sumLines(lines: InternalBookLine[]): number {
     return lines.reduce((sum, line) => sum + line.amount.value, 0);
+  }
+
+  private resolveValidatedTotalChecks(context: {
+    operational: number;
+    prudent: number;
+    declared?: InternalBookMoneyCell;
+    issues: InternalBookValidationIssue[];
+    sheetName: string;
+    tolerance: number;
+  }): number {
+    if (!context.declared) {
+      return context.operational;
+    }
+
+    const matchesOperational = Math.abs(context.operational - context.declared.value) <= context.tolerance;
+    const matchesPrudent = Math.abs(context.prudent - context.declared.value) <= context.tolerance;
+
+    if (!matchesOperational && matchesPrudent) {
+      context.issues.push(
+        this.createIssue(
+          'TOTAL_B_INCLUDES_STALE_CHECKS',
+          'warning',
+          'TOTAL(B) inclut des cheques anciens; risque prudent deja integre.',
+          context.sheetName,
+          'totalB',
+          context.declared.rowIndex,
+          context.declared.columnIndex,
+        ),
+      );
+      return context.prudent;
+    }
+
+    return context.operational;
+  }
+
+  private classifyOutstandingChecks(
+    lines: InternalBookLine[],
+    reportDate: string,
+    sheetName: string,
+    issues: InternalBookValidationIssue[],
+  ): { operational: InternalBookLine[]; stale: InternalBookLine[]; highRiskTotal: number } {
+    const operational: InternalBookLine[] = [];
+    const stale: InternalBookLine[] = [];
+    let highRiskTotal = 0;
+
+    for (const line of lines) {
+      if (!this.isStaleOutstandingCheck(line, reportDate)) {
+        operational.push(line);
+        continue;
+      }
+
+      stale.push(line);
+      issues.push(
+        this.createIssue(
+          'STALE_OUTSTANDING_CHECK',
+          'warning',
+          'Cheque ancien a regulariser exclu du TOTAL(B) operationnel et inclus dans le risque prudent.',
+          sheetName,
+          'checksNotYetCleared',
+          line.amount.rowIndex,
+          line.amount.columnIndex,
+        ),
+      );
+
+      if (this.isHighRiskStaleOutstandingCheck(line)) {
+        highRiskTotal += line.amount.value;
+        issues.push(
+          this.createIssue(
+            'HIGH_RISK_STALE_OUTSTANDING_CHECK',
+            'warning',
+            'Cheque ancien a risque eleve: beneficiaire administration/douane/tresor.',
+            sheetName,
+            'checksNotYetCleared',
+            line.amount.rowIndex,
+            line.amount.columnIndex,
+          ),
+        );
+      }
+    }
+
+    return { operational, stale, highRiskTotal };
+  }
+
+  private isStaleOutstandingCheck(line: InternalBookLine, reportDate: string): boolean {
+    if (!line.date) {
+      return false;
+    }
+
+    const checkDate = this.parseIsoDate(line.date);
+    const reportDay = this.parseIsoDate(reportDate);
+    if (!checkDate || !reportDay) {
+      return false;
+    }
+
+    const staleCutoff = new Date(reportDay);
+    staleCutoff.setUTCFullYear(staleCutoff.getUTCFullYear() - STALE_CHECK_AGE_YEARS);
+    return checkDate < staleCutoff;
+  }
+
+  private isHighRiskStaleOutstandingCheck(line: InternalBookLine): boolean {
+    const label = this.normalizeText([line.label, line.description].filter(Boolean).join(' '));
+    return HIGH_RISK_STALE_CHECK_LABEL.test(label);
+  }
+
+  private parseIsoDate(value: string): Date | undefined {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+      return undefined;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+      ? date
+      : undefined;
   }
 
   private extractUnlabeledSingleMoney(row: NormalizedRow): InternalBookMoneyCell | undefined {

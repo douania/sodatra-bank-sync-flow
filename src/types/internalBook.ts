@@ -58,6 +58,9 @@ export type InternalBookValidationIssueCode =
   | 'A_MINUS_B_MISMATCH'
   | 'IMPAYES_TOTAL_MISMATCH'
   | 'FACILITIES_TOTAL_MISMATCH'
+  | 'STALE_OUTSTANDING_CHECK'
+  | 'HIGH_RISK_STALE_OUTSTANDING_CHECK'
+  | 'TOTAL_B_INCLUDES_STALE_CHECKS'
   | 'MISSING_REQUIRED_SECTION'
   | 'MISSING_REQUIRED_AMOUNT'
   | 'AMBIGUOUS_AMOUNT_COLUMN'
@@ -91,6 +94,10 @@ export interface InternalBookValidation {
   calculatedTotalBalanceA?: number;
   declaredTotalChecks?: number;
   calculatedTotalChecks: number;
+  calculatedTotalChecksOperational: number;
+  calculatedTotalChecksPrudent: number;
+  calculatedStaleOutstandingChecksRiskTotal: number;
+  highRiskStaleOutstandingChecksTotal?: number;
   declaredClosingBalanceC?: number;
   calculatedClosingBalanceC?: number;
   declaredTotalImpayes?: number;
@@ -117,6 +124,7 @@ export interface InternalBook {
   totalDeposits?: InternalBookMoneyCell;
   totalBalanceA?: InternalBookMoneyCell;
   checksNotYetCleared: InternalBookLine[];
+  staleOutstandingChecks: InternalBookLine[];
   totalB?: InternalBookMoneyCell;
   closingBalanceC?: InternalBookMoneyCell;
   bankFacilities: InternalBookFacilityLine[];

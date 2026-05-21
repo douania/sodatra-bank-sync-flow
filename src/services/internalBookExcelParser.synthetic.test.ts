@@ -78,6 +78,28 @@ function createWorkbookWithImpayesRows(impayeRows: unknown[][], sourceRows: Part
   );
 }
 
+function createChecksWorkbook(
+  checksRows: unknown[][],
+  declaredTotalChecks: number,
+  closingBalance: number,
+  totalBalanceA = 1_000_000,
+): XLSX.WorkBook {
+  return createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', totalBalanceA],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['TOTAL DEPOSIT', 0],
+      ['TOTAL BALANCE (A)', totalBalanceA],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      ...checksRows,
+      ['TOTAL (B)', declaredTotalChecks],
+      ['CLOSING BALANCE C', closingBalance],
+    ],
+    '180526',
+  );
+}
+
 test('parses a synthetic BIS internal book workbook with dash zero totals and facilities', () => {
   const result = parser.parseWorkbook(createWorkbook(), '05-BIS 2026.xlsx', {
     parsedAt: '2026-05-18T00:00:00.000Z',
@@ -586,4 +608,158 @@ test('flags an A-B-C mismatch as needs_review', () => {
   assert.equal(result.books.length, 1);
   assert.equal(result.books[0].validation.status, 'needs_review');
   assert.equal(result.books[0].validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH'), true);
+});
+
+test('classifies ORABANK-shaped old issued checks as prudent risk while TOTAL(B) stays operational', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', 283_316],
+      ['DEPOTS PAS ENCORE ENCAISSE'],
+      ['TOTAL DEPOSIT', 0],
+      ['TOTAL A', 283_316],
+      ['LESS CHEQUES EMIS NON ENCAISSES'],
+      ['DATE', 'CH NO', 'DESCRIPTION', 'AMOUNT'],
+      ['17/05/2023', 'CHK-OLD-001', 'Synthetic old check A', 3_000_000],
+      ['18/05/2022', 'CHK-OLD-002', 'Synthetic old check B', 2_808_751],
+      ['TOTAL (B)', 0],
+      ['CLOSING BALANCE C', 283_316],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05- ORABANK 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.checksNotYetCleared.length, 0);
+  assert.equal(book.staleOutstandingChecks.length, 2);
+  assert.equal(book.validation.declaredTotalChecks, 0);
+  assert.equal(book.validation.calculatedTotalChecksOperational, 0);
+  assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 5_808_751);
+  assert.equal(book.validation.calculatedTotalChecksPrudent, 5_808_751);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'STALE_OUTSTANDING_CHECK'), true);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH'), false);
+});
+
+test('classifies stale checks by age for common Internal Book bank shapes', () => {
+  const cases = [
+    ['05-BIS 2026.xlsx', 'BIS'],
+    ['05 - BICIS 2026.xlsx', 'BICIS'],
+    ['05-BRIDGE 2026.xlsx', 'BRIDGE'],
+    ['5-ATLANTIK BANK 2026.xlsx', 'ATLANTIK'],
+  ] as const;
+
+  for (const [sourceFile, bank] of cases) {
+    const result = parser.parseWorkbook(
+      createChecksWorkbook([['17/05/2023', `CHK-${bank}-OLD`, `Synthetic ${bank} old check`, 45_000]], 0, 1_000_000),
+      sourceFile,
+    );
+    const [book] = result.books;
+
+    assert.equal(book.bank, bank);
+    assert.equal(book.validation.status, 'valid');
+    assert.equal(book.staleOutstandingChecks.length, 1);
+    assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 45_000);
+    assert.equal(book.validation.calculatedTotalChecksOperational, 0);
+  }
+});
+
+test('keeps BDK stale check aligned to the official TOTAL(B) AMOUNT 1 column out of operational total', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', '', '', '', '', '', 1_000_000, ''],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['', '', '', 'TOTAL DEPOSIT', '', '', 0, ''],
+      ['', '', '', 'TOTAL BALANCE (A)', '', '', 1_000_000, ''],
+      ['CHECK NOT YET CLEARED'],
+      ['DATE', 'CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR No/FACT.No', 'AMOUNT', 'AMOUNT 1'],
+      ['17/05/2023', 1001, 'Synthetic BDK old check', 'Synthetic vendor', 'Synthetic client', 87035, '', 75_000],
+      ['', '', '', 'TOTAL (B)', '', '', '', 0],
+      ['', '', '', 'CLOSING BALANCE', '', '', 1_000_000, ''],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BDK 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.staleOutstandingChecks.length, 1);
+  assert.equal(book.staleOutstandingChecks[0].amount.value, 75_000);
+  assert.equal(book.validation.calculatedTotalChecksOperational, 0);
+  assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 75_000);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH'), false);
+});
+
+test('keeps recent and undated outstanding checks operational', () => {
+  const recent = parser.parseWorkbook(
+    createChecksWorkbook([['18/05/2025', 'CHK-RECENT', 'Synthetic recent check', 100_000]], 100_000, 900_000),
+    '05-BIS 2026.xlsx',
+  ).books[0];
+  const undated = parser.parseWorkbook(
+    createChecksWorkbook([['', 'CHK-NODATE', 'Synthetic undated check', 80_000]], 80_000, 920_000),
+    '05 - BICIS 2026.xlsx',
+  ).books[0];
+
+  assert.equal(recent.validation.status, 'valid');
+  assert.equal(recent.checksNotYetCleared.length, 1);
+  assert.equal(recent.staleOutstandingChecks.length, 0);
+  assert.equal(recent.validation.calculatedTotalChecksOperational, 100_000);
+  assert.equal(undated.validation.status, 'valid');
+  assert.equal(undated.checksNotYetCleared.length, 1);
+  assert.equal(undated.staleOutstandingChecks.length, 0);
+});
+
+test('warns on high-risk stale administration checks without blocking the book', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook([['17/05/2023', 'CHK-DGD', 'Synthetic DOUANE regularization', 50_000]], 0, 1_000_000),
+    '05-BRIDGE 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.staleOutstandingChecks.length, 1);
+  assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 50_000);
+  assert.equal(book.validation.highRiskStaleOutstandingChecksTotal, 50_000);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'HIGH_RISK_STALE_OUTSTANDING_CHECK'), true);
+});
+
+test('accepts TOTAL(B) when it already includes prudent stale outstanding checks', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook(
+      [
+        ['18/05/2026', 'CHK-CURRENT', 'Synthetic current check', 100_000],
+        ['17/05/2023', 'CHK-OLD', 'Synthetic old check', 50_000],
+      ],
+      150_000,
+      850_000,
+    ),
+    '05-BIS 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.validation.calculatedTotalChecksOperational, 100_000);
+  assert.equal(book.validation.calculatedTotalChecksPrudent, 150_000);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'TOTAL_B_INCLUDES_STALE_CHECKS'), true);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH'), false);
+});
+
+test('keeps TOTAL(B) that matches neither operational nor prudent stale totals in needs review', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook(
+      [
+        ['18/05/2026', 'CHK-CURRENT', 'Synthetic current check', 100_000],
+        ['17/05/2023', 'CHK-OLD', 'Synthetic old check', 50_000],
+      ],
+      123_456,
+      876_544,
+    ),
+    '05-BIS 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'needs_review');
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH' && issue.section === 'totalB'), true);
 });
