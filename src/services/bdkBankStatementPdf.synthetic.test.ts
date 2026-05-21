@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { extractBDKAccountStatement } from './bdkAccountStatementExtractor';
 import { bdkExtractionService } from './bdkExtractionService';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
 
@@ -75,6 +76,53 @@ test('BDK account statement synthetic fixture: expected balances follow opening 
   const closing = 900_000;
 
   assert.equal(opening + totalCredits - totalDebits, closing);
+});
+
+test('BDK account statement synthetic fixture: isolated extractor validates statement totals', () => {
+  const result = extractBDKAccountStatement(ACCOUNT_STATEMENT_TEXT);
+
+  assert.equal(result.reportDate, '05/05/2026');
+  assert.equal(result.openingBalance, 1_000_000);
+  assert.equal(result.totalDebits, 300_000);
+  assert.equal(result.totalCredits, 200_000);
+  assert.equal(result.closingBalance, 900_000);
+  assert.equal(result.validation.calculatedClosing, 900_000);
+  assert.equal(result.validation.discrepancy, 0);
+  assert.equal(result.validation.isValid, true);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.errors, []);
+});
+
+test('BDK account statement synthetic fixture: isolated extractor rejects inconsistent closing balance', () => {
+  const inconsistentText = ACCOUNT_STATEMENT_TEXT.replace(
+    'Solde (XOF) au 05/05/2026 : 900 000',
+    'Solde (XOF) au 05/05/2026 : 901 000'
+  );
+  const result = extractBDKAccountStatement(inconsistentText);
+
+  assert.equal(result.closingBalance, 901_000);
+  assert.equal(result.validation.calculatedClosing, 900_000);
+  assert.equal(result.validation.discrepancy, -1_000);
+  assert.equal(result.validation.isValid, false);
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /validation failed/i);
+});
+
+test('BDK account statement synthetic fixture: isolated extractor accepts flattened accented text', () => {
+  const flattenedText = ACCOUNT_STATEMENT_TEXT
+    .replace('Periode', 'P\u00e9riode')
+    .replace('Libelle', 'Libell\u00e9')
+    .replace('Debit', 'D\u00e9bit')
+    .replace('Credit', 'Cr\u00e9dit')
+    .replace(/1 000 000/g, '1\u00a0000\u202f000')
+    .replace(/\s*\n\s*/g, ' ');
+  const result = extractBDKAccountStatement(flattenedText);
+
+  assert.equal(result.openingBalance, 1_000_000);
+  assert.equal(result.totalDebits, 300_000);
+  assert.equal(result.totalCredits, 200_000);
+  assert.equal(result.closingBalance, 900_000);
+  assert.equal(result.success, true);
 });
 
 test('BDK account statement synthetic fixture: specialized parser documents current unsupported format', () => {
