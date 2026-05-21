@@ -22,6 +22,21 @@ IMPAYE
 18/05/2026 3361178 IMPAYE CORIS SYNTHETIC CLIENT REGUL IMPAYE FRAIS 25 000
 `;
 
+const ACCOUNT_STATEMENT_TEXT = `
+BDK
+EXTRAIT DE COMPTE
+Periode du 30/04/2026 au 05/05/2026
+Solde initial (XOF) : 1 000 000
+
+Date       Valeur     Libelle                         Debit     Credit    Solde
+30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000             800 000
+02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT             200 000  1 000 000
+05/05/2026 05/05/2026 FRAIS SYNTHETIC               100 000             900 000
+
+Total                                                300 000    200 000
+Solde (XOF) au 05/05/2026 : 900 000
+`;
+
 test('BDK PDF synthetic baseline: specialized parser extracts core sections and validates A-B=C', () => {
   const result = bdkExtractionService.extractBDKData(SYNTHETIC_BDK_PDF_TEXT);
 
@@ -51,4 +66,41 @@ test('BDK PDF synthetic baseline: generic section extractor is characterized sep
   assert.equal(Array.isArray(result.data.checksNotCleared), true);
   assert.equal(Array.isArray(result.data.bankFacilities), true);
   assert.equal(Array.isArray(result.data.impayes), true);
+});
+
+test('BDK account statement synthetic fixture: expected balances follow opening + credits - debits = closing', () => {
+  const opening = 1_000_000;
+  const totalDebits = 300_000;
+  const totalCredits = 200_000;
+  const closing = 900_000;
+
+  assert.equal(opening + totalCredits - totalDebits, closing);
+});
+
+test('BDK account statement synthetic fixture: specialized parser documents current unsupported format', () => {
+  const result = bdkExtractionService.extractBDKData(ACCOUNT_STATEMENT_TEXT);
+
+  // This documents current unsupported account-statement format. A future 0E parser should replace these limitation assertions with positive extraction assertions.
+  assert.equal(result.openingBalance.amount, 0);
+  assert.equal(result.totalDeposits, 0);
+  assert.equal(result.totalChecks, 0);
+  assert.equal(result.closingBalance, 0);
+  assert.equal(result.deposits.length, 0);
+  assert.equal(result.checks.length, 0);
+  assert.equal(result.facilities.length, 0);
+  assert.equal(result.impayes.length, 0);
+});
+
+test('BDK account statement synthetic fixture: generic section extractor documents current limitation', async () => {
+  const result = await bankReportSectionExtractor.extractBankReportSections(ACCOUNT_STATEMENT_TEXT, 'BDK');
+
+  // Current limitation: account-statement sections do not match the generic BDK bank-report patterns yet.
+  assert.equal(result.success, true);
+  assert.ok(result.data);
+  assert.equal(result.data.openingBalance, 0);
+  assert.equal(result.data.closingBalance, 0);
+  assert.equal(result.data.depositsNotCleared.length, 0);
+  assert.equal(result.data.checksNotCleared.length, 0);
+  assert.equal(result.data.bankFacilities.length, 0);
+  assert.equal(result.data.impayes.length, 0);
 });
