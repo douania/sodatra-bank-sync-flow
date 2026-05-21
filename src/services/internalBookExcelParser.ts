@@ -59,6 +59,8 @@ interface MoneySelection {
 
 const EXCEL_SERIAL_DATE_MIN = 20000;
 const EXCEL_SERIAL_DATE_MAX = 60000;
+const EXCEL_SERIAL_DATE_EPOCH_UTC = Date.UTC(1899, 11, 30);
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const NON_AMOUNT_COLUMN_HEADERS = new Set(['DATE', 'CH NO', 'CH NO BD', 'TR NO', 'FACT NO', 'REF', 'REFERENCE']);
 const AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT', 'AMOUNT 1', 'MONTANT 1']);
 const PRIMARY_AMOUNT_COLUMN_HEADERS = new Set(['AMOUNT', 'MONTANT']);
@@ -1617,7 +1619,42 @@ class InternalBookExcelParser {
       }
     }
 
+    const dateColumnCells = row.cells.filter((cell) => this.isDateColumnCell(cell));
+    for (const cell of dateColumnCells) {
+      const dateColumnSerial = this.parseExcelSerialDate(cell.raw);
+      if (dateColumnSerial) {
+        return dateColumnSerial;
+      }
+    }
+
+    const firstCell = row.cells[0];
+    if (dateColumnCells.length === 0 && firstCell && this.canUseFirstCellExcelSerialDateFallback(firstCell)) {
+      return this.parseExcelSerialDate(firstCell.raw);
+    }
+
     return undefined;
+  }
+
+  private isDateColumnCell(cell: NormalizedCell): boolean {
+    return /\bDATE\b/.test(cell.headerNormalizedText ?? '');
+  }
+
+  private canUseFirstCellExcelSerialDateFallback(cell: NormalizedCell): boolean {
+    const header = cell.headerNormalizedText ?? '';
+    return header === '' || this.isDateColumnCell(cell);
+  }
+
+  private parseExcelSerialDate(value: unknown): string | undefined {
+    if (typeof value !== 'number' || !this.looksLikeExcelSerialDate(value)) {
+      return undefined;
+    }
+
+    const date = new Date(EXCEL_SERIAL_DATE_EPOCH_UTC + value * MILLISECONDS_PER_DAY);
+    if (Number.isNaN(date.getTime())) {
+      return undefined;
+    }
+
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 
   private looksLikeDate(value: string): boolean {
