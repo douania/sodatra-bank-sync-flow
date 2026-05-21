@@ -1503,7 +1503,7 @@ class InternalBookExcelParser {
 
     const staleCutoff = new Date(reportDay);
     staleCutoff.setUTCFullYear(staleCutoff.getUTCFullYear() - STALE_CHECK_AGE_YEARS);
-    return checkDate < staleCutoff;
+    return checkDate <= staleCutoff;
   }
 
   private isHighRiskStaleOutstandingCheck(line: InternalBookLine): boolean {

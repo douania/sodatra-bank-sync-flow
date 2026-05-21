@@ -711,6 +711,23 @@ test('keeps recent and undated outstanding checks operational', () => {
   assert.equal(undated.staleOutstandingChecks.length, 0);
 });
 
+test('classifies three-year-old checks stale at the report-date cutoff only', () => {
+  const atCutoff = parser.parseWorkbook(
+    createChecksWorkbook([['18/05/2023', 'CHK-CUTOFF', 'Synthetic cutoff check', 60_000]], 0, 1_000_000),
+    '05-BIS 2026.xlsx',
+  ).books[0];
+  const afterCutoff = parser.parseWorkbook(
+    createChecksWorkbook([['19/05/2023', 'CHK-AFTER', 'Synthetic after cutoff check', 60_000]], 60_000, 940_000),
+    '05-BIS 2026.xlsx',
+  ).books[0];
+
+  assert.equal(atCutoff.validation.status, 'valid');
+  assert.equal(atCutoff.staleOutstandingChecks.length, 1);
+  assert.equal(afterCutoff.validation.status, 'valid');
+  assert.equal(afterCutoff.checksNotYetCleared.length, 1);
+  assert.equal(afterCutoff.staleOutstandingChecks.length, 0);
+});
+
 test('warns on high-risk stale administration checks without blocking the book', () => {
   const result = parser.parseWorkbook(
     createChecksWorkbook([['17/05/2023', 'CHK-DGD', 'Synthetic DOUANE regularization', 50_000]], 0, 1_000_000),
