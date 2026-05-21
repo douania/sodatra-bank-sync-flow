@@ -641,6 +641,116 @@ test('classifies ORABANK-shaped old issued checks as prudent risk while TOTAL(B)
   assert.equal(book.validation.issues.some((issue) => issue.code === 'A_MINUS_B_MISMATCH'), false);
 });
 
+test('classifies a stale outstanding check from an Excel serial date', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook([[45063, 'CHK-SERIAL-OLD', 'Synthetic serial old check', 45_000]], 0, 1_000_000),
+    '05-BIS 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.staleOutstandingChecks.length, 1);
+  assert.equal(book.checksNotYetCleared.length, 0);
+  assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 45_000);
+  assert.equal(book.validation.calculatedTotalChecksOperational, 0);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'STALE_OUTSTANDING_CHECK'), true);
+});
+
+test('keeps a recent outstanding check operational from an Excel serial date', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook([[45795, 'CHK-SERIAL-RECENT', 'Synthetic serial recent check', 70_000]], 70_000, 930_000),
+    '05-BIS 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.checksNotYetCleared.length, 1);
+  assert.equal(book.staleOutstandingChecks.length, 0);
+  assert.equal(book.validation.calculatedTotalChecksOperational, 70_000);
+});
+
+test('classifies Excel serial check dates stale at the three-year report-date cutoff only', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook(
+      [
+        [45064, 'CHK-SERIAL-CUTOFF', 'Synthetic serial cutoff check', 60_000],
+        [45065, 'CHK-SERIAL-AFTER', 'Synthetic serial after cutoff check', 40_000],
+      ],
+      40_000,
+      960_000,
+    ),
+    '05-BIS 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.deepEqual(book.staleOutstandingChecks.map((line) => line.date), ['2023-05-18']);
+  assert.deepEqual(book.checksNotYetCleared.map((line) => line.date), ['2023-05-19']);
+});
+
+test('extracts Excel serial dates from DATE headers without confusing official amounts', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', 1_000_000],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['TOTAL DEPOSIT', 0],
+      ['TOTAL BALANCE (A)', 1_000_000],
+      ['CHECK NOT YET CLEARED'],
+      ['DESCRIPTION', 'DATE', 'REFERENCE', 'AMOUNT'],
+      ['Synthetic DATE serial check', 45064, 'CHK-DATE-SERIAL', 65_000],
+      ['TOTAL (B)', 0],
+      ['CLOSING BALANCE C', 1_000_000],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BIS 2026.xlsx');
+  const [book] = result.books;
+  const [check] = book.staleOutstandingChecks;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(check.date, '2023-05-18');
+  assert.equal(check.amount.value, 65_000);
+  assert.equal(book.validation.calculatedTotalChecksOperational, 0);
+  assert.equal(book.validation.issues.some((issue) => issue.code === 'AMBIGUOUS_AMOUNT_COLUMN'), false);
+});
+
+test('preserves stale outstanding check classification for text row dates', () => {
+  const result = parser.parseWorkbook(
+    createChecksWorkbook([['17/05/2023', 'CHK-TEXT-OLD', 'Synthetic text old check', 55_000]], 0, 1_000_000),
+    '05-BIS 2026.xlsx',
+  );
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.staleOutstandingChecks[0].date, '2023-05-17');
+  assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 55_000);
+});
+
+test('extracts an Excel serial date from the first row cell without a DATE header', () => {
+  const workbook = createWorkbookFromRows(
+    [
+      ['OPENING BALANCE', 1_000_000],
+      ['DEPOSIT NOT YET CLEARED'],
+      ['TOTAL DEPOSIT', 0],
+      ['TOTAL BALANCE (A)', 1_000_000],
+      ['CHECK NOT YET CLEARED'],
+      ['REFERENCE', 'DESCRIPTION', 'AMOUNT'],
+      [45064, 'Synthetic first-cell serial check', 30_000],
+      ['TOTAL (B)', 0],
+      ['CLOSING BALANCE C', 1_000_000],
+    ],
+    '180526',
+  );
+
+  const result = parser.parseWorkbook(workbook, '05-BIS 2026.xlsx');
+  const [book] = result.books;
+
+  assert.equal(book.validation.status, 'valid');
+  assert.equal(book.staleOutstandingChecks[0].date, '2023-05-18');
+  assert.equal(book.validation.calculatedStaleOutstandingChecksRiskTotal, 30_000);
+});
+
 test('classifies stale checks by age for common Internal Book bank shapes', () => {
   const cases = [
     ['05-BIS 2026.xlsx', 'BIS'],
