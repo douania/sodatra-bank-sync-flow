@@ -12,6 +12,14 @@ interface InternalBookProcessingDebugIssue {
   columnIndex?: number;
 }
 
+interface InternalBookProcessingDebugCheckRiskTotals {
+  sheetName: string;
+  calculatedTotalChecksOperational: number;
+  calculatedTotalChecksPrudent: number;
+  calculatedStaleOutstandingChecksRiskTotal: number;
+  highRiskStaleOutstandingChecksTotal?: number;
+}
+
 export interface InternalBookProcessingDebugInfo {
   pipeline: 'internal_book';
   sourceFile: string;
@@ -28,6 +36,7 @@ export interface InternalBookProcessingDebugInfo {
   parserErrors: InternalBookProcessingDebugIssue[];
   parserWarnings: InternalBookProcessingDebugIssue[];
   selectedBookIssues: InternalBookProcessingDebugIssue[];
+  selectedBookCheckRiskTotals: InternalBookProcessingDebugCheckRiskTotals[];
 }
 
 export function adaptInternalBookImportResultToProcessingResult(
@@ -97,6 +106,13 @@ function buildDebugInfo(importResult: InternalBookImportResult): InternalBookPro
     parserErrors: importResult.parserErrors.map(toDebugIssue),
     parserWarnings: importResult.parserWarnings.map(toDebugIssue),
     selectedBookIssues: collectSelectedBookIssues(importResult).map(toDebugIssue),
+    selectedBookCheckRiskTotals: importResult.selectedBooks.map((book) => ({
+      sheetName: book.sheetName,
+      calculatedTotalChecksOperational: book.validation.calculatedTotalChecksOperational,
+      calculatedTotalChecksPrudent: book.validation.calculatedTotalChecksPrudent,
+      calculatedStaleOutstandingChecksRiskTotal: book.validation.calculatedStaleOutstandingChecksRiskTotal,
+      highRiskStaleOutstandingChecksTotal: book.validation.highRiskStaleOutstandingChecksTotal,
+    })),
   };
 }
 
