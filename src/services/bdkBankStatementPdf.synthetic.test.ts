@@ -39,6 +39,21 @@ Total                                                300 000    200 000
 Solde (XOF) au 05/05/2026 : 900 000
 `;
 
+const LETTER_SPACED_ACCOUNT_STATEMENT_TEXT = `
+BDK
+E X T R A I T   D E   C O M P T E
+Periode du 30/04/2026 au 05/05/2026
+S o l d e   i n i t i a l   ( X O F ) : 1 000 000
+
+Date       Valeur     Libelle                         D e b i t     C r e d i t    Solde
+30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000                   800 000
+02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT              200 000       1 000 000
+05/05/2026 05/05/2026 FRAIS SYNTHETIC               100 000                   900 000
+
+Total                                                300 000        200 000
+S o l d e   ( X O F )   a u 05/05/2026 : 900 000
+`;
+
 test('BDK PDF synthetic baseline: specialized parser extracts core sections and validates A-B=C', () => {
   const result = bdkExtractionService.extractBDKData(SYNTHETIC_BDK_PDF_TEXT);
 
@@ -137,6 +152,17 @@ test('BDK account statement synthetic fixture: diagnostic service extracts detec
   assert.equal(result.accountStatement.totalCredits, 200_000);
   assert.equal(result.accountStatement.closingBalance, 900_000);
   assert.equal(result.accountStatement.validation.isValid, true);
+});
+
+test('BDK account statement synthetic fixture: diagnostic service detects letter-spaced markers', () => {
+  const result = analyzeBDKBankStatementText(LETTER_SPACED_ACCOUNT_STATEMENT_TEXT);
+
+  assert.equal(result.detectedFormat, 'bdk_account_statement');
+  assert.equal(result.success, false);
+  assert.ok(result.accountStatement);
+  assert.ok(result.errors.length > 0);
+  assert.deepEqual(result.errors, result.accountStatement.errors);
+  assert.doesNotMatch(result.errors.join(' '), /unknown/i);
 });
 
 test('BDK account statement synthetic fixture: diagnostic service reports invalid detected account statement', () => {
