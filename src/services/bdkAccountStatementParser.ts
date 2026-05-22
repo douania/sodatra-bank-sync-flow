@@ -16,6 +16,10 @@ export interface BDKAccountStatementParseOptions {
 
 const TRANSACTION_LINE_PATTERN = /^(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+)$/;
 const TRANSACTION_AMOUNTS_PATTERN = /^(.*?)\s+(\d[\d\s\u00a0\u202f]*?)\s{2,}(\d[\d\s\u00a0\u202f]*)\s*$/;
+const FLATTENED_TRANSACTION_PAIR_PATTERN = /\d{2}\/\d{2}\/\d{4}\s+\d{2}\/\d{2}\/\d{4}/g;
+const FLATTENED_TRANSACTION_AMOUNTS_PATTERN =
+  /^(.*?)\s+(\d{1,3}(?:[\s\u00a0\u202f]+\d{3})*?)\s+((?:0|[1-9]\d{0,2})(?:[\s\u00a0\u202f]+\d{3})*)\s*$/;
+const FLATTENED_TERMINAL_PATTERN = /\btotal\b|\bsolde\s*\(\s*xof\s*\)\s*au\b/i;
 
 export function parseBDKAccountStatement(
   textContent: string,
@@ -80,6 +84,18 @@ function parseTransactionLines(
   openingBalance: number,
   currency: string
 ): BankAccountStatementLine[] {
+  const rowOrientedLines = parseRowOrientedTransactionLines(textContent, openingBalance, currency);
+
+  return rowOrientedLines.length > 0
+    ? rowOrientedLines
+    : parseFlattenedTransactionSegments(textContent, openingBalance, currency);
+}
+
+function parseRowOrientedTransactionLines(
+  textContent: string,
+  openingBalance: number,
+  currency: string
+): BankAccountStatementLine[] {
   let previousBalance = openingBalance;
 
   return textContent
@@ -95,6 +111,31 @@ function parseTransactionLines(
 
       return line;
     });
+}
+
+function parseFlattenedTransactionSegments(
+  textContent: string,
+  openingBalance: number,
+  currency: string
+): BankAccountStatementLine[] {
+  const pairMatches = [...textContent.matchAll(FLATTENED_TRANSACTION_PAIR_PATTERN)];
+  let previousBalance = openingBalance;
+
+  return pairMatches.map((pairMatch, sourceLineIndex) => {
+    const startIndex = pairMatch.index ?? 0;
+    const nextPairIndex = pairMatches[sourceLineIndex + 1]?.index ?? textContent.length;
+    const candidateText = textContent.slice(startIndex, nextPairIndex);
+    const terminalMatch = candidateText.match(FLATTENED_TERMINAL_PATTERN);
+    const segmentEnd = terminalMatch?.index ?? candidateText.length;
+    const segment = candidateText.slice(0, segmentEnd).trim();
+    const line = parseFlattenedTransactionSegment(segment, sourceLineIndex, previousBalance, currency);
+
+    if (line.runningBalance !== undefined) {
+      previousBalance = line.runningBalance;
+    }
+
+    return line;
+  });
 }
 
 function parseTransactionLine(
@@ -124,6 +165,63 @@ function parseTransactionLine(
   const amount = parseAmount(amountMatch[2]);
   const runningBalance = parseAmount(amountMatch[3]);
 
+  return buildDerivedTransactionLine(
+    sourceLineIndex,
+    transactionDate,
+    valueDate,
+    descriptionSanitized,
+    amount,
+    runningBalance,
+    previousBalance,
+    currency
+  );
+}
+
+function parseFlattenedTransactionSegment(
+  rawSegment: string,
+  sourceLineIndex: number,
+  previousBalance: number,
+  currency: string
+): BankAccountStatementLine {
+  const transactionMatch = rawSegment.match(TRANSACTION_LINE_PATTERN);
+  const transactionDate = transactionMatch?.[1];
+  const valueDate = transactionMatch?.[2];
+  const content = transactionMatch?.[3] ?? '';
+  const amountMatch = content.match(FLATTENED_TRANSACTION_AMOUNTS_PATTERN);
+
+  if (!amountMatch) {
+    return buildUnknownLine(
+      sourceLineIndex,
+      transactionDate,
+      valueDate,
+      sanitizeDescription(content),
+      currency,
+      'Flattened transaction segment skipped because amount or running balance could not be parsed.'
+    );
+  }
+
+  return buildDerivedTransactionLine(
+    sourceLineIndex,
+    transactionDate,
+    valueDate,
+    sanitizeDescription(amountMatch[1]),
+    parseAmount(amountMatch[2]),
+    parseAmount(amountMatch[3]),
+    previousBalance,
+    currency
+  );
+}
+
+function buildDerivedTransactionLine(
+  sourceLineIndex: number,
+  transactionDate: string | undefined,
+  valueDate: string | undefined,
+  descriptionSanitized: string,
+  amount: number,
+  runningBalance: number,
+  previousBalance: number,
+  currency: string
+): BankAccountStatementLine {
   if (previousBalance - amount === runningBalance) {
     return {
       sourceLineIndex,

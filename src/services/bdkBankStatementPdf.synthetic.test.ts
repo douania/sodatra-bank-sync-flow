@@ -42,7 +42,7 @@ Solde (XOF) au 05/05/2026 : 900 000
 `;
 
 const FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT = `
-BDK EXTRAIT DE COMPTE Periode du 30/04/2026 au 05/05/2026 Solde initial (XOF) : 1 000 000 Date Valeur Libelle Debit Credit Solde PAGE HEADER 30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000 800 000 PAGE CONTINUATION 02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT 200 000 1 000 000 05/05/2026 05/05/2026 FRAIS SYNTHETIC 100 000 900 000 Total 300 000 200 000 Solde (XOF) au 05/05/2026 : 900 000
+BDK EXTRAIT DE COMPTE Periode du 30/04/2026 au 05/05/2026 Solde initial (XOF) : 1 000 000 Date Valeur Libelle Debit Credit Solde PAGE HEADER 30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000 800 000 02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT 200 000 1 000 000 05/05/2026 05/05/2026 FRAIS SYNTHETIC 100 000 900 000 Total 300 000 200 000 Solde (XOF) au 05/05/2026 : 900 000
 `;
 
 const LETTER_SPACED_ACCOUNT_STATEMENT_TEXT = `
@@ -221,16 +221,30 @@ test('BDK account statement synthetic fixture: pure parser rejects statement wit
   assert.match(result.errors.join(' '), /no transaction lines extracted/i);
 });
 
-test('BDK account statement synthetic fixture: pure parser rejects flattened page-level text', () => {
+test('BDK account statement synthetic fixture: pure parser extracts strict flattened page-level text', () => {
   const result = parseBDKAccountStatement(FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT);
-  const syntheticDates = FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT.match(/\d{2}\/\d{2}\/\d{4}/g) ?? [];
-  const syntheticAmounts = FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT.match(/\d[\d ]{4,}/g) ?? [];
 
-  assert.ok(syntheticDates.length > 2);
-  assert.ok(syntheticAmounts.length > 2);
+  assert.equal(result.success, true);
+  assert.ok(result.statement);
+  assert.equal(result.statement.lines.length, 3);
+  assert.deepEqual(result.statement.lines.map((line) => line.direction), ['debit', 'credit', 'debit']);
+  assert.equal(result.statement.totalDebits, 300_000);
+  assert.equal(result.statement.totalCredits, 200_000);
+  assert.equal(result.statement.closingBalance, 900_000);
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects ambiguous flattened balance direction', () => {
+  const flattenedWithAmbiguousDirection = FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT.replace(
+    'VIREMENT SYNTHETIC FOURNISSEUR 200 000 800 000',
+    'VIREMENT SYNTHETIC FOURNISSEUR 200 000 850 000'
+  );
+  const result = parseBDKAccountStatement(flattenedWithAmbiguousDirection);
+
   assert.equal(result.success, false);
-  assert.equal(result.statement, undefined);
-  assert.match(result.errors.join(' '), /no transaction lines extracted/i);
+  assert.ok(result.statement);
+  assert.equal(result.statement.lines[0].direction, 'unknown');
+  assert.equal(result.validation.isValid, false);
+  assert.match(result.errors.join(' '), /unknown direction/i);
 });
 
 test('BDK account statement synthetic fixture: pure parser parses narrow-space transaction amounts', () => {
