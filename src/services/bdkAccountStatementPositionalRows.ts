@@ -1,12 +1,15 @@
 import type { TextItem } from './positionalExtractionService';
+import type {
+  BankStatementProfile,
+  PositionedBankStatementColumnKey,
+  PositionedBankStatementExtractionResult,
+  PositionedBankStatementRow
+} from '@/types/bankStatementPositioning';
 
-type BDKAccountStatementColumnKey =
-  | 'transactionDate'
-  | 'valueDate'
-  | 'description'
-  | 'debit'
-  | 'credit'
-  | 'balance';
+type BDKAccountStatementColumnKey = Extract<
+  PositionedBankStatementColumnKey,
+  'transactionDate' | 'valueDate' | 'description' | 'debit' | 'credit' | 'balance'
+>;
 
 interface ColumnAnchor {
   key: BDKAccountStatementColumnKey;
@@ -34,15 +37,13 @@ interface PositionedTransactionRow {
   balance: string;
 }
 
-export interface BDKAccountStatementPositionalRowsResult {
-  success: boolean;
+export interface BDKAccountStatementPositionalRowsResult
+  extends PositionedBankStatementExtractionResult {
   rows: string[];
   rowOrientedText: string;
-  errors: string[];
-  warnings: string[];
 }
 
-const HEADER_LABELS: Record<BDKAccountStatementColumnKey, string[]> = {
+const HEADER_LABELS: Record<BDKAccountStatementColumnKey, readonly string[]> = {
   transactionDate: ['date'],
   valueDate: ['valeur'],
   description: ['libelle'],
@@ -51,7 +52,7 @@ const HEADER_LABELS: Record<BDKAccountStatementColumnKey, string[]> = {
   balance: ['solde']
 };
 
-const HEADER_ORDER: BDKAccountStatementColumnKey[] = [
+const HEADER_ORDER: readonly BDKAccountStatementColumnKey[] = [
   'transactionDate',
   'valueDate',
   'description',
@@ -59,6 +60,23 @@ const HEADER_ORDER: BDKAccountStatementColumnKey[] = [
   'credit',
   'balance'
 ];
+
+export const BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE: BankStatementProfile = {
+  id: 'bdk-account-statement',
+  bank: 'BDK',
+  signMode: 'column',
+  expectedColumns: HEADER_ORDER,
+  headerAliases: HEADER_LABELS,
+  dateFormat: 'dd/MM/yyyy',
+  amountFormat: {
+    thousandSeparators: [' ', '\u00a0', '\u202f']
+  },
+  summaryRules: {
+    opening: ['Solde initial'],
+    totals: ['Total'],
+    closing: ['Solde (XOF) au']
+  }
+};
 
 const DATE_PATTERN = /^\d{2}\/\d{2}\/\d{4}$/;
 const ROW_Y_TOLERANCE = 4;
@@ -74,7 +92,7 @@ export function reconstructBDKAccountStatementRows(
     const detectedKeys = new Set(anchors.map((anchor) => anchor.key));
     const missingHeaders = HEADER_ORDER.filter((key) => !detectedKeys.has(key));
 
-    return buildResult([], [
+    return buildResult([], [], [
       `Missing BDK account statement column headers: ${missingHeaders.join(', ')}.`
     ], warnings);
   }
@@ -144,8 +162,9 @@ export function reconstructBDKAccountStatementRows(
     errors.push('No positioned BDK account statement transaction rows reconstructed.');
   }
 
-  const rows = transactions.map(formatTransactionRow);
-  return buildResult(rows, errors, warnings);
+  const positionedRows = transactions.map(toPositionedRow);
+  const rows = positionedRows.map(formatTransactionRow);
+  return buildResult(positionedRows, rows, errors, warnings);
 }
 
 function detectHeaderAnchors(items: TextItem[]): ColumnAnchor[] {
@@ -252,14 +271,30 @@ function validateTransactionCells(row: PositionedTransactionRow, errors: string[
   }
 }
 
-function formatTransactionRow(row: PositionedTransactionRow): string {
-  const description = row.descriptionParts.join(' ').trim();
+function toPositionedRow(row: PositionedTransactionRow): PositionedBankStatementRow {
+  const hasDebit = Boolean(row.debit);
+  const hasCredit = Boolean(row.credit);
+
+  return {
+    sourceRowIndex: row.sourceRowIndex,
+    transactionDate: row.transactionDate,
+    valueDate: row.valueDate,
+    description: row.descriptionParts.join(' ').trim(),
+    debit: row.debit,
+    credit: row.credit,
+    balance: row.balance,
+    amountColumn: hasDebit === hasCredit ? undefined : hasDebit ? 'debit' : 'credit',
+    direction: hasDebit === hasCredit ? 'unknown' : hasDebit ? 'debit' : 'credit'
+  };
+}
+
+function formatTransactionRow(row: PositionedBankStatementRow): string {
   const amount = row.debit && row.credit ? '' : row.debit || row.credit;
 
   return [
     row.transactionDate,
     row.valueDate,
-    description,
+    row.description,
     amount,
     row.balance
   ]
@@ -295,12 +330,15 @@ function midpoint(left: number, right: number): number {
 }
 
 function buildResult(
+  positionedRows: PositionedBankStatementRow[],
   rows: string[],
   errors: string[],
   warnings: string[]
 ): BDKAccountStatementPositionalRowsResult {
   return {
     success: rows.length > 0 && errors.length === 0,
+    profile: BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
+    positionedRows,
     rows,
     rowOrientedText: rows.join('\n'),
     errors,
