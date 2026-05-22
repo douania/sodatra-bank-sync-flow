@@ -41,6 +41,10 @@ Total                                                300 000    200 000
 Solde (XOF) au 05/05/2026 : 900 000
 `;
 
+const FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT = `
+BDK EXTRAIT DE COMPTE Periode du 30/04/2026 au 05/05/2026 Solde initial (XOF) : 1 000 000 Date Valeur Libelle Debit Credit Solde PAGE HEADER 30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000 800 000 PAGE CONTINUATION 02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT 200 000 1 000 000 05/05/2026 05/05/2026 FRAIS SYNTHETIC 100 000 900 000 Total 300 000 200 000 Solde (XOF) au 05/05/2026 : 900 000
+`;
+
 const LETTER_SPACED_ACCOUNT_STATEMENT_TEXT = `
 BDK
 E X T R A I T   D E   C O M P T E
@@ -212,6 +216,18 @@ test('BDK account statement synthetic fixture: pure parser rejects statement wit
     .join('\n');
   const result = parseBDKAccountStatement(statementWithoutLines);
 
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.match(result.errors.join(' '), /no transaction lines extracted/i);
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects flattened page-level text', () => {
+  const result = parseBDKAccountStatement(FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT);
+  const syntheticDates = FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT.match(/\d{2}\/\d{2}\/\d{4}/g) ?? [];
+  const syntheticAmounts = FLATTENED_BDK_ACCOUNT_STATEMENT_TEXT.match(/\d[\d ]{4,}/g) ?? [];
+
+  assert.ok(syntheticDates.length > 2);
+  assert.ok(syntheticAmounts.length > 2);
   assert.equal(result.success, false);
   assert.equal(result.statement, undefined);
   assert.match(result.errors.join(' '), /no transaction lines extracted/i);
