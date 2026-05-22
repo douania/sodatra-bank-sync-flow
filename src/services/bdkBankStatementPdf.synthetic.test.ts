@@ -3,6 +3,7 @@ import test from 'node:test';
 import { extractBDKAccountStatement } from './bdkAccountStatementExtractor';
 import { analyzeBDKBankStatementText } from './bdkBankStatementDiagnosticService';
 import { bdkExtractionService } from './bdkExtractionService';
+import { bankReportProcessingService } from './bankReportProcessingService';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
 
 const SYNTHETIC_BDK_PDF_TEXT = `
@@ -54,6 +55,27 @@ Total                                                300 000        200 000
 S o l d e   ( X O F )   a u 05/05/2026 : 900 000
 `;
 
+type BankReportProcessingPdfStub = {
+  extractTextFromPDF: (buffer: ArrayBuffer) => Promise<string>;
+};
+
+async function processSyntheticBDKPDF(textContent: string) {
+  const pdfStub = bankReportProcessingService as unknown as BankReportProcessingPdfStub;
+  const extractTextFromPDF = pdfStub.extractTextFromPDF;
+
+  pdfStub.extractTextFromPDF = async () => textContent;
+
+  try {
+    const file = new File(['synthetic bdk pdf'], 'BDK synthetic statement.pdf', {
+      type: 'application/pdf'
+    });
+
+    return await bankReportProcessingService.processBankReportExcel(file);
+  } finally {
+    pdfStub.extractTextFromPDF = extractTextFromPDF;
+  }
+}
+
 test('BDK PDF synthetic baseline: specialized parser extracts core sections and validates A-B=C', () => {
   const result = bdkExtractionService.extractBDKData(SYNTHETIC_BDK_PDF_TEXT);
 
@@ -83,6 +105,16 @@ test('BDK PDF synthetic baseline: generic section extractor is characterized sep
   assert.equal(Array.isArray(result.data.checksNotCleared), true);
   assert.equal(Array.isArray(result.data.bankFacilities), true);
   assert.equal(Array.isArray(result.data.impayes), true);
+});
+
+test('BDK PDF synthetic baseline: bank report service keeps analysis reports on section extraction path', async () => {
+  const result = await processSyntheticBDKPDF(SYNTHETIC_BDK_PDF_TEXT);
+
+  assert.equal(result.success, true);
+  assert.ok(result.data);
+  assert.equal(result.data.bank, 'BDK');
+  assert.equal(result.data.openingBalance, 1_000_000);
+  assert.equal(result.data.closingBalance, 1_025_000);
 });
 
 test('BDK account statement synthetic fixture: expected balances follow opening + credits - debits = closing', () => {
@@ -176,6 +208,26 @@ test('BDK account statement synthetic fixture: diagnostic service reports invali
   assert.equal(result.success, false);
   assert.ok(result.accountStatement);
   assert.equal(result.accountStatement.validation.isValid, false);
+});
+
+test('BDK account statement synthetic fixture: bank report service rejects detected account statement', async () => {
+  const result = await processSyntheticBDKPDF(ACCOUNT_STATEMENT_TEXT);
+
+  assert.equal(result.success, false);
+  assert.equal(result.data, undefined);
+  assert.match(result.errors?.join(' ') ?? '', /not supported as BankReport documents/i);
+});
+
+test('BDK account statement synthetic fixture: bank report service rejects invalid detected account statement', async () => {
+  const inconsistentText = ACCOUNT_STATEMENT_TEXT.replace(
+    'Solde (XOF) au 05/05/2026 : 900 000',
+    'Solde (XOF) au 05/05/2026 : 901 000'
+  );
+  const result = await processSyntheticBDKPDF(inconsistentText);
+
+  assert.equal(result.success, false);
+  assert.equal(result.data, undefined);
+  assert.match(result.errors?.join(' ') ?? '', /not supported as BankReport documents/i);
 });
 
 test('BDK PDF synthetic baseline: diagnostic service detects analysis report without handling it', () => {
