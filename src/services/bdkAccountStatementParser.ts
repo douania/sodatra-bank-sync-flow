@@ -15,7 +15,7 @@ export interface BDKAccountStatementParseOptions {
 }
 
 const TRANSACTION_LINE_PATTERN = /^(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+)$/;
-const TRANSACTION_AMOUNTS_PATTERN = /^(.*?)\s+(\d[\d ]*?)\s{2,}(\d[\d ]*)\s*$/;
+const TRANSACTION_AMOUNTS_PATTERN = /^(.*?)\s+(\d[\d\s\u00a0\u202f]*?)\s{2,}(\d[\d\s\u00a0\u202f]*)\s*$/;
 
 export function parseBDKAccountStatement(
   textContent: string,
@@ -276,7 +276,7 @@ function hasExtractionError(errors: string[], expectedText: string): boolean {
 }
 
 function parseAmount(value: string): number {
-  return Number.parseInt(value.replace(/\s+/g, ''), 10) || 0;
+  return Number.parseInt(value.replace(/[\s\u00a0\u202f]+/g, ''), 10) || 0;
 }
 
 function sanitizeDescription(value: string): string {

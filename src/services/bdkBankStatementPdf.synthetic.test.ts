@@ -217,7 +217,7 @@ test('BDK account statement synthetic fixture: pure parser rejects statement wit
   assert.match(result.errors.join(' '), /no transaction lines extracted/i);
 });
 
-test('BDK account statement synthetic fixture: pure parser documents narrow-space transaction amount limitation', () => {
+test('BDK account statement synthetic fixture: pure parser parses narrow-space transaction amounts', () => {
   const statementWithNarrowAmountSpaces = ACCOUNT_STATEMENT_TEXT
     .replace('1 000 000', '1\u00a0000\u202f000')
     .replace(/200 000/g, '200\u00a0000')
@@ -226,10 +226,14 @@ test('BDK account statement synthetic fixture: pure parser documents narrow-spac
     .replace(/900 000/g, '900\u00a0000');
   const result = parseBDKAccountStatement(statementWithNarrowAmountSpaces);
 
-  assert.equal(result.success, false);
+  assert.equal(result.success, true);
   assert.ok(result.statement);
-  assert.match(result.errors.join(' '), /unknown direction/i);
-  assert.match(result.warnings.join(' '), /running balance could not be parsed/i);
+  assert.equal(result.statement.lines.length, 3);
+  assert.equal(result.statement.openingBalance, 1_000_000);
+  assert.equal(result.statement.totalDebits, 300_000);
+  assert.equal(result.statement.totalCredits, 200_000);
+  assert.equal(result.statement.closingBalance, 900_000);
+  assert.deepEqual(result.statement.lines.map((line) => line.direction), ['debit', 'credit', 'debit']);
 });
 
 test('BDK account statement synthetic fixture: pure parser sanitizes long spaced descriptions', () => {
