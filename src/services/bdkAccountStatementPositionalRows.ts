@@ -150,9 +150,36 @@ export function reconstructBDKAccountStatementRows(
 
 function detectHeaderAnchors(items: TextItem[]): ColumnAnchor[] {
   return HEADER_ORDER.flatMap((key) => {
-    const item = items.find((candidate) => HEADER_LABELS[key].includes(normalizeLabel(candidate.text)));
+    const item = items.find((candidate) => matchesHeaderLabel(key, candidate.text));
     return item ? [{ key, item }] : [];
   });
+}
+
+function matchesHeaderLabel(key: BDKAccountStatementColumnKey, value: string): boolean {
+  const normalized = normalizeLabel(value);
+
+  if (HEADER_LABELS[key].includes(normalized)) {
+    return true;
+  }
+
+  if (key === 'description') {
+    return normalizeLetters(normalized) === 'libelledeloperation';
+  }
+
+  if (key === 'debit' || key === 'credit' || key === 'balance') {
+    return matchesCurrencyHeaderLabel(key, normalized);
+  }
+
+  return false;
+}
+
+function matchesCurrencyHeaderLabel(
+  key: Extract<BDKAccountStatementColumnKey, 'debit' | 'credit' | 'balance'>,
+  normalized: string
+): boolean {
+  const label = HEADER_LABELS[key][0];
+
+  return new RegExp(`^${label}\\([a-z]{3}\\)$`).test(normalized);
 }
 
 function createColumnZones(anchors: ColumnAnchor[]): ColumnZone[] {
@@ -257,6 +284,10 @@ function normalizeLabel(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, '')
     .toLowerCase();
+}
+
+function normalizeLetters(value: string): string {
+  return value.replace(/[^a-z]/g, '');
 }
 
 function midpoint(left: number, right: number): number {
