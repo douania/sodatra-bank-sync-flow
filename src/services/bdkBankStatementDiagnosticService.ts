@@ -23,6 +23,8 @@ const ACCOUNT_STATEMENT_MARKERS = [
   'SOLDE (XOF) AU'
 ];
 
+const COMPACT_ACCOUNT_STATEMENT_MARKERS = ACCOUNT_STATEMENT_MARKERS.map(compactMarkerWhitespace);
+
 const ANALYSIS_REPORT_MARKERS = [
   'OPENING BALANCE',
   'DEPOSIT NOT YET CLEARED',
@@ -32,8 +34,9 @@ const ANALYSIS_REPORT_MARKERS = [
 
 export function analyzeBDKBankStatementText(textContent: string): BDKBankStatementDiagnosticResult {
   const normalizedText = normalizeMarkers(textContent);
+  const compactAccountStatementText = compactMarkerWhitespace(normalizedText);
 
-  if (hasMarkers(normalizedText, ACCOUNT_STATEMENT_MARKERS)) {
+  if (hasMarkers(compactAccountStatementText, COMPACT_ACCOUNT_STATEMENT_MARKERS)) {
     const accountStatement = extractBDKAccountStatement(textContent);
 
     return {
@@ -68,4 +71,8 @@ function normalizeMarkers(value: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase();
+}
+
+function compactMarkerWhitespace(value: string): string {
+  return value.replace(/\s+/g, '');
 }
