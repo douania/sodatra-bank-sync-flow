@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { extractBDKAccountStatement } from './bdkAccountStatementExtractor';
+import { parseBDKAccountStatement } from './bdkAccountStatementParser';
 import { analyzeBDKBankStatementText } from './bdkBankStatementDiagnosticService';
 import { bdkExtractionService } from './bdkExtractionService';
 import { bankReportProcessingService } from './bankReportProcessingService';
@@ -139,6 +140,81 @@ test('BDK account statement synthetic fixture: isolated extractor validates stat
   assert.equal(result.validation.isValid, true);
   assert.equal(result.success, true);
   assert.deepEqual(result.errors, []);
+});
+
+test('BDK account statement synthetic fixture: pure parser extracts transaction lines', () => {
+  const result = parseBDKAccountStatement(ACCOUNT_STATEMENT_TEXT);
+
+  assert.equal(result.success, true);
+  assert.ok(result.statement);
+  assert.equal(result.statement.lines.length, 3);
+  assert.equal(result.statement.openingBalance, 1_000_000);
+  assert.equal(result.statement.totalDebits, 300_000);
+  assert.equal(result.statement.totalCredits, 200_000);
+  assert.equal(result.statement.closingBalance, 900_000);
+});
+
+test('BDK account statement synthetic fixture: pure parser derives transaction directions from balances', () => {
+  const result = parseBDKAccountStatement(ACCOUNT_STATEMENT_TEXT);
+
+  assert.ok(result.statement);
+  assert.deepEqual(
+    result.statement.lines.map((line) => ({
+      direction: line.direction,
+      debitAmount: line.debitAmount,
+      creditAmount: line.creditAmount,
+      signedAmount: line.signedAmount,
+      runningBalance: line.runningBalance
+    })),
+    [
+      {
+        direction: 'debit',
+        debitAmount: 200_000,
+        creditAmount: undefined,
+        signedAmount: -200_000,
+        runningBalance: 800_000
+      },
+      {
+        direction: 'credit',
+        debitAmount: undefined,
+        creditAmount: 200_000,
+        signedAmount: 200_000,
+        runningBalance: 1_000_000
+      },
+      {
+        direction: 'debit',
+        debitAmount: 100_000,
+        creditAmount: undefined,
+        signedAmount: -100_000,
+        runningBalance: 900_000
+      }
+    ]
+  );
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects inconsistent closing balance', () => {
+  const inconsistentText = ACCOUNT_STATEMENT_TEXT.replace(
+    'Solde (XOF) au 05/05/2026 : 900 000',
+    'Solde (XOF) au 05/05/2026 : 901 000'
+  );
+  const result = parseBDKAccountStatement(inconsistentText);
+
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.equal(result.validation.isValid, false);
+  assert.match(result.errors.join(' '), /validation failed/i);
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects statement without transaction lines', () => {
+  const statementWithoutLines = ACCOUNT_STATEMENT_TEXT
+    .split('\n')
+    .filter((line) => !/^\d{2}\/\d{2}\/\d{4}\s+\d{2}\/\d{2}\/\d{4}\s+/.test(line))
+    .join('\n');
+  const result = parseBDKAccountStatement(statementWithoutLines);
+
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.match(result.errors.join(' '), /no transaction lines extracted/i);
 });
 
 test('BDK account statement synthetic fixture: isolated extractor rejects inconsistent closing balance', () => {
