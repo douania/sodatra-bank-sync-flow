@@ -36,6 +36,17 @@ function headers(): TextItem[] {
   ];
 }
 
+function observedHeaderVariant(): TextItem[] {
+  return [
+    textItem('Date', COLUMN_X.transactionDate, 20),
+    textItem('Valeur', COLUMN_X.valueDate, 20),
+    textItem("Libellé de l'Opération", COLUMN_X.description, 20),
+    textItem('Débit (XOF)', COLUMN_X.debit, 20),
+    textItem('Crédit (XOF)', COLUMN_X.credit, 20),
+    textItem('Solde (XOF)', COLUMN_X.balance, 20)
+  ];
+}
+
 function transactionItems({
   transactionDate = '30/04/2026',
   valueDate = '30/04/2026',
@@ -116,6 +127,25 @@ test('BDK positioned account statement rows reconstruct a credit row for the pur
   assert.equal(parsed.statement.lines[0].creditAmount, 200_000);
 });
 
+test('BDK positioned account statement rows reconstruct with characterized header variants', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...observedHeaderVariant(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    })
+  ]);
+  const parsed = parseBDKAccountStatement(statementText(positioned.rowOrientedText, '200 000 0', '800 000'));
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.rows.length, 1);
+  assert.equal(parsed.success, true);
+  assert.ok(parsed.statement);
+  assert.equal(parsed.statement.lines[0].direction, 'debit');
+});
+
 test('BDK positioned account statement rows attach a multiline description to its transaction', () => {
   const positioned = reconstructBDKAccountStatementRows([
     ...headers(),
@@ -144,6 +174,23 @@ test('BDK positioned account statement rows do not promote an orphan continuatio
   assert.equal(positioned.success, false);
   assert.deepEqual(positioned.rows, []);
   assert.match(positioned.errors.join(' '), /orphan description continuation/i);
+});
+
+test('BDK positioned account statement rows reject ambiguous header-like text', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...headers().filter((item) => item.text !== 'Libelle'),
+    textItem('Libellé Fournisseur', COLUMN_X.description, 20),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    })
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.deepEqual(positioned.rows, []);
+  assert.match(positioned.errors.join(' '), /missing bdk account statement column headers: description/i);
 });
 
 test('BDK positioned account statement rows leave a missing running balance fail-closed in the parser', () => {
