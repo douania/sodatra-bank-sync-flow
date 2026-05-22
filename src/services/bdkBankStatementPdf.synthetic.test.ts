@@ -217,6 +217,85 @@ test('BDK account statement synthetic fixture: pure parser rejects statement wit
   assert.match(result.errors.join(' '), /no transaction lines extracted/i);
 });
 
+test('BDK account statement synthetic fixture: pure parser documents narrow-space transaction amount limitation', () => {
+  const statementWithNarrowAmountSpaces = ACCOUNT_STATEMENT_TEXT
+    .replace('1 000 000', '1\u00a0000\u202f000')
+    .replace(/200 000/g, '200\u00a0000')
+    .replace(/300 000/g, '300\u00a0000')
+    .replace(/800 000/g, '800\u00a0000')
+    .replace(/900 000/g, '900\u00a0000');
+  const result = parseBDKAccountStatement(statementWithNarrowAmountSpaces);
+
+  assert.equal(result.success, false);
+  assert.ok(result.statement);
+  assert.match(result.errors.join(' '), /unknown direction/i);
+  assert.match(result.warnings.join(' '), /running balance could not be parsed/i);
+});
+
+test('BDK account statement synthetic fixture: pure parser sanitizes long spaced descriptions', () => {
+  const statementWithLongDescription = ACCOUNT_STATEMENT_TEXT.replace(
+    'VIREMENT SYNTHETIC FOURNISSEUR',
+    'VIREMENT   SYNTHETIC    FOURNISSEUR   LONG   LABEL'
+  );
+  const result = parseBDKAccountStatement(statementWithLongDescription);
+
+  assert.equal(result.success, true);
+  assert.ok(result.statement);
+  assert.equal(
+    result.statement.lines[0].descriptionSanitized,
+    'VIREMENT SYNTHETIC FOURNISSEUR LONG LABEL'
+  );
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects transaction line without running balance', () => {
+  const statementWithoutRunningBalance = ACCOUNT_STATEMENT_TEXT.replace(
+    '05/05/2026 05/05/2026 FRAIS SYNTHETIC               100 000             900 000',
+    '05/05/2026 05/05/2026 FRAIS SYNTHETIC               100 000'
+  );
+  const result = parseBDKAccountStatement(statementWithoutRunningBalance);
+
+  assert.equal(result.success, false);
+  assert.ok(result.statement);
+  assert.equal(result.statement.lines[2].direction, 'unknown');
+  assert.equal(result.statement.lines[2].signedAmount, 0);
+  assert.match(result.errors.join(' '), /unknown direction/i);
+  assert.match(result.warnings.join(' '), /running balance could not be parsed/i);
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects line with ambiguous balance direction', () => {
+  const statementWithAmbiguousDirection = ACCOUNT_STATEMENT_TEXT.replace(
+    '30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000             800 000',
+    '30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000             850 000'
+  );
+  const result = parseBDKAccountStatement(statementWithAmbiguousDirection);
+
+  assert.equal(result.success, false);
+  assert.ok(result.statement);
+  assert.equal(result.statement.lines[0].direction, 'unknown');
+  assert.equal(result.statement.lines[0].signedAmount, 0);
+  assert.match(result.errors.join(' '), /unknown direction/i);
+  assert.match(result.warnings.join(' '), /could not be derived/i);
+});
+
+test('BDK account statement synthetic fixture: pure parser rejects line totals that differ from declared totals', () => {
+  const statementWithMismatchedLineTotals = ACCOUNT_STATEMENT_TEXT
+    .replace(
+      '30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 200 000             800 000',
+      '30/04/2026 30/04/2026 VIREMENT SYNTHETIC FOURNISSEUR 150 000             850 000'
+    )
+    .replace(
+      '02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT             200 000  1 000 000',
+      '02/05/2026 02/05/2026 ENCAISSEMENT SYNTHETIC CLIENT             150 000  1 000 000'
+    );
+  const result = parseBDKAccountStatement(statementWithMismatchedLineTotals);
+
+  assert.equal(result.success, false);
+  assert.ok(result.statement);
+  assert.deepEqual(result.statement.lines.map((line) => line.direction), ['debit', 'credit', 'debit']);
+  assert.equal(result.validation.declaredTotalsMatchLines, false);
+  assert.match(result.errors.join(' '), /line totals do not match declared statement totals/i);
+});
+
 test('BDK account statement synthetic fixture: isolated extractor rejects inconsistent closing balance', () => {
   const inconsistentText = ACCOUNT_STATEMENT_TEXT.replace(
     'Solde (XOF) au 05/05/2026 : 900 000',
