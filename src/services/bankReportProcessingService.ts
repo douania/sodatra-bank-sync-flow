@@ -1,6 +1,7 @@
 
 import * as XLSX from 'xlsx';
 import { BankReport } from '@/types/banking';
+import { analyzeBDKBankStatementText } from './bdkBankStatementDiagnosticService';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
 
 export interface BankReportProcessingResult {
@@ -33,8 +34,10 @@ class BankReportProcessingService {
 
       console.log(`🏦 Type de banque détecté: ${bankType}`);
 
+      const isPdfFile = file.name.toLowerCase().endsWith('.pdf');
+
       // Extraction du contenu selon le type de fichier
-      if (file.name.toLowerCase().endsWith('.pdf')) {
+      if (isPdfFile) {
         textContent = await this.extractTextFromPDF(buffer);
       } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
         textContent = await this.extractTextFromExcel(buffer);
@@ -50,6 +53,17 @@ class BankReportProcessingService {
           success: false,
           errors: ['Contenu textuel insuffisant extrait du fichier']
         };
+      }
+
+      if (isPdfFile && bankType === 'BDK') {
+        const diagnosticResult = analyzeBDKBankStatementText(textContent);
+
+        if (diagnosticResult.detectedFormat === 'bdk_account_statement') {
+          return {
+            success: false,
+            errors: ['BDK account statements are not supported as BankReport documents.']
+          };
+        }
       }
 
       console.log(`📄 Contenu extrait: ${textContent.length} caractères`);
@@ -147,7 +161,7 @@ class BankReportProcessingService {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         const pageText = textContent.items
-          .map((item: any) => item.str)
+          .map((item: { str?: string }) => item.str ?? '')
           .join(' ');
         fullText += pageText + '\n';
       }
