@@ -327,6 +327,69 @@ test('BDK positioned analyzer fails when headers are missing even if balances ar
   assert.match(analysis.errors.join(' '), /missing bdk account statement column headers: description/i);
 });
 
+test('BDK positioned analyzer accepts synthetic positional page items', () => {
+  const page = {
+    items: syntheticPositionedStatementItems(),
+    tables: [],
+    pageWidth: 800,
+    pageHeight: 1000
+  };
+  const analysis = analyzeBDKAccountStatementPositioned(page.items);
+
+  assert.equal(analysis.success, true);
+  assert.equal(analysis.balances.openingBalance, 1_000_000);
+  assert.equal(analysis.balances.closingBalance, 900_000);
+  assert.equal(analysis.rows.positionedRows.length, 3);
+  assert.deepEqual(analysis.rows.positionedRows.map((row) => row.amountColumn), ['debit', 'credit', 'debit']);
+  assert.deepEqual(analysis.rows.positionedRows.map((row) => row.direction), ['debit', 'credit', 'debit']);
+  assert.ok(analysis.validation);
+  assert.equal(analysis.validation.success, true);
+});
+
+test('BDK positioned analyzer does not depend on synthetic page tables or dimensions', () => {
+  const pageWithMetadata = {
+    items: syntheticPositionedStatementItems(),
+    tables: [{ synthetic: true }],
+    pageWidth: 1,
+    pageHeight: 1
+  };
+  const pageWithoutUsefulMetadata = {
+    items: syntheticPositionedStatementItems(),
+    tables: [],
+    pageWidth: 0,
+    pageHeight: 0
+  };
+
+  assert.equal(analyzeBDKAccountStatementPositioned(pageWithMetadata.items).success, true);
+  assert.equal(analyzeBDKAccountStatementPositioned(pageWithoutUsefulMetadata.items).success, true);
+});
+
+test('BDK positioned analyzer fails closed for incomplete synthetic positional page items', () => {
+  const page = {
+    items: [
+      ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+      ...headers().filter((item) => item.text !== 'Libelle'),
+      ...transactionItems({
+        description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+        debit: '200 000',
+        balance: '800 000',
+        y: 80
+      })
+    ],
+    tables: [],
+    pageWidth: 800,
+    pageHeight: 1000
+  };
+  const analysis = analyzeBDKAccountStatementPositioned(page.items);
+
+  assert.equal(analysis.success, false);
+  assert.equal(analysis.balances.openingBalance, 1_000_000);
+  assert.equal(analysis.balances.closingBalanceFound, false);
+  assert.equal(analysis.rows.success, false);
+  assert.match(analysis.errors.join(' '), /closing balance/i);
+  assert.match(analysis.errors.join(' '), /missing bdk account statement column headers: description/i);
+});
+
 test('BDK positioned account statement profile uses column sign mode', () => {
   assert.equal(BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE.bank, 'BDK');
   assert.equal(BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE.signMode, 'column');
