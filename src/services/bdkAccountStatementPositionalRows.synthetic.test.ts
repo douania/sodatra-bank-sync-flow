@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { PositionedBankStatementRow } from '@/types/bankStatementPositioning';
 import type { TextItem } from './positionalExtractionService';
 import { parseBDKAccountStatement } from './bdkAccountStatementParser';
+import { extractBDKAccountStatementPositionedBalances } from './bdkAccountStatementPositionedBalanceExtractor';
 import {
   BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
   reconstructBDKAccountStatementRows
@@ -79,6 +80,12 @@ function transactionItems({
   ];
 }
 
+function balanceLine(text: string, y: number): TextItem[] {
+  return text
+    .split('|')
+    .map((part, index) => textItem(part, 40 + index * 140, y));
+}
+
 function statementText(rows: string, totals: string, closingBalance: string): string {
   return `
 BDK
@@ -106,6 +113,83 @@ function positionedRow(
     ...overrides
   };
 }
+
+test('BDK positioned balance extractor reads opening and closing balances', () => {
+  const balances = extractBDKAccountStatementPositionedBalances([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+    ...headers(),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900 000', 160)
+  ]);
+
+  assert.equal(balances.openingBalanceFound, true);
+  assert.equal(balances.closingBalanceFound, true);
+  assert.equal(balances.openingBalance, 1_000_000);
+  assert.equal(balances.closingBalance, 900_000);
+  assert.equal(balances.closingDate, '05/05/2026');
+  assert.deepEqual(balances.errors, []);
+  assert.deepEqual(balances.warnings, []);
+});
+
+test('BDK positioned balance extractor accepts NBSP and narrow NBSP amount separators', () => {
+  const balances = extractBDKAccountStatementPositionedBalances([
+    ...balanceLine('Solde initial (XOF) :|1\u00a0000\u202f000', 20),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900\u00a0000', 160)
+  ]);
+
+  assert.equal(balances.openingBalance, 1_000_000);
+  assert.equal(balances.closingBalance, 900_000);
+  assert.deepEqual(balances.errors, []);
+});
+
+test('BDK positioned balance extractor accepts accented and variable-case opening label', () => {
+  const balances = extractBDKAccountStatementPositionedBalances([
+    ...balanceLine('SOLDE INITIÁL (XOF) :|1 000 000', 20),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900 000', 160)
+  ]);
+
+  assert.equal(balances.openingBalanceFound, true);
+  assert.equal(balances.openingBalance, 1_000_000);
+  assert.equal(balances.closingBalance, 900_000);
+  assert.deepEqual(balances.errors, []);
+});
+
+test('BDK positioned balance extractor rejects missing opening balance', () => {
+  const balances = extractBDKAccountStatementPositionedBalances([
+    ...headers(),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900 000', 160)
+  ]);
+
+  assert.equal(balances.openingBalanceFound, false);
+  assert.equal(balances.openingBalance, undefined);
+  assert.equal(balances.closingBalanceFound, true);
+  assert.equal(balances.closingBalance, 900_000);
+  assert.match(balances.errors.join(' '), /opening balance/i);
+});
+
+test('BDK positioned balance extractor rejects missing closing balance', () => {
+  const balances = extractBDKAccountStatementPositionedBalances([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+    ...headers()
+  ]);
+
+  assert.equal(balances.openingBalanceFound, true);
+  assert.equal(balances.openingBalance, 1_000_000);
+  assert.equal(balances.closingBalanceFound, false);
+  assert.equal(balances.closingBalance, undefined);
+  assert.match(balances.errors.join(' '), /closing balance/i);
+});
+
+test('BDK positioned balance extractor does not depend on declared debit credit totals', () => {
+  const balances = extractBDKAccountStatementPositionedBalances([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 20),
+    ...balanceLine('Total|300 000|200 000', 140),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900 000', 160)
+  ]);
+
+  assert.equal(balances.openingBalance, 1_000_000);
+  assert.equal(balances.closingBalance, 900_000);
+  assert.deepEqual(balances.errors, []);
+});
 
 test('BDK positioned account statement profile uses column sign mode', () => {
   assert.equal(BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE.bank, 'BDK');
