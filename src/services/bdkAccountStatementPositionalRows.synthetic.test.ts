@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { PositionedBankStatementRow } from '@/types/bankStatementPositioning';
 import type { TextItem } from './positionalExtractionService';
 import { parseBDKAccountStatement } from './bdkAccountStatementParser';
+import { analyzeBDKAccountStatementPositioned } from './bdkAccountStatementPositionedAnalyzer';
 import { extractBDKAccountStatementPositionedBalances } from './bdkAccountStatementPositionedBalanceExtractor';
 import {
   BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
@@ -84,6 +85,43 @@ function balanceLine(text: string, y: number): TextItem[] {
   return text
     .split('|')
     .map((part, index) => textItem(part, 40 + index * 140, y));
+}
+
+function closingBalanceFooterLine(amount: string, y: number): TextItem[] {
+  return [
+    textItem('Solde (XOF) au 05/05/2026 :', COLUMN_X.balance, y),
+    textItem(amount, COLUMN_X.balance + 180, y)
+  ];
+}
+
+function syntheticPositionedStatementItems(): TextItem[] {
+  return [
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+    ...headers(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    }),
+    ...transactionItems({
+      transactionDate: '02/05/2026',
+      valueDate: '02/05/2026',
+      description: 'ENCAISSEMENT SYNTHETIC CLIENT',
+      credit: '200 000',
+      balance: '1 000 000',
+      y: 104
+    }),
+    ...transactionItems({
+      transactionDate: '05/05/2026',
+      valueDate: '05/05/2026',
+      description: 'FRAIS SYNTHETIC',
+      debit: '100 000',
+      balance: '900 000',
+      y: 128
+    }),
+    ...closingBalanceFooterLine('900 000', 160)
+  ];
 }
 
 function statementText(rows: string, totals: string, closingBalance: string): string {
@@ -189,6 +227,104 @@ test('BDK positioned balance extractor does not depend on declared debit credit 
   assert.equal(balances.openingBalance, 1_000_000);
   assert.equal(balances.closingBalance, 900_000);
   assert.deepEqual(balances.errors, []);
+});
+
+test('BDK positioned analyzer composes balances rows and validator successfully', () => {
+  const analysis = analyzeBDKAccountStatementPositioned(syntheticPositionedStatementItems());
+
+  assert.equal(analysis.success, true);
+  assert.equal(analysis.balances.openingBalance, 1_000_000);
+  assert.equal(analysis.balances.closingBalance, 900_000);
+  assert.equal(analysis.rows.success, true);
+  assert.ok(analysis.validation);
+  assert.equal(analysis.validation.success, true);
+  assert.equal(analysis.validation.calculatedClosing, 900_000);
+  assert.deepEqual(analysis.rows.positionedRows.map((row) => row.amountColumn), ['debit', 'credit', 'debit']);
+  assert.deepEqual(analysis.rows.positionedRows.map((row) => row.direction), ['debit', 'credit', 'debit']);
+  assert.deepEqual(analysis.errors, []);
+});
+
+test('BDK positioned analyzer fails closed when opening balance is missing', () => {
+  const analysis = analyzeBDKAccountStatementPositioned([
+    ...headers(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    }),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|800 000', 160)
+  ]);
+
+  assert.equal(analysis.success, false);
+  assert.equal(analysis.balances.openingBalanceFound, false);
+  assert.equal(analysis.validation, undefined);
+  assert.match(analysis.errors.join(' '), /opening balance/i);
+});
+
+test('BDK positioned analyzer validates with opening only but fails global success when closing is missing', () => {
+  const analysis = analyzeBDKAccountStatementPositioned([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+    ...headers(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    })
+  ]);
+
+  assert.equal(analysis.success, false);
+  assert.equal(analysis.balances.openingBalance, 1_000_000);
+  assert.equal(analysis.balances.closingBalanceFound, false);
+  assert.ok(analysis.validation);
+  assert.equal(analysis.validation.success, true);
+  assert.equal(analysis.validation.calculatedClosing, 800_000);
+  assert.match(analysis.errors.join(' '), /closing balance/i);
+});
+
+test('BDK positioned analyzer returns validation failure for debit with increasing balance', () => {
+  const analysis = analyzeBDKAccountStatementPositioned([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+    ...headers(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '1 200 000',
+      y: 80
+    }),
+    ...closingBalanceFooterLine('1 200 000', 160)
+  ]);
+
+  assert.equal(analysis.success, false);
+  assert.equal(analysis.rows.success, true);
+  assert.ok(analysis.validation);
+  assert.equal(analysis.validation.success, false);
+  assert.equal(analysis.rows.positionedRows[0].amountColumn, 'debit');
+  assert.equal(analysis.rows.positionedRows[0].direction, 'debit');
+  assert.match(analysis.errors.join(' '), /debit arithmetic/i);
+});
+
+test('BDK positioned analyzer fails when headers are missing even if balances are present', () => {
+  const analysis = analyzeBDKAccountStatementPositioned([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+    ...headers().filter((item) => item.text !== 'Libelle'),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    }),
+    ...closingBalanceFooterLine('800 000', 160)
+  ]);
+
+  assert.equal(analysis.success, false);
+  assert.equal(analysis.balances.openingBalance, 1_000_000);
+  assert.equal(analysis.balances.closingBalance, 800_000);
+  assert.equal(analysis.rows.success, false);
+  assert.ok(analysis.validation);
+  assert.equal(analysis.validation.success, false);
+  assert.match(analysis.errors.join(' '), /missing bdk account statement column headers: description/i);
 });
 
 test('BDK positioned account statement profile uses column sign mode', () => {
