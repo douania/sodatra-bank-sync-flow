@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PositionedBankStatementRow } from '@/types/bankStatementPositioning';
-import type { TextItem } from './positionalExtractionService';
+import type { PositionalData, TextItem } from './positionalExtractionService';
 import { parseBDKAccountStatement } from './bdkAccountStatementParser';
 import { analyzeBDKAccountStatementPositioned } from './bdkAccountStatementPositionedAnalyzer';
+import { analyzeBDKAccountStatementPositionedDocument } from './bdkAccountStatementPositionedDocumentAnalyzer';
 import { extractBDKAccountStatementPositionedBalances } from './bdkAccountStatementPositionedBalanceExtractor';
 import {
   BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
@@ -122,6 +123,15 @@ function syntheticPositionedStatementItems(): TextItem[] {
     }),
     ...closingBalanceFooterLine('900 000', 160)
   ];
+}
+
+function syntheticPositionalPage(items: TextItem[]): PositionalData {
+  return {
+    items,
+    tables: [],
+    pageWidth: 800,
+    pageHeight: 1000
+  };
 }
 
 function statementText(rows: string, totals: string, closingBalance: string): string {
@@ -388,6 +398,67 @@ test('BDK positioned analyzer fails closed for incomplete synthetic positional p
   assert.equal(analysis.rows.success, false);
   assert.match(analysis.errors.join(' '), /closing balance/i);
   assert.match(analysis.errors.join(' '), /missing bdk account statement column headers: description/i);
+});
+
+test('BDK positioned document analyzer accepts one synthetic positional page', () => {
+  const page = syntheticPositionalPage(syntheticPositionedStatementItems());
+  const result = analyzeBDKAccountStatementPositionedDocument([page]);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageCount, 1);
+  assert.equal(result.itemCount, page.items.length);
+  assert.deepEqual(result.analyzedPageIndexes, [0]);
+  assert.ok(result.analysis);
+  assert.equal(result.analysis.success, true);
+  assert.equal(result.analysis.balances.openingBalance, 1_000_000);
+  assert.equal(result.analysis.balances.closingBalance, 900_000);
+  assert.equal(result.analysis.rows.positionedRows.length, 3);
+  assert.deepEqual(result.analysis.rows.positionedRows.map((row) => row.amountColumn), ['debit', 'credit', 'debit']);
+  assert.deepEqual(result.analysis.rows.positionedRows.map((row) => row.direction), ['debit', 'credit', 'debit']);
+  assert.ok(result.analysis.validation);
+  assert.equal(result.analysis.validation.success, true);
+});
+
+test('BDK positioned document analyzer combines useful page items with synthetic noise pages', () => {
+  const noisePage = syntheticPositionalPage([
+    textItem('SYNTHETIC PAGE HEADER', COLUMN_X.balance + 220, 300),
+    textItem('SYNTHETIC FOOTER', COLUMN_X.balance + 220, 960)
+  ]);
+  const usefulPage = syntheticPositionalPage(syntheticPositionedStatementItems());
+  const result = analyzeBDKAccountStatementPositionedDocument([noisePage, usefulPage]);
+
+  assert.equal(result.success, true);
+  assert.equal(result.pageCount, 2);
+  assert.equal(result.itemCount, noisePage.items.length + usefulPage.items.length);
+  assert.deepEqual(result.analyzedPageIndexes, [0, 1]);
+  assert.ok(result.analysis);
+  assert.equal(result.analysis.validation?.success, true);
+  assert.deepEqual(result.analysis.rows.positionedRows.map((row) => row.amountColumn), ['debit', 'credit', 'debit']);
+});
+
+test('BDK positioned document analyzer fails closed for empty pages', () => {
+  const result = analyzeBDKAccountStatementPositionedDocument([]);
+
+  assert.equal(result.success, false);
+  assert.equal(result.analysis, undefined);
+  assert.equal(result.pageCount, 0);
+  assert.equal(result.itemCount, 0);
+  assert.deepEqual(result.analyzedPageIndexes, []);
+  assert.match(result.errors.join(' '), /no bdk positioned document pages/i);
+});
+
+test('BDK positioned document analyzer fails closed for pages without items', () => {
+  const result = analyzeBDKAccountStatementPositionedDocument([
+    syntheticPositionalPage([]),
+    syntheticPositionalPage([])
+  ]);
+
+  assert.equal(result.success, false);
+  assert.equal(result.analysis, undefined);
+  assert.equal(result.pageCount, 2);
+  assert.equal(result.itemCount, 0);
+  assert.deepEqual(result.analyzedPageIndexes, []);
+  assert.match(result.errors.join(' '), /no bdk positioned document text items/i);
 });
 
 test('BDK positioned account statement profile uses column sign mode', () => {
