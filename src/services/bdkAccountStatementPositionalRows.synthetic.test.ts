@@ -369,6 +369,68 @@ test('BDK positioned account statement rows keep parser validation for balances 
   assert.match(mismatchedTotals.errors.join(' '), /line totals do not match declared statement totals/i);
 });
 
+test('BDK positioned account statement rows validate reconstructed debit credit debit balances', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...headers(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '800 000',
+      y: 80
+    }),
+    ...transactionItems({
+      transactionDate: '02/05/2026',
+      valueDate: '02/05/2026',
+      description: 'ENCAISSEMENT SYNTHETIC CLIENT',
+      credit: '200 000',
+      balance: '1 000 000',
+      y: 104
+    }),
+    ...transactionItems({
+      transactionDate: '05/05/2026',
+      valueDate: '05/05/2026',
+      description: 'FRAIS SYNTHETIC',
+      debit: '100 000',
+      balance: '900 000',
+      y: 128
+    })
+  ]);
+  const validation = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    closingBalance: 900_000,
+    positionedRows: positioned.positionedRows
+  });
+
+  assert.equal(positioned.success, true);
+  assert.deepEqual(positioned.positionedRows.map((row) => row.amountColumn), ['debit', 'credit', 'debit']);
+  assert.deepEqual(positioned.positionedRows.map((row) => row.direction), ['debit', 'credit', 'debit']);
+  assert.equal(validation.success, true);
+  assert.equal(validation.calculatedClosing, 900_000);
+  assert.deepEqual(validation.errors, []);
+});
+
+test('BDK positioned account statement validation rejects reconstructed debit with increasing balance', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...headers(),
+    ...transactionItems({
+      description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+      debit: '200 000',
+      balance: '1 200 000',
+      y: 80
+    })
+  ]);
+  const validation = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: positioned.positionedRows
+  });
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows[0].amountColumn, 'debit');
+  assert.equal(positioned.positionedRows[0].direction, 'debit');
+  assert.equal(validation.success, false);
+  assert.match(validation.errors.join(' '), /debit arithmetic/i);
+});
+
 test('BDK positioned rows validator accepts debit credit debit arithmetic from amount columns', () => {
   const result = validateBDKAccountStatementPositionedRows({
     openingBalance: 1_000_000,
