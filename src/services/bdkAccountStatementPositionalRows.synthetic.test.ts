@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { PositionedBankStatementRow } from '@/types/bankStatementPositioning';
 import type { TextItem } from './positionalExtractionService';
 import { parseBDKAccountStatement } from './bdkAccountStatementParser';
 import {
   BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
   reconstructBDKAccountStatementRows
 } from './bdkAccountStatementPositionalRows';
+import { validateBDKAccountStatementPositionedRows } from './bdkAccountStatementPositionedRowsValidator';
 
 const COLUMN_X = {
   transactionDate: 40,
@@ -87,6 +89,22 @@ ${rows}
 Total ${totals}
 Solde (XOF) au 05/05/2026 : ${closingBalance}
 `;
+}
+
+function positionedRow(
+  overrides: Partial<PositionedBankStatementRow>
+): PositionedBankStatementRow {
+  return {
+    sourceRowIndex: 0,
+    transactionDate: '30/04/2026',
+    valueDate: '30/04/2026',
+    description: 'SYNTHETIC POSITIONED ROW',
+    debit: '',
+    credit: '',
+    balance: '',
+    direction: 'unknown',
+    ...overrides
+  };
 }
 
 test('BDK positioned account statement profile uses column sign mode', () => {
@@ -349,4 +367,208 @@ test('BDK positioned account statement rows keep parser validation for balances 
   assert.match(ambiguousBalance.errors.join(' '), /unknown direction/i);
   assert.equal(mismatchedTotals.success, false);
   assert.match(mismatchedTotals.errors.join(' '), /line totals do not match declared statement totals/i);
+});
+
+test('BDK positioned rows validator accepts debit credit debit arithmetic from amount columns', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    closingBalance: 900_000,
+    positionedRows: [
+      positionedRow({
+        sourceRowIndex: 0,
+        debit: '200 000',
+        balance: '800 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      }),
+      positionedRow({
+        sourceRowIndex: 1,
+        credit: '200 000',
+        balance: '1 000 000',
+        amountColumn: 'credit',
+        direction: 'credit'
+      }),
+      positionedRow({
+        sourceRowIndex: 2,
+        debit: '100 000',
+        balance: '900 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.calculatedClosing, 900_000);
+  assert.equal(result.lineCount, 3);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.warnings, []);
+});
+
+test('BDK positioned rows validator rejects debit whose balance increases without reclassification', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        debit: '200 000',
+        balance: '1 200 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /debit arithmetic/i);
+});
+
+test('BDK positioned rows validator rejects credit whose balance decreases without reclassification', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        credit: '200 000',
+        balance: '800 000',
+        amountColumn: 'credit',
+        direction: 'credit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /credit arithmetic/i);
+});
+
+test('BDK positioned rows validator rejects missing amount column and unknown direction', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        debit: '200 000',
+        balance: '800 000',
+        direction: 'unknown'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /unambiguous debit or credit amount column/i);
+});
+
+test('BDK positioned rows validator rejects both debit and credit amounts', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        debit: '100 000',
+        credit: '100 000',
+        balance: '1 000 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /both debit and credit amounts/i);
+});
+
+test('BDK positioned rows validator rejects missing amount', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        balance: '900 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /no parsable debit amount/i);
+});
+
+test('BDK positioned rows validator rejects direction inconsistent with amount column', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        debit: '200 000',
+        balance: '800 000',
+        amountColumn: 'debit',
+        direction: 'credit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.errors.join(' '), /direction does not match amount column/i);
+});
+
+test('BDK positioned rows validator rejects unparsable amount or balance', () => {
+  const invalidAmount = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        debit: 'SYNTHETIC',
+        balance: '900 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+  const invalidBalance = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    positionedRows: [
+      positionedRow({
+        debit: '100 000',
+        balance: 'SYNTHETIC',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(invalidAmount.success, false);
+  assert.match(invalidAmount.errors.join(' '), /no parsable debit amount/i);
+  assert.equal(invalidBalance.success, false);
+  assert.match(invalidBalance.errors.join(' '), /no parsable running balance/i);
+});
+
+test('BDK positioned rows validator rejects inconsistent final closing balance', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    closingBalance: 901_000,
+    positionedRows: [
+      positionedRow({
+        debit: '100 000',
+        balance: '900 000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.calculatedClosing, 900_000);
+  assert.match(result.errors.join(' '), /closing balance/i);
+});
+
+test('BDK positioned rows validator accepts NBSP and narrow NBSP amount separators', () => {
+  const result = validateBDKAccountStatementPositionedRows({
+    openingBalance: 1_000_000,
+    closingBalance: 900_000,
+    positionedRows: [
+      positionedRow({
+        debit: '100\u00a0000',
+        balance: '900\u202f000',
+        amountColumn: 'debit',
+        direction: 'debit'
+      })
+    ]
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.calculatedClosing, 900_000);
 });
