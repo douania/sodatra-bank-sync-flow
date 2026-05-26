@@ -8,6 +8,9 @@ import { analyzeBDKAccountStatementPositionedDocument } from './bdkAccountStatem
 import {
   adaptBDKPositionedDocumentAnalysisToBankAccountStatementImportResult
 } from './bdkAccountStatementPositionedImportAdapter';
+import {
+  extractBDKAccountStatementPositionedTotals
+} from './bdkAccountStatementPositionedTotalsExtractor';
 import { extractBDKAccountStatementPositionedBalances } from './bdkAccountStatementPositionedBalanceExtractor';
 import {
   BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
@@ -240,6 +243,96 @@ test('BDK positioned balance extractor does not depend on declared debit credit 
   assert.equal(balances.openingBalance, 1_000_000);
   assert.equal(balances.closingBalance, 900_000);
   assert.deepEqual(balances.errors, []);
+});
+
+test('BDK positioned totals extractor reads declared debit and credit totals', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...balanceLine('Total|300 000|200 000', 140)
+  ]);
+
+  assert.equal(totals.totalDebitsFound, true);
+  assert.equal(totals.totalCreditsFound, true);
+  assert.equal(totals.totalDebits, 300_000);
+  assert.equal(totals.totalCredits, 200_000);
+  assert.deepEqual(totals.errors, []);
+});
+
+test('BDK positioned totals extractor accepts NBSP and narrow NBSP amount separators', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...balanceLine('Total|300\u00a0000|200\u202f000', 140)
+  ]);
+
+  assert.equal(totals.totalDebits, 300_000);
+  assert.equal(totals.totalCredits, 200_000);
+  assert.deepEqual(totals.errors, []);
+});
+
+test('BDK positioned totals extractor accepts variable-case accented total label', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...balanceLine('T\u00d3TAL|300 000|200 000', 140)
+  ]);
+
+  assert.equal(totals.totalDebitsFound, true);
+  assert.equal(totals.totalCreditsFound, true);
+  assert.equal(totals.totalDebits, 300_000);
+  assert.equal(totals.totalCredits, 200_000);
+  assert.deepEqual(totals.errors, []);
+});
+
+test('BDK positioned totals extractor fails closed when total row is absent', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 20),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900 000', 160)
+  ]);
+
+  assert.equal(totals.totalDebitsFound, false);
+  assert.equal(totals.totalCreditsFound, false);
+  assert.equal(totals.totalDebits, undefined);
+  assert.equal(totals.totalCredits, undefined);
+  assert.match(totals.errors.join(' '), /totals row/i);
+});
+
+test('BDK positioned totals extractor fails closed when only debit total is present', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...balanceLine('Total|300 000', 140)
+  ]);
+
+  assert.equal(totals.totalDebitsFound, false);
+  assert.equal(totals.totalCreditsFound, false);
+  assert.match(totals.errors.join(' '), /both debit and credit totals/i);
+});
+
+test('BDK positioned totals extractor fails closed for ambiguous non-positioned total amounts', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    textItem('Total | 300 000 | 200 000 | 900 000', 40, 140)
+  ]);
+
+  assert.equal(totals.totalDebitsFound, false);
+  assert.equal(totals.totalCreditsFound, false);
+  assert.match(totals.errors.join(' '), /ambiguous/i);
+});
+
+test('BDK positioned totals extractor does not depend on transaction lines', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...headers(),
+    ...balanceLine('Total|300 000|200 000', 140)
+  ]);
+
+  assert.equal(totals.totalDebits, 300_000);
+  assert.equal(totals.totalCredits, 200_000);
+  assert.deepEqual(totals.errors, []);
+});
+
+test('BDK positioned totals extractor does not extract opening or closing balances', () => {
+  const totals = extractBDKAccountStatementPositionedTotals([
+    ...balanceLine('Solde initial (XOF) :|1 000 000', 20),
+    ...balanceLine('Total|300 000|200 000', 140),
+    ...balanceLine('Solde (XOF) au 05/05/2026 :|900 000', 160)
+  ]);
+
+  assert.equal(totals.totalDebits, 300_000);
+  assert.equal(totals.totalCredits, 200_000);
+  assert.deepEqual(totals.errors, []);
 });
 
 test('BDK positioned analyzer composes balances rows and validator successfully', () => {
