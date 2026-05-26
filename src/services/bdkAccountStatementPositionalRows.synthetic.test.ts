@@ -402,11 +402,10 @@ test('BDK positioned rows characterize independent false anchors before the real
     textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
   ]);
 
-  assert.equal(positioned.success, false);
-  assert.match(
-    positioned.errors.join(' '),
-    /incomplete transaction date pair|no positioned bdk account statement transaction rows|no running balance/i
-  );
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows[0].amountColumn, 'debit');
+  assert.equal(positioned.positionedRows[0].balance, '900 000');
+  assert.deepEqual(positioned.errors, []);
 });
 
 test('BDK positioned rows characterize fragmented currency headers on one header line', () => {
@@ -444,9 +443,10 @@ test('BDK positioned rows characterize false balance anchor cascading X zones', 
     textItem('1 100 000', REAL_LAYOUT_APPROX_X.balance, 80)
   ]);
 
-  assert.equal(positioned.success, false);
+  assert.equal(positioned.success, true);
   assert.equal(positioned.positionedRows[0]?.direction, 'credit');
-  assert.match(positioned.errors.join(' '), /no running balance|incomplete transaction date pair/i);
+  assert.equal(positioned.positionedRows[0]?.balance, '1 100 000');
+  assert.deepEqual(positioned.errors, []);
 });
 
 test('BDK positioned analyzer composes balances rows and validator successfully', () => {

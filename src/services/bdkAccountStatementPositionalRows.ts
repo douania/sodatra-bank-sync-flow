@@ -168,9 +168,35 @@ export function reconstructBDKAccountStatementRows(
 }
 
 function detectHeaderAnchors(items: TextItem[]): ColumnAnchor[] {
+  const rowAnchors = groupByPhysicalRows(items).map((row) => detectHeaderAnchorsInRow(row.items));
+  const completeHeader = rowAnchors.find((anchors) => (
+    anchors.length === HEADER_ORDER.length && hasExpectedHeaderOrder(anchors)
+  ));
+
+  if (completeHeader) {
+    return completeHeader;
+  }
+
+  return rowAnchors
+    .filter(hasExpectedHeaderOrder)
+    .sort((left, right) => right.length - left.length)[0] ?? [];
+}
+
+function detectHeaderAnchorsInRow(items: TextItem[]): ColumnAnchor[] {
   return HEADER_ORDER.flatMap((key) => {
     const item = items.find((candidate) => matchesHeaderLabel(key, candidate.text));
     return item ? [{ key, item }] : [];
+  });
+}
+
+function hasExpectedHeaderOrder(anchors: ColumnAnchor[]): boolean {
+  return anchors.every((anchor, index) => {
+    const previous = anchors[index - 1];
+    return previous === undefined
+      || (
+        HEADER_ORDER.indexOf(previous.key) < HEADER_ORDER.indexOf(anchor.key)
+        && previous.item.x < anchor.item.x
+      );
   });
 }
 
