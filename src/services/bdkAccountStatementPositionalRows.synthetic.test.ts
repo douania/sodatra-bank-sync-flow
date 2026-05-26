@@ -432,6 +432,71 @@ test('BDK positioned rows characterize fragmented currency headers on one header
   assert.deepEqual(positioned.errors, []);
 });
 
+test('BDK positioned rows characterize split balance currency header on the same physical line', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    textItem('Date', REAL_LAYOUT_APPROX_X.transactionDate, 20),
+    textItem('Valeur', REAL_LAYOUT_APPROX_X.valueDate, 20),
+    textItem("Libelle de l'Operation", REAL_LAYOUT_APPROX_X.description, 20),
+    textItem('Debit', REAL_LAYOUT_APPROX_X.debit, 20),
+    textItem('Credit', REAL_LAYOUT_APPROX_X.credit, 20),
+    textItem('Solde', 503, 20),
+    textItem('(XOF)', 525, 20),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC DEBIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows[0].amountColumn, 'debit');
+  assert.equal(positioned.positionedRows[0].balance, '900 000');
+  assert.deepEqual(positioned.errors, []);
+});
+
+test('BDK positioned rows characterize split balance currency header within row tolerance', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    textItem('Date', REAL_LAYOUT_APPROX_X.transactionDate, 20),
+    textItem('Valeur', REAL_LAYOUT_APPROX_X.valueDate, 20),
+    textItem("Libelle de l'Operation", REAL_LAYOUT_APPROX_X.description, 20),
+    textItem('Debit', REAL_LAYOUT_APPROX_X.debit, 20),
+    textItem('Credit', REAL_LAYOUT_APPROX_X.credit, 20),
+    textItem('Solde', 503, 20),
+    textItem('(XOF)', 525, 22),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC CREDIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.credit, 80),
+    textItem('1 100 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows[0].amountColumn, 'credit');
+  assert.equal(positioned.positionedRows[0].balance, '1 100 000');
+  assert.deepEqual(positioned.errors, []);
+});
+
+test('BDK positioned rows fail closed when split balance label is outside row tolerance', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    textItem('Date', REAL_LAYOUT_APPROX_X.transactionDate, 20),
+    textItem('Valeur', REAL_LAYOUT_APPROX_X.valueDate, 20),
+    textItem("Libelle de l'Operation", REAL_LAYOUT_APPROX_X.description, 20),
+    textItem('Debit', REAL_LAYOUT_APPROX_X.debit, 20),
+    textItem('Credit', REAL_LAYOUT_APPROX_X.credit, 20),
+    textItem('(XOF)', 525, 20),
+    textItem('Solde', 503, 30),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC DEBIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.deepEqual(positioned.positionedRows, []);
+  assert.match(positioned.errors.join(' '), /missing bdk account statement column headers: balance/i);
+});
+
 test('BDK positioned rows characterize false balance anchor cascading X zones', () => {
   const positioned = reconstructBDKAccountStatementRows([
     textItem('Solde', REAL_LAYOUT_APPROX_X.debit + 8, 8),
