@@ -5,6 +5,9 @@ import type { PositionalData, TextItem } from './positionalExtractionService';
 import { parseBDKAccountStatement } from './bdkAccountStatementParser';
 import { analyzeBDKAccountStatementPositioned } from './bdkAccountStatementPositionedAnalyzer';
 import { analyzeBDKAccountStatementPositionedDocument } from './bdkAccountStatementPositionedDocumentAnalyzer';
+import {
+  adaptBDKPositionedDocumentAnalysisToBankAccountStatementImportResult
+} from './bdkAccountStatementPositionedImportAdapter';
 import { extractBDKAccountStatementPositionedBalances } from './bdkAccountStatementPositionedBalanceExtractor';
 import {
   BDK_ACCOUNT_STATEMENT_POSITIONAL_PROFILE,
@@ -459,6 +462,89 @@ test('BDK positioned document analyzer fails closed for pages without items', ()
   assert.equal(result.itemCount, 0);
   assert.deepEqual(result.analyzedPageIndexes, []);
   assert.match(result.errors.join(' '), /no bdk positioned document text items/i);
+});
+
+test('BDK positioned import adapter maps document analysis to isolated bank account statement import result', () => {
+  const documentAnalysis = analyzeBDKAccountStatementPositionedDocument([
+    syntheticPositionalPage(syntheticPositionedStatementItems())
+  ]);
+  const result = adaptBDKPositionedDocumentAnalysisToBankAccountStatementImportResult(documentAnalysis);
+
+  assert.equal(result.success, true);
+  assert.ok(result.statement);
+  assert.equal(result.bank, 'BDK');
+  assert.equal(result.detectedFormat, 'bdk_account_statement_positioned');
+  assert.equal(result.statement.bank, 'BDK');
+  assert.equal(result.statement.sourceFormat, 'pdf_positioned');
+  assert.equal(result.statement.openingBalance, 1_000_000);
+  assert.equal(result.statement.closingBalance, 900_000);
+  assert.equal(result.statement.totalDebits, 300_000);
+  assert.equal(result.statement.totalCredits, 200_000);
+  assert.equal(result.statement.lines.length, 3);
+  assert.deepEqual(result.statement.lines.map((line) => line.direction), ['debit', 'credit', 'debit']);
+  assert.deepEqual(result.statement.lines.map((line) => line.signedAmount), [-200_000, 200_000, -100_000]);
+  assert.equal(result.statement.status, 'needs_review');
+  assert.equal(result.statement.validation.status, 'needs_review');
+  assert.equal(result.statement.validation.totalDebitsFound, false);
+  assert.equal(result.statement.validation.totalCreditsFound, false);
+  assert.equal(result.statement.validation.declaredTotalsMatchLines, undefined);
+  assert.match(result.statement.warnings.join(' '), /declared statement totals are not extracted/i);
+});
+
+test('BDK positioned import adapter applies isolated source and account options', () => {
+  const documentAnalysis = analyzeBDKAccountStatementPositionedDocument([
+    syntheticPositionalPage(syntheticPositionedStatementItems())
+  ]);
+  const result = adaptBDKPositionedDocumentAnalysisToBankAccountStatementImportResult(documentAnalysis, {
+    sourceFileName: 'synthetic-statement.pdf',
+    accountNumberMasked: 'XXXX-1234',
+    accountFingerprint: 'fingerprint-synthetic',
+    currency: 'SYN',
+    sourceFormat: 'synthetic_positioned'
+  });
+
+  assert.equal(result.success, true);
+  assert.ok(result.statement);
+  assert.equal(result.sourceFileName, 'synthetic-statement.pdf');
+  assert.equal(result.statement.sourceFileName, 'synthetic-statement.pdf');
+  assert.equal(result.statement.accountIdentity.accountNumberMasked, 'XXXX-1234');
+  assert.equal(result.statement.accountIdentity.accountFingerprint, 'fingerprint-synthetic');
+  assert.equal(result.statement.currency, 'SYN');
+  assert.equal(result.statement.lines[0].currency, 'SYN');
+  assert.equal(result.statement.sourceFormat, 'synthetic_positioned');
+});
+
+test('BDK positioned import adapter fails closed when document analysis failed', () => {
+  const documentAnalysis = analyzeBDKAccountStatementPositionedDocument([]);
+  const result = adaptBDKPositionedDocumentAnalysisToBankAccountStatementImportResult(documentAnalysis);
+
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.match(result.errors.join(' '), /no bdk positioned document pages/i);
+});
+
+test('BDK positioned import adapter does not reclassify debit with increasing balance', () => {
+  const documentAnalysis = analyzeBDKAccountStatementPositionedDocument([
+    syntheticPositionalPage([
+      ...balanceLine('Solde initial (XOF) :|1 000 000', 8),
+      ...headers(),
+      ...transactionItems({
+        description: 'VIREMENT SYNTHETIC FOURNISSEUR',
+        debit: '200 000',
+        balance: '1 200 000',
+        y: 80
+      }),
+      ...closingBalanceFooterLine('1 200 000', 160)
+    ])
+  ]);
+  const result = adaptBDKPositionedDocumentAnalysisToBankAccountStatementImportResult(documentAnalysis);
+
+  assert.equal(documentAnalysis.success, false);
+  assert.equal(documentAnalysis.analysis?.rows.positionedRows[0].amountColumn, 'debit');
+  assert.equal(documentAnalysis.analysis?.rows.positionedRows[0].direction, 'debit');
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.match(result.errors.join(' '), /debit arithmetic/i);
 });
 
 test('BDK positioned account statement profile uses column sign mode', () => {
