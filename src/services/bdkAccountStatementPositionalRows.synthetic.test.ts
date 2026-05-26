@@ -389,6 +389,66 @@ test('BDK positioned rows characterize real-layout approximate X positions with 
   assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
 });
 
+test('BDK positioned rows characterize independent false anchors before the real table header', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    textItem('Date', 500, 8),
+    textItem('Libelle', 20, 8),
+    textItem('Solde', 60, 8),
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC DEBIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.match(
+    positioned.errors.join(' '),
+    /incomplete transaction date pair|no positioned bdk account statement transaction rows|no running balance/i
+  );
+});
+
+test('BDK positioned rows characterize fragmented currency headers on one header line', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    textItem('Date', REAL_LAYOUT_APPROX_X.transactionDate, 20),
+    textItem('Valeur', REAL_LAYOUT_APPROX_X.valueDate, 20),
+    textItem("Libelle de l'Operation", REAL_LAYOUT_APPROX_X.description, 20),
+    textItem('Debit', REAL_LAYOUT_APPROX_X.debit, 20),
+    textItem('(XOF)', REAL_LAYOUT_APPROX_X.debit + 35, 20),
+    textItem('Credit', REAL_LAYOUT_APPROX_X.credit, 20),
+    textItem('(XOF)', REAL_LAYOUT_APPROX_X.credit + 40, 20),
+    textItem('Solde', REAL_LAYOUT_APPROX_X.balance, 20),
+    textItem('(XOF)', REAL_LAYOUT_APPROX_X.balance + 35, 20),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC CREDIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.credit, 80),
+    textItem('1 100 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows[0].amountColumn, 'credit');
+  assert.equal(positioned.positionedRows[0].balance, '1 100 000');
+  assert.deepEqual(positioned.errors, []);
+});
+
+test('BDK positioned rows characterize false balance anchor cascading X zones', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    textItem('Solde', REAL_LAYOUT_APPROX_X.debit + 8, 8),
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC CREDIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.credit, 80),
+    textItem('1 100 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.equal(positioned.positionedRows[0]?.direction, 'credit');
+  assert.match(positioned.errors.join(' '), /no running balance|incomplete transaction date pair/i);
+});
+
 test('BDK positioned analyzer composes balances rows and validator successfully', () => {
   const analysis = analyzeBDKAccountStatementPositioned(syntheticPositionedStatementItems());
 
