@@ -27,6 +27,15 @@ const COLUMN_X = {
   balance: 730
 };
 
+const REAL_LAYOUT_APPROX_X = {
+  transactionDate: 47,
+  valueDate: 92,
+  description: 189,
+  debit: 342,
+  credit: 421,
+  balance: 500
+};
+
 function textItem(text: string, x: number, y: number): TextItem {
   return {
     text,
@@ -47,6 +56,21 @@ function headers(): TextItem[] {
     textItem('Debit', COLUMN_X.debit, 20),
     textItem('Credit', COLUMN_X.credit, 20),
     textItem('Solde', COLUMN_X.balance, 20)
+  ];
+}
+
+function realLayoutApproxHeaders({
+  balanceHeader = 'Solde'
+}: {
+  balanceHeader?: string;
+} = {}): TextItem[] {
+  return [
+    textItem('Date', REAL_LAYOUT_APPROX_X.transactionDate, 20),
+    textItem('Valeur', REAL_LAYOUT_APPROX_X.valueDate, 20),
+    textItem('Libelle', REAL_LAYOUT_APPROX_X.description, 20),
+    textItem('Debit', REAL_LAYOUT_APPROX_X.debit, 20),
+    textItem('Credit', REAL_LAYOUT_APPROX_X.credit, 20),
+    textItem(balanceHeader, REAL_LAYOUT_APPROX_X.balance, 20)
   ];
 }
 
@@ -333,6 +357,36 @@ test('BDK positioned totals extractor does not extract opening or closing balanc
   assert.equal(totals.totalDebits, 300_000);
   assert.equal(totals.totalCredits, 200_000);
   assert.deepEqual(totals.errors, []);
+});
+
+test('BDK positioned rows characterize real-layout approximate X positions with missing balance header', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...realLayoutApproxHeaders({ balanceHeader: 'SYNTHETIC BALANCE HEADER' }),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC DEBIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.deepEqual(positioned.positionedRows, []);
+  assert.match(positioned.errors.join(' '), /missing bdk account statement column headers: balance/i);
+});
+
+test('BDK positioned rows characterize real-layout approximate X positions with incomplete date pair', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('SYNTHETIC ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80),
+    textItem('SYNTHETIC CONTINUATION', REAL_LAYOUT_APPROX_X.description, 104)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.deepEqual(positioned.positionedRows, []);
+  assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
 });
 
 test('BDK positioned analyzer composes balances rows and validator successfully', () => {
