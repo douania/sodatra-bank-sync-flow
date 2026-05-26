@@ -111,9 +111,12 @@ export function reconstructBDKAccountStatementRows(
     const transactionDate = cells.transactionDate;
     const valueDate = cells.valueDate;
     const description = cells.description;
-    const hasTransactionDates = DATE_PATTERN.test(transactionDate) && DATE_PATTERN.test(valueDate);
-    const hasAnyDate = Boolean(transactionDate || valueDate);
+    const hasTransactionDate = DATE_PATTERN.test(transactionDate);
+    const hasValueDate = DATE_PATTERN.test(valueDate);
+    const hasTransactionDates = hasTransactionDate && hasValueDate;
+    const hasPartialDate = hasTransactionDate !== hasValueDate;
     const hasNumericColumns = Boolean(cells.debit || cells.credit || cells.balance);
+    const continuationText = joinTextParts([transactionDate, valueDate, description]);
 
     if (hasTransactionDates) {
       if (currentTransaction) {
@@ -134,18 +137,23 @@ export function reconstructBDKAccountStatementRows(
       return;
     }
 
-    if (hasAnyDate) {
+    if (hasPartialDate) {
       errors.push(`Physical row ${sourceRowIndex} has an incomplete transaction date pair.`);
       return;
     }
 
-    if (description && !hasNumericColumns) {
+    if (continuationText && !hasNumericColumns) {
       if (!currentTransaction) {
         errors.push(`Physical row ${sourceRowIndex} is an orphan description continuation.`);
         return;
       }
 
-      currentTransaction.descriptionParts.push(description);
+      currentTransaction.descriptionParts.push(continuationText);
+      return;
+    }
+
+    if (continuationText && hasNumericColumns) {
+      errors.push(`Physical row ${sourceRowIndex} has non-date text in date columns with numeric columns.`);
       return;
     }
 
@@ -333,6 +341,15 @@ function joinTextItems(items: TextItem[]): string {
   return [...items]
     .sort((left, right) => left.x - right.x)
     .map((item) => item.text.trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function joinTextParts(parts: string[]): string {
+  return parts
+    .map((part) => part.trim())
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')

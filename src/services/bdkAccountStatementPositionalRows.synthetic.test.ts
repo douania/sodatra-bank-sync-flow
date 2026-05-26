@@ -400,10 +400,13 @@ test('BDK positioned rows characterize indented continuation spilling into value
     textItem('SYNTHETIC INDENTED CONTINUATION', 128, 104)
   ]);
 
-  assert.equal(positioned.success, false);
+  assert.equal(positioned.success, true);
   assert.equal(positioned.positionedRows.length, 1);
-  assert.equal(positioned.positionedRows[0].description, 'SYNTHETIC BASE ROW');
-  assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
+  assert.equal(
+    positioned.positionedRows[0].description,
+    'SYNTHETIC BASE ROW SYNTHETIC INDENTED CONTINUATION'
+  );
+  assert.deepEqual(positioned.errors, []);
 });
 
 test('BDK positioned rows attach indented continuation after value date boundary', () => {
@@ -438,7 +441,7 @@ test('BDK positioned rows characterize non-date text in value date zone as incom
 
   assert.equal(positioned.success, false);
   assert.deepEqual(positioned.positionedRows, []);
-  assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
+  assert.match(positioned.errors.join(' '), /incomplete transaction date pair|non-date text in date columns/i);
 });
 
 test('BDK positioned rows keep positive control with date value description and amounts aligned', () => {
