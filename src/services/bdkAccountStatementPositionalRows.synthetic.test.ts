@@ -389,6 +389,75 @@ test('BDK positioned rows characterize real-layout approximate X positions with 
   assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
 });
 
+test('BDK positioned rows characterize indented continuation spilling into value date zone', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC BASE ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80),
+    textItem('SYNTHETIC INDENTED CONTINUATION', 128, 104)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.equal(positioned.positionedRows.length, 1);
+  assert.equal(positioned.positionedRows[0].description, 'SYNTHETIC BASE ROW');
+  assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
+});
+
+test('BDK positioned rows attach indented continuation after value date boundary', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC BASE ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80),
+    textItem('SYNTHETIC DESCRIPTION CONTINUATION', 150, 104)
+  ]);
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows.length, 1);
+  assert.equal(
+    positioned.positionedRows[0].description,
+    'SYNTHETIC BASE ROW SYNTHETIC DESCRIPTION CONTINUATION'
+  );
+  assert.deepEqual(positioned.errors, []);
+});
+
+test('BDK positioned rows characterize non-date text in value date zone as incomplete date pair', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('SYNTHETIC NON DATE VALUE', 128, 80),
+    textItem('SYNTHETIC DEBIT ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, false);
+  assert.deepEqual(positioned.positionedRows, []);
+  assert.match(positioned.errors.join(' '), /incomplete transaction date pair/i);
+});
+
+test('BDK positioned rows keep positive control with date value description and amounts aligned', () => {
+  const positioned = reconstructBDKAccountStatementRows([
+    ...realLayoutApproxHeaders(),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.transactionDate, 80),
+    textItem('30/04/2026', REAL_LAYOUT_APPROX_X.valueDate, 80),
+    textItem('SYNTHETIC CONTROL ROW', REAL_LAYOUT_APPROX_X.description, 80),
+    textItem('100 000', REAL_LAYOUT_APPROX_X.debit, 80),
+    textItem('900 000', REAL_LAYOUT_APPROX_X.balance, 80)
+  ]);
+
+  assert.equal(positioned.success, true);
+  assert.equal(positioned.positionedRows.length, 1);
+  assert.equal(positioned.positionedRows[0].description, 'SYNTHETIC CONTROL ROW');
+  assert.equal(positioned.positionedRows[0].amountColumn, 'debit');
+  assert.deepEqual(positioned.errors, []);
+});
+
 test('BDK positioned rows characterize independent false anchors before the real table header', () => {
   const positioned = reconstructBDKAccountStatementRows([
     textItem('Date', 500, 8),
