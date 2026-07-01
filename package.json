@@ -9,6 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "test:bdk-pdf": "tsx --test src/services/bdkBankStatementPdf.synthetic.test.ts",
+    "test:structured-csv": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
