@@ -247,6 +247,104 @@ test('returns the provided sourceFileName in the document', () => {
   assert.equal(document.sourceFileName, 'synthetic-export.csv');
 });
 
+test('fails closed on an unterminated quoted field', () => {
+  const document = parseStructuredBankStatementCsv(csv([
+    ';;Solde initial (XOF) : 1000000;;;',
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    // The description opens a quote that is never closed before EOF.
+    '01/06/2026;01/06/2026;"CHEQUE DE BANQUE;200000;;800000'
+  ]));
+
+  assert.equal(document.validation.status, 'invalid');
+  assert.equal(document.lines.length, 0);
+  assert.match(document.errors.join(' '), /unterminated quoted field/i);
+});
+
+test('does not silently swallow following rows after an unterminated quote', () => {
+  const document = parseStructuredBankStatementCsv(csv([
+    ';;Solde initial (XOF) : 1000000;;;',
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    // Opening quote leaks into every subsequent row when tokenized naively.
+    '01/06/2026;01/06/2026;"SYNTHETIC OUTFLOW;200000;;800000',
+    '02/06/2026;02/06/2026;SYNTHETIC INFLOW;;500000;1300000',
+    '03/06/2026;03/06/2026;SYNTHETIC OUTFLOW TWO;300000;;1000000',
+    ';;Total;500000;500000;',
+    ';;Solde (XOF) au 30/06/2026 : 1000000;;;'
+  ]));
+
+  assert.notEqual(document.validation.status, 'valid');
+  assert.equal(document.validation.status, 'invalid');
+  assert.equal(document.lines.length, 0);
+  assert.match(document.errors.join(' '), /unterminated quoted field/i);
+});
+
+test('a post-header transaction label cannot fabricate an opening balance', () => {
+  const document = parseStructuredBankStatementCsv(csv([
+    // No "Solde initial" row before the header.
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    '01/06/2026;01/06/2026;VIR SOLDE INITIAL REGULARISATION 999999;200000;;800000',
+    ';;Total;200000;0;',
+    ';;Solde (XOF) au 30/06/2026 : 800000;;;'
+  ]));
+
+  assert.equal(document.openingBalance, undefined);
+  assert.equal(document.validation.openingBalanceFound, false);
+  assert.equal(document.lines.length, 1);
+});
+
+test('keeps the pre-header opening balance despite a trap label after the header', () => {
+  const document = parseStructuredBankStatementCsv(csv([
+    ';;Solde initial (XOF) : 1000000;;;',
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    '01/06/2026;01/06/2026;VIR SOLDE INITIAL PIEGE 999999;200000;;800000',
+    ';;Total;200000;0;',
+    ';;Solde (XOF) au 30/06/2026 : 800000;;;'
+  ]));
+
+  assert.equal(document.openingBalance, 1_000_000);
+  assert.equal(document.validation.openingBalanceFound, true);
+});
+
+test('a post-header account/iban-like cell does not pollute masked identifiers', () => {
+  const document = parseStructuredBankStatementCsv(csv([
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    // "Numero de compte" / "Code IBAN" appearing in the transactional body.
+    '01/06/2026;01/06/2026;Numero de compte;200000;;800000',
+    '02/06/2026;02/06/2026;Code IBAN;;200000;1000000',
+    ';;Total;200000;200000;',
+    ';;Solde (XOF) au 30/06/2026 : 1000000;;;'
+  ]));
+
+  assert.equal(document.accountNumberMasked, undefined);
+  assert.equal(document.ibanMasked, undefined);
+  assert.equal(document.lines.length, 2);
+});
+
+test('still extracts the closing footer metadata after bounding the metadata scan', () => {
+  const document = parseStructuredBankStatementCsv(validOraLikeCsv());
+
+  assert.equal(document.declaredClosingBalance, 1_000_000);
+  assert.equal(document.statementDate, '30/06/2026');
+  assert.equal(document.validation.closingBalanceFound, true);
+});
+
+test('a transaction label mimicking the closing footer cannot pollute the closing balance', () => {
+  const document = parseStructuredBankStatementCsv(csv([
+    ';;Solde initial (XOF) : 1000000;;;',
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    // The label mimics the closing footer, but this is a genuine dated transaction.
+    '01/06/2026;01/06/2026;VIR SOLDE AU 30/06/2026 : 999999;200000;;800000',
+    ';;Total;200000;0;',
+    ';;Solde (XOF) au 30/06/2026 : 800000;;;'
+  ]));
+
+  assert.equal(document.declaredClosingBalance, 800_000);
+  assert.equal(document.statementDate, '30/06/2026');
+  assert.equal(document.lines.length, 1);
+  assert.equal(document.validation.closingBalanceDiscrepancy, 0);
+  assert.equal(document.validation.status, 'valid');
+});
+
 test('masks the account number without leaking a trailing currency suffix', () => {
   const document = parseStructuredBankStatementCsv(csv([
     'Numero de compte;01401-00000000000-99 XOF;;;;',

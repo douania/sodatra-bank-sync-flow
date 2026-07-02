@@ -100,17 +100,38 @@ export function parseStructuredBankStatementCsv(
 ): StructuredBankStatementDocument {
   const text = stripBom(rawCsv ?? '');
   const delimiter = options.delimiter ?? detectDelimiter(text);
-  const rows = tokenizeCsv(text, delimiter);
+  const { rows, unterminatedQuote } = tokenizeCsv(text, delimiter);
 
   const errors: string[] = [];
   const warnings: string[] = [];
 
   const bankHint = detectBankHint(options.sourceFileName);
-  const metadata = extractMetadata(rows);
+
+  // A quoted field left open would otherwise swallow every following row into a
+  // single cell, silently dropping the remaining transaction lines. Fail closed.
+  if (unterminatedQuote) {
+    return buildDocument({
+      bankHint,
+      delimiter,
+      sourceFileName: options.sourceFileName,
+      currency: options.currency,
+      accountNumberMasked: options.accountNumberMasked,
+      accountFingerprint: options.accountFingerprint,
+      metadata: {},
+      lines: [],
+      declaredTotals: { debit: undefined, credit: undefined, found: false },
+      status: 'invalid',
+      errors: ['Unterminated quoted field in CSV.'],
+      warnings
+    });
+  }
+
+  // The transaction header must be located before metadata extraction so that
+  // identity/opening/period fields can be bounded to the pre-header region.
+  const header = locateHeader(rows);
+  const metadata = extractMetadata(rows, header?.rowIndex, header?.columns.operationDate);
   const currency = options.currency ?? metadata.currency;
   const accountNumberMasked = options.accountNumberMasked ?? metadata.accountNumberMasked;
-
-  const header = locateHeader(rows);
 
   if (!header) {
     return buildDocument({
@@ -471,10 +492,21 @@ interface ExtractedMetadata {
   closingBalance?: number;
 }
 
-function extractMetadata(rows: string[][]): ExtractedMetadata {
+function extractMetadata(
+  rows: string[][],
+  headerRowIndex?: number,
+  operationDateColumn?: number
+): ExtractedMetadata {
   const metadata: ExtractedMetadata = {};
 
-  for (const row of rows) {
+  // Identity / opening / period metadata always appear *before* the transaction
+  // header. Bounding this scan to the pre-header region prevents a transaction
+  // label from impersonating "Solde initial", "Periode", "Numero de compte" or
+  // "Code IBAN". When no header was located, fall back to the whole document so
+  // the unsupported/invalid branches keep whatever they can find.
+  const preHeaderEnd = headerRowIndex ?? rows.length;
+  for (let rowIndex = 0; rowIndex < preHeaderEnd; rowIndex++) {
+    const row = rows[rowIndex];
     for (let columnIndex = 0; columnIndex < row.length; columnIndex++) {
       const raw = row[columnIndex];
       const deburred = deburr(raw);
@@ -482,12 +514,6 @@ function extractMetadata(rows: string[][]): ExtractedMetadata {
 
       if (metadata.openingBalance === undefined && /solde\s+initial/.test(deburred)) {
         metadata.openingBalance = parseTrailingAmount(raw);
-        metadata.currency = metadata.currency ?? extractCurrency(raw);
-      }
-
-      if (metadata.closingBalance === undefined && /solde.*\bau\b\s*\d{2}\/\d{2}\/\d{4}/.test(deburred)) {
-        metadata.closingBalance = parseTrailingAmount(raw);
-        metadata.statementDate = metadata.statementDate ?? extractDate(raw);
         metadata.currency = metadata.currency ?? extractCurrency(raw);
       }
 
@@ -510,6 +536,31 @@ function extractMetadata(rows: string[][]): ExtractedMetadata {
         if (value && value.trim() !== '') {
           metadata.ibanMasked = maskIdentifier(value);
         }
+      }
+    }
+  }
+
+  // Closing balance / statement date live in the closing footer, after the
+  // header. When no header was located, scan the whole document as a fallback.
+  const footerStart = headerRowIndex !== undefined ? headerRowIndex + 1 : 0;
+  for (let rowIndex = footerStart; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
+
+    // Closing metadata only appears in footer rows, never in a genuine
+    // transaction row: one that carries a dd/mm/yyyy operation date. This keeps
+    // a transaction label like "VIR SOLDE AU 30/06/2026 : 999999" from being
+    // mistaken for the real closing footer.
+    if (operationDateColumn !== undefined && DATE_PATTERN.test((row[operationDateColumn] ?? '').trim())) {
+      continue;
+    }
+
+    for (const raw of row) {
+      const deburred = deburr(raw);
+
+      if (metadata.closingBalance === undefined && /solde.*\bau\b\s*\d{2}\/\d{2}\/\d{4}/.test(deburred)) {
+        metadata.closingBalance = parseTrailingAmount(raw);
+        metadata.statementDate = metadata.statementDate ?? extractDate(raw);
+        metadata.currency = metadata.currency ?? extractCurrency(raw);
       }
     }
   }
@@ -609,7 +660,10 @@ function detectDelimiter(text: string): StructuredBankStatementDelimiter {
   return candidates.reduce((best, candidate) => (counts[candidate] > counts[best] ? candidate : best), ';');
 }
 
-function tokenizeCsv(text: string, delimiter: string): string[][] {
+function tokenizeCsv(
+  text: string,
+  delimiter: string
+): { rows: string[][]; unterminatedQuote: boolean } {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -659,7 +713,7 @@ function tokenizeCsv(text: string, delimiter: string): string[][] {
     rows.push(row);
   }
 
-  return rows;
+  return { rows, unterminatedQuote: inQuotes };
 }
 
 function cell(row: string[], index: number | undefined): string {
