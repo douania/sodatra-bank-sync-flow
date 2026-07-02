@@ -25,5 +25,39 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-unused-vars": "off",
     },
+  },
+  {
+    // Node-only guard: these services import node:crypto (directly or
+    // transitively) and must never enter a browser-bundled chain.
+    files: ["src/pages/**/*.{ts,tsx}", "src/components/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "@/services/structuredBankStatementCsvIdempotencyKeys",
+            "@/services/structuredBankStatementCsvPreIngestion",
+            "../services/structuredBankStatementCsvIdempotencyKeys",
+            "../services/structuredBankStatementCsvPreIngestion",
+            "./structuredBankStatementCsvIdempotencyKeys",
+            "./structuredBankStatementCsvPreIngestion",
+          ].map((name) => ({
+            name,
+            message:
+              "Node-only module (pulls node:crypto into the bundle); it must never be imported from a page or component.",
+          })),
+          patterns: [
+            {
+              group: [
+                "**/structuredBankStatementCsvIdempotencyKeys",
+                "**/structuredBankStatementCsvPreIngestion",
+              ],
+              message:
+                "Node-only module (pulls node:crypto into the bundle); it must never be imported from a page or component.",
+            },
+          ],
+        },
+      ],
+    },
   }
 );

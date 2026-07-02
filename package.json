@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "test:bdk-pdf": "tsx --test src/services/bdkBankStatementPdf.synthetic.test.ts",
     "test:structured-csv": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts",
+    "test:structured-csv-all": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts src/services/structuredBankStatementCsvIdempotencyKeys.synthetic.test.ts src/services/structuredBankStatementCsvImportAdapter.synthetic.test.ts src/services/structuredBankStatementCsvRuntimeDiagnosticService.synthetic.test.ts src/services/structuredBankStatementCsvPreIngestion.synthetic.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
