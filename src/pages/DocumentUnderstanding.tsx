@@ -16,6 +16,7 @@ import BDKDetailedReport from '@/components/BDKDetailedReport';
 import { RapportBancaire } from '@/types/banking-universal';
 import PositionalPDFViewer from '@/components/PositionalPDFViewer';
 import { enhancedBDKExtractionService, EnhancedBDKResult } from '@/services/enhancedBDKExtractionService';
+import { runStructuredBankStatementCsvDiagnostic } from '@/services/structuredBankStatementCsvRuntimeDiagnosticService';
 
 const DocumentUnderstanding = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -93,6 +94,40 @@ const DocumentUnderstanding = () => {
     console.log('🚀 [UI] Début de l\'analyse du fichier:', selectedFile.name);
     
     try {
+      // 0. Structured CSV exports get a dedicated, read-only diagnostic surface.
+      //    This path never extracts PDF/Excel text, never calls the bank-report
+      //    or BDK services, never writes to the database, and never surfaces the
+      //    raw CSV content — diagnostic summary only, no ingestion.
+      if (selectedFile.name.toLowerCase().endsWith('.csv')) {
+        const diagnostic = await runStructuredBankStatementCsvDiagnostic(selectedFile);
+
+        setFileType('structuredBankStatementCsv');
+        setConfidence(
+          diagnostic.status === 'valid'
+            ? 'high'
+            : diagnostic.status === 'needs_review'
+              ? 'medium'
+              : 'low'
+        );
+        setBankType(
+          diagnostic.bankHint === 'BDK' || diagnostic.bankHint === 'ORA'
+            ? diagnostic.bankHint
+            : null
+        );
+        // Never store the raw CSV content as inspectable text.
+        setRawText(null);
+        setEnhancedBDKResult(null);
+        setBdkDetailedData(null);
+        setAnalysisDebugInfo(null);
+        setParsedData({ type: 'Structured Bank Statement CSV (Diagnostic)', ...diagnostic });
+
+        const csvAnalysisTime = Date.now() - analysisStartTime;
+        toast.success('Diagnostic CSV terminé', {
+          description: `Statut: ${diagnostic.status ?? 'rejeté'} (délimiteur ${diagnostic.detectedDelimiter ?? 'n/a'}) en ${csvAnalysisTime}ms`,
+        });
+        return;
+      }
+
       // 1. Detect file type
       const detection = await enhancedFileProcessingService.detectFileType(selectedFile);
       setFileType(detection.detectedType);
@@ -753,6 +788,119 @@ const DocumentUnderstanding = () => {
       {/* Affichage détaillé BDK si disponible */}
       {bdkDetailedData && (
         <BDKDetailedReport data={bdkDetailedData} />
+      )}
+
+      {/* Surface diagnostic CSV structuré : résumé sécurisé uniquement, aucune ingestion */}
+      {parsedData?.type === 'Structured Bank Statement CSV (Diagnostic)' && (
+        <Card className="mt-8">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center space-x-2">
+                <FileSearch className="h-5 w-5" />
+                <span>Diagnostic CSV Structuré</span>
+              </CardTitle>
+              <div className="flex items-center space-x-2">
+                {parsedData.bankHint && parsedData.bankHint !== 'UNKNOWN' && (
+                  <Badge variant="outline">{parsedData.bankHint}</Badge>
+                )}
+                {parsedData.detectedDelimiter && (
+                  <Badge variant="outline">délimiteur « {parsedData.detectedDelimiter} »</Badge>
+                )}
+                <Badge className={
+                  parsedData.status === 'valid' ? 'bg-green-100 text-green-800' :
+                  parsedData.status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+                }>
+                  {parsedData.status ?? 'rejeté'}
+                </Badge>
+              </div>
+            </div>
+            <CardDescription>Fichier : {parsedData.sourceFileName}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center space-x-2">
+              <AlertCircle className="h-5 w-5 text-amber-600" />
+              <span className="text-sm text-amber-800 font-medium">
+                Contenu CSV brut masqué — diagnostic uniquement, aucune ingestion.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <div className="text-gray-500">Lignes</div>
+                <div className="font-medium">{parsedData.lineCount}</div>
+              </div>
+              <div>
+                <div className="text-gray-500">Débit / Crédit / Inconnu</div>
+                <div className="font-medium">
+                  {parsedData.debitLineCount} / {parsedData.creditLineCount} / {parsedData.unknownLineCount}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-500">Devise</div>
+                <div className="font-medium">{parsedData.currency ?? 'N/A'}</div>
+              </div>
+              <div>
+                <div className="text-gray-500">Compte (masqué)</div>
+                <div className="font-medium">{parsedData.accountNumberMasked ?? 'N/A'}</div>
+              </div>
+              <div>
+                <div className="text-gray-500">Période</div>
+                <div className="font-medium">
+                  {parsedData.periodStart ?? '—'} → {parsedData.periodEnd ?? '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-500">Ouverture / clôture trouvées</div>
+                <div className="font-medium">
+                  {parsedData.openingBalanceFound ? 'oui' : 'non'} / {parsedData.closingBalanceFound ? 'oui' : 'non'}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-500">Clôture calculée</div>
+                <div className="font-medium">
+                  {typeof parsedData.computedClosingBalance === 'number'
+                    ? parsedData.computedClosingBalance.toLocaleString()
+                    : 'N/A'}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-500">Écart de clôture</div>
+                <div className="font-medium">
+                  {typeof parsedData.closingBalanceDiscrepancy === 'number'
+                    ? parsedData.closingBalanceDiscrepancy.toLocaleString()
+                    : 'N/A'}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-xs text-gray-500">
+              Ingestion autorisée : {String(parsedData.ingestionAllowed)} · Diagnostic complété : {String(parsedData.diagnosticCompleted)}
+            </div>
+
+            {Array.isArray(parsedData.errors) && parsedData.errors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <div className="font-medium text-red-800 mb-1">Erreurs</div>
+                <ul className="list-disc list-inside text-sm text-red-700 space-y-1">
+                  {parsedData.errors.map((message: string, index: number) => (
+                    <li key={index}>{message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {Array.isArray(parsedData.warnings) && parsedData.warnings.length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                <div className="font-medium text-yellow-800 mb-1">Avertissements</div>
+                <ul className="list-disc list-inside text-sm text-yellow-700 space-y-1">
+                  {parsedData.warnings.map((message: string, index: number) => (
+                    <li key={index}>{message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       <Card className="mt-8">
