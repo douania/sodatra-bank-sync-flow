@@ -29,7 +29,12 @@ export default tseslint.config(
   {
     // Node-only guard: these services import node:crypto (directly or
     // transitively) and must never enter a browser-bundled chain.
-    files: ["src/pages/**/*.{ts,tsx}", "src/components/**/*.{ts,tsx}"],
+    files: [
+      "src/pages/**/*.{ts,tsx}",
+      "src/components/**/*.{ts,tsx}",
+      "src/hooks/**/*.{ts,tsx}",
+      "src/contexts/**/*.{ts,tsx}",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -37,23 +42,27 @@ export default tseslint.config(
           paths: [
             "@/services/structuredBankStatementCsvIdempotencyKeys",
             "@/services/structuredBankStatementCsvPreIngestion",
+            "@/services/structuredBankStatementCsvNodeIngestionRuntime",
             "../services/structuredBankStatementCsvIdempotencyKeys",
             "../services/structuredBankStatementCsvPreIngestion",
+            "../services/structuredBankStatementCsvNodeIngestionRuntime",
             "./structuredBankStatementCsvIdempotencyKeys",
             "./structuredBankStatementCsvPreIngestion",
+            "./structuredBankStatementCsvNodeIngestionRuntime",
           ].map((name) => ({
             name,
             message:
-              "Node-only module (pulls node:crypto into the bundle); it must never be imported from a page or component.",
+              "Node-only module (pulls node:crypto into the bundle); it must never enter a browser chain (pages, components, hooks, contexts).",
           })),
           patterns: [
             {
               group: [
                 "**/structuredBankStatementCsvIdempotencyKeys",
                 "**/structuredBankStatementCsvPreIngestion",
+                "**/structuredBankStatementCsvNodeIngestionRuntime",
               ],
               message:
-                "Node-only module (pulls node:crypto into the bundle); it must never be imported from a page or component.",
+                "Node-only module (pulls node:crypto into the bundle); it must never enter a browser chain (pages, components, hooks, contexts).",
             },
           ],
         },
