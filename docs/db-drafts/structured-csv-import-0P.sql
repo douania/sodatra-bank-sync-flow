@@ -1,5 +1,5 @@
 -- ============================================================================
--- POC-BANK-STRUCTURED-EXPORTS-0P
+-- POC-BANK-STRUCTURED-EXPORTS-0P — révisé par 0R (corrections post-audit 0Q)
 -- ============================================================================
 -- DRAFT SQL — REVIEW ONLY — DO NOT APPLY
 --
@@ -8,9 +8,13 @@
 --   * No live DB execution.
 --   * Ce fichier sert uniquement de support de revue pour discuter la future
 --     migration DB issue du design validé en 0O (CLOSED / PASS_DESIGN).
+--   * Révision 0R : corrections issues de l'audit 0Q (line_hash vs supersede,
+--     parser_validation_status nullable, UNIQUE(attempt_id) staging,
+--     conversion dates DD/MM/YYYY, description_sanitized non anonymisé,
+--     TEXT+CHECK recommandé v1, safe_details anti-raw, RPC et tests complétés).
 --
 -- HEAD canonique attendu (main) :
---   0ef59900e520e47987e852afd61647536615199c
+--   d26dfc6b4dc9233bc05ccbd9204e5f95531d2b9b
 --
 -- Rappels de sécurité données (invariants hérités des lots 0J/0K/0O) :
 --   * no raw CSV        — jamais de texte CSV brut en base ;
@@ -47,10 +51,15 @@ $$;
 -- ============================================================================
 -- SECTION 2 — TYPES / ENUMS PROPOSÉS (DRAFT)
 -- ============================================================================
--- Choix de design à trancher en revue : enums Postgres (typage fort, mais
--- ALTER TYPE nécessaire à chaque évolution) vs colonnes TEXT + CHECK
--- (plus souples pour un domaine encore mouvant). Le draft propose des enums ;
--- la future migration pourra retenir TEXT + CHECK si le CTO préfère.
+-- RECOMMANDATION v1 (révision 0R) : TEXT + CHECK plutôt qu'enums Postgres.
+--   * Les domaines de statuts sont encore mouvants en phase POC : une liste
+--     TEXT + CHECK évolue par simple DROP/ADD CONSTRAINT, transactionnel et
+--     rollbackable, alors qu'ALTER TYPE ne permet ni retrait ni renommage de
+--     valeur et impose des restrictions d'usage en transaction. Objectif :
+--     éviter des migrations ALTER TYPE inutiles pendant la phase POC.
+--   * Les CREATE TYPE ci-dessous restent DOCUMENTAIRES : ils décrivent les
+--     domaines de valeurs. Les enums restent une option future si le domaine
+--     se stabilise (décision CTO au moment de la vraie migration).
 
 -- 2.1 Statut d'une tentative d'import (cycle de vie complet).
 -- Couvre le minimum requis par 0P :
@@ -147,7 +156,12 @@ CREATE TABLE bank_statement_import_attempts (
   import_id                 text,                   -- identité logique ; NULL si statut invalid/unsupported
 
   -- Résultat parser / pré-ingestion.
-  parser_validation_status  structured_parser_validation_status NOT NULL,
+  -- NULLABLE (révision 0R) : le runtime 0M rejette certains dépôts AVANT toute
+  -- validation parser complète (nom de fichier non .csv rejeté avant décodage,
+  -- échec runtime inattendu) ; dans ces cas aucun importResult n'existe, donc
+  -- aucun statut parser. NULL = jamais parsé. Fabriquer 'invalid'/'unsupported'
+  -- ici serait une traçabilité artificielle (interdite, SECURITY_CONTRACT §7).
+  parser_validation_status  structured_parser_validation_status,
   success                   boolean NOT NULL DEFAULT false,  -- parsing techniquement abouti
   ingestion_ready           boolean NOT NULL DEFAULT false,  -- toutes les gates passées
   rejected_reason           text,                   -- code de rejet safe (pas de contenu CSV)
@@ -169,6 +183,10 @@ CREATE TABLE bank_statement_import_attempts (
     CHECK (NOT ingestion_ready OR import_id IS NOT NULL),
   CONSTRAINT attempts_ingestion_ready_requires_fingerprint
     CHECK (NOT ingestion_ready OR account_fingerprint IS NOT NULL),
+  -- Compense la nullabilité (révision 0R) : une tentative promotable a
+  -- forcément traversé le parser, donc porte un statut de validation.
+  CONSTRAINT attempts_ingestion_ready_requires_parser_status
+    CHECK (NOT ingestion_ready OR parser_validation_status IS NOT NULL),
   CONSTRAINT attempts_rejected_has_reason
     CHECK (status <> 'rejected' OR rejected_reason IS NOT NULL),
   -- Hash requis dès que la tentative dépasse la phase de décodage : seuls les
@@ -224,6 +242,10 @@ CREATE TABLE bank_statement_staging (
   created_at                timestamptz NOT NULL DEFAULT now(),
   created_by                uuid REFERENCES auth.users (id),
 
+  -- Cardinalité contractuelle (révision 0R) : « 1 attempt réussie => 0..1
+  -- staging » était promis en commentaire mais non contraint ; sans UNIQUE,
+  -- plusieurs stagings par attempt rendraient la promotion ambiguë.
+  CONSTRAINT staging_one_per_attempt UNIQUE (attempt_id),
   CONSTRAINT staging_period_coherent
     CHECK (period_end_date >= period_start_date),
   CONSTRAINT staging_masked_never_full_account
@@ -245,8 +267,14 @@ CREATE TABLE bank_statement_lines_staging (
   transaction_date          date NOT NULL,
   value_date                date,
 
-  -- Libellé expurgé : canonicalisé et nettoyé de tout identifiant sensible.
-  -- Jamais la ligne CSV brute.
+  -- Libellé bancaire NORMALISÉ, PAS ANONYMISÉ (révision 0R — précision
+  -- honnête) : la sanitization runtime actuelle (parser 0B) se limite à un
+  -- collapse d'espaces + trim. Le libellé reste une donnée SENSIBLE : il peut
+  -- contenir noms de contreparties, références, numéros de chèques, voire des
+  -- identifiants de comptes tiers présents dans le libellé d'origine.
+  -- Interdits stricts : jamais la ligne CSV brute complète, jamais le numéro
+  -- de compte complet ni l'IBAN complet du relevé (masqués en amont).
+  -- Conséquence RLS (SECTION 6) : accès aux lignes minimal et fail-closed.
   description_sanitized     text NOT NULL,
 
   debit_amount              numeric(18, 2),
@@ -303,6 +331,9 @@ CREATE TABLE bank_statement_canonical (
   ingested_by               uuid REFERENCES auth.users (id),
 
   -- Chaîne de remplacement (option retenue en 0O : supersede plutôt que delete).
+  -- (révision 0R) Dans la vraie migration, cette self-FK doit être déclarée
+  -- DEFERRABLE INITIALLY DEFERRED : la séquence normative 7.7 référence l'id
+  -- du nouveau canonical AVANT son insertion (vérification FK au COMMIT).
   superseded_by             uuid REFERENCES bank_statement_canonical (id),
   superseded_at             timestamptz,
 
@@ -329,6 +360,8 @@ CREATE TABLE bank_statement_lines_canonical (
 
   transaction_date          date NOT NULL,
   value_date                date,
+  -- Même statut de sensibilité qu'en 3.C (révision 0R) : libellé normalisé,
+  -- PAS anonymisé — jamais la ligne CSV brute, accès RLS minimal.
   description_sanitized     text NOT NULL,
 
   debit_amount              numeric(18, 2),
@@ -379,12 +412,35 @@ CREATE TABLE bank_statement_import_events (
       attempt_id IS NOT NULL OR
       staging_statement_id IS NOT NULL OR
       canonical_statement_id IS NOT NULL
+    ),
+  -- Ceinture structurelle anti-raw (révision 0R) : refus au niveau table des
+  -- clés top-level interdites. Limite connue : ce CHECK ne couvre que le
+  -- premier niveau de clés JSONB ; la profondeur (objets imbriqués) est
+  -- couverte par la whitelist de la RPC 7.8 + tests négatifs (T15).
+  CONSTRAINT events_safe_details_no_banned_keys
+    CHECK (
+      safe_details IS NULL
+      OR NOT (safe_details ?| ARRAY[
+        'raw_csv', 'raw_text', 'raw_bytes', 'raw_content', 'file_content',
+        'account_number', 'iban'
+      ])
     )
 );
 
--- ANTI-RAW : safe_details ne doit jamais contenir de clé raw_csv, raw_text,
--- raw_bytes, account_number, iban. À faire respecter par la future RPC
--- d'écriture (whitelist de clés) + test DB (SECTION 8).
+-- ANTI-RAW / DOCTRINE safe_details (renforcée en révision 0R) :
+--   * WHITELIST STRICTE de clés autorisées, appliquée par la RPC 7.8 AVANT
+--     tout INSERT (toute clé hors whitelist => exception fail-closed).
+--     Whitelist proposée (à figer en revue) : reason_code, errors_count,
+--     warnings_count, line_count, import_id, raw_text_hash, line_hash,
+--     previous_status, new_status, resolution, parser_version,
+--     runtime_version.
+--   * INTERDITS ABSOLUS (clés ET valeurs) : raw_csv, raw_text, raw_bytes,
+--     raw_content, file_content, account_number, iban, ainsi que tout payload
+--     transactionnel complet (ligne de relevé recopiée, libellé intégral).
+--   * ÉCRITURE UNIQUEMENT via la RPC safe 7.8 : aucune policy INSERT directe
+--     pour les rôles applicatifs sur cette table.
+--   * TESTS DB NÉGATIFS attendus (T15) : clé bannie => échec CHECK + refus
+--     RPC ; clé non bannie mais hors whitelist => refus RPC.
 
 -- ============================================================================
 -- SECTION 4 — CONTRAINTES / INDEXES DRAFT
@@ -397,19 +453,44 @@ CREATE UNIQUE INDEX uq_canonical_active_import_id
   ON bank_statement_canonical (import_id)
   WHERE status = 'ingested';
 
--- 4.2 Unicité canonical des lignes : un line_hash ne peut être promu qu'une fois
---     sous un relevé actif. line_hash est déterministe sur (import_id, dates,
---     direction, montant signé, devise, description canonicalisée,
---     occurrenceOrdinal).
---     Deux lignes métier strictement identiques dans un même relevé sont
---     différenciées par occurrenceOrdinal côté pré-ingestion (socle 0H/0I) ;
---     elles doivent donc produire deux line_hash distincts. Un conflit
---     line_hash indique plutôt une vraie collision logique ou une tentative
---     de promotion déjà existante.
---     Variante si supersede doit conserver les lignes : index partiel joint au
---     statut du relevé parent (nécessite colonne dénormalisée ou trigger).
-CREATE UNIQUE INDEX uq_lines_canonical_line_hash
-  ON bank_statement_lines_canonical (line_hash);
+-- 4.2 Unicité canonical des lignes — RÉVISÉE EN 0R (audit 0Q, point bloquant).
+--     L'unicité GLOBALE initialement proposée
+--       (CREATE UNIQUE INDEX ... ON bank_statement_lines_canonical (line_hash))
+--     est INCOMPATIBLE avec le workflow supersede et est ABANDONNÉE :
+--     line_hash est déterministe sur (import_id, dates, direction, montant
+--     signé, devise, description canonicalisée, occurrenceOrdinal) et ne
+--     dépend PAS du relevé canonical porteur. Un supersede re-promeut le même
+--     import_id corrigé : toute ligne inchangée reproduit le même line_hash
+--     que celle — conservée, append-only — de l'ancien canonical superseded,
+--     donc l'unicité globale rendrait tout supersede impossible.
+--
+--     Invariant conservé, exprimable immédiatement : un line_hash unique PAR
+--     relevé canonical. Deux lignes métier strictement identiques d'un même
+--     relevé restent différenciées par occurrenceOrdinal (socle 0H/0I) et
+--     produisent deux line_hash distincts.
+CREATE UNIQUE INDEX uq_lines_canonical_line_hash_per_statement
+  ON bank_statement_lines_canonical (canonical_statement_id, line_hash);
+
+--     L'invariant « un line_hash n'est ACTIF qu'une seule fois » (R3) doit
+--     être garanti par l'UNE des deux options sûres suivantes — choix à
+--     trancher au design de la vraie migration ; NE PAS revenir à l'unicité
+--     globale :
+--
+--     Option A — statut dénormalisé + index partiel actif :
+--       * colonne is_active boolean NOT NULL sur bank_statement_lines_canonical,
+--         maintenue EXCLUSIVEMENT par les RPC promote/supersede, dans la même
+--         transaction que la bascule du relevé parent ;
+--       * CREATE UNIQUE INDEX uq_lines_canonical_line_hash_active
+--           ON bank_statement_lines_canonical (line_hash) WHERE is_active;
+--       * garantie structurelle forte ; coût : dénormalisation + discipline
+--         RPC (une divergence is_active/statut parent doit être testée, T13).
+--
+--     Option B — enforcement transactionnel dans les RPC SECURITY DEFINER :
+--       * aucune contrainte globale en schéma ; la RPC de promotion vérifie,
+--         SOUS VERROU (7.9), qu'aucun canonical ACTIF ne contient déjà l'un
+--         des line_hash à promouvoir (R3) avant d'insérer ;
+--       * schéma plus simple ; la garantie repose entièrement sur la RPC et
+--         le locking : tests de concurrence obligatoires (T16).
 
 -- 4.3 Indexes de recherche attempts.
 --     Index partiel : raw_text_hash est nullable (rejets avant décodage) ;
@@ -421,7 +502,9 @@ CREATE INDEX idx_attempts_import_id     ON bank_statement_import_attempts (impor
 CREATE INDEX idx_attempts_status        ON bank_statement_import_attempts (status);
 
 -- 4.4 Indexes staging / lignes.
-CREATE INDEX idx_staging_attempt_id         ON bank_statement_staging (attempt_id);
+--     (révision 0R) idx_staging_attempt_id supprimé : la contrainte
+--     staging_one_per_attempt (UNIQUE attempt_id, SECTION 3.B) porte déjà
+--     l'index sous-jacent.
 CREATE INDEX idx_lines_staging_import_id    ON bank_statement_lines_staging (import_id);
 CREATE INDEX idx_lines_canonical_import_id  ON bank_statement_lines_canonical (import_id);
 
@@ -481,6 +564,41 @@ CREATE INDEX idx_lines_canonical_import_id  ON bank_statement_lines_canonical (i
 --          ces statuts).
 --
 -- ============================================================================
+-- SECTION 5B — CONVERSION DES DATES dd/mm/yyyy -> date (AJOUT 0R — NORMATIF)
+-- ============================================================================
+--
+-- Le parser TS (0B) et les clés d'idempotence (0H) manipulent TOUTES les
+-- dates comme des chaînes 'dd/mm/yyyy' (DATE_PATTERN ^\d{2}/\d{2}/\d{4}$) :
+-- operationDate, valueDate, periodStart, periodEnd, statementDate.
+--
+-- D1. Toute écriture vers une colonne `date` de ce schéma DOIT convertir
+--     EXPLICITEMENT : to_date(value, 'DD/MM/YYYY').
+--     JAMAIS de cast implicite ('03/07/2026'::date) : il dépend du DateStyle
+--     de session (défaut Postgres 'ISO, MDY' => '03/07/2026' lu 7 mars) et
+--     fausse SILENCIEUSEMENT toute date dont le jour est <= 12.
+--
+-- D2. Validation round-trip obligatoire (to_date reste tolérant sur certains
+--     formats/débordements) :
+--       to_char(to_date(value, 'DD/MM/YYYY'), 'DD/MM/YYYY') = value
+--     sinon rejet fail-closed (aucune correction silencieuse — cohérent avec
+--     SECURITY_CONTRACT §7 : pas de dates artificielles). Implémentation
+--     recommandée : une fonction SQL stricte dédiée (IMMUTABLE) centralisant
+--     D1 + D2, utilisée par toutes les RPC d'écriture.
+--
+-- D3. Cas de test attendus (SECTION 8, T12) :
+--       '03/07/2026' => 2026-07-03 (jamais 2026-03-07), quel que soit le
+--                       DateStyle de la session ;
+--       '31/02/2026' => rejet (date inexistante) ;
+--       '2026-07-03' => rejet (format inattendu : pas de tolérance) ;
+--       '3/7/2026'   => rejet round-trip (le pattern TS exige 2 chiffres).
+--
+-- D4. Conséquence assumée : line_hash est calculé côté runtime sur la chaîne
+--     'dd/mm/yyyy' (et sur la représentation JS du montant). Il n'est PAS
+--     recalculable depuis les colonnes DB (dates converties, numeric
+--     reformaté) : c'est un identifiant opaque produit par le runtime,
+--     vérifiable uniquement en repassant le texte source dans le runtime.
+--
+-- ============================================================================
 -- SECTION 6 — PSEUDO-RLS / AUTH (DRAFT — NON APPLIQUÉ)
 -- ============================================================================
 -- Hypothèse : fonction existante de rôle applicatif, ex. has_role(uid, role)
@@ -534,34 +652,102 @@ CREATE INDEX idx_lines_canonical_import_id  ON bank_statement_lines_canonical (i
 --     doit connaître que les RPC, jamais d'insert/update sur ces tables).
 --
 -- ============================================================================
--- SECTION 7 — RPC FUTURES (PSEUDO-DESIGN — NON IMPLÉMENTÉES)
+-- SECTION 7 — RPC FUTURES (PSEUDO-DESIGN — NON IMPLÉMENTÉES — COMPLÉTÉ EN 0R)
 -- ============================================================================
 --
--- Toutes SECURITY DEFINER, search_path épinglé, vérification de rôle interne,
--- et chaque appel écrit un event append-only.
+-- Toutes SECURITY DEFINER, search_path épinglé, EXECUTE révoqué de PUBLIC et
+-- accordé explicitement (précédent Lot 2B sur has_role), vérification de rôle
+-- INTERNE à chaque fonction (SECURITY DEFINER contourne RLS), et chaque appel
+-- écrit un event append-only via 7.8. Toute RPC qui décide ou écrit côté
+-- canonical prend d'abord le verrou 7.9.
 --
--- 7.1 promote_structured_bank_statement_import(attempt_id uuid)
---       - vérifie attempt.ingestion_ready = true (ou needs_review + opt-in
---         humain explicite, cf. R5) ;
+-- 7.1 promote_structured_bank_statement_import(p_attempt_id uuid)
+--       - verrou 7.9 sur import_id ;
+--       - vérifie attempt.ingestion_ready = true (le chemin needs_review passe
+--         par 7.6, jamais par cette RPC) ;
 --       - applique R1/R2/R3 (duplicate/conflict) avant toute écriture ;
 --       - copie staging -> canonical + lignes, transactionnellement ;
 --       - marque attempt 'ingested', staging 'promoted' ;
 --       - event 'promoted'.
 --
--- 7.2 reject_structured_bank_statement_import(attempt_id uuid, reason text)
---       - marque attempt 'rejected' avec rejected_reason safe ;
+-- 7.2 reject_structured_bank_statement_import(p_attempt_id uuid, p_reason text)
+--       - marque attempt 'rejected' avec rejected_reason safe (code d'erreur,
+--         jamais de contenu CSV) ;
 --       - event 'attempt_rejected'.
 --
--- 7.3 mark_structured_bank_statement_duplicate(attempt_id uuid,
---                                              canonical_statement_id uuid)
---       - marque attempt 'duplicate' en référencant le canonical existant ;
+-- 7.3 mark_structured_bank_statement_duplicate(p_attempt_id uuid,
+--                                              p_canonical_statement_id uuid)
+--       - marque attempt 'duplicate' ; le lien vers le canonical existant est
+--         porté par l'event (colonne canonical_statement_id de 3.F — la table
+--         attempts n'a volontairement pas de colonne dédiée) ;
 --       - event 'duplicate_detected'.
 --
--- 7.4 supersede_structured_bank_statement_import(
---        old_canonical_statement_id uuid, new_attempt_id uuid, reason text)
---       - promotion du nouveau + bascule de l'ancien en 'superseded'
---         (superseded_by / superseded_at), dans la MÊME transaction ;
---       - event 'superseded' sur l'ancien + 'promoted' sur le nouveau.
+-- 7.4 resolve_structured_bank_statement_conflict_keep_existing(
+--        p_attempt_id uuid, p_reason text)
+--       - arbitrage humain d'un conflict R2 : le canonical existant est
+--         CONSERVÉ, aucune écriture staging/canonical ;
+--       - actor_id humain OBLIGATOIRE (jamais automatique) ;
+--       - event 'status_changed' avec safe_details
+--         {"resolution": "keep_existing"} sur l'attempt en conflit.
+--
+-- 7.5 request_structured_bank_statement_manager_escalation(
+--        p_attempt_id uuid, p_reason text)
+--       - un manager demande review/promotion à un rôle habilité ;
+--       - aucune écriture staging/canonical ; l'attempt ne change pas d'état ;
+--       - event 'review_requested' avec actor_id = manager.
+--
+-- 7.6 approve_structured_bank_statement_needs_review_promotion(
+--        p_attempt_id uuid, p_reason text)
+--       - promotion HUMAINE d'un attempt 'needs_review' (R5) — seule
+--         exception à la gate ingestion_ready ;
+--       - actor_id humain obligatoire (rôle exact à trancher en revue :
+--         admin seul, ou admin + manager) ;
+--       - même pipeline que 7.1 (verrou 7.9, R1/R2/R3, copie
+--         transactionnelle) ;
+--       - events 'promotion_requested' puis 'promoted'.
+--
+-- 7.7 supersede_structured_bank_statement_import(
+--        p_old_canonical_statement_id uuid, p_new_attempt_id uuid,
+--        p_reason text)
+--     Séquence transactionnelle NORMATIVE (révision 0R) :
+--       a. la fonction est UNE transaction : tout échec à n'importe quelle
+--          étape => ROLLBACK TOTAL, aucun état intermédiaire persistant ;
+--       b. verrou 7.9 sur import_id — sérialise avec toute promotion ou
+--          supersede concurrente du même relevé logique ;
+--       c. re-lecture du canonical ACTIF sous verrou (SELECT ... FOR UPDATE) :
+--          il doit être p_old_canonical_statement_id, sinon exception
+--          (l'appelant travaillait sur un état périmé) ;
+--       d. validation du staging lié à p_new_attempt_id : gates R1/R2/R3,
+--          attempt 'ingestion_ready' (ou approbation humaine 7.6) ;
+--       e. pré-génération de l'id du nouveau canonical :
+--          v_new_id := gen_random_uuid() ;
+--       f. bascule de l'ancien : status = 'superseded',
+--          superseded_by = v_new_id, superseded_at = now().
+--          La self-FK superseded_by doit être DEFERRABLE INITIALLY DEFERRED
+--          (cf. 3.D) : v_new_id n'existe pas encore, la FK est vérifiée au
+--          COMMIT. L'ordre inverse (insérer le nouveau d'abord) est
+--          IMPOSSIBLE : uq_canonical_active_import_id — index partiel, non
+--          déférable — interdit deux relevés 'ingested' simultanés pour un
+--          même import_id ;
+--       g. insertion du nouveau canonical (id = v_new_id, status 'ingested')
+--          + ses lignes (avec bascule is_active si Option A de 4.2) ;
+--       h. events append-only, même transaction : 'superseded' sur l'ancien
+--          + 'promoted' sur le nouveau ;
+--       i. postcondition vérifiée avant sortie : exactement UN canonical
+--          status = 'ingested' pour cet import_id.
+--
+-- 7.8 append_structured_bank_statement_safe_audit_event(...)
+--       - SEUL point d'écriture de bank_statement_import_events ;
+--       - whitelist stricte des clés safe_details (doctrine 3.F) appliquée
+--         AVANT insert : toute clé hors whitelist => exception fail-closed ;
+--       - INSERT uniquement — UPDATE/DELETE inexistants (RLS + REVOKE, 6).
+--
+-- 7.9 Garde concurrence (helper interne, PAS une RPC exposée au client) :
+--       - pg_advisory_xact_lock(hashtextextended(p_import_id, 0)) pris par
+--         7.1 / 7.6 / 7.7 avant toute lecture décisionnelle ;
+--       - sérialise double promotion et double supersede du même import_id
+--         (T16) ; libéré automatiquement au COMMIT/ROLLBACK ;
+--       - complément : SELECT ... FOR UPDATE sur le canonical actif (7.7.c).
 --
 -- ============================================================================
 -- SECTION 8 — TESTS DB ATTENDUS (FUTURE MIGRATION — CHECKLIST DE REVUE)
@@ -575,8 +761,12 @@ CREATE INDEX idx_lines_canonical_import_id  ON bank_statement_lines_canonical (i
 --      => refusée, attempt 'duplicate', aucun doublon canonical.
 -- T4.  Conflict (R2) : même import_id + raw_text_hash différent => attempt
 --      'conflict', pas d'upsert, canonical intact.
--- T5.  line_hash duplicate (R3) : insertion d'une ligne canonical avec un
---      line_hash existant => rejetée par uq_lines_canonical_line_hash.
+-- T5.  line_hash duplicate (R3) — révisé 0R : insertion de deux lignes de
+--      MÊME line_hash sous le MÊME relevé canonical => rejetée par
+--      uq_lines_canonical_line_hash_per_statement ; un line_hash déjà présent
+--      sous un AUTRE canonical ACTIF => refusé par le mécanisme retenu en 4.2
+--      (index partiel is_active en Option A, contrôle RPC sous verrou en
+--      Option B).
 --      Contrôle associé : deux lignes métier strictement identiques d'un même
 --      relevé (différenciées par occurrenceOrdinal) produisent deux line_hash
 --      distincts et sont TOUTES DEUX promues sans conflit.
@@ -593,12 +783,43 @@ CREATE INDEX idx_lines_canonical_import_id  ON bank_statement_lines_canonical (i
 -- T10. Canonical immutability : UPDATE/DELETE directs sur
 --      bank_statement_canonical et bank_statement_lines_canonical échouent
 --      hors RPC contrôlée.
--- T11. Rollback / supersede : supersede bascule l'ancien relevé en
---      'superseded' avec chaîne superseded_by/superseded_at cohérente
---      (contrainte canonical_supersede_coherent) et un seul relevé actif
---      par import_id (index uq_canonical_active_import_id).
+-- T11. Rollback / supersede : la séquence normative 7.7 bascule l'ancien
+--      relevé en 'superseded' avec chaîne superseded_by/superseded_at
+--      cohérente (contrainte canonical_supersede_coherent, FK différée) et
+--      un seul relevé actif par import_id à la fin (index
+--      uq_canonical_active_import_id) ; tout échec intermédiaire => rollback
+--      TOTAL (aucun canonical orphelin, aucun event partiel).
+--
+-- ---- Tests ajoutés en révision 0R -------------------------------------------
+--
+-- T12. Dates DMY sans dépendance DateStyle (SECTION 5B) :
+--      '03/07/2026' => 2026-07-03 (jamais 2026-03-07), vérifié sous
+--      DateStyle 'ISO, MDY' ET 'ISO, DMY' ;
+--      '31/02/2026' => rejet (date inexistante) ;
+--      '2026-07-03' => rejet (format inattendu) ;
+--      '3/7/2026'   => rejet round-trip (2 chiffres exigés).
+-- T13. Supersede avec lignes communes : re-promotion corrigée du même
+--      import_id dont N lignes sont identiques (mêmes line_hash) à celles de
+--      l'ancien canonical superseded => promotion RÉUSSIE (c'est le scénario
+--      que l'unicité globale abandonnée en 4.2 rendait impossible) ;
+--      l'invariant « un line_hash actif une seule fois » reste vérifié
+--      (Option A ou B) ; les lignes de l'ancien relevé restent lisibles
+--      (historique append-only).
+-- T14. Escalation manager : 7.5 écrit 'review_requested' avec actor_id =
+--      manager ; un manager ne peut NI promouvoir (7.1/7.6 refusent) NI
+--      écrire directement staging/canonical/events.
+-- T15. safe_details anti-raw négatif : insertion d'une clé bannie (raw_csv,
+--      raw_text, raw_bytes, raw_content, file_content, account_number, iban)
+--      => échec (CHECK events_safe_details_no_banned_keys) ET refus RPC 7.8 ;
+--      clé non bannie mais hors whitelist => refusée par 7.8 ; clé bannie
+--      IMBRIQUÉE dans un objet => refusée par 7.8 (le CHECK ne couvre que le
+--      top-level, cf. 3.F).
+-- T16. Concurrence : deux promotions simultanées du même import_id => une
+--      seule gagne, l'autre sort en duplicate/conflict contrôlé (verrou 7.9) ;
+--      deux supersedes simultanés du même canonical actif => un seul gagne
+--      (verrou 7.9 + re-lecture 7.7.c) ; jamais deux canonical actifs.
 --
 -- ============================================================================
--- FIN DU DRAFT — POC-BANK-STRUCTURED-EXPORTS-0P
+-- FIN DU DRAFT — POC-BANK-STRUCTURED-EXPORTS-0P (révisé 0R)
 -- DRAFT SQL — REVIEW ONLY — DO NOT APPLY — NOT A MIGRATION
 -- ============================================================================
