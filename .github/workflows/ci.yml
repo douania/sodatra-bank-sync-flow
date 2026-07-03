@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint-build:
+    name: Lint and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # TODO OPS-ESLINT-BASELINE-1: make lint blocking once existing lint debt is resolved.
+      - name: Lint (advisory — existing repo debt)
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
