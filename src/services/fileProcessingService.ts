@@ -7,7 +7,7 @@ import { SupabaseRetryService } from './supabaseClientService';
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 import { progressService } from './progressService';
-import type { ProcessingResult } from '@/types/processing';
+import type { ExcelImportDiagnostics, ProcessingResult } from '@/types/processing';
 import {
   appendInternalBookProcessingResult,
   detectInternalBookRuntimeFile,
@@ -100,24 +100,47 @@ export class FileProcessingService {
         
         // Traiter tous les fichiers de collection
         let allCollections: CollectionReport[] = [];
-        
+
+        // ⭐ PACK-B2 : diagnostics d'import Excel exposés dans le résultat (auditabilité).
+        // Les erreurs Excel en succès partiel restent hors de results.errors pour ne pas
+        // changer la règle de succès globale.
+        const excelImportDiagnostics: ExcelImportDiagnostics = {
+          files_processed: 0,
+          collections_extracted: 0,
+          excel_errors: [],
+          excel_warnings: []
+        };
+        results.data!.excelImportDiagnostics = excelImportDiagnostics;
+
         for (const collectionFile of categorizedFiles.collectionReports) {
-          progressService.updateStepProgress('excel_processing', 'Traitement Excel', 
+          progressService.updateStepProgress('excel_processing', 'Traitement Excel',
             `Traitement de ${collectionFile.name}`, 25 + (50 * categorizedFiles.collectionReports.indexOf(collectionFile) / categorizedFiles.collectionReports.length));
-          
+
           // ⭐ EXTRACTION EXCEL AVEC RETRY
           const excelResult = await SupabaseRetryService.executeWithRetry(
             () => excelProcessingService.processCollectionReportExcel(collectionFile),
             { maxRetries: 3 },
             `Extraction Excel - ${collectionFile.name}`
           );
-          
+
+          excelImportDiagnostics.files_processed++;
+          for (const message of excelResult.errors ?? []) {
+            excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message });
+          }
+          for (const message of excelResult.warnings ?? []) {
+            excelImportDiagnostics.excel_warnings.push({ file: collectionFile.name, message });
+          }
+
           if (excelResult.success && excelResult.data) {
             allCollections = [...allCollections, ...excelResult.data];
+            excelImportDiagnostics.collections_extracted += excelResult.data.length;
           } else {
             const errorMsg = `Erreur traitement Excel ${collectionFile.name}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
             console.error('❌', errorMsg);
             results.errors?.push(errorMsg);
+            if (!excelResult.errors || excelResult.errors.length === 0) {
+              excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message: 'Erreur inconnue' });
+            }
           }
         }
         
