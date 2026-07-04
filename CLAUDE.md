@@ -21,6 +21,24 @@ Application bancaire sensible. Ces règles priment sur tout comportement par dé
 - Pas de refactor global.
 - Préserver : sécurité, RLS/Auth, idempotence, intégrité des données, auditabilité.
 
+## 2bis. Règle anti-fragmentation des lots
+
+Sauf bug critique isolé, un chantier doit être traité comme **un pack fonctionnel complet**, pas comme une succession de micro-PR.
+
+Règles :
+
+- 1 chantier = 1 pack fonctionnel complet.
+- Un pack peut contenir des sous-sections internes, mais elles doivent rester coordonnées dans le même objectif métier.
+- Ne pas créer une PR par micro-détail si les changements appartiennent au même chantier fonctionnel.
+- Préférer une PR unique par pack, avec diagnostic, patchs coordonnés, tests, risques et clôture.
+- Les micro-lots sont réservés aux cas suivants :
+  - bug critique isolé ;
+  - hotfix bloquant ;
+  - correction de sécurité ;
+  - rollback ;
+  - micro-fix explicitement demandé par le CTO.
+- Si un pack devient trop large ou risqué, proposer un découpage en sous-lots fonctionnels cohérents, pas en fragments techniques artificiels.
+
 ## 3. Préflight obligatoire (avant tout travail)
 
 ```
