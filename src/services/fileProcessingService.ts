@@ -13,46 +13,8 @@ import {
   detectInternalBookRuntimeFile,
   processInternalBookRuntimeFile,
 } from './internalBookRuntimeProcessingService';
+import { aggregateBatchSyncResults } from './syncResultAggregator';
 export type { ProcessingResult } from '@/types/processing';
-
-interface BatchSyncError {
-  collection: {
-    clientCode?: string;
-  };
-  error: string;
-}
-
-interface BatchSyncPartialResult {
-  new_collections?: number;
-  idempotent_updates?: number;
-  enriched_collections?: number;
-  ignored_collections?: number;
-  errors?: BatchSyncError[];
-  summary?: {
-    enrichments?: {
-      date_of_validity_added?: number;
-      bank_commissions_added?: number;
-      references_updated?: number;
-      statuses_updated?: number;
-    };
-  };
-}
-
-interface AggregatedBatchSyncResult {
-  new_collections: number;
-  idempotent_updates: number;
-  enriched_collections: number;
-  ignored_collections: number;
-  errors: BatchSyncError[];
-  summary: {
-    enrichments: {
-      date_of_validity_added: number;
-      bank_commissions_added: number;
-      references_updated: number;
-      statuses_updated: number;
-    };
-  };
-}
 
 export class FileProcessingService {
   async processFiles(files: File[]): Promise<ProcessingResult> {
@@ -206,8 +168,8 @@ export class FileProcessingService {
             'intelligent_sync'
           );
           
-          // ⭐ AGRÉGATION DES RÉSULTATS BATCH
-          const syncResult = this.aggregateBatchResults(batchSyncResult.results);
+          // ⭐ AGRÉGATION DES RÉSULTATS BATCH (résultats de lots + erreurs top-level)
+          const syncResult = aggregateBatchSyncResults(batchSyncResult.results, batchSyncResult.errors);
           
           progressService.completeStep('excel_processing', 'Traitement Excel', 'Extraction terminée', 
             `${allCollections.length} collections extraites`);
@@ -230,7 +192,7 @@ export class FileProcessingService {
           
           // ⭐ AJOUTER LES ERREURS AU RÉSULTAT GLOBAL
           if (syncResult.errors.length > 0) {
-            const errorMessages = syncResult.errors.map(e => `${e.collection.clientCode}: ${e.error}`);
+            const errorMessages = syncResult.errors.map(e => `${e.collection?.clientCode ?? 'INCONNU'}: ${e.error}`);
             results.errors?.push(...errorMessages);
           }
         }
@@ -540,49 +502,6 @@ export class FileProcessingService {
       console.error('❌ Erreur calcul Fund Position:', error);
       return null;
     }
-  }
-
-  // ⭐ NOUVELLE MÉTHODE : Agrégation des résultats de batch
-  private aggregateBatchResults(batchResults: BatchSyncPartialResult[]): AggregatedBatchSyncResult {
-    const aggregated = {
-      new_collections: 0,
-      idempotent_updates: 0,
-      enriched_collections: 0,
-      ignored_collections: 0,
-      errors: [] as BatchSyncError[],
-      summary: {
-        enrichments: {
-          date_of_validity_added: 0,
-          bank_commissions_added: 0,
-          references_updated: 0,
-          statuses_updated: 0
-        }
-      }
-    };
-
-    batchResults.forEach(result => {
-      if (result) {
-        aggregated.new_collections += result.new_collections || 0;
-        aggregated.idempotent_updates += result.idempotent_updates || 0;
-        aggregated.enriched_collections += result.enriched_collections || 0;
-        aggregated.ignored_collections += result.ignored_collections || 0;
-        
-        // Agréger les erreurs
-        if (result.errors) {
-          aggregated.errors.push(...result.errors);
-        }
-        
-        // Agréger les statistiques d'enrichissement
-        if (result.summary?.enrichments) {
-          aggregated.summary.enrichments.date_of_validity_added += result.summary.enrichments.date_of_validity_added || 0;
-          aggregated.summary.enrichments.bank_commissions_added += result.summary.enrichments.bank_commissions_added || 0;
-          aggregated.summary.enrichments.references_updated += result.summary.enrichments.references_updated || 0;
-          aggregated.summary.enrichments.statuses_updated += result.summary.enrichments.statuses_updated || 0;
-        }
-      }
-    });
-
-    return aggregated;
   }
 
   private async processClientReconciliation(file: File): Promise<ClientReconciliation[]> {
