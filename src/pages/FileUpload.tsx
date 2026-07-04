@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert'; 
 import { FileSpreadsheet, FileText, Upload, Building2, X, AlertTriangle, CheckCircle, FileUp, ArrowRight } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
-import { fileProcessingService } from '@/services/fileProcessingService';
+import { fileProcessingService, type ProcessingResult } from '@/services/fileProcessingService';
 import { progressService } from '@/services/progressService';
 import { ProgressDisplay } from '@/components/ProgressDisplay';
 import ProcessingResultsDetailed from '@/components/ProcessingResultsDetailed';
@@ -15,7 +15,8 @@ const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileTypes, setFileTypes] = useState<{ [key: string]: string }>({});
   const [processing, setProcessing] = useState(false);
-  const [processingResults, setProcessingResults] = useState<any>(null);
+  const [processingResults, setProcessingResults] = useState<ProcessingResult | null>(null);
+  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [rejectedFiles, setRejectedFiles] = useState<FileRejection[]>([]);
   const { toast } = useToast();
 
@@ -113,6 +114,7 @@ const FileUpload = () => {
 
   const handleSubmit = async () => {
     setProcessing(true);
+    setProcessingStartTime(Date.now());
     setProcessingResults(null);
     progressService.reset();
 
@@ -250,8 +252,13 @@ const FileUpload = () => {
         </Alert>
       )}
       
+      {processing && <ProgressDisplay />}
+
       {processingResults && (
-        <ProcessingResultsDetailed results={processingResults} />
+        <ProcessingResultsDetailed
+          results={processingResults}
+          processingTime={processingStartTime ? Date.now() - processingStartTime : undefined}
+        />
       )}
       
       {/* Liste des fichiers sélectionnés */}
