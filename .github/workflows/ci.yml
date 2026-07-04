@@ -34,5 +34,78 @@ jobs:
         continue-on-error: true
         run: npm run lint
 
+      # OPS-LINT-RATCHET-1: lint stays advisory above, but ESLint debt must not
+      # grow past the baseline audited in OPS-ESLINT-BASELINE-1 (212 errors,
+      # 11 warnings, 223 total). Fails only if errors > 212 or total > 223, so
+      # turning an error into a warning still passes.
+      - name: ESLint ratchet
+        run: |
+          set +e
+          npm run --silent lint -- --format json > "$RUNNER_TEMP/eslint-report.json"
+          lint_exit=$?
+          set -e
+          echo "ESLint exit code: $lint_exit"
+
+          if [ "$lint_exit" -ge 2 ]; then
+            echo "ESLint crashed instead of reporting problems (exit $lint_exit)." >&2
+            exit "$lint_exit"
+          fi
+
+          node <<'NODE'
+          const fs = require('fs');
+
+          const baseline = {
+            errors: 212,
+            warnings: 11,
+            total: 223,
+          };
+
+          const reportPath = process.env.RUNNER_TEMP + '/eslint-report.json';
+          const raw = fs.readFileSync(reportPath, 'utf8').trim();
+
+          if (!raw) {
+            console.error('ESLint JSON report is empty.');
+            process.exit(1);
+          }
+
+          let report;
+          try {
+            report = JSON.parse(raw);
+          } catch (error) {
+            console.error('Failed to parse ESLint JSON report.');
+            console.error(error);
+            process.exit(1);
+          }
+
+          const totals = report.reduce(
+            (acc, file) => {
+              acc.errors += file.errorCount || 0;
+              acc.warnings += file.warningCount || 0;
+              if ((file.errorCount || 0) + (file.warningCount || 0) > 0) {
+                acc.files += 1;
+              }
+              return acc;
+            },
+            { errors: 0, warnings: 0, files: 0 }
+          );
+
+          totals.total = totals.errors + totals.warnings;
+
+          console.log('ESLint ratchet summary');
+          console.log(`Errors: ${totals.errors} / baseline ${baseline.errors}`);
+          console.log(`Warnings: ${totals.warnings} / baseline ${baseline.warnings}`);
+          console.log(`Total: ${totals.total} / baseline ${baseline.total}`);
+          console.log(`Files with problems: ${totals.files}`);
+
+          const failed = totals.total > baseline.total || totals.errors > baseline.errors;
+
+          if (failed) {
+            console.error('ESLint debt increased above baseline.');
+            process.exit(1);
+          }
+
+          console.log('ESLint debt is within baseline.');
+          NODE
+
       - name: Build
         run: npm run build
