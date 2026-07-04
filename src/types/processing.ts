@@ -42,6 +42,20 @@ export interface PartialSyncResultData {
   };
 }
 
+// Diagnostics d'import Excel : messages déjà nettoyés par excelProcessingService,
+// aucune ligne brute ni donnée bancaire stockée ici.
+export interface ExcelImportIssue {
+  file: string;
+  message: string;
+}
+
+export interface ExcelImportDiagnostics {
+  files_processed: number;
+  collections_extracted: number;
+  excel_errors: ExcelImportIssue[];
+  excel_warnings: ExcelImportIssue[];
+}
+
 export interface ProcessingResult {
   success: boolean;
   data?: {
@@ -50,6 +64,7 @@ export interface ProcessingResult {
     clientReconciliation?: ClientReconciliation[];
     collectionReports?: CollectionReport[];
     syncResult?: SyncResultData;
+    excelImportDiagnostics?: ExcelImportDiagnostics;
   };
   errors?: string[];
   debugInfo?: any;

@@ -121,17 +121,26 @@ const FileUpload = () => {
     try {
       const result = await fileProcessingService.processFiles(selectedFiles);
 
-      if (result.success) {
+      // ⭐ PACK-B2 : toujours exposer le résultat structuré, même en échec partiel/global
+      setProcessingResults(result);
+
+      const excelErrorCount = result.data?.excelImportDiagnostics?.excel_errors?.length ?? 0;
+      const excelWarningCount = result.data?.excelImportDiagnostics?.excel_warnings?.length ?? 0;
+
+      if (result.success && excelErrorCount === 0 && excelWarningCount === 0) {
         toast({
-          title: "Succès",
-          description: "Fichiers traités avec succès.",
+          title: "Traitement terminé avec succès",
+          description: "Fichiers traités sans erreur détectée.",
         });
-        
-        setProcessingResults(result);
+      } else if (result.success) {
+        toast({
+          title: "Traitement terminé avec réserves",
+          description: `${excelErrorCount} ligne(s) Excel rejetée(s), ${excelWarningCount} warning(s) — consultez l'audit de l'import ci-dessous.`,
+        });
       } else {
         toast({
           variant: "destructive",
-          title: "Erreur",
+          title: "Traitement partiellement échoué / à vérifier",
           description: "Erreur lors du traitement des fichiers: " + (result.errors?.join(', ') || 'Erreur inconnue'),
         });
       }

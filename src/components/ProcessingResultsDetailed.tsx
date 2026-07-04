@@ -21,24 +21,40 @@ interface ProcessingResultsDetailedProps {
   processingTime?: number;
 }
 
-const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({ 
-  results, 
-  processingTime 
+const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
+  results,
+  processingTime
 }) => {
-  const getStatusIcon = (success: boolean) => {
-    return success ? (
-      <CheckCircle className="h-5 w-5 text-green-500" />
-    ) : (
-      <XCircle className="h-5 w-5 text-red-500" />
-    );
+  // ⭐ PACK-B2 : statut honnête à trois niveaux (succès / réserves / échec)
+  const excelDiagnostics = results.data?.excelImportDiagnostics;
+  const excelErrorCount = excelDiagnostics?.excel_errors?.length ?? 0;
+  const excelWarningCount = excelDiagnostics?.excel_warnings?.length ?? 0;
+  const syncResult = results.data?.syncResult;
+  const syncErrors = syncResult?.errors ?? [];
+  const globalErrorCount = results.errors?.length ?? 0;
+  const hasReserves = excelErrorCount > 0 || excelWarningCount > 0 || syncErrors.length > 0 || globalErrorCount > 0;
+  const overallStatus: 'success' | 'reserves' | 'failed' =
+    !results.success ? 'failed' : hasReserves ? 'reserves' : 'success';
+
+  // Équation de conservation des compteurs sync (tolérante aux champs absents)
+  const countersSum =
+    (syncResult?.new_collections || 0) +
+    (syncResult?.idempotent_updates || 0) +
+    (syncResult?.enriched_collections || 0) +
+    (syncResult?.ignored_collections || 0);
+  const totalProcessed = syncResult?.summary?.total_processed;
+  const conservationOk = typeof totalProcessed === 'number' && countersSum === totalProcessed;
+
+  const getStatusIcon = () => {
+    if (overallStatus === 'success') return <CheckCircle className="h-5 w-5 text-green-500" />;
+    if (overallStatus === 'reserves') return <AlertTriangle className="h-5 w-5 text-amber-500" />;
+    return <XCircle className="h-5 w-5 text-red-500" />;
   };
 
-  const getStatusBadge = (success: boolean) => {
-    return (
-      <Badge variant={success ? "default" : "destructive"}>
-        {success ? "Succès" : "Échec"}
-      </Badge>
-    );
+  const getStatusBadge = () => {
+    if (overallStatus === 'success') return <Badge variant="default">Succès</Badge>;
+    if (overallStatus === 'reserves') return <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">Succès avec réserves</Badge>;
+    return <Badge variant="destructive">Échec / À vérifier</Badge>;
   };
 
   const formatNumber = (num: number) => {
@@ -84,9 +100,11 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                       (results.data?.clientReconciliation?.length || 0);
     
     if (totalItems === 0) return 0;
-    
-    const errorCount = results.errors?.length || 0;
-    return Math.max(0, Math.round(((totalItems - errorCount) / totalItems) * 100));
+
+    // ⭐ PACK-B2 : les lignes Excel rejetées et les erreurs sync comptent comme bloquantes,
+    // les warnings Excel non.
+    const blockingErrorCount = globalErrorCount + excelErrorCount + syncErrors.length;
+    return Math.max(0, Math.round(((totalItems - blockingErrorCount) / totalItems) * 100));
   };
 
   return (
@@ -95,9 +113,9 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
-            {getStatusIcon(results.success)}
+            {getStatusIcon()}
             <span>Résumé du traitement</span>
-            {getStatusBadge(results.success)}
+            {getStatusBadge()}
           </CardTitle>
           <CardDescription>
             Résultats de l'importation et de la synchronisation des données
@@ -111,7 +129,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                 <Database className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-500">Taux de Succès</p>
+                <p className="text-sm text-gray-500">Taux sans erreur bloquante</p>
                 <p className="text-2xl font-bold text-gray-900">{calculateSuccessRate()}%</p>
               </div>
             </div>
@@ -162,7 +180,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
           {/* Barre de progression */}
           <div className="mt-4">
             <div className="flex justify-between text-sm text-gray-500 mb-2">
-              <span>Progression globale</span>
+              <span>Qualité du traitement</span>
               <span>{calculateSuccessRate()}%</span>
             </div>
             <Progress value={calculateSuccessRate()} className="h-2" />
@@ -221,6 +239,125 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                     <div>Ignorées / préservées: {results.data.syncResult.ignored_collections || 0}</div>
                   </div>
                 </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ⭐ PACK-B2 : Audit de l'import Excel */}
+      {(excelDiagnostics || syncResult) && (
+        <Card className={excelErrorCount > 0 || syncErrors.length > 0 ? 'border-amber-300' : ''}>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <FileSpreadsheet className="h-5 w-5 text-blue-600" />
+              <span>Audit de l'import Excel</span>
+            </CardTitle>
+            <CardDescription>
+              Traçabilité des lignes acceptées, rejetées et des erreurs de synchronisation
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {excelDiagnostics && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Fichiers traités</p>
+                    <p className="text-xl font-bold">{formatNumber(excelDiagnostics.files_processed)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Collections extraites</p>
+                    <p className="text-xl font-bold text-green-600">{formatNumber(excelDiagnostics.collections_extracted)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Lignes rejetées</p>
+                    <p className={`text-xl font-bold ${excelErrorCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                      {formatNumber(excelErrorCount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Warnings Excel</p>
+                    <p className={`text-xl font-bold ${excelWarningCount > 0 ? 'text-amber-600' : 'text-gray-900'}`}>
+                      {formatNumber(excelWarningCount)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {excelErrorCount > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-red-700 mb-1">Erreurs Excel (lignes rejetées)</p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {excelDiagnostics!.excel_errors.slice(0, 10).map((issue, index) => (
+                      <div key={index} className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
+                        {issue.file} — {issue.message}
+                      </div>
+                    ))}
+                    {excelErrorCount > 10 && (
+                      <p className="text-xs text-gray-500">... et {excelErrorCount - 10} autres erreurs</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {excelWarningCount > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-amber-700 mb-1">Warnings Excel</p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {excelDiagnostics!.excel_warnings.slice(0, 10).map((issue, index) => (
+                      <div key={index} className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                        {issue.file} — {issue.message}
+                      </div>
+                    ))}
+                    {excelWarningCount > 10 && (
+                      <p className="text-xs text-gray-500">... et {excelWarningCount - 10} autres warnings</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {syncResult && (
+                <>
+                  <div>
+                    <p className="text-sm font-medium mb-1">
+                      Erreurs de synchronisation (collections et batch) : {formatNumber(syncErrors.length)}
+                    </p>
+                    {syncErrors.length > 0 && (
+                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                        {syncErrors.slice(0, 10).map((syncError, index) => (
+                          <div key={index} className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
+                            {syncError?.collection?.clientCode ?? 'INCONNU'}: {syncError?.error ?? 'Erreur inconnue'}
+                          </div>
+                        ))}
+                        {syncErrors.length > 10 && (
+                          <p className="text-xs text-gray-500">... et {syncErrors.length - 10} autres erreurs</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-3 bg-gray-50 border rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Équation de conservation des compteurs</p>
+                      {conservationOk ? (
+                        <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Cohérent</Badge>
+                      ) : (
+                        <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">À vérifier</Badge>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-600 mt-2 space-y-1">
+                      <div>
+                        Ajoutées ({formatNumber(syncResult.new_collections || 0)}) +
+                        idempotentes ({formatNumber(syncResult.idempotent_updates || 0)}) +
+                        enrichies ({formatNumber(syncResult.enriched_collections || 0)}) +
+                        ignorées ({formatNumber(syncResult.ignored_collections || 0)}) = {formatNumber(countersSum)}
+                      </div>
+                      <div>
+                        total_processed annoncé : {typeof totalProcessed === 'number' ? formatNumber(totalProcessed) : 'indisponible'}
+                      </div>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </CardContent>
@@ -366,32 +503,43 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
         <CardHeader>
           <CardTitle>Actions Recommandées</CardTitle>
           <CardDescription>
-            Prochaines étapes avec les corrections automatiques
+            Prochaines étapes selon le résultat du traitement
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {results.success ? (
+            {overallStatus === 'success' ? (
               <>
                 <div className="flex items-center space-x-2 text-green-600">
                   <CheckCircle className="h-4 w-4" />
                   <span className="text-sm">Traitement terminé avec succès</span>
                 </div>
                 <div className="text-sm text-gray-600">
-                  • Vérifier les éventuels avertissements
-                  • Contrôler les lignes rejetées si présentes
+                  • Aucune erreur ni ligne rejetée détectée
                   • Consulter le dashboard principal ou la page Collections
+                </div>
+              </>
+            ) : overallStatus === 'reserves' ? (
+              <>
+                <div className="flex items-center space-x-2 text-amber-600">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span className="text-sm">Traitement terminé avec réserves</span>
+                </div>
+                <div className="text-sm text-gray-600">
+                  • Consultez l'audit de l'import Excel : lignes rejetées et warnings ci-dessus
+                  • Les lignes valides ont été importées ; les lignes rejetées ne l'ont pas été
+                  • Corrigez le fichier source si nécessaire puis relancez l'import
                 </div>
               </>
             ) : (
               <>
                 <div className="flex items-center space-x-2 text-red-600">
                   <XCircle className="h-4 w-4" />
-                  <span className="text-sm">Traitement partiellement échoué</span>
+                  <span className="text-sm">Traitement partiellement échoué / à vérifier</span>
                 </div>
                 <div className="text-sm text-gray-600">
                   • Vérifiez les erreurs ci-dessus et corrigez les fichiers si nécessaire
-                  • Les corrections automatiques ont été appliquées aux données valides
+                  • Seules les lignes validées ont été importées
                   • Relancez le traitement pour les fichiers en échec
                 </div>
               </>
