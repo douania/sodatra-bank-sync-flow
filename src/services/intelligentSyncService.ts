@@ -30,6 +30,8 @@ export interface SyncResult {
   new_collections: number;
   idempotent_updates: number;
   enriched_collections: number;
+  // EXISTS_INCOMPLETE sans aucun enrichissement réellement appliqué en base.
+  incomplete_not_enriched: number;
   ignored_collections: number;
   errors: Array<{ collection: any; error: string }>;
   summary: {
@@ -326,6 +328,7 @@ export class IntelligentSyncService {
       new_collections: 0,
       idempotent_updates: 0,
       enriched_collections: 0,
+      incomplete_not_enriched: 0,
       ignored_collections: 0,
       errors: [],
       summary: {
@@ -366,8 +369,17 @@ export class IntelligentSyncService {
               
             case CollectionStatus.EXISTS_INCOMPLETE:
               const enrichmentResult = await this.enrichExistingCollection(comparison);
-              result.enriched_collections++;
-              
+
+              // ⭐ PACK-B-FINAL : enriched_collections ne compte que les collections
+              // avec au moins un champ réellement appliqué en base. Une collection
+              // incomplète sans enrichissement applicable est comptée à part.
+              if (enrichmentResult.enrichments.length > 0) {
+                result.enriched_collections++;
+              } else {
+                result.incomplete_not_enriched++;
+              }
+
+
               // ⭐ COMPTABILISATION DES ENRICHISSEMENTS
               for (const enrichment of enrichmentResult.enrichments) {
                 if (enrichment.field === 'dateOfValidity') result.summary.enrichments.date_of_validity_added++;
@@ -399,12 +411,14 @@ export class IntelligentSyncService {
       result.new_collections +
       result.idempotent_updates +
       result.enriched_collections +
+      result.incomplete_not_enriched +
       result.ignored_collections;
-    
+
     console.log('📊 SYNCHRONISATION QUOTIDIENNE TERMINÉE:', {
       ajoutées_réellement: result.new_collections,
       mises_à_jour_idempotentes: result.idempotent_updates,
       enrichies: result.enriched_collections,
+      incomplètes_non_enrichies: result.incomplete_not_enriched,
       ignorées: result.ignored_collections,
       erreurs: result.errors.length
     });
