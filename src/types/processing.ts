@@ -60,6 +60,47 @@ export interface ExcelImportDiagnostics {
   excel_warnings: ExcelImportIssue[];
 }
 
+// ⭐ PACK-C — Staging/review en mémoire pour l'import Collection Report Excel.
+// Contrat : AUCUNE écriture DB tant que la promotion n'a pas été explicitement
+// demandée par l'utilisateur. La clé d'idempotence reste (excel_filename, excel_source_row).
+export type CollectionProposedStatus = 'NEW' | 'EXISTS_COMPLETE' | 'EXISTS_INCOMPLETE';
+
+export interface CollectionReviewRow {
+  // Identifiant de review : `${excelFilename}::${excelSourceRow}` — aligné sur
+  // la clé d'idempotence existante, jamais générée artificiellement.
+  rowId: string;
+  collection: CollectionReport;
+  selected: boolean;
+  proposedStatus?: CollectionProposedStatus;
+}
+
+export interface CollectionImportReviewCounters {
+  files_processed: number;
+  accepted_rows: number;
+  rejected_rows: number;
+  file_level_rejections: number;
+  warnings: number;
+}
+
+export interface CollectionImportReview {
+  reviewReady: boolean;
+  files: string[];
+  acceptedRows: CollectionReviewRow[];
+  // Rejets ligne à ligne (date invalide, clientCode vide, traçabilité manquante…).
+  rejectedRows: ExcelImportIssue[];
+  // Rejets globaux d'un fichier (headers obligatoires absents, feuille invalide…).
+  fileLevelErrors: ExcelImportIssue[];
+  warnings: ExcelImportIssue[];
+  counters: CollectionImportReviewCounters;
+  preparedAt: string;
+}
+
+export interface CollectionPromotionResult {
+  promoted: boolean;
+  validatedCount: number;
+  syncResult: SyncResultData;
+}
+
 export interface ProcessingResult {
   success: boolean;
   data?: {

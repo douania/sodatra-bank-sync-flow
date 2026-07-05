@@ -10,6 +10,18 @@ import { fileProcessingService, type ProcessingResult } from '@/services/filePro
 import { progressService } from '@/services/progressService';
 import { ProgressDisplay } from '@/components/ProgressDisplay';
 import ProcessingResultsDetailed from '@/components/ProcessingResultsDetailed';
+import CollectionImportReviewPanel from '@/components/CollectionImportReview';
+import {
+  attachProposedStatuses,
+  partitionCollectionReportFiles,
+  prepareCollectionImportReview,
+} from '@/services/collectionImportReviewService';
+import {
+  assertPromotionAllowed,
+  getValidatedCollections,
+  promoteValidatedCollections,
+} from '@/services/collectionImportPromotionService';
+import type { CollectionImportReview } from '@/types/processing';
 
 const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -18,9 +30,27 @@ const FileUpload = () => {
   const [processingResults, setProcessingResults] = useState<ProcessingResult | null>(null);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [rejectedFiles, setRejectedFiles] = useState<FileRejection[]>([]);
+  // ⭐ PACK-C : staging/review Collection Report — aucune écriture DB avant promotion.
+  const [collectionReview, setCollectionReview] = useState<CollectionImportReview | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [promotionResult, setPromotionResult] = useState<ProcessingResult | null>(null);
   const { toast } = useToast();
 
+  // ⭐ PACK-C.1 : toute modification de la liste des fichiers invalide la review,
+  // la promotion et les résultats précédents — sinon l'UI afficherait un staging
+  // périmé ne correspondant plus aux fichiers sélectionnés.
+  const resetImportStateAfterFileChange = useCallback(() => {
+    setCollectionReview(null);
+    setPromotionResult(null);
+    setProcessingResults(null);
+  }, []);
+
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
+    // ⭐ PACK-C.1 : nouveaux fichiers ajoutés → l'état de review/promotion est périmé.
+    if (acceptedFiles.length > 0) {
+      resetImportStateAfterFileChange();
+    }
+
     // Ajouter les nouveaux fichiers à la liste existante
     setSelectedFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
     
@@ -34,7 +64,7 @@ const FileUpload = () => {
     });
     
     setFileTypes(prev => ({ ...prev, ...newFileTypes }));
-    
+
     // Gérer les fichiers rejetés
     if (rejectedFiles.length > 0) {
       setRejectedFiles(rejectedFiles);
@@ -44,7 +74,7 @@ const FileUpload = () => {
         description: `${rejectedFiles.length} fichier(s) n'ont pas pu être acceptés.`,
       });
     }
-  }, [toast]);
+  }, [toast, resetImportStateAfterFileChange]);
   
   const { getRootProps, getInputProps } = useDropzone({
     onDrop,
@@ -58,8 +88,11 @@ const FileUpload = () => {
   });
   
   const removeFile = (fileName: string) => {
+    // ⭐ PACK-C.1 : fichier retiré → l'état de review/promotion est périmé.
+    resetImportStateAfterFileChange();
+
     setSelectedFiles(prevFiles => prevFiles.filter(file => file.name !== fileName));
-    
+
     // Supprimer également le type de fichier
     setFileTypes(prev => {
       const newTypes = { ...prev };
@@ -116,33 +149,56 @@ const FileUpload = () => {
     setProcessing(true);
     setProcessingStartTime(Date.now());
     setProcessingResults(null);
+    setCollectionReview(null);
+    setPromotionResult(null);
     progressService.reset();
 
     try {
-      const result = await fileProcessingService.processFiles(selectedFiles);
+      // ⭐ PACK-C : les Collection Report Excel ne passent plus par processFiles
+      // (qui écrit en DB immédiatement). Ils sont analysés en staging mémoire ;
+      // l'écriture DB n'a lieu qu'à la promotion explicite.
+      const { collectionFiles, otherFiles } = await partitionCollectionReportFiles(selectedFiles);
 
-      // ⭐ PACK-B2 : toujours exposer le résultat structuré, même en échec partiel/global
-      setProcessingResults(result);
+      if (collectionFiles.length > 0) {
+        let review = await prepareCollectionImportReview(collectionFiles);
+        // Statuts proposés (NEW / EXISTS_COMPLETE / EXISTS_INCOMPLETE) : lecture
+        // seule, best-effort — la review reste utilisable si la DB est injoignable.
+        review = await attachProposedStatuses(review);
+        setCollectionReview(review);
 
-      const excelErrorCount = result.data?.excelImportDiagnostics?.excel_errors?.length ?? 0;
-      const excelWarningCount = result.data?.excelImportDiagnostics?.excel_warnings?.length ?? 0;
+        const rejectionCount = review.counters.rejected_rows + review.counters.file_level_rejections;
+        toast({
+          title: "Review Collection prête — aucune écriture DB",
+          description: `${review.counters.accepted_rows} ligne(s) acceptée(s), ${rejectionCount} rejet(s), ${review.counters.warnings} warning(s). Validez puis promouvez explicitement.`,
+        });
+      }
 
-      if (result.success && excelErrorCount === 0 && excelWarningCount === 0) {
-        toast({
-          title: "Traitement terminé avec succès",
-          description: "Fichiers traités sans erreur détectée.",
-        });
-      } else if (result.success) {
-        toast({
-          title: "Traitement terminé avec réserves",
-          description: `${excelErrorCount} ligne(s) Excel rejetée(s), ${excelWarningCount} warning(s) — consultez l'audit de l'import ci-dessous.`,
-        });
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Traitement partiellement échoué / à vérifier",
-          description: "Erreur lors du traitement des fichiers: " + (result.errors?.join(', ') || 'Erreur inconnue'),
-        });
+      if (otherFiles.length > 0) {
+        const result = await fileProcessingService.processFiles(otherFiles);
+
+        // ⭐ PACK-B2 : toujours exposer le résultat structuré, même en échec partiel/global
+        setProcessingResults(result);
+
+        const excelErrorCount = result.data?.excelImportDiagnostics?.excel_errors?.length ?? 0;
+        const excelWarningCount = result.data?.excelImportDiagnostics?.excel_warnings?.length ?? 0;
+
+        if (result.success && excelErrorCount === 0 && excelWarningCount === 0) {
+          toast({
+            title: "Traitement terminé avec succès",
+            description: "Fichiers traités sans erreur détectée.",
+          });
+        } else if (result.success) {
+          toast({
+            title: "Traitement terminé avec réserves",
+            description: `${excelErrorCount} ligne(s) Excel rejetée(s), ${excelWarningCount} warning(s) — consultez l'audit de l'import ci-dessous.`,
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Traitement partiellement échoué / à vérifier",
+            description: "Erreur lors du traitement des fichiers: " + (result.errors?.join(', ') || 'Erreur inconnue'),
+          });
+        }
       }
     } catch (error) {
       console.error("Erreur lors du traitement:", error);
@@ -153,6 +209,72 @@ const FileUpload = () => {
       });
     } finally {
       setProcessing(false);
+    }
+  };
+
+  // ⭐ PACK-C : promotion explicite des lignes validées — seul point d'écriture DB
+  // du flux Collection Report.
+  const handlePromote = async (reviewWithSelection: CollectionImportReview) => {
+    const gate = assertPromotionAllowed(reviewWithSelection);
+    if (!gate.allowed) {
+      toast({
+        variant: "destructive",
+        title: "Promotion impossible",
+        description: gate.reason,
+      });
+      return;
+    }
+
+    setPromoting(true);
+    try {
+      const promotion = await promoteValidatedCollections(reviewWithSelection);
+      const validated = getValidatedCollections(reviewWithSelection);
+
+      const result: ProcessingResult = {
+        success: promotion.syncResult.errors.length === 0,
+        data: {
+          bankReports: [],
+          collectionReports: validated,
+          syncResult: promotion.syncResult,
+          excelImportDiagnostics: {
+            files_processed: reviewWithSelection.counters.files_processed,
+            collections_extracted: reviewWithSelection.counters.accepted_rows,
+            excel_errors: [
+              ...reviewWithSelection.fileLevelErrors,
+              ...reviewWithSelection.rejectedRows,
+            ],
+            excel_warnings: reviewWithSelection.warnings,
+          },
+        },
+        errors: promotion.syncResult.errors.map(
+          syncError => `${syncError.collection?.clientCode ?? 'INCONNU'}: ${syncError.error}`
+        ),
+      };
+
+      setCollectionReview(reviewWithSelection);
+      setPromotionResult(result);
+
+      if (promotion.syncResult.errors.length === 0) {
+        toast({
+          title: "Promotion terminée",
+          description: `Écriture DB effectuée après validation : ${promotion.validatedCount} ligne(s) promue(s).`,
+        });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Promotion terminée avec erreurs",
+          description: `${promotion.syncResult.errors.length} erreur(s) de synchronisation — consultez le détail ci-dessous.`,
+        });
+      }
+    } catch (error) {
+      console.error("Erreur lors de la promotion:", error);
+      toast({
+        variant: "destructive",
+        title: "Erreur de promotion",
+        description: error instanceof Error ? error.message : 'Erreur inconnue',
+      });
+    } finally {
+      setPromoting(false);
     }
   };
   
@@ -232,7 +354,7 @@ const FileUpload = () => {
               </>
             ) : (
               <>
-                Traiter {selectedFiles.length} fichier(s) <ArrowRight className="ml-2 h-5 w-5" />
+                Analyser / Traiter {selectedFiles.length} fichier(s) <ArrowRight className="ml-2 h-5 w-5" />
               </>
             )}
           </Button>
@@ -262,6 +384,32 @@ const FileUpload = () => {
       )}
       
       {processing && <ProgressDisplay />}
+
+      {/* ⭐ PACK-C : review humaine du staging Collection — zéro écriture DB avant promotion */}
+      {collectionReview && (
+        <CollectionImportReviewPanel
+          review={collectionReview}
+          promoting={promoting}
+          promotionDone={!!promotionResult}
+          onPromote={handlePromote}
+        />
+      )}
+
+      {/* ⭐ PACK-C : résultat de la promotion (écriture DB après validation explicite) */}
+      {promotionResult && (
+        <>
+          <Alert className="mb-6 border-green-300 bg-green-50">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <AlertDescription className="text-green-800">
+              Écriture DB effectuée après validation — résultat détaillé ci-dessous.
+            </AlertDescription>
+          </Alert>
+          <ProcessingResultsDetailed
+            results={promotionResult}
+            processingTime={processingStartTime ? Date.now() - processingStartTime : undefined}
+          />
+        </>
+      )}
 
       {processingResults && (
         <ProcessingResultsDetailed
