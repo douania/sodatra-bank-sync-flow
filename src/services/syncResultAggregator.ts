@@ -31,6 +31,7 @@ export function aggregateBatchSyncResults(
     new_collections: 0,
     idempotent_updates: 0,
     enriched_collections: 0,
+    incomplete_not_enriched: 0,
     ignored_collections: 0,
     errors: [],
     summary: {
@@ -52,6 +53,7 @@ export function aggregateBatchSyncResults(
     aggregated.new_collections += result.new_collections || 0;
     aggregated.idempotent_updates += result.idempotent_updates || 0;
     aggregated.enriched_collections += result.enriched_collections || 0;
+    aggregated.incomplete_not_enriched += result.incomplete_not_enriched || 0;
     aggregated.ignored_collections += result.ignored_collections || 0;
 
     if (Array.isArray(result.errors)) {
@@ -88,7 +90,28 @@ export function aggregateBatchSyncResults(
     aggregated.new_collections +
     aggregated.idempotent_updates +
     aggregated.enriched_collections +
+    aggregated.incomplete_not_enriched +
     aggregated.ignored_collections;
 
   return aggregated;
+}
+
+/**
+ * Compte les erreurs bloquantes pour le taux UI sans double comptage.
+ * fileProcessingService recopie déjà chaque erreur sync dans results.errors :
+ * les erreurs sync ne sont donc recomptées que si, par défaut de propagation,
+ * elles n'y figurent pas (cas défensif). Aucune erreur n'est masquée.
+ */
+export function computeBlockingErrorCount(
+  globalErrorCount: number,
+  excelErrorCount: number,
+  syncErrorCount: number
+): number {
+  const safeGlobal = Math.max(0, globalErrorCount || 0);
+  const safeExcel = Math.max(0, excelErrorCount || 0);
+  const safeSync = Math.max(0, syncErrorCount || 0);
+
+  const syncErrorsNotInGlobal = Math.max(0, safeSync - safeGlobal);
+
+  return safeGlobal + safeExcel + syncErrorsNotInGlobal;
 }

@@ -15,6 +15,7 @@ import {
   Database
 } from 'lucide-react';
 import { ProcessingResult } from '@/types/processing';
+import { computeBlockingErrorCount } from '@/services/syncResultAggregator';
 
 interface ProcessingResultsDetailedProps {
   results: ProcessingResult;
@@ -41,6 +42,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
     (syncResult?.new_collections || 0) +
     (syncResult?.idempotent_updates || 0) +
     (syncResult?.enriched_collections || 0) +
+    (syncResult?.incomplete_not_enriched || 0) +
     (syncResult?.ignored_collections || 0);
   const totalProcessed = syncResult?.summary?.total_processed;
   const conservationOk = typeof totalProcessed === 'number' && countersSum === totalProcessed;
@@ -103,7 +105,9 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
 
     // ⭐ PACK-B2 : les lignes Excel rejetées et les erreurs sync comptent comme bloquantes,
     // les warnings Excel non.
-    const blockingErrorCount = globalErrorCount + excelErrorCount + syncErrors.length;
+    // ⭐ PACK-B-FINAL : les erreurs sync sont déjà recopiées dans results.errors ;
+    // computeBlockingErrorCount évite de les compter deux fois sans les masquer.
+    const blockingErrorCount = computeBlockingErrorCount(globalErrorCount, excelErrorCount, syncErrors.length);
     return Math.max(0, Math.round(((totalItems - blockingErrorCount) / totalItems) * 100));
   };
 
@@ -235,7 +239,8 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                   <div className="text-xs text-blue-600 mt-1">
                     <div>Ajoutées réellement: {results.data.syncResult.new_collections || 0}</div>
                     <div>Mises à jour idempotentes: {results.data.syncResult.idempotent_updates || 0}</div>
-                    <div>Enrichies: {results.data.syncResult.enriched_collections || 0}</div>
+                    <div>Enrichies réellement: {results.data.syncResult.enriched_collections || 0}</div>
+                    <div>Incomplètes sans enrichissement réel: {results.data.syncResult.incomplete_not_enriched || 0}</div>
                     <div>Ignorées / préservées: {results.data.syncResult.ignored_collections || 0}</div>
                   </div>
                 </div>
@@ -350,6 +355,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                         Ajoutées ({formatNumber(syncResult.new_collections || 0)}) +
                         idempotentes ({formatNumber(syncResult.idempotent_updates || 0)}) +
                         enrichies ({formatNumber(syncResult.enriched_collections || 0)}) +
+                        incomplètes non enrichies ({formatNumber(syncResult.incomplete_not_enriched || 0)}) +
                         ignorées ({formatNumber(syncResult.ignored_collections || 0)}) = {formatNumber(countersSum)}
                       </div>
                       <div>

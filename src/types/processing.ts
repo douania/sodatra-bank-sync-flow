@@ -25,6 +25,9 @@ export interface SyncResultData {
   new_collections: number;
   idempotent_updates: number;
   enriched_collections: number;
+  // Collections EXISTS_INCOMPLETE analysées mais sans aucun champ réellement
+  // appliqué en base : comptées à part pour ne pas gonfler enriched_collections.
+  incomplete_not_enriched: number;
   ignored_collections: number;
   errors: SyncCollectionError[];
   summary: SyncResultSummary;
@@ -34,6 +37,7 @@ export interface PartialSyncResultData {
   new_collections?: number;
   idempotent_updates?: number;
   enriched_collections?: number;
+  incomplete_not_enriched?: number;
   ignored_collections?: number;
   errors?: SyncCollectionError[];
   summary?: {
