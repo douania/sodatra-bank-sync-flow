@@ -14,7 +14,10 @@ export default defineConfig(({ mode }) => ({
     react(),
     mode === 'development' &&
     componentTagger(),
-    mcpPlugin(),
+    // Le plugin Lovable MCP régénère supabase/functions/mcp/index.ts, mais produit
+    // sous Windows un artefact Supabase cassé (import "npm:C:\..."). Désactivé sur
+    // Windows local ; la sandbox Linux de Lovable reste la source de cet artefact.
+    process.platform !== "win32" && mcpPlugin(),
   ].filter(Boolean),
   resolve: {
     alias: {
