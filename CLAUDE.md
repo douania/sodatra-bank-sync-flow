@@ -94,3 +94,11 @@ Chaque lot se termine par un rapport court :
 6. **Diff summary** — fichiers, lignes ajoutées/supprimées.
 7. **Risques** — risques résiduels.
 8. **Recommandation** — PASS / PASS_WITH_RESERVES / FAIL / BLOCKED.
+
+## 7. Lovable MCP / build Windows
+
+- `supabase/functions/mcp/index.ts` est un **artefact généré** par le plugin Lovable MCP (`@lovable.dev/mcp-js`, sandbox Linux de Lovable).
+- **Ne jamais committer une version régénérée depuis Windows** : le plugin y produit un bundle cassé (`import "npm:C:\..."`) qui fuite le chemin local et casse le déploiement.
+- Si `npm run build` modifie ce fichier : **STOP**, puis `git restore supabase/functions/mcp/index.ts` avant toute PR.
+- Interdiction de référencer `import.meta.env` dans `src/lib/mcp/**` (risque d'inlining de variables d'environnement locales dans l'artefact).
+- Toute modification MCP (tools, manifest, auth) nécessite une revue CTO séparée.
