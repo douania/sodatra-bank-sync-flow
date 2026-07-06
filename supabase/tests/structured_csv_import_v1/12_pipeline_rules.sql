@@ -136,6 +136,33 @@ SELECT poc_test.expect_error($neg$
     p_lines => jsonb_build_array(poc_test.mk_line(0,'h_neg_1','credit','10.00','10.00','02/05/2026')))
 $neg$, '%STRUCTURED_CSV_AMOUNT_SCALE%', 'montant 3 decimales rejete (chemin complet)');
 
+-- Masque strict (PR #77) : compte quasi-complet avec un asterisque refuse,
+-- et jamais plus de 4 chiffres finaux.
+SELECT poc_test.expect_error($neg$
+  SELECT public.pre_ingest_structured_bank_statement(
+    p_requested_status => 'rejected', p_source_format => 'structured_csv_v1',
+    p_bank => 'BKTEST', p_rejected_reason => 'SYNTH_MASK_TEST',
+    p_account_number_masked => '123456789012*45')
+$neg$, '%attempts_masked_never_full_account%', 'PR77 masque quasi-complet (asterisque median) refuse');
+
+SELECT poc_test.expect_error($neg$
+  SELECT public.pre_ingest_structured_bank_statement(
+    p_requested_status => 'rejected', p_source_format => 'structured_csv_v1',
+    p_bank => 'BKTEST', p_rejected_reason => 'SYNTH_MASK_TEST',
+    p_account_number_masked => '****12345')
+$neg$, '%attempts_masked_never_full_account%', 'PR77 masque a 5 chiffres finaux refuse');
+
+-- Coherence signe (PR #77) : ligne credit avec signed_amount negatif refusee.
+SELECT poc_test.expect_error($neg$
+  SELECT public.pre_ingest_structured_bank_statement(
+    p_requested_status => 'ingestion_ready', p_source_format => 'structured_csv_v1',
+    p_bank => 'BKTEST', p_account_fingerprint => 'fp_synth_neg',
+    p_raw_text_hash => 'rth_neg', p_import_id => 'poc:v1:NEG',
+    p_parser_validation_status => 'valid',
+    p_statement => poc_test.mk_stmt(1,'0.00','0.00','10.00','10.00'),
+    p_lines => jsonb_build_array(poc_test.mk_line(0,'h_neg_sign','credit','10.00','-10.00','02/05/2026')))
+$neg$, '%lines_staging_one_amount%', 'PR77 credit avec signed negatif refuse (chemin complet)');
+
 -- Branche rejet : payload interdit / raison obligatoire (R6).
 SELECT poc_test.expect_error($neg$
   SELECT public.pre_ingest_structured_bank_statement(

@@ -65,4 +65,34 @@ SELECT poc_test.expect_error(
   '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'montant non numerique rejete'
 );
 
+-- Durcissement PR #77 : le cast ::numeric libre acceptait NaN, Infinity et la
+-- notation exponentielle — rejets explicites, insensibles a la casse.
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('NaN') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 NaN rejete');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('nan') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 nan (minuscules) rejete');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('Infinity') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 Infinity rejete');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('-Infinity') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 -Infinity rejete');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('inf') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 inf rejete');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('-INF') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 -INF (majuscules) rejete');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict('1e10') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 notation exponentielle rejetee');
+SELECT poc_test.expect_error(
+  $$ SELECT public.structured_csv_parse_amount_strict(' 10.00') $$,
+  '%STRUCTURED_CSV_AMOUNT_FORMAT%', 'PR77 espace parasite rejete');
+SELECT poc_test.assert(
+  public.structured_csv_parse_amount_strict('-200.00') = (-200.00)::numeric,
+  'PR77 montant negatif legitime toujours accepte');
+
 SELECT 'dates & montants stricts: PASS' AS status;

@@ -324,6 +324,40 @@ SELECT poc_test.expect_error(
         WHERE s.attempt_id = poc_test.ctx_get('s8_attempt')::uuid $neg$,
   '%STRUCTURED_CSV_TRIGGER_STATUS%', 'trigger: canonical ne peut pas naitre superseded');
 
+-- F.6 (PR #77) Masque strict au niveau table : même le owner ne peut pas
+--     insérer un compte quasi-complet contenant un astérisque.
+SELECT poc_test.expect_error(
+  $neg$ INSERT INTO public.bank_statement_staging (attempt_id, import_id, raw_text_hash, bank,
+        account_fingerprint, account_number_masked, currency, period_start_date, period_end_date,
+        opening_balance, total_debits, total_credits, closing_balance, validation_status, line_count)
+        VALUES ((poc_test.ctx_get('b1_rejected')::jsonb ->> 'attempt_id')::uuid,
+                'poc:v1:MASK', 'rth_mask', 'BKTEST', 'fp_synth_mask',
+                '78901234567890*1', 'XOF', DATE '2026-05-01', DATE '2026-05-31',
+                0, 0, 0, 0, 'valid', 0) $neg$,
+  '%staging_masked_never_full_account%', 'PR77 masque quasi-complet refuse au niveau table (owner)');
+
+-- F.7 (PR #77) Cohérence signe au niveau table : debit avec signed positif.
+SELECT poc_test.expect_error(
+  $neg$ INSERT INTO public.bank_statement_lines_staging
+        (staging_statement_id, attempt_id, import_id, line_hash, source_line_index,
+         transaction_date, description_sanitized, debit_amount, signed_amount, direction, currency)
+        SELECT s.id, s.attempt_id, s.import_id, 'h_sign_dbg', 98, DATE '2026-05-02',
+               'SYNTHETIC SIGN BYPASS', 5.00, 5.00, 'debit', 'XOF'
+        FROM public.bank_statement_staging s
+        WHERE s.attempt_id = poc_test.ctx_get('s3_attempt')::uuid $neg$,
+  '%lines_staging_one_amount%', 'PR77 debit avec signed positif refuse au niveau table (owner)');
+
+-- F.8 (PR #77) Cohérence signe canonical : credit avec signed negatif.
+SELECT poc_test.expect_error(
+  $neg$ INSERT INTO public.bank_statement_lines_canonical
+        (canonical_statement_id, import_id, line_hash, is_active, transaction_date,
+         description_sanitized, credit_amount, signed_amount, direction, currency)
+        SELECT id, 'poc:v1:S11', 'h_sign_dbg2', false, DATE '2026-05-05',
+               'SYNTHETIC SIGN BYPASS', 5.00, -5.00, 'credit', 'XOF'
+        FROM public.bank_statement_canonical
+        WHERE import_id = 'poc:v1:S11' AND status = 'ingested' $neg$,
+  '%lines_canonical_one_amount%', 'PR77 credit avec signed negatif refuse au niveau table (owner)');
+
 -- Invariant final T13bis re-vérifié après toutes les tentatives de contournement.
 SELECT poc_test.assert(
   NOT EXISTS (

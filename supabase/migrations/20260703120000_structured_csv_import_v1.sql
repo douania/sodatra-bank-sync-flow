@@ -29,6 +29,17 @@
 --   9.  RPC pre_ingest_structured_bank_statement = write path staging.
 --   10. Dates : helper strict DD/MM/YYYY avec round-trip, aucun cast implicite.
 --
+-- Durcissements post-audit CTO (PR #77) :
+--   a. montants : validation regex stricte avant cast — rejet explicite de
+--      NaN / Infinity / -Infinity / inf (toute casse), notation exponentielle,
+--      signes/espaces parasites ;
+--   b. lignes staging/canonical : CHECK direction/montant/signe complet
+--      (debit => signed < 0 et abs(signed) = debit_amount ;
+--       credit => signed > 0 et signed = credit_amount) ;
+--   c. account_number_masked : masque strict ^[*]+[0-9]{0,4}$ — uniquement des
+--      astérisques puis AU PLUS 4 chiffres finaux (un compte quasi-complet
+--      contenant un astérisque est refusé).
+--
 -- Invariants données (0J/0K/0O) : no raw CSV, no raw bytes, no full account,
 -- no full IBAN. Seuls account_fingerprint (hash) et account_number_masked
 -- (****1234) sont admis. description_sanitized = libellé normalisé, PAS
@@ -79,8 +90,10 @@ CREATE TABLE public.bank_statement_import_attempts (
     parser_validation_status IS NULL
     OR parser_validation_status IN ('valid', 'needs_review', 'invalid', 'unsupported')
   ),
+  -- Masque strict (PR #77) : uniquement des astérisques puis au plus 4
+  -- chiffres finaux — un compte quasi-complet avec astérisque est refusé.
   CONSTRAINT attempts_masked_never_full_account
-    CHECK (account_number_masked IS NULL OR account_number_masked LIKE '%*%'),
+    CHECK (account_number_masked IS NULL OR account_number_masked ~ '^[*]+[0-9]{0,4}$'),
   CONSTRAINT attempts_ingestion_ready_requires_success
     CHECK (NOT ingestion_ready OR success),
   CONSTRAINT attempts_ingestion_ready_requires_import_id
@@ -137,8 +150,9 @@ CREATE TABLE public.bank_statement_staging (
   CONSTRAINT staging_one_per_attempt UNIQUE (attempt_id),
   CONSTRAINT staging_period_coherent
     CHECK (period_end_date >= period_start_date),
+  -- Masque strict (PR #77) : cf. attempts_masked_never_full_account.
   CONSTRAINT staging_masked_never_full_account
-    CHECK (account_number_masked IS NULL OR account_number_masked LIKE '%*%')
+    CHECK (account_number_masked IS NULL OR account_number_masked ~ '^[*]+[0-9]{0,4}$')
 );
 
 -- 1.C  Lignes de transaction en staging.
@@ -169,10 +183,15 @@ CREATE TABLE public.bank_statement_lines_staging (
   CONSTRAINT lines_staging_status_domain CHECK (status IN (
     'not_promoted', 'promotion_pending', 'promoted', 'promotion_failed', 'superseded'
   )),
+  -- Cohérence direction/montant/signe complète (durcie PR #77) : le signe de
+  -- signed_amount et son égalité en valeur absolue avec le montant porté sont
+  -- structurels — un montant nul ou incohérent est refusé.
   CONSTRAINT lines_staging_one_amount
     CHECK (
-      (direction = 'debit'  AND debit_amount  IS NOT NULL AND credit_amount IS NULL) OR
-      (direction = 'credit' AND credit_amount IS NOT NULL AND debit_amount  IS NULL)
+      (direction = 'debit'  AND debit_amount  IS NOT NULL AND credit_amount IS NULL
+        AND signed_amount < 0 AND abs(signed_amount) = debit_amount) OR
+      (direction = 'credit' AND credit_amount IS NOT NULL AND debit_amount  IS NULL
+        AND signed_amount > 0 AND signed_amount = credit_amount)
     ),
   CONSTRAINT lines_staging_unique_per_statement
     UNIQUE (staging_statement_id, line_hash)
@@ -220,8 +239,9 @@ CREATE TABLE public.bank_statement_canonical (
       (status = 'ingested'   AND superseded_by IS NULL     AND superseded_at IS NULL) OR
       (status = 'superseded' AND superseded_by IS NOT NULL AND superseded_at IS NOT NULL)
     ),
+  -- Masque strict (PR #77) : cf. attempts_masked_never_full_account.
   CONSTRAINT canonical_masked_never_full_account
-    CHECK (account_number_masked IS NULL OR account_number_masked LIKE '%*%')
+    CHECK (account_number_masked IS NULL OR account_number_masked ~ '^[*]+[0-9]{0,4}$')
 );
 
 COMMENT ON TABLE public.bank_statement_canonical IS
@@ -252,10 +272,14 @@ CREATE TABLE public.bank_statement_lines_canonical (
 
   created_at                timestamptz NOT NULL DEFAULT now(),
 
+  -- Cohérence direction/montant/signe complète (durcie PR #77) :
+  -- cf. lines_staging_one_amount.
   CONSTRAINT lines_canonical_one_amount
     CHECK (
-      (direction = 'debit'  AND debit_amount  IS NOT NULL AND credit_amount IS NULL) OR
-      (direction = 'credit' AND credit_amount IS NOT NULL AND debit_amount  IS NULL)
+      (direction = 'debit'  AND debit_amount  IS NOT NULL AND credit_amount IS NULL
+        AND signed_amount < 0 AND abs(signed_amount) = debit_amount) OR
+      (direction = 'credit' AND credit_amount IS NOT NULL AND debit_amount  IS NULL
+        AND signed_amount > 0 AND signed_amount = credit_amount)
     )
 );
 
@@ -389,11 +413,16 @@ BEGIN
   IF p_value IS NULL THEN
     RETURN NULL;
   END IF;
-  BEGIN
-    v_num := p_value::numeric;
-  EXCEPTION WHEN OTHERS THEN
+  -- Durcissement audit CTO (PR #77) : validation structurelle stricte AVANT
+  -- tout cast. Le cast ::numeric libre acceptait 'NaN', 'Infinity', '-inf'
+  -- (toute casse) et la notation exponentielle — interdits pour un montant
+  -- financier. Seule forme admise : signe optionnel, 1 à 16 chiffres,
+  -- décimales optionnelles. NaN/Infinity échouent la regex quelle que soit
+  -- leur casse (seuls les chiffres sont admis).
+  IF p_value !~ '^-?[0-9]{1,16}([.][0-9]+)?$' THEN
     RAISE EXCEPTION 'STRUCTURED_CSV_AMOUNT_FORMAT: numeric value rejected (fail-closed)';
-  END;
+  END IF;
+  v_num := p_value::numeric;
   IF v_num IS DISTINCT FROM round(v_num, 2) THEN
     RAISE EXCEPTION 'STRUCTURED_CSV_AMOUNT_SCALE: more than 2 decimals rejected (fail-closed)';
   END IF;
