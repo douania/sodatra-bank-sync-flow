@@ -56,10 +56,51 @@ export interface BuildStructuredBankStatementLineHashInput {
   occurrenceOrdinal: number;
 }
 
+/**
+ * PERIOD-IDENTITY-V2-0E — browser twin of the Node v2 daily-unit identity
+ * input. Same doctrine: no periodStart/periodEnd, no sourceFormat — the
+ * canonical day of an account is export-window-independent.
+ */
+export interface BuildStructuredBankStatementDayUnitIdInput {
+  bank: 'BDK' | 'ORA' | string;
+  accountFingerprint: string;
+  currency: string;
+  /** Strict DD/MM/YYYY calendar date; the split key is always operationDate. */
+  accountingDate: string;
+}
+
+/**
+ * PERIOD-IDENTITY-V2-0E — browser twin of the Node v2 daily line identity
+ * input. valueDate stays a hash component but is never a split key.
+ */
+export interface BuildStructuredBankStatementDailyLineHashInput {
+  dayUnitId: string;
+  valueDate?: string;
+  direction: 'debit' | 'credit';
+  signedAmount: number;
+  currency: string;
+  descriptionSanitized: string;
+  /** Occurrence ordinal computed PER ACCOUNTING DAY (doctrine 0D), >= 1. */
+  dailyOccurrenceOrdinal: number;
+}
+
 // Domain-separation tags: MUST stay byte-identical to the Node twin — they are
 // part of the persisted identity contract (0U `import_id` / `line_hash`).
 const IMPORT_ID_DOMAIN = 'sodatra:structured_bank_statement_csv:import_id:v1';
 const LINE_HASH_DOMAIN = 'sodatra:structured_bank_statement_csv:line_hash:v1';
+
+// PERIOD-IDENTITY-V2-0E domain tags: MUST stay byte-identical to the Node twin
+// — they are part of the persisted identity contract of the future daily-unit
+// pipeline. v1 tags above are kept untouched — v2 is ADDED, never a
+// replacement.
+export const STRUCTURED_BANK_STATEMENT_DAY_UNIT_ID_DOMAIN_V2 =
+  'sodatra:structured_bank_statement_csv:day_unit_id:v2';
+export const STRUCTURED_BANK_STATEMENT_DAILY_LINE_HASH_DOMAIN_V2 =
+  'sodatra:structured_bank_statement_csv:daily_line_hash:v2';
+
+// Strict DD/MM/YYYY shape for the v2 accountingDate (calendar round-trip below
+// refuses silent rollovers such as 31/02/2026).
+const STRICT_DAY_MONTH_YEAR_PATTERN = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 
 // No-break space (U+00A0) and narrow no-break space (U+202F): folded to a plain
 // space before whitespace collapsing so a re-export that swaps one for the other
@@ -186,7 +227,10 @@ export async function buildStructuredBankStatementLineHash(
     );
   }
 
-  const canonicalAmount = canonicalizeSignedAmount(input.signedAmount);
+  const canonicalAmount = canonicalizeSignedAmount(
+    input.signedAmount,
+    'buildStructuredBankStatementLineHash'
+  );
 
   const currency = trimString(input.currency);
   if (currency === '') {
@@ -208,6 +252,111 @@ export async function buildStructuredBankStatementLineHash(
     currency,
     description,
     String(input.occurrenceOrdinal)
+  ]);
+
+  return sha256Hex(payload);
+}
+
+/**
+ * dayUnitId (v2): identity of ONE accounting day of one account in one
+ * currency, independent of the export window that carried it.
+ *
+ * Browser twin of the Node builder: same components, same validation order,
+ * same error messages, same payload — only the digest is Web Crypto based.
+ * Validation happens synchronously before any digest.
+ */
+export async function buildStructuredBankStatementDayUnitId(
+  input: BuildStructuredBankStatementDayUnitIdInput
+): Promise<string> {
+  const bank = trimString(input.bank);
+  const accountFingerprint = trimString(input.accountFingerprint);
+  const currency = trimString(input.currency);
+
+  if (bank === '') {
+    throw new Error('buildStructuredBankStatementDayUnitId: bank must be non-empty.');
+  }
+  if (accountFingerprint === '') {
+    throw new Error(
+      'buildStructuredBankStatementDayUnitId: accountFingerprint is mandatory and must be non-empty; ' +
+        'refusing to fall back on the masked account number.'
+    );
+  }
+  if (currency === '') {
+    throw new Error('buildStructuredBankStatementDayUnitId: currency must be non-empty.');
+  }
+
+  const accountingDate = assertStrictAccountingDate(
+    input.accountingDate,
+    'buildStructuredBankStatementDayUnitId'
+  );
+
+  const payload = canonicalPayload([
+    STRUCTURED_BANK_STATEMENT_DAY_UNIT_ID_DOMAIN_V2,
+    bank,
+    accountFingerprint,
+    currency,
+    accountingDate
+  ]);
+
+  return sha256Hex(payload);
+}
+
+/**
+ * dailyLineHash (v2): logical identity of a single transaction line, scoped
+ * to its daily unit instead of the export attempt.
+ *
+ * Browser twin of the Node builder: same components, same validation order,
+ * same error messages, same payload. Validation happens synchronously before
+ * any digest.
+ */
+export async function buildStructuredBankStatementDailyLineHash(
+  input: BuildStructuredBankStatementDailyLineHashInput
+): Promise<string> {
+  const dayUnitId = trimString(input.dayUnitId);
+  if (dayUnitId === '') {
+    throw new Error('buildStructuredBankStatementDailyLineHash: dayUnitId must be non-empty.');
+  }
+
+  if (input.direction !== 'debit' && input.direction !== 'credit') {
+    throw new Error(
+      `buildStructuredBankStatementDailyLineHash: direction must be "debit" or "credit", received "${String(
+        input.direction
+      )}".`
+    );
+  }
+
+  if (!Number.isInteger(input.dailyOccurrenceOrdinal) || input.dailyOccurrenceOrdinal < 1) {
+    throw new Error(
+      `buildStructuredBankStatementDailyLineHash: dailyOccurrenceOrdinal must be an integer >= 1, received "${String(
+        input.dailyOccurrenceOrdinal
+      )}".`
+    );
+  }
+
+  const canonicalAmount = canonicalizeSignedAmount(
+    input.signedAmount,
+    'buildStructuredBankStatementDailyLineHash'
+  );
+
+  const currency = trimString(input.currency);
+  if (currency === '') {
+    throw new Error('buildStructuredBankStatementDailyLineHash: currency must be non-empty.');
+  }
+
+  const description = normalizeStructuredBankStatementDescriptionForHash(input.descriptionSanitized);
+  if (description === '') {
+    throw new Error('buildStructuredBankStatementDailyLineHash: descriptionSanitized must be non-empty.');
+  }
+
+  const payload = canonicalPayload([
+    STRUCTURED_BANK_STATEMENT_DAILY_LINE_HASH_DOMAIN_V2,
+    dayUnitId,
+    input.valueDate === undefined ? '' : trimString(input.valueDate),
+    input.direction,
+    canonicalAmount,
+    currency,
+    description,
+    String(input.dailyOccurrenceOrdinal)
   ]);
 
   return sha256Hex(payload);
@@ -243,17 +392,41 @@ export function normalizeStructuredBankStatementDescriptionForHash(value: string
     .toLowerCase();
 }
 
-function canonicalizeSignedAmount(signedAmount: number): string {
+function canonicalizeSignedAmount(signedAmount: number, label: string): string {
   if (!Number.isFinite(signedAmount)) {
     throw new Error(
-      `buildStructuredBankStatementLineHash: signedAmount must be a finite number, received "${String(
-        signedAmount
-      )}".`
+      `${label}: signedAmount must be a finite number, received "${String(signedAmount)}".`
     );
   }
   // Collapse negative zero to zero so "-0" and "0" share one canonical form.
   const normalized = signedAmount === 0 ? 0 : signedAmount;
   return normalized.toString();
+}
+
+// Strict DD/MM/YYYY validation with a calendar round-trip: "31/02/2026" is
+// refused instead of silently rolling over. Returns the trimmed value.
+function assertStrictAccountingDate(value: string, label: string): string {
+  const trimmed = trimString(value);
+  const match = STRICT_DAY_MONTH_YEAR_PATTERN.exec(trimmed);
+  if (!match) {
+    throw new Error(
+      `${label}: accountingDate must be a strict DD/MM/YYYY date, received "${trimmed}".`
+    );
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const roundTrip = new Date(Date.UTC(year, month - 1, day));
+  const roundTrips =
+    roundTrip.getUTCFullYear() === year &&
+    roundTrip.getUTCMonth() === month - 1 &&
+    roundTrip.getUTCDate() === day;
+  if (!roundTrips) {
+    throw new Error(
+      `${label}: accountingDate must be a real calendar date (no silent rollover), received "${trimmed}".`
+    );
+  }
+  return trimmed;
 }
 
 // Explicit ordered-array serialization: order is fixed, so the pre-image is
