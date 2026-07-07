@@ -2,8 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   prepareStructuredBankStatementCsvIngestion,
+  MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS,
   type StructuredBankStatementCsvPreIngestionInput
 } from './structuredBankStatementCsvPreIngestion';
+import {
+  BRIDGE_CSV_INGESTION_REJECTION_MESSAGE,
+  UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE
+} from './structuredBankStatementCsvImportAdapter';
 
 // All fixtures below are fully synthetic. No real bank statement data, no real
 // account number, no real bank client and no SODATRA data is ever used.
@@ -352,4 +357,113 @@ test('NO-LEAK 2: rejected documents leak nothing either', () => {
     assert.equal(keys.has(forbiddenKey), false, `forbidden key exposed: ${forbiddenKey}`);
   }
   assert.equal(serialized.includes(SYNTHETIC_RAW_ACCOUNT_DIGITS), false);
+});
+
+// ---------------------------------------------------------------------------
+// DAILY-INGESTION-0C — garde BRIDGE / UNKNOWN sur le chemin de pré-ingestion
+// ---------------------------------------------------------------------------
+
+test('0C BRIDGE: a bridge-named CSV is rejected fail-closed, no identity, no statement', () => {
+  const result = prepareStructuredBankStatementCsvIngestion(
+    baseInput({ sourceFileName: 'BRIDGE_EXPORT.csv' })
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.ingestionReady, false);
+  assert.equal(result.lineHashesApplied, false);
+  assert.equal(result.importId, undefined);
+  assert.equal(result.importResult.statement, undefined);
+  assert.equal(result.importResult.rejectedReason, BRIDGE_CSV_INGESTION_REJECTION_MESSAGE);
+  assert.ok(result.errors.includes(BRIDGE_CSV_INGESTION_REJECTION_MESSAGE));
+  // Traceability of the rejected text is preserved.
+  assert.match(result.rawTextHash, HEX_SHA256);
+});
+
+test('0C UNKNOWN: a CSV without a trusted BDK/ORA source name is rejected fail-closed', () => {
+  const named = prepareStructuredBankStatementCsvIngestion(
+    baseInput({ sourceFileName: 'releve-mysterieux-juin.csv' })
+  );
+  assert.equal(named.success, false);
+  assert.equal(named.ingestionReady, false);
+  assert.equal(named.importId, undefined);
+  assert.equal(named.importResult.statement, undefined);
+  assert.ok(named.errors.includes(UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE));
+
+  const unnamed = prepareStructuredBankStatementCsvIngestion(
+    baseInput({ sourceFileName: undefined })
+  );
+  assert.equal(unnamed.success, false);
+  assert.equal(unnamed.ingestionReady, false);
+  assert.equal(unnamed.importId, undefined);
+  assert.ok(unnamed.errors.includes(UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE));
+});
+
+// ---------------------------------------------------------------------------
+// DAILY-INGESTION-0C — garde période longue
+// ---------------------------------------------------------------------------
+
+// 90 jours inclusifs : 01/06/2026 -> 29/08/2026. Le relevé reste entièrement
+// réconcilié : seule la durée déclarée dépasse la limite.
+function longPeriodCsv(): string {
+  const lines = validCsvLines();
+  lines[2] = 'Periode;01/06/2026;29/08/2026;;;';
+  lines[lines.length - 1] = 'Solde au 29/08/2026 : 1100000;;;;;';
+  return lines.join('\n');
+}
+
+// 45 jours inclusifs pile : 01/06/2026 -> 15/07/2026 (borne acceptée).
+function boundaryPeriodCsv(): string {
+  const lines = validCsvLines();
+  lines[2] = 'Periode;01/06/2026;15/07/2026;;;';
+  lines[lines.length - 1] = 'Solde au 15/07/2026 : 1100000;;;;;';
+  return lines.join('\n');
+}
+
+// 46 jours inclusifs : 01/06/2026 -> 16/07/2026 (premier jour refusé).
+function overBoundaryPeriodCsv(): string {
+  const lines = validCsvLines();
+  lines[2] = 'Periode;01/06/2026;16/07/2026;;;';
+  lines[lines.length - 1] = 'Solde au 16/07/2026 : 1100000;;;;;';
+  return lines.join('\n');
+}
+
+test('0C période: 90 jours -> jamais ingestionReady, message contrôlé, identité conservée', () => {
+  const result = prepareStructuredBankStatementCsvIngestion(
+    baseInput({ decodedText: longPeriodCsv() })
+  );
+
+  // Le document reste valide et hashé (identité légitime), mais le signal
+  // fail-closed ingestionReady est forcé à false par la garde.
+  assert.equal(result.success, true);
+  assert.equal(result.lineHashesApplied, true);
+  assert.ok(result.importId !== undefined);
+  assert.equal(result.ingestionReady, false);
+
+  const periodError = result.errors.find((error) => error.includes('90 days'));
+  assert.ok(periodError !== undefined, 'expected a controlled period-length error');
+  assert.ok(periodError.includes(`${MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS}-day`));
+});
+
+test('0C période: 45 jours pile passe, 46 jours bloque (borne inclusive)', () => {
+  const atBoundary = prepareStructuredBankStatementCsvIngestion(
+    baseInput({ decodedText: boundaryPeriodCsv() })
+  );
+  assert.equal(atBoundary.success, true);
+  assert.equal(atBoundary.ingestionReady, true);
+  assert.equal(atBoundary.errors.length, 0);
+
+  const overBoundary = prepareStructuredBankStatementCsvIngestion(
+    baseInput({ decodedText: overBoundaryPeriodCsv() })
+  );
+  assert.equal(overBoundary.success, true);
+  assert.equal(overBoundary.ingestionReady, false);
+  assert.ok(overBoundary.errors.some((error) => error.includes('46 days')));
+});
+
+test('0C période: le comportement existant à 30 jours est inchangé', () => {
+  const result = prepareStructuredBankStatementCsvIngestion(baseInput());
+
+  assert.equal(result.success, true);
+  assert.equal(result.ingestionReady, true);
+  assert.equal(result.errors.length, 0);
 });

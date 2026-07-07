@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   adaptStructuredBankStatementDocumentToBankAccountStatementImportResult,
+  findStructuredBankStatementIngestionGuardRejection,
+  BRIDGE_CSV_INGESTION_REJECTION_MESSAGE,
+  UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE,
   type StructuredBankStatementCsvImportAdapterOptions
 } from './structuredBankStatementCsvImportAdapter';
 import {
@@ -607,4 +610,96 @@ test('REJECT 19: a valid status with an undefined lineBalancesConsistent is not 
   assert.equal(result.success, false);
   assert.equal(result.statement, undefined);
   assert.match(result.errors.join(' '), /do not reconcile/i);
+});
+
+// ---------------------------------------------------------------------------
+// DAILY-INGESTION-0C — garde BRIDGE / UNKNOWN sur le chemin d'adaptation
+// ---------------------------------------------------------------------------
+
+test('0C guard unit: BRIDGE file names are rejected with the controlled message', () => {
+  assert.equal(
+    findStructuredBankStatementIngestionGuardRejection({
+      sourceFileName: '010726 BRIDGE ONLINE CSV.csv',
+      bankHint: 'UNKNOWN'
+    }),
+    BRIDGE_CSV_INGESTION_REJECTION_MESSAGE
+  );
+  // BRIDGE wins even over a concrete hint: a bridge-named file is never eligible.
+  assert.equal(
+    findStructuredBankStatementIngestionGuardRejection({
+      sourceFileName: 'BRIDGE_EXPORT_ORA.csv',
+      bankHint: 'ORA'
+    }),
+    BRIDGE_CSV_INGESTION_REJECTION_MESSAGE
+  );
+});
+
+test('0C guard unit: UNKNOWN bank hint is rejected, trusted BDK/ORA pass', () => {
+  assert.equal(
+    findStructuredBankStatementIngestionGuardRejection({
+      sourceFileName: 'releve-mysterieux.csv',
+      bankHint: 'UNKNOWN'
+    }),
+    UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE
+  );
+  assert.equal(
+    findStructuredBankStatementIngestionGuardRejection({
+      sourceFileName: undefined,
+      bankHint: 'UNKNOWN'
+    }),
+    UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE
+  );
+  assert.equal(
+    findStructuredBankStatementIngestionGuardRejection({
+      sourceFileName: 'releve ora synthetique.csv',
+      bankHint: 'ORA'
+    }),
+    undefined
+  );
+  assert.equal(
+    findStructuredBankStatementIngestionGuardRejection({
+      sourceFileName: 'releve-bdk-synthetique.csv',
+      bankHint: 'BDK'
+    }),
+    undefined
+  );
+});
+
+test('0C adapt: UNKNOWN bank hint is a hard rejection, never a warning-only pass', () => {
+  const document = makeDocument({ bankHint: 'UNKNOWN', sourceFileName: 'releve-mysterieux.csv' });
+  const result = adaptStructuredBankStatementDocumentToBankAccountStatementImportResult(
+    document,
+    options()
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.equal(result.rejectedReason, UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE);
+  assert.ok(result.errors.includes(UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE));
+});
+
+test('0C adapt: a BRIDGE-named document never yields a statement, even when otherwise valid', () => {
+  const document = makeDocument({
+    bankHint: 'UNKNOWN',
+    sourceFileName: '010726 BRIDGE ONLINE CSV.csv'
+  });
+  const result = adaptStructuredBankStatementDocumentToBankAccountStatementImportResult(
+    document,
+    options()
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.equal(result.rejectedReason, BRIDGE_CSV_INGESTION_REJECTION_MESSAGE);
+});
+
+test('0C adapt: options.sourceFileName takes precedence for the BRIDGE guard', () => {
+  const result = adaptStructuredBankStatementDocumentToBankAccountStatementImportResult(
+    makeDocument(),
+    options({ sourceFileName: 'BRIDGE_EXPORT.csv' })
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.statement, undefined);
+  assert.equal(result.rejectedReason, BRIDGE_CSV_INGESTION_REJECTION_MESSAGE);
 });

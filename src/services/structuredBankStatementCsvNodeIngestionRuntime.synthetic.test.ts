@@ -78,7 +78,7 @@ function baseInput(
   overrides: Partial<StructuredBankStatementCsvNodeIngestionRuntimeInput> = {}
 ): StructuredBankStatementCsvNodeIngestionRuntimeInput {
   return {
-    sourceFileName: 'releve-synthetique.csv',
+    sourceFileName: 'releve-bdk-synthetique.csv',
     bytes: encodeWindows1252(validCsv()),
     bank: 'BDK',
     accountFingerprint: SYNTHETIC_FINGERPRINT,
@@ -88,14 +88,14 @@ function baseInput(
 
 test('non-CSV input is rejected fail-closed before any decoding', () => {
   const result = prepareStructuredBankStatementCsvNodeIngestionRuntime(
-    baseInput({ sourceFileName: 'releve-synthetique.pdf' })
+    baseInput({ sourceFileName: 'releve-bdk-synthetique.pdf' })
   );
 
   assert.equal(result.success, false);
   assert.equal(result.ingestionReady, false);
   assert.equal(result.lineHashesApplied, false);
   assert.equal(result.rawContentHidden, true);
-  assert.equal(result.sourceFileName, 'releve-synthetique.pdf');
+  assert.equal(result.sourceFileName, 'releve-bdk-synthetique.pdf');
   assert.ok(result.rejectedReason !== undefined && result.rejectedReason.length > 0);
   assert.ok(result.errors.length > 0);
   // The pre-ingestion layer ALWAYS computes rawTextHash and an importResult:
@@ -106,7 +106,7 @@ test('non-CSV input is rejected fail-closed before any decoding', () => {
 
 test('.CSV extension is accepted case-insensitively', () => {
   const result = prepareStructuredBankStatementCsvNodeIngestionRuntime(
-    baseInput({ sourceFileName: 'RELEVE-SYNTHETIQUE.CSV' })
+    baseInput({ sourceFileName: 'RELEVE-BDK-SYNTHETIQUE.CSV' })
   );
 
   assert.equal(result.success, true);

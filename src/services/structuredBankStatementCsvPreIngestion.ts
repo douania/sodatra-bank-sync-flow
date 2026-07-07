@@ -32,6 +32,15 @@
  *    text.
  *  - The decoded text, raw account number and raw CSV cells are never exposed
  *    by the result.
+ *
+ * DAILY-INGESTION-0C guards (pure, no DB):
+ *  - BRIDGE-named files and UNKNOWN bank hints are rejected fail-closed on
+ *    this ingestion path (shared guard with the 0G adapter); no importId is
+ *    ever computed for such a document.
+ *  - A statement period longer than MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS
+ *    (inclusive day count) is never `ingestionReady`. Overlap detection
+ *    against previously ingested periods requires the DB history and stays
+ *    out of scope until E-2C / the period doctrine lot.
  */
 
 import type { BankAccountStatementImportResult } from '@/types/bankAccountStatement';
@@ -45,7 +54,18 @@ import {
   buildStructuredBankStatementRawTextHash,
   normalizeStructuredBankStatementDescriptionForHash
 } from './structuredBankStatementCsvIdempotencyKeys';
-import { adaptStructuredBankStatementDocumentToBankAccountStatementImportResult } from './structuredBankStatementCsvImportAdapter';
+import {
+  adaptStructuredBankStatementDocumentToBankAccountStatementImportResult,
+  findStructuredBankStatementIngestionGuardRejection
+} from './structuredBankStatementCsvImportAdapter';
+
+/**
+ * DAILY-INGESTION-0C: maximum statement period length (inclusive day count)
+ * accepted on the ingestion path. Anything longer is never `ingestionReady`.
+ */
+export const MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS = 45;
+
+const DAY_IN_MS = 86_400_000;
 
 export interface StructuredBankStatementCsvPreIngestionInput {
   /** CSV text already decoded (e.g. from Windows-1252) at the runtime boundary. */
@@ -69,8 +89,10 @@ export interface StructuredBankStatementCsvPreIngestionResult {
   success: boolean;
   /**
    * True only when the adapter succeeded AND an importId was computed AND every
-   * statement line carries a lineHash. This is the fail-closed idempotency
-   * signal a future ingestion lot must gate on.
+   * statement line carries a lineHash AND no 0C ingestion guard fired (BRIDGE /
+   * UNKNOWN source, period longer than
+   * MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS). This is the fail-closed
+   * idempotency signal a future ingestion lot must gate on.
    */
   ingestionReady: boolean;
   /** Always computed, even for rejected documents (traceability). */
@@ -104,6 +126,26 @@ export function prepareStructuredBankStatementCsvIngestion(
   const status = document.validation.status;
   const accountFingerprint = normalizeOptional(input.accountFingerprint);
 
+  // DAILY-INGESTION-0C: BRIDGE / UNKNOWN sources are never ingestable. The
+  // rejection is recorded as a pre-ingestion error and no identity is ever
+  // fabricated for such a document; the 0G adapter enforces the same guard on
+  // its own path, so the importResult below is rejected as well.
+  const ingestionGuardRejection = findStructuredBankStatementIngestionGuardRejection({
+    sourceFileName: input.sourceFileName,
+    bankHint: document.bankHint
+  });
+  if (ingestionGuardRejection !== undefined) {
+    errors.push(ingestionGuardRejection);
+  }
+
+  // DAILY-INGESTION-0C: period-length guard. Only rules on a positively
+  // measurable period (both dates present, strictly parseable, not reversed);
+  // malformed dates stay the parser's concern (non-regression).
+  const periodGuardError = buildPeriodLengthGuardError(document.periodStart, document.periodEnd);
+  if (periodGuardError !== undefined) {
+    errors.push(periodGuardError);
+  }
+
   // Single normalization point: the same trimmed, defaulted sourceFormat feeds
   // both the importId and the adapter, so the statement's sourceFormat can
   // never diverge from the one hashed into the identity.
@@ -113,7 +155,10 @@ export function prepareStructuredBankStatementCsvIngestion(
   // component is positively present. Preconditions are checked here so the 0H
   // helper's throws never become the control flow of this layer.
   let importId: string | undefined;
-  if (status === 'valid' || status === 'needs_review') {
+  if (ingestionGuardRejection !== undefined) {
+    // Guard-rejected documents never receive an identity: the pre-ingestion
+    // error above is the single controlled signal.
+  } else if (status === 'valid' || status === 'needs_review') {
     const periodStart = normalizeOptional(document.periodStart);
     const periodEnd = normalizeOptional(document.periodEnd);
 
@@ -213,9 +258,14 @@ export function prepareStructuredBankStatementCsvIngestion(
     }
   };
 
+  // DAILY-INGESTION-0C: a fired guard forces ingestionReady to false even for
+  // an otherwise fully valid, fully hashed statement.
+  const ingestionBlockedByGuard =
+    ingestionGuardRejection !== undefined || periodGuardError !== undefined;
+
   return {
     success: importResult.success,
-    ingestionReady: importResult.success,
+    ingestionReady: importResult.success && !ingestionBlockedByGuard,
     rawTextHash,
     importId,
     lineHashesApplied: true,
@@ -223,6 +273,55 @@ export function prepareStructuredBankStatementCsvIngestion(
     errors,
     warnings
   };
+}
+
+/**
+ * DAILY-INGESTION-0C: controlled error when the statement period (inclusive
+ * day count between two strict DD/MM/YYYY dates) exceeds
+ * MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS. Absent, unparseable or reversed
+ * dates return `undefined`: the guard only rules on a positively measurable
+ * period length.
+ */
+function buildPeriodLengthGuardError(
+  periodStart: string | undefined,
+  periodEnd: string | undefined
+): string | undefined {
+  if (periodStart === undefined || periodEnd === undefined) {
+    return undefined;
+  }
+  const startMs = parseStrictDayMonthYearUtc(periodStart.trim());
+  const endMs = parseStrictDayMonthYearUtc(periodEnd.trim());
+  if (startMs === undefined || endMs === undefined || endMs < startMs) {
+    return undefined;
+  }
+  const periodDays = Math.round((endMs - startMs) / DAY_IN_MS) + 1;
+  if (periodDays <= MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS) {
+    return undefined;
+  }
+  return (
+    `Statement period spans ${periodDays} days (${periodStart.trim()} -> ${periodEnd.trim()}), ` +
+    `above the ${MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS}-day ingestion limit; ` +
+    'the statement is not ingestion-ready.'
+  );
+}
+
+// Strict DD/MM/YYYY parsing with a calendar round-trip: "31/02/2026" is
+// refused instead of silently rolling over to March.
+function parseStrictDayMonthYearUtc(value: string): number | undefined {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) {
+    return undefined;
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const utc = Date.UTC(year, month - 1, day);
+  const date = new Date(utc);
+  const roundTrips =
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+  return roundTrips ? utc : undefined;
 }
 
 /**
