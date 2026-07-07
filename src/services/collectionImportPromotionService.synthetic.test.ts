@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   assertPromotionAllowed,
+  assessCollectionRowShift,
   getValidatedCollections,
   promoteValidatedCollections,
+  COLLECTION_SHIFT_MIN_DIVERGENT_ROWS,
   type CollectionSyncEngine,
 } from './collectionImportPromotionService';
 import { buildCollectionRowId } from './collectionImportReviewService';
@@ -274,4 +276,193 @@ test('les erreurs collection remontées par le moteur restent visibles après ag
   assert.equal(promotion.syncResult.errors.length, 1);
   assert.equal(promotion.syncResult.errors[0].collection.clientCode, 'CLIENT_SYN_2');
   assert.equal(promotion.syncResult.errors[0].error, 'Erreur insertion synthétique');
+});
+
+// ---------------------------------------------------------------------------
+// ⭐ DAILY-INGESTION-0C — garde-fou de décalage massif des lignes Collection
+// ---------------------------------------------------------------------------
+
+// Moteur simulé avec une "base" préexistante : analyze restitue existingRecord
+// pour chaque trace Excel déjà connue, comme le fait intelligentSyncService.
+function createFakeSyncEngineWithExistingBase(existingRecords: CollectionReport[]) {
+  const store = new Map<string, CollectionReport>();
+  for (const record of existingRecords) {
+    store.set(buildCollectionRowId(record.excelFilename!, record.excelSourceRow!), record);
+  }
+  const calls = { analyze: 0, sync: 0 };
+
+  const engine: CollectionSyncEngine = {
+    async analyze(collections) {
+      calls.analyze++;
+      return collections.map(collection => {
+        const key = buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!);
+        const existing = store.get(key);
+        return {
+          excelRow: collection,
+          existingRecord: existing,
+          status: existing ? 'EXISTS_COMPLETE' : 'NEW',
+          missingFields: [],
+          enrichmentOpportunities: [],
+          collectionKey: key,
+        };
+      }) as unknown as CollectionComparison[];
+    },
+    async sync(comparisons) {
+      calls.sync++;
+      let new_collections = 0;
+      let idempotent_updates = 0;
+      for (const comparison of comparisons) {
+        const collection = comparison.excelRow as CollectionReport;
+        const key = buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!);
+        if (store.has(key)) {
+          store.set(key, collection);
+          idempotent_updates++;
+        } else {
+          store.set(key, collection);
+          new_collections++;
+        }
+      }
+      return {
+        new_collections,
+        idempotent_updates,
+        enriched_collections: 0,
+        incomplete_not_enriched: 0,
+        ignored_collections: 0,
+        errors: [],
+      };
+    },
+  };
+
+  return { engine, store, calls };
+}
+
+test('0C décalage massif : insertion au milieu simulée -> promotion bloquée, sync jamais appelé', async () => {
+  // Base existante : lignes 1..10 telles qu'importées initialement.
+  // Fichier réexporté : une ligne insérée au milieu a décalé toutes les
+  // lignes -> à chaque excel_source_row N correspond désormais le contenu de
+  // l'ancienne ligne N-1 (identité stable différente sur chaque trace).
+  const existing = Array.from({ length: 10 }, (_, index) => syntheticCollection(index + 1));
+  const review = syntheticReview(
+    Array.from({ length: 10 }, (_, index) => ({ sourceRow: index + 1, selected: true }))
+  );
+  review.acceptedRows = review.acceptedRows.map((row, index) => ({
+    ...row,
+    collection: {
+      ...syntheticCollection(index), // contenu de la ligne précédente
+      excelSourceRow: index + 1,     // ...sous la trace de la ligne courante
+      excelFilename: 'COLLECTION_REPORT_SYNTHETIC.xlsx',
+    },
+  }));
+
+  const { engine, store, calls } = createFakeSyncEngineWithExistingBase(existing);
+  const snapshot = new Map(store);
+
+  await assert.rejects(
+    promoteValidatedCollections(review, engine),
+    /Promotion bloquée : possible décalage massif des lignes Collection/
+  );
+
+  assert.equal(calls.sync, 0, 'sync must never run when the shift guard fires');
+  assert.deepEqual([...store.entries()], [...snapshot.entries()], 'no write may occur');
+});
+
+test('0C décalage : réimport strictement identique -> aucune fausse alerte, idempotence préservée', async () => {
+  const existing = Array.from({ length: 10 }, (_, index) => syntheticCollection(index + 1));
+  const review = syntheticReview(
+    Array.from({ length: 10 }, (_, index) => ({ sourceRow: index + 1, selected: true }))
+  );
+
+  const { engine, calls } = createFakeSyncEngineWithExistingBase(existing);
+  const promotion = await promoteValidatedCollections(review, engine);
+
+  assert.equal(calls.sync, 1);
+  assert.equal(promotion.syncResult.idempotent_updates, 10);
+  assert.equal(promotion.syncResult.errors.length, 0);
+});
+
+test('0C décalage : des enrichissements non identitaires ne déclenchent jamais le blocage', async () => {
+  // Les lignes existantes ne diffèrent que sur des champs volatils/enrichissables.
+  const existing = Array.from({ length: 10 }, (_, index) => ({
+    ...syntheticCollection(index + 1),
+    status: 'processed' as const,
+    processingStatus: 'FULLY_PROCESSED',
+    dateOfValidity: '2026-06-20',
+    creditedDate: '2026-06-21',
+    commission: 1234,
+    bankCommission: 567,
+    matchConfidence: 0.99,
+    matchMethod: 'SYNTHETIC_MATCH',
+    processedAt: '2026-06-21T10:00:00.000Z',
+  }));
+  const review = syntheticReview(
+    Array.from({ length: 10 }, (_, index) => ({ sourceRow: index + 1, selected: true }))
+  );
+
+  const { engine, calls } = createFakeSyncEngineWithExistingBase(existing);
+  const promotion = await promoteValidatedCollections(review, engine);
+
+  assert.equal(calls.sync, 1);
+  assert.equal(promotion.syncResult.errors.length, 0);
+});
+
+// --- Tests unitaires du calcul de décalage -----------------------------------
+
+function shiftComparison(
+  excelRow: Partial<CollectionReport>,
+  existingRecord?: Partial<CollectionReport>
+): CollectionComparison {
+  return {
+    excelRow,
+    existingRecord,
+    status: existingRecord ? 'EXISTS_COMPLETE' : 'NEW',
+    missingFields: [],
+    enrichmentOpportunities: [],
+    collectionKey: 'synthetic-key',
+  } as unknown as CollectionComparison;
+}
+
+function identityRow(seed: number): Partial<CollectionReport> {
+  return {
+    reportDate: '2026-06-05',
+    clientCode: `CLIENT_SYN_${seed}`,
+    collectionAmount: 100000 + seed,
+    bankName: 'BANQUE_SYNTHETIQUE_1',
+    factureNo: `FA-${seed}`,
+    noChqBd: `CHQ-${seed}`,
+  };
+}
+
+test('0C assessCollectionRowShift : seuil absolu (5 lignes) et seuil relatif (20 %)', () => {
+  const identical = (count: number, offset = 0) =>
+    Array.from({ length: count }, (_, index) =>
+      shiftComparison(identityRow(offset + index), identityRow(offset + index))
+    );
+  const divergent = (count: number, offset = 0) =>
+    Array.from({ length: count }, (_, index) =>
+      shiftComparison(identityRow(offset + index), identityRow(offset + index + 1000))
+    );
+
+  // 4 divergentes sur 30 (13 %) : sous les deux seuils -> pas de blocage.
+  const belowBoth = assessCollectionRowShift([...identical(26), ...divergent(4, 100)]);
+  assert.equal(belowBoth.comparedExistingCount, 30);
+  assert.equal(belowBoth.divergentCount, 4);
+  assert.equal(belowBoth.blocked, false);
+
+  // 5 divergentes sur 30 (17 %) : seuil absolu atteint -> blocage.
+  const absolute = assessCollectionRowShift([...identical(25), ...divergent(5, 100)]);
+  assert.equal(absolute.divergentCount, COLLECTION_SHIFT_MIN_DIVERGENT_ROWS);
+  assert.equal(absolute.blocked, true);
+
+  // 2 divergentes sur 10 (20 %) : seuil relatif atteint -> blocage.
+  const relative = assessCollectionRowShift([...identical(8), ...divergent(2, 100)]);
+  assert.equal(relative.blocked, true);
+
+  // 1 divergente sur 10 (10 %) : sous les deux seuils -> pas de blocage.
+  const single = assessCollectionRowShift([...identical(9), ...divergent(1, 100)]);
+  assert.equal(single.blocked, false);
+
+  // Aucune ligne existante comparée : rien à bloquer.
+  const onlyNew = assessCollectionRowShift([shiftComparison(identityRow(1))]);
+  assert.equal(onlyNew.comparedExistingCount, 0);
+  assert.equal(onlyNew.blocked, false);
 });

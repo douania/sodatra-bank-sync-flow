@@ -13,6 +13,10 @@
  *    `valid` document. `needs_review` never yields `success: true`; it can only
  *    produce a review statement when the caller opts in and every mandatory field
  *    is present. `invalid` and `unsupported` never produce a statement.
+ *  - DAILY-INGESTION-0C guard: a BRIDGE-named source file or an UNKNOWN bank
+ *    hint is a hard rejection on this adaptation path — never a mere warning.
+ *    The read-only diagnostic service does not go through this adapter and
+ *    keeps returning its safe summary for any CSV.
  *
  * The raw account number, raw CSV text and raw transaction cells are never
  * surfaced: only the already-masked / already-sanitized document fields flow
@@ -51,21 +55,69 @@ export interface StructuredBankStatementCsvImportAdapterOptions {
 const DETECTED_FORMAT = 'structured_bank_statement_csv';
 const DEFAULT_SOURCE_FORMAT = 'structured_bank_statement_csv';
 
+// ---------------------------------------------------------------------------
+// DAILY-INGESTION-0C — ingestion/adaptation guard (pure, no I/O).
+// ---------------------------------------------------------------------------
+
+export const BRIDGE_CSV_INGESTION_REJECTION_MESSAGE =
+  'BRIDGE CSV is not supported for ingestion; use the XLSX export.';
+
+export const UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE =
+  'Document bank hint is UNKNOWN; ingestion and adaptation require a trusted BDK or ORA source file name.';
+
+export interface StructuredBankStatementIngestionGuardInput {
+  sourceFileName?: string;
+  bankHint: StructuredBankStatementDocument['bankHint'];
+}
+
+/**
+ * Fail-closed eligibility check shared by the 0G adapter and the 0I
+ * pre-ingestion layer: BRIDGE exports (any source file name containing
+ * "bridge") and UNKNOWN bank hints can never become a promotable statement.
+ * Returns the controlled rejection message, or `undefined` when eligible.
+ */
+export function findStructuredBankStatementIngestionGuardRejection(
+  input: StructuredBankStatementIngestionGuardInput
+): string | undefined {
+  const name = (input.sourceFileName ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+  if (name.includes('bridge')) {
+    return BRIDGE_CSV_INGESTION_REJECTION_MESSAGE;
+  }
+  if (input.bankHint !== 'BDK' && input.bankHint !== 'ORA') {
+    return UNKNOWN_BANK_HINT_INGESTION_REJECTION_MESSAGE;
+  }
+  return undefined;
+}
+
 export function adaptStructuredBankStatementDocumentToBankAccountStatementImportResult(
   document: StructuredBankStatementDocument,
   options: StructuredBankStatementCsvImportAdapterOptions
 ): BankAccountStatementImportResult {
   const adapterWarnings: string[] = [];
 
-  // 1. Bank-hint coherence. `bankHint` is only a cross-check: a concrete hint
-  //    that contradicts the requested bank is a hard rejection; an UNKNOWN hint
-  //    is tolerated but recorded as a coherence warning.
-  const coherence = checkBankHintCoherence(document.bankHint, options.bank);
-  if (coherence.warning) {
-    adapterWarnings.push(coherence.warning);
+  // 0. DAILY-INGESTION-0C guard: BRIDGE / UNKNOWN are hard rejections on the
+  //    adaptation path. Evaluated before anything else so no statement can be
+  //    produced for an ineligible source.
+  const guardRejection = findStructuredBankStatementIngestionGuardRejection({
+    sourceFileName: options.sourceFileName ?? document.sourceFileName,
+    bankHint: document.bankHint
+  });
+  if (guardRejection !== undefined) {
+    return buildRejectedResult(document, options, [guardRejection], adapterWarnings);
   }
-  if (coherence.rejectionReason) {
-    return buildRejectedResult(document, options, [coherence.rejectionReason], adapterWarnings);
+
+  // 1. Bank-hint coherence: after the 0C guard the hint is concrete (BDK/ORA);
+  //    a hint that contradicts the requested bank is a hard rejection.
+  if (document.bankHint !== options.bank) {
+    return buildRejectedResult(
+      document,
+      options,
+      [`Document bank hint "${document.bankHint}" contradicts the requested bank "${options.bank}".`],
+      adapterWarnings
+    );
   }
 
   const status = document.validation.status;
@@ -150,30 +202,6 @@ export function adaptStructuredBankStatementDocumentToBankAccountStatementImport
     rejectedReason: success
       ? undefined
       : 'Document status is needs_review; the statement requires manual review before ingestion.'
-  };
-}
-
-interface BankHintCoherence {
-  rejectionReason?: string;
-  warning?: string;
-}
-
-function checkBankHintCoherence(
-  bankHint: StructuredBankStatementDocument['bankHint'],
-  bank: StructuredBankStatementCsvImportAdapterOptions['bank']
-): BankHintCoherence {
-  if (bankHint === 'BDK' || bankHint === 'ORA') {
-    if (bankHint !== bank) {
-      return {
-        rejectionReason: `Document bank hint "${bankHint}" contradicts the requested bank "${bank}".`
-      };
-    }
-    return {};
-  }
-
-  // bankHint === 'UNKNOWN'
-  return {
-    warning: `Document bank hint is UNKNOWN; requested bank "${bank}" was applied without a bank-hint cross-check.`
   };
 }
 
