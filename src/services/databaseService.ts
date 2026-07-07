@@ -2,6 +2,80 @@ import { supabase } from '@/integrations/supabase/client';
 import { BankReport, CollectionReport, FundPosition, ClientReconciliation } from '@/types/banking';
 import type { DuplicateReport, DuplicateGroup, DuplicateRemovalResult } from '@/types/banking';
 
+// ⭐ HOTFIX-FUND-POSITION-SIGN-0A — montants Fund Position (colonnes bigint).
+// Le signe est TOUJOURS préservé : un solde négatif (découvert, net_balance…)
+// reste négatif. Arrondi = troncature vers zéro (Math.trunc), jamais Math.abs.
+// Valeur non finie ou hors ±Number.MAX_SAFE_INTEGER : refus contrôlé (throw),
+// jamais d'insertion silencieuse à 0. Fonction pure et sans dépendance,
+// exportée pour être testable sous Node sans le client Supabase Vite-only.
+export function sanitizeFundPositionAmount(value: number, fieldLabel: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(
+      `Fund Position: montant invalide pour "${fieldLabel}" (${String(value)}) — insertion refusée.`
+    );
+  }
+  const truncated = Math.trunc(value);
+  if (truncated > Number.MAX_SAFE_INTEGER || truncated < -Number.MAX_SAFE_INTEGER) {
+    throw new Error(
+      `Fund Position: montant hors bornes sûres pour "${fieldLabel}" (${String(value)}) — insertion refusée.`
+    );
+  }
+  // -0 replié sur 0 pour une forme canonique unique.
+  return truncated === 0 ? 0 : truncated;
+}
+
+// Construit les payloads d'insertion Fund Position AVANT toute écriture : un
+// montant invalide refuse tout le lot avant le premier INSERT (aucune écriture
+// partielle). deposit_for_day / payment_for_day ne deviennent null que si la
+// source est réellement absente (undefined/null) — un 0 réel reste 0.
+export function buildFundPositionInsertPayloads(fundPosition: FundPosition) {
+  const fundPositionRow = {
+    report_date: fundPosition.reportDate,
+    total_fund_available: sanitizeFundPositionAmount(
+      fundPosition.totalFundAvailable,
+      'total_fund_available'
+    ),
+    collections_not_deposited: sanitizeFundPositionAmount(
+      fundPosition.collectionsNotDeposited,
+      'collections_not_deposited'
+    ),
+    grand_total: sanitizeFundPositionAmount(fundPosition.grandTotal, 'grand_total'),
+    deposit_for_day:
+      fundPosition.depositForDay != null
+        ? sanitizeFundPositionAmount(fundPosition.depositForDay, 'deposit_for_day')
+        : null,
+    payment_for_day:
+      fundPosition.paymentForDay != null
+        ? sanitizeFundPositionAmount(fundPosition.paymentForDay, 'payment_for_day')
+        : null
+  };
+
+  const detailRows = (fundPosition.details ?? []).map((detail, index) => ({
+    bank_name: detail.bankName,
+    balance: sanitizeFundPositionAmount(detail.balance, `details[${index}].balance`),
+    fund_applied: sanitizeFundPositionAmount(detail.fundApplied, `details[${index}].fund_applied`),
+    net_balance: sanitizeFundPositionAmount(detail.netBalance, `details[${index}].net_balance`),
+    non_validated_deposit: sanitizeFundPositionAmount(
+      detail.nonValidatedDeposit,
+      `details[${index}].non_validated_deposit`
+    ),
+    grand_balance: sanitizeFundPositionAmount(detail.grandBalance, `details[${index}].grand_balance`)
+  }));
+
+  const holdRows = (fundPosition.holdCollections ?? []).map((hold, index) => ({
+    hold_date: hold.holdDate,
+    cheque_number: hold.chequeNumber,
+    client_bank: hold.clientBank,
+    client_name: hold.clientName,
+    facture_reference: hold.factureReference,
+    amount: sanitizeFundPositionAmount(hold.amount, `holdCollections[${index}].amount`),
+    deposit_date: hold.depositDate,
+    days_remaining: hold.daysRemaining
+  }));
+
+  return { fundPositionRow, detailRows, holdRows };
+}
+
 export class DatabaseService {
   
   async testConnection(): Promise<boolean> {
@@ -614,9 +688,9 @@ export class DatabaseService {
     }
   }
 
-  // ⭐ CORRECTION FUND POSITION - Arrondir avant insertion
+  // ⭐ CORRECTION FUND POSITION - Valider et tronquer vers zéro avant insertion
   async saveFundPosition(fundPosition: FundPosition): Promise<{ success: boolean; error?: string }> {
-    // ⭐ SAUVEGARDE FUND POSITION AVEC RETRY ET ARRONDISSEMENT
+    // ⭐ SAUVEGARDE FUND POSITION AVEC RETRY, VALIDATION ET TRONCATURE VERS ZÉRO (SIGNE PRÉSERVÉ)
     const { SupabaseRetryService } = await import('./supabaseClientService');
     
     try {
@@ -631,31 +705,19 @@ export class DatabaseService {
         holdCollections: fundPosition.holdCollections?.length || 0
       });
       
-      // ⭐ SÉCURISER LES VALEURS AVANT INSERTION pour éviter l'erreur bigint
-      const safeValue = (value: number): number => {
-        if (!Number.isFinite(value) || value > Number.MAX_SAFE_INTEGER) {
-          console.warn(`⚠️ Valeur non sûre détectée: ${value}, utilisation de 0`);
-          return 0;
-        }
-        return Math.floor(Math.abs(value)); // Assurer un entier positif
-      };
-      
-      const roundedFundPosition = {
-        report_date: fundPosition.reportDate,
-        total_fund_available: safeValue(fundPosition.totalFundAvailable),
-        collections_not_deposited: safeValue(fundPosition.collectionsNotDeposited),
-        grand_total: safeValue(fundPosition.grandTotal),
-        deposit_for_day: fundPosition.depositForDay ? safeValue(fundPosition.depositForDay) : null,
-        payment_for_day: fundPosition.paymentForDay ? safeValue(fundPosition.paymentForDay) : null
-      };
-      
-      console.log('🔢 Valeurs arrondies pour insertion:', roundedFundPosition);
+      // ⭐ HOTFIX-FUND-POSITION-SIGN-0A : tous les montants (principal, détails,
+      // holds) sont validés et tronqués — signe préservé — AVANT la première
+      // insertion : un montant invalide refuse tout le lot, aucune écriture
+      // partielle et aucune conversion silencieuse à 0.
+      const { fundPositionRow, detailRows, holdRows } = buildFundPositionInsertPayloads(fundPosition);
+
+      console.log('🔢 Valeurs sécurisées pour insertion:', fundPositionRow);
       
       const { data: fundPositionData, error: fundPositionError } = await SupabaseRetryService.executeWithRetry(
         async () => {
           const { data, error } = await supabase
             .from('fund_position')
-            .insert(roundedFundPosition)
+            .insert(fundPositionRow)
             .select('id')
             .single();
 
@@ -674,17 +736,12 @@ export class DatabaseService {
       console.log(`✅ Fund Position principale sauvegardée avec ID: ${fundPositionId}`);
       
       // Sauvegarder les détails par banque si disponibles
-      if (fundPosition.details && fundPosition.details.length > 0) {
-        console.log(`💾 Sauvegarde de ${fundPosition.details.length} détails bancaires...`);
-        
-        const detailsToInsert = fundPosition.details.map(detail => ({
+      if (detailRows.length > 0) {
+        console.log(`💾 Sauvegarde de ${detailRows.length} détails bancaires...`);
+
+        const detailsToInsert = detailRows.map(row => ({
           fund_position_id: fundPositionId,
-          bank_name: detail.bankName,
-          balance: safeValue(detail.balance),
-          fund_applied: safeValue(detail.fundApplied),
-          net_balance: safeValue(detail.netBalance),
-          non_validated_deposit: safeValue(detail.nonValidatedDeposit),
-          grand_balance: safeValue(detail.grandBalance)
+          ...row
         }));
         
         await SupabaseRetryService.executeWithRetry(
@@ -703,19 +760,12 @@ export class DatabaseService {
       }
       
       // Sauvegarder les collections en attente (HOLD) si disponibles
-      if (fundPosition.holdCollections && fundPosition.holdCollections.length > 0) {
-        console.log(`💾 Sauvegarde de ${fundPosition.holdCollections.length} collections en attente...`);
-        
-        const holdsToInsert = fundPosition.holdCollections.map(hold => ({
+      if (holdRows.length > 0) {
+        console.log(`💾 Sauvegarde de ${holdRows.length} collections en attente...`);
+
+        const holdsToInsert = holdRows.map(row => ({
           fund_position_id: fundPositionId,
-          hold_date: hold.holdDate,
-          cheque_number: hold.chequeNumber,
-          client_bank: hold.clientBank,
-          client_name: hold.clientName,
-          facture_reference: hold.factureReference,
-          amount: safeValue(hold.amount),
-          deposit_date: hold.depositDate,
-          days_remaining: hold.daysRemaining
+          ...row
         }));
         
         await SupabaseRetryService.executeWithRetry(
