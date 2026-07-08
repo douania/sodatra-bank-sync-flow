@@ -76,7 +76,16 @@ export interface StructuredBankStatementDailyLine {
   accountingDate: string;
   valueDate?: string;
   direction: 'debit' | 'credit';
+  /**
+   * Parser-carried amounts (0G): forwarded for the future payload and the
+   * daily aggregates derivation. They NEVER feed any v2 hash — signedAmount
+   * remains the only amount hashed into the dailyLineHash.
+   */
+  debitAmount?: number;
+  creditAmount?: number;
   signedAmount: number;
+  /** Parser-carried running balance (0G): aggregate material only, never hashed. */
+  runningBalance?: number;
   currency: string;
   descriptionSanitized: string;
   dailyOccurrenceOrdinal: number;
@@ -320,7 +329,10 @@ export function buildDailyStatementUnitsFromStructuredDocument(
           accountingDate: group.accountingDate,
           valueDate: line.valueDate,
           direction: line.direction as 'debit' | 'credit',
+          debitAmount: line.debit,
+          creditAmount: line.credit,
           signedAmount: line.signedAmount,
+          runningBalance: line.balance,
           currency,
           descriptionSanitized: line.descriptionSanitized,
           dailyOccurrenceOrdinal: ordinals[index],
