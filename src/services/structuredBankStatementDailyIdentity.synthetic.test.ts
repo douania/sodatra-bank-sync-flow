@@ -396,6 +396,41 @@ test('composition: export J splits into one unit per accounting day with full tr
   }
 });
 
+test('composition (0G): daily lines carry the parser amounts and running balance, without feeding any hash', () => {
+  const units = buildUnitsFromCsv(exportJCsv());
+
+  const debitLine = unitByDate(units, '29/06/2026').lines[0];
+  assert.equal(debitLine.debitAmount, 50_000);
+  assert.equal(debitLine.creditAmount, undefined);
+  assert.equal(debitLine.runningBalance, 950_000);
+
+  const creditLine = unitByDate(units, '30/06/2026').lines[0];
+  assert.equal(creditLine.debitAmount, undefined);
+  assert.equal(creditLine.creditAmount, 200_000);
+  assert.equal(creditLine.runningBalance, 1_150_000);
+
+  // Identity invariance: the enrichment is payload/aggregate material only —
+  // a line stripped of its running balance keeps the exact same identities.
+  const document = parseStructuredBankStatementCsv(exportJCsv(), {
+    sourceFileName: 'releve ora synthetique.csv'
+  });
+  const strippedDocument = {
+    ...document,
+    lines: document.lines.map((line) => ({ ...line, debit: undefined, credit: undefined, balance: undefined }))
+  };
+  const stripped = buildDailyStatementUnitsFromStructuredDocument({
+    document: strippedDocument,
+    bank: 'ORA',
+    accountFingerprint: SYNTHETIC_FINGERPRINT,
+    currency: 'XOF'
+  });
+  assert.ok(stripped.success);
+  assert.deepEqual(
+    stripped.units.map((unit) => unit.lines.map((line) => line.dailyLineHash)),
+    units.map((unit) => unit.lines.map((line) => line.dailyLineHash))
+  );
+});
+
 test('composition: exact re-deposit of the same export yields identical units and hashes', () => {
   const first = buildUnitsFromCsv(exportJCsv());
   const second = buildUnitsFromCsv(exportJCsv());

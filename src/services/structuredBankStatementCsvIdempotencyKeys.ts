@@ -91,6 +91,18 @@ export interface BuildStructuredBankStatementDailyLineHashInput {
   dailyOccurrenceOrdinal: number;
 }
 
+/**
+ * DAILY-RPC-V2-PAYLOAD-0G — content fingerprint of ONE daily unit.
+ *
+ * The dailyLineHashes are the v2 line identities of the unit; the list is
+ * sorted lexically before hashing so the fingerprint is independent of the
+ * physical line order carried by any given export.
+ */
+export interface BuildStructuredBankStatementDayContentHashInput {
+  dayUnitId: string;
+  dailyLineHashes: string[];
+}
+
 // Domain-separation tags: a fixed literal prefix keeps the pre-image of one hash
 // family from ever colliding with another (e.g. an importId payload can never
 // equal a lineHash payload). They are constants, so hashing stays deterministic.
@@ -105,10 +117,17 @@ export const STRUCTURED_BANK_STATEMENT_DAY_UNIT_ID_DOMAIN_V2 =
   'sodatra:structured_bank_statement_csv:day_unit_id:v2';
 export const STRUCTURED_BANK_STATEMENT_DAILY_LINE_HASH_DOMAIN_V2 =
   'sodatra:structured_bank_statement_csv:daily_line_hash:v2';
+// DAILY-RPC-V2-PAYLOAD-0G domain tag: same contract rules as the two tags
+// above (persisted identity contract, browser twin byte-identical).
+export const STRUCTURED_BANK_STATEMENT_DAY_CONTENT_HASH_DOMAIN_V2 =
+  'sodatra:structured_bank_statement_csv:day_content_hash:v2';
 
 // Strict DD/MM/YYYY shape for the v2 accountingDate (calendar round-trip below
 // refuses silent rollovers such as 31/02/2026).
 const STRICT_DAY_MONTH_YEAR_PATTERN = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+
+// Exact shape every persisted v2 hash must have (lowercase hex SHA-256).
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
 // No-break space (U+00A0) and narrow no-break space (U+202F): folded to a plain
 // space before whitespace collapsing so a re-export that swaps one for the other
@@ -359,6 +378,75 @@ export function buildStructuredBankStatementDailyLineHash(
   ]);
 
   return sha256Hex(payload);
+}
+
+/**
+ * dayContentHash (v2): fingerprint of the FULL business content of one daily
+ * unit, computed over the lexically sorted list of its dailyLineHashes.
+ *
+ * Sorting makes the hash independent of the physical line order inside the
+ * export, so two overlapping sliding exports carrying the same accounting day
+ * produce the same dayContentHash: this is the future day-level R1/R2
+ * comparator (rawTextHash is export-scoped and cannot compare days).
+ * Fail-closed: every entry must be a 64-char lowercase hex SHA-256, and a
+ * duplicate entry is refused — the v2 dailyLineHash embeds the per-day
+ * occurrence ordinal, so a duplicate can only reveal an ordinal bug upstream.
+ */
+export function buildStructuredBankStatementDayContentHash(
+  input: BuildStructuredBankStatementDayContentHashInput
+): string {
+  const payload = buildDayContentHashCanonicalPayload(input);
+  return sha256Hex(payload);
+}
+
+// Shared, deterministic pre-image assembly for the dayContentHash: validation
+// then [domain, dayUnitId, sortedHashes]. Kept as one function so the digest
+// call above stays trivially identical to the browser twin's.
+function buildDayContentHashCanonicalPayload(
+  input: BuildStructuredBankStatementDayContentHashInput
+): string {
+  const dayUnitId = trimString(input.dayUnitId);
+  if (dayUnitId === '') {
+    throw new Error('buildStructuredBankStatementDayContentHash: dayUnitId must be non-empty.');
+  }
+
+  if (!Array.isArray(input.dailyLineHashes) || input.dailyLineHashes.length === 0) {
+    throw new Error(
+      'buildStructuredBankStatementDayContentHash: dailyLineHashes must be a non-empty array.'
+    );
+  }
+
+  const seen = new Set<string>();
+  const normalized = input.dailyLineHashes.map((value, index) => {
+    const hash = trimString(value);
+    if (!SHA256_HEX_PATTERN.test(hash)) {
+      throw new Error(
+        `buildStructuredBankStatementDayContentHash: dailyLineHashes[${index}] must be a ` +
+          '64-char lowercase hex SHA-256.'
+      );
+    }
+    if (seen.has(hash)) {
+      throw new Error(
+        `buildStructuredBankStatementDayContentHash: dailyLineHashes[${index}] duplicates another ` +
+          'hash of the same unit; the v2 dailyLineHash embeds the occurrence ordinal, so a ' +
+          'duplicate reveals an ordinal bug (fail-closed).'
+      );
+    }
+    seen.add(hash);
+    return hash;
+  });
+
+  // Lexical sort: hex lowercase strings, so code-unit order is well-defined.
+  normalized.sort();
+
+  // The middle component is a NESTED array; JSON.stringify keeps the pre-image
+  // unambiguous ([domain, dayUnitId, [h1, h2]] can never collide with a flat
+  // 4-part payload of another hash family).
+  return JSON.stringify([
+    STRUCTURED_BANK_STATEMENT_DAY_CONTENT_HASH_DOMAIN_V2,
+    dayUnitId,
+    normalized
+  ]);
 }
 
 /**
