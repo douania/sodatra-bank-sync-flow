@@ -1,6 +1,12 @@
 # Tests DB — POC-BANK-STRUCTURED-EXPORTS-0U (migration candidate v1)
 
-Suite de tests SQL pour `supabase/migrations/20260703120000_structured_csv_import_v1.sql`.
+Suite de tests SQL pour `supabase/db-archive/structured_csv_import_v1/20260703120000_structured_csv_import_v1.sql`.
+
+> **Archive candidate v1 — hors chemin live (lot 0J).** Cette migration v1 est
+> archivée hors `supabase/migrations` afin d'éviter toute application
+> accidentelle par `db push`/`db reset`. Elle reste testable localement comme
+> référence historique. La candidate cible est la v2 journalière
+> (`supabase/migrations/20260708130000_daily_statement_units_v2.sql`).
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live.
@@ -22,11 +28,11 @@ $PSQL -f 00_supabase_local_shim.sql
 $PSQL -f 01_seed_synthetic_identities.sql
 
 # 2. Test de rollback : la migration s'annule proprement
-$PSQL -c "BEGIN;" -f ../../migrations/20260703120000_structured_csv_import_v1.sql -c "ROLLBACK;"
+$PSQL -c "BEGIN;" -f ../../db-archive/structured_csv_import_v1/20260703120000_structured_csv_import_v1.sql -c "ROLLBACK;"
 #    (vérifier ensuite qu'aucune table bank_statement_% n'existe)
 
 # 3. Application réelle (une transaction, comme le CLI supabase)
-$PSQL --single-transaction -f ../../migrations/20260703120000_structured_csv_import_v1.sql
+$PSQL --single-transaction -f ../../db-archive/structured_csv_import_v1/20260703120000_structured_csv_import_v1.sql
 
 # 4. Suites séquentielles
 $PSQL -f 10_structure_and_privileges.sql
