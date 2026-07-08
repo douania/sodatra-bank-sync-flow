@@ -44,6 +44,17 @@
 --           payloads valides ; un payload invalide lève une exception et rien
 --           ne persiste (fail-closed all-or-nothing).
 --
+-- Durcissement 0K (DAILY-V2-HARDENING-0K) :
+--   H-0K-1. Promotion d'une unité validation_status='needs_review' ou
+--           aggregates_status='unavailable' : raison humaine safe obligatoire
+--           (p_approval_reason), auditée via l'event append-only dédié
+--           unit_promotion_approved AVANT la promotion. Les unités
+--           valid/derived restent promouvables par l'appel historique à un
+--           seul argument (signature unique (uuid, text) avec default).
+--   H-0K-2. Backfill borné structurellement : period_days <= 4000 et
+--           p_units <= 4000 par dépôt, cap unités contrôlé AVANT la boucle
+--           de validation de p_units (anti payload massif accidentel).
+--
 -- Invariants données : no raw CSV, no raw bytes, no full account, no IBAN.
 -- description_sanitized = libellé normalisé, PAS anonymisé : donnée sensible,
 -- lecture RLS minimale (admin seul en staging).
@@ -299,7 +310,7 @@ CREATE TABLE public.daily_statement_import_events (
   CONSTRAINT events_v2_event_type_domain CHECK (event_type IN (
     'attempt_received', 'backfill_deposit', 'unit_staged', 'unit_provisional_held',
     'unit_duplicate', 'unit_conflict', 'unit_needs_review', 'unit_promoted',
-    'promotion_failed', 'unit_superseded', 'status_changed'
+    'unit_promotion_approved', 'promotion_failed', 'unit_superseded', 'status_changed'
   )),
   CONSTRAINT events_v2_reference_something
     CHECK (
@@ -651,7 +662,8 @@ DECLARE
     'raw_text_hash', 'requested_mode', 'backfill_grant_reference',
     'previous_status', 'new_status', 'resolution', 'parser_version',
     'runtime_version', 'units_total', 'units_staged', 'units_provisional',
-    'units_duplicate', 'units_conflict', 'units_needs_review', 'period_days'
+    'units_duplicate', 'units_conflict', 'units_needs_review', 'period_days',
+    'approval_reason', 'validation_status', 'aggregates_status'
   ];
 BEGIN
   IF p_details IS NULL THEN
@@ -951,6 +963,10 @@ DECLARE
   ];
   -- Miroir de MAX_STRUCTURED_BANK_STATEMENT_PERIOD_DAYS (0C).
   c_max_period_days constant integer := 45;
+  -- Plafonds STRUCTURELS du backfill (0K) : un dépôt BIS reste massif mais
+  -- borné — jamais de payload illimité, même sous grant admin.
+  c_max_backfill_period_days constant integer := 4000;
+  c_max_backfill_units       constant integer := 4000;
 BEGIN
   -- Rôle : admin ou manager (dépôt) ; backfill = admin seul (doctrine 0F).
   v_actor := auth.uid();
@@ -1069,6 +1085,15 @@ BEGIN
   ELSE
     IF v_grant IS NULL THEN
       RAISE EXCEPTION 'DAILY_STMT_GRANT_REQUIRED: backfill_grant_reference is mandatory in backfill mode (fail-closed)';
+    END IF;
+    -- Plafonds structurels 0K. Le cap d'unités est contrôlé ICI, AVANT la
+    -- boucle de validation de p_units : un payload massif accidentel est
+    -- rejeté sans être parsé unité par unité.
+    IF v_period_days > c_max_backfill_period_days THEN
+      RAISE EXCEPTION 'DAILY_STMT_BACKFILL_PERIOD_CAP: backfill window above the structural %-day cap (fail-closed)', c_max_backfill_period_days;
+    END IF;
+    IF jsonb_array_length(p_units) > c_max_backfill_units THEN
+      RAISE EXCEPTION 'DAILY_STMT_BACKFILL_UNITS_CAP: backfill deposit above the structural %-unit cap (fail-closed)', c_max_backfill_units;
     END IF;
   END IF;
 
@@ -1396,7 +1421,15 @@ $$;
 -- 4.2 promote_daily_statement_unit — admin seul, UNE unité journalière.
 --     R1/R2/R3 re-vérifiés SOUS VERROU (état re-lu après acquisition).
 --     Une unité provisional n'est JAMAIS promouvable (doctrine 9 + trigger).
-CREATE OR REPLACE FUNCTION public.promote_daily_statement_unit(p_staging_unit_id uuid)
+--     0K : une unité validation_status='needs_review' ou
+--     aggregates_status='unavailable' n'est promouvable qu'avec une raison
+--     humaine auditée (p_approval_reason). Signature UNIQUE (uuid, text) avec
+--     default — jamais d'overload (uuid) ; l'appel historique à un argument
+--     reste valide pour les unités valid/derived.
+CREATE OR REPLACE FUNCTION public.promote_daily_statement_unit(
+  p_staging_unit_id uuid,
+  p_approval_reason text DEFAULT NULL
+)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1482,6 +1515,26 @@ BEGIN
       'promotion aborted: active daily_line_hash overlap with another day unit (R3)',
       jsonb_build_object('reason_code', 'daily_line_hash_scope_conflict'));
     RETURN jsonb_build_object('outcome', 'needs_review');
+  END IF;
+
+  -- Gate d'approbation 0K — placée APRÈS l'arbitrage R1/R2/R3 (issues
+  -- duplicate/conflict/needs_review inchangées, sans raison) et AVANT le
+  -- promote core : une unité à review (validation_status='needs_review') ou
+  -- sans agrégats dérivés (aggregates_status='unavailable') n'atteint le
+  -- canonical qu'avec une raison humaine safe, auditée en append-only AVANT
+  -- la promotion. Les unités valid/derived passent sans raison (appel
+  -- historique à un seul argument préservé).
+  IF v_unit.validation_status = 'needs_review'
+     OR v_unit.aggregates_status = 'unavailable' THEN
+    PERFORM public.daily_stmt_assert_safe_reason(p_approval_reason);
+    PERFORM public.daily_stmt_append_audit_event(
+      v_actor, v_unit.attempt_id, v_unit.id, NULL,
+      v_unit.day_unit_id, NULL,
+      'unit_promotion_approved', v_unit.status, v_unit.status,
+      'human approval recorded before promotion',
+      jsonb_build_object('approval_reason', p_approval_reason,
+                         'validation_status', v_unit.validation_status,
+                         'aggregates_status', v_unit.aggregates_status));
   END IF;
 
   v_new_id := gen_random_uuid();
@@ -1726,8 +1779,8 @@ REVOKE ALL ON FUNCTION public.daily_stmt_assert_canonical_insert_allowed()      
 REVOKE ALL ON FUNCTION public.pre_ingest_daily_statement_units(jsonb, jsonb, jsonb, jsonb) FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.pre_ingest_daily_statement_units(jsonb, jsonb, jsonb, jsonb) TO authenticated;
 
-REVOKE ALL ON FUNCTION public.promote_daily_statement_unit(uuid) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.promote_daily_statement_unit(uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.promote_daily_statement_unit(uuid, text) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.promote_daily_statement_unit(uuid, text) TO authenticated;
 
 REVOKE ALL ON FUNCTION public.supersede_daily_statement_unit(uuid, uuid, text) FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.supersede_daily_statement_unit(uuid, uuid, text) TO authenticated;

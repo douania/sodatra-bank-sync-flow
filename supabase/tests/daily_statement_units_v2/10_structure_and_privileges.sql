@@ -211,4 +211,32 @@ BEGIN
   RAISE NOTICE 'OK: RPC v2 = SECURITY DEFINER + search_path epingle';
 END $$;
 
+-- 0K : promote_daily_statement_unit = signature UNIQUE (uuid, text) avec
+-- default argument — jamais d'overload (uuid) résiduel (compat appel
+-- historique à un argument assurée par le default, pas par une 2e fonction).
+DO $$
+DECLARE
+  v_count integer;
+  v_args  text;
+  v_ndef  integer;
+BEGIN
+  SELECT count(*) INTO v_count
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'promote_daily_statement_unit';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST_FAILED: promote_daily_statement_unit attendu en UNE signature, trouve %', v_count;
+  END IF;
+  SELECT pg_get_function_identity_arguments(p.oid), p.pronargdefaults
+  INTO v_args, v_ndef
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'promote_daily_statement_unit';
+  IF v_args <> 'p_staging_unit_id uuid, p_approval_reason text' THEN
+    RAISE EXCEPTION 'TEST_FAILED: signature promote inattendue [%]', v_args;
+  END IF;
+  IF v_ndef <> 1 THEN
+    RAISE EXCEPTION 'TEST_FAILED: p_approval_reason doit porter un DEFAULT (compat appel historique)';
+  END IF;
+  RAISE NOTICE 'OK: promote_daily_statement_unit = signature unique (uuid, text DEFAULT)';
+END $$;
+
 SELECT 'structure & privileges v2: PASS' AS status;
