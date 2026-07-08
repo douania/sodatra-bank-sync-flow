@@ -203,7 +203,8 @@ SELECT poc_test.expect_error($neg$
     poc_test.mk_guard(true, 1))
 $neg$, '%DAILY_STMT_DATE_FORMAT%', 'accounting_date ISO rejete (chemin complet)');
 
--- Montant a 3 decimales dans une unite (pas d'arrondi silencieux).
+-- Montant a 3 decimales dans une unite (pas d'arrondi silencieux). Depuis
+-- 0H-FIX-AMOUNT-STRICT-PARITY, le refus survient au FORMAT (parite TS).
 SELECT poc_test.expect_error($neg$
   SELECT public.pre_ingest_daily_statement_units(
     poc_test.mk_attempt('daily','BKTEST','02/05/2026','02/05/2026',NULL),
@@ -211,7 +212,7 @@ SELECT poc_test.expect_error($neg$
       || jsonb_build_object('day_total_debits', 0.001)),
     jsonb_build_array(poc_test.mk_line('BKTEST','02/05/2026', poc_test.hex64('neg1'), 1, 0)),
     poc_test.mk_guard(true, 1))
-$neg$, '%DAILY_STMT_AMOUNT_SCALE%', 'montant 3 decimales rejete (chemin complet)');
+$neg$, '%DAILY_STMT_AMOUNT_FORMAT%', 'montant 3 decimales rejete (chemin complet)');
 
 ROLLBACK;
 

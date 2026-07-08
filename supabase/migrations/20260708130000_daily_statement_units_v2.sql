@@ -387,8 +387,11 @@ END;
 $$;
 
 -- 3.2 Montants stricts : forme admise = signe optionnel, 1-16 chiffres,
---     décimales optionnelles ; échelle max 2, aucun arrondi silencieux
---     (NaN/Infinity/exponentielle échouent la regex, doctrine PR #77).
+--     décimales optionnelles LIMITÉES À 2 (parité stricte avec la regex TS 0G
+--     /^-?\d{1,16}(\.\d{1,2})?$/ : '10.120' est refusé au FORMAT, pas
+--     seulement à l'échelle) ; aucun arrondi silencieux, le check d'échelle
+--     reste en ceinture (NaN/Infinity/exponentielle échouent la regex,
+--     doctrine PR #77).
 CREATE OR REPLACE FUNCTION public.daily_stmt_parse_amount_strict(p_value text)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -401,7 +404,7 @@ BEGIN
   IF p_value IS NULL THEN
     RETURN NULL;
   END IF;
-  IF p_value !~ '^-?[0-9]{1,16}([.][0-9]+)?$' THEN
+  IF p_value !~ '^-?[0-9]{1,16}([.][0-9]{1,2})?$' THEN
     RAISE EXCEPTION 'DAILY_STMT_AMOUNT_FORMAT: numeric value rejected (fail-closed)';
   END IF;
   v_num := p_value::numeric;

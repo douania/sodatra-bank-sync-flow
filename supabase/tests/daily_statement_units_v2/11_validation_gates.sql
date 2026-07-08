@@ -57,9 +57,19 @@ SELECT poc_test.assert(
   public.daily_stmt_parse_amount_strict('-200.00') = (-200.00)::numeric,
   'montant negatif legitime accepte'
 );
+-- Depuis 0H-FIX-AMOUNT-STRICT-PARITY, la regex format limite elle-même à 2
+-- décimales (parité TS) : 3 décimales échouent au FORMAT, le check d'échelle
+-- restant en ceinture.
 SELECT poc_test.expect_error(
   $$ SELECT public.daily_stmt_parse_amount_strict('10.123') $$,
-  '%DAILY_STMT_AMOUNT_SCALE%', 'montant 3 decimales rejete (pas d''arrondi silencieux)'
+  '%DAILY_STMT_AMOUNT_FORMAT%', 'montant 3 decimales rejete (pas d''arrondi silencieux)'
+);
+-- Parité stricte regex TS 0G : 3 decimales terminees par zero ('10.120' =
+-- numeric 10.12) doivent echouer au FORMAT, jamais etre acceptees.
+SELECT poc_test.expect_error(
+  $$ SELECT public.daily_stmt_parse_amount_strict('10.120') $$,
+  '%DAILY_STMT_AMOUNT_FORMAT%',
+  'montant 3 decimales avec zero final rejete'
 );
 SELECT poc_test.expect_error(
   $$ SELECT public.daily_stmt_parse_amount_strict('abc') $$,
