@@ -102,6 +102,11 @@ SELECT poc_test.expect_error(
   format($q$ SELECT public.promote_daily_statement_unit(%L::uuid) $q$,
          poc_test.ctx_get('o3_provisional_staging')),
   '%DAILY_STMT_PROVISIONAL_NOT_PROMOTABLE%', 'O5: provisional (sans ref) non promouvable');
+-- 0K : une raison d'approbation ne contourne JAMAIS la gate provisional.
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid, 'SYNTH raison') $q$,
+         poc_test.ctx_get('o1_provisional_staging')),
+  '%DAILY_STMT_PROVISIONAL_NOT_PROMOTABLE%', 'O5: provisional non promouvable meme avec raison (0K)');
 ROLLBACK;
 
 -- O6 : BDK sans export_reference_date n'herite PAS de la regle ORA.
@@ -224,5 +229,34 @@ SELECT poc_test.assert(
             AND safe_details ->> 'backfill_grant_reference' = 'CTO-BACKFILL-GRANT-0001'),
   'B5: event backfill_deposit avec grant dans safe_details'
 );
+
+-- B8 (0K) : backfill au-delà du plafond period_days => rejet structurel
+-- (fenêtre 01/01/2010..31/12/2020 = 4018 jours inclusifs > 4000, period_days
+-- recalculé exactement pour passer la gate de cohérence en amont).
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error($neg$
+  SELECT public.pre_ingest_daily_statement_units(
+    poc_test.mk_attempt('backfill','BKTEST','01/01/2010','31/12/2020',NULL),
+    jsonb_build_array(poc_test.mk_unit('BKTEST','15/01/2015', ARRAY[poc_test.hex64('bf_cap1')], 'staged')),
+    jsonb_build_array(poc_test.mk_line('BKTEST','15/01/2015', poc_test.hex64('bf_cap1'), 1, 0)),
+    poc_test.mk_guard(false, (date '2020-12-31' - date '2010-01-01') + 1, 'CTO-BACKFILL-GRANT-0002'))
+$neg$, '%DAILY_STMT_BACKFILL_PERIOD_CAP%', 'B8: backfill > 4000 jours rejete (plafond structurel)');
+ROLLBACK;
+
+-- B9 (0K) : backfill au-delà du plafond d'unités => rejet AVANT la boucle de
+-- validation de p_units : les 4001 unités sont volontairement INVALIDES (clé
+-- hors whitelist) — si la boucle était atteinte, l'erreur serait
+-- DAILY_STMT_PAYLOAD_KEY, pas le cap. Le test reste rapide par construction.
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error($neg$
+  SELECT public.pre_ingest_daily_statement_units(
+    poc_test.mk_attempt('backfill','BKTEST','01/01/2026','31/03/2026',NULL),
+    (SELECT jsonb_agg(jsonb_build_object('i', g)) FROM generate_series(1, 4001) g),
+    jsonb_build_array(poc_test.mk_line('BKTEST','15/01/2026', poc_test.hex64('bf_cap2'), 1, 0)),
+    poc_test.mk_guard(false, 90, 'CTO-BACKFILL-GRANT-0002'))
+$neg$, '%DAILY_STMT_BACKFILL_UNITS_CAP%', 'B9: backfill > 4000 unites rejete avant parsing des unites');
+ROLLBACK;
 
 SELECT 'ORA & backfill v2: PASS' AS status;

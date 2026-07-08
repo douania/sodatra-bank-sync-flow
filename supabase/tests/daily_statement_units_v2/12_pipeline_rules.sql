@@ -466,4 +466,133 @@ SELECT poc_test.expect_error(
   '%DAILY_STMT_PROMOTE_GATE%', 'R3: unite needs_review jamais promue silencieusement');
 ROLLBACK;
 
+-- ============================================================================
+-- F. 0K — approbation humaine auditée : needs_review / agrégats indisponibles.
+-- ============================================================================
+
+-- F1 : unité validation_status='needs_review' déposée staged (journée neuve).
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.ctx_set('f_nr_result', public.pre_ingest_daily_statement_units(
+  poc_test.mk_attempt('daily','BKTEST','06/05/2026','06/05/2026',NULL),
+  jsonb_build_array(poc_test.mk_unit('BKTEST','06/05/2026', ARRAY[poc_test.hex64('f_nr1')], 'staged')
+    || jsonb_build_object('validation_status','needs_review')),
+  jsonb_build_array(poc_test.mk_line('BKTEST','06/05/2026', poc_test.hex64('f_nr1'), 1, 0)),
+  poc_test.mk_guard(true, 1))::text);
+COMMIT;
+SELECT poc_test.ctx_set('f_nr_staging',
+  (poc_test.ctx_get('f_nr_result')::jsonb -> 'units' -> 0 ->> 'staging_unit_id'));
+SELECT poc_test.assert(
+  (poc_test.ctx_get('f_nr_result')::jsonb -> 'units' -> 0 ->> 'unit_status') = 'staged',
+  'F1: unite validation_status=needs_review deposee staged');
+
+-- F2 : promotion sans raison (appel historique a un argument) => refus.
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid) $q$,
+         poc_test.ctx_get('f_nr_staging')),
+  '%DAILY_STMT_REASON_REQUIRED%', 'F2: needs_review sans raison refuse');
+-- F2b : raison vide => refus.
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid, '  ') $q$,
+         poc_test.ctx_get('f_nr_staging')),
+  '%DAILY_STMT_REASON_REQUIRED%', 'F2b: raison vide refusee');
+-- F2c : raison trop longue (> 200) => refus.
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid, %L) $q$,
+         poc_test.ctx_get('f_nr_staging'), repeat('x', 201)),
+  '%DAILY_STMT_REASON_TOO_LONG%', 'F2c: raison > 200 caracteres refusee');
+ROLLBACK;
+
+-- F2d : manager avec raison => toujours refuse (admin seul).
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid, 'SYNTH: revue OK') $q$,
+         poc_test.ctx_get('f_nr_staging')),
+  '%DAILY_STMT_ROLE_DENIED%', 'F2d: manager ne promeut pas, meme avec raison');
+ROLLBACK;
+
+-- Aucun refus n'a laisse d'event d'approbation (append-only, pas d'etat partiel).
+SELECT poc_test.assert(
+  NOT EXISTS (SELECT 1 FROM public.daily_statement_import_events
+              WHERE staging_unit_id = poc_test.ctx_get('f_nr_staging')::uuid
+                AND event_type = 'unit_promotion_approved'),
+  'F2: aucun event approbation apres les refus');
+
+-- F3 : promotion admin avec raison safe => promoted + audit d'approbation.
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.ctx_set('f3_result', public.promote_daily_statement_unit(
+  poc_test.ctx_get('f_nr_staging')::uuid,
+  'SYNTH: revue manuelle validee (0K)')::text);
+COMMIT;
+SELECT poc_test.assert(
+  (poc_test.ctx_get('f3_result')::jsonb ->> 'outcome') = 'promoted',
+  'F3: needs_review promue avec raison => promoted');
+SELECT poc_test.assert(
+  EXISTS (SELECT 1 FROM public.daily_statement_import_events
+          WHERE staging_unit_id = poc_test.ctx_get('f_nr_staging')::uuid
+            AND event_type = 'unit_promotion_approved'
+            AND previous_status = 'staged' AND new_status = 'staged'
+            AND safe_message = 'human approval recorded before promotion'
+            AND safe_details ->> 'approval_reason' = 'SYNTH: revue manuelle validee (0K)'
+            AND safe_details ->> 'validation_status' = 'needs_review'
+            AND safe_details ->> 'aggregates_status' = 'derived'),
+  'F3: event unit_promotion_approved avec safe_details complets');
+SELECT poc_test.assert(
+  EXISTS (SELECT 1 FROM public.daily_statement_import_events
+          WHERE staging_unit_id = poc_test.ctx_get('f_nr_staging')::uuid
+            AND event_type = 'unit_promoted'),
+  'F3: event unit_promoted present apres approbation');
+
+-- F4 : aggregates_status='unavailable' => meme gate d'approbation.
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.ctx_set('f_ua_result', public.pre_ingest_daily_statement_units(
+  poc_test.mk_attempt('daily','BKTEST','07/05/2026','07/05/2026',NULL),
+  jsonb_build_array(poc_test.mk_unit('BKTEST','07/05/2026', ARRAY[poc_test.hex64('f_ua1')], 'staged')
+    || jsonb_build_object('aggregates_status','unavailable',
+                          'opening_balance_derived', NULL,
+                          'closing_balance_derived', NULL)),
+  jsonb_build_array(poc_test.mk_line('BKTEST','07/05/2026', poc_test.hex64('f_ua1'), 1, 0)),
+  poc_test.mk_guard(true, 1))::text);
+COMMIT;
+SELECT poc_test.ctx_set('f_ua_staging',
+  (poc_test.ctx_get('f_ua_result')::jsonb -> 'units' -> 0 ->> 'staging_unit_id'));
+SELECT poc_test.assert(
+  (poc_test.ctx_get('f_ua_result')::jsonb -> 'units' -> 0 ->> 'unit_status') = 'staged',
+  'F4: unite aggregates_status=unavailable deposee staged');
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid) $q$,
+         poc_test.ctx_get('f_ua_staging')),
+  '%DAILY_STMT_REASON_REQUIRED%', 'F4: agregats indisponibles sans raison refuse');
+ROLLBACK;
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.ctx_set('f4_result', public.promote_daily_statement_unit(
+  poc_test.ctx_get('f_ua_staging')::uuid,
+  'SYNTH: agregats indisponibles assumes (0K)')::text);
+COMMIT;
+SELECT poc_test.assert(
+  (poc_test.ctx_get('f4_result')::jsonb ->> 'outcome') = 'promoted',
+  'F4: agregats indisponibles promue avec raison');
+SELECT poc_test.assert(
+  EXISTS (SELECT 1 FROM public.daily_statement_import_events
+          WHERE staging_unit_id = poc_test.ctx_get('f_ua_staging')::uuid
+            AND event_type = 'unit_promotion_approved'
+            AND safe_details ->> 'aggregates_status' = 'unavailable'),
+  'F4: event approbation avec aggregates_status=unavailable');
+
+-- F5 : la voie valid/derived (promotion historique de la section C) n'a
+-- enregistre AUCUNE approbation.
+SELECT poc_test.assert(
+  NOT EXISTS (SELECT 1 FROM public.daily_statement_import_events
+              WHERE staging_unit_id = poc_test.ctx_get('b_staging_01')::uuid
+                AND event_type = 'unit_promotion_approved'),
+  'F5: aucune approbation enregistree pour une promotion valid/derived');
+
 SELECT 'pipeline rules v2: PASS' AS status;
