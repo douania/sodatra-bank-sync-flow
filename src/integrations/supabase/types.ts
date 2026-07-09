@@ -154,6 +154,449 @@ export type Database = {
         }
         Relationships: []
       }
+      bank_statement_canonical: {
+        Row: {
+          account_fingerprint: string
+          account_number_masked: string | null
+          active_raw_text_hash: string
+          bank: string
+          closing_balance: number
+          currency: string
+          id: string
+          import_id: string
+          ingested_at: string
+          ingested_by: string | null
+          opening_balance: number
+          period_end_date: string
+          period_start_date: string
+          promoted_from_staging_id: string
+          statement_date: string | null
+          status: string
+          superseded_at: string | null
+          superseded_by: string | null
+          total_credits: number
+          total_debits: number
+          validation_status: string
+        }
+        Insert: {
+          account_fingerprint: string
+          account_number_masked?: string | null
+          active_raw_text_hash: string
+          bank: string
+          closing_balance: number
+          currency: string
+          id?: string
+          import_id: string
+          ingested_at?: string
+          ingested_by?: string | null
+          opening_balance: number
+          period_end_date: string
+          period_start_date: string
+          promoted_from_staging_id: string
+          statement_date?: string | null
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          total_credits: number
+          total_debits: number
+          validation_status: string
+        }
+        Update: {
+          account_fingerprint?: string
+          account_number_masked?: string | null
+          active_raw_text_hash?: string
+          bank?: string
+          closing_balance?: number
+          currency?: string
+          id?: string
+          import_id?: string
+          ingested_at?: string
+          ingested_by?: string | null
+          opening_balance?: number
+          period_end_date?: string
+          period_start_date?: string
+          promoted_from_staging_id?: string
+          statement_date?: string | null
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          total_credits?: number
+          total_debits?: number
+          validation_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_canonical_promoted_from_staging_id_fkey"
+            columns: ["promoted_from_staging_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_staging"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_canonical_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_canonical"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statement_import_attempts: {
+        Row: {
+          account_fingerprint: string | null
+          account_number_masked: string | null
+          bank: string
+          created_at: string
+          created_by: string | null
+          errors_count: number
+          id: string
+          import_id: string | null
+          ingestion_ready: boolean
+          parser_validation_status: string | null
+          parser_version: string | null
+          raw_text_hash: string | null
+          rejected_reason: string | null
+          runtime_version: string | null
+          source_file_name_redacted: string | null
+          source_format: string
+          status: string
+          success: boolean
+          warnings_count: number
+        }
+        Insert: {
+          account_fingerprint?: string | null
+          account_number_masked?: string | null
+          bank: string
+          created_at?: string
+          created_by?: string | null
+          errors_count?: number
+          id?: string
+          import_id?: string | null
+          ingestion_ready?: boolean
+          parser_validation_status?: string | null
+          parser_version?: string | null
+          raw_text_hash?: string | null
+          rejected_reason?: string | null
+          runtime_version?: string | null
+          source_file_name_redacted?: string | null
+          source_format: string
+          status?: string
+          success?: boolean
+          warnings_count?: number
+        }
+        Update: {
+          account_fingerprint?: string | null
+          account_number_masked?: string | null
+          bank?: string
+          created_at?: string
+          created_by?: string | null
+          errors_count?: number
+          id?: string
+          import_id?: string | null
+          ingestion_ready?: boolean
+          parser_validation_status?: string | null
+          parser_version?: string | null
+          raw_text_hash?: string | null
+          rejected_reason?: string | null
+          runtime_version?: string | null
+          source_file_name_redacted?: string | null
+          source_format?: string
+          status?: string
+          success?: boolean
+          warnings_count?: number
+        }
+        Relationships: []
+      }
+      bank_statement_import_events: {
+        Row: {
+          actor_id: string | null
+          attempt_id: string | null
+          canonical_statement_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          import_id: string | null
+          new_status: string | null
+          previous_status: string | null
+          raw_text_hash: string | null
+          safe_details: Json | null
+          safe_message: string | null
+          staging_statement_id: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          attempt_id?: string | null
+          canonical_statement_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          import_id?: string | null
+          new_status?: string | null
+          previous_status?: string | null
+          raw_text_hash?: string | null
+          safe_details?: Json | null
+          safe_message?: string | null
+          staging_statement_id?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          attempt_id?: string | null
+          canonical_statement_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          import_id?: string | null
+          new_status?: string | null
+          previous_status?: string | null
+          raw_text_hash?: string | null
+          safe_details?: Json | null
+          safe_message?: string | null
+          staging_statement_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_import_events_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_import_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_import_events_canonical_statement_id_fkey"
+            columns: ["canonical_statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_canonical"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_import_events_staging_statement_id_fkey"
+            columns: ["staging_statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_staging"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statement_lines_canonical: {
+        Row: {
+          canonical_statement_id: string
+          created_at: string
+          credit_amount: number | null
+          currency: string
+          debit_amount: number | null
+          description_sanitized: string
+          direction: string
+          id: string
+          import_id: string
+          is_active: boolean
+          line_hash: string
+          running_balance: number | null
+          signed_amount: number
+          transaction_date: string
+          value_date: string | null
+        }
+        Insert: {
+          canonical_statement_id: string
+          created_at?: string
+          credit_amount?: number | null
+          currency: string
+          debit_amount?: number | null
+          description_sanitized: string
+          direction: string
+          id?: string
+          import_id: string
+          is_active: boolean
+          line_hash: string
+          running_balance?: number | null
+          signed_amount: number
+          transaction_date: string
+          value_date?: string | null
+        }
+        Update: {
+          canonical_statement_id?: string
+          created_at?: string
+          credit_amount?: number | null
+          currency?: string
+          debit_amount?: number | null
+          description_sanitized?: string
+          direction?: string
+          id?: string
+          import_id?: string
+          is_active?: boolean
+          line_hash?: string
+          running_balance?: number | null
+          signed_amount?: number
+          transaction_date?: string
+          value_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_lines_canonical_canonical_statement_id_fkey"
+            columns: ["canonical_statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_canonical"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statement_lines_staging: {
+        Row: {
+          attempt_id: string
+          created_at: string
+          credit_amount: number | null
+          currency: string
+          debit_amount: number | null
+          description_sanitized: string
+          direction: string
+          id: string
+          import_id: string
+          line_hash: string
+          running_balance: number | null
+          signed_amount: number
+          source_line_index: number
+          staging_statement_id: string
+          status: string
+          transaction_date: string
+          value_date: string | null
+        }
+        Insert: {
+          attempt_id: string
+          created_at?: string
+          credit_amount?: number | null
+          currency: string
+          debit_amount?: number | null
+          description_sanitized: string
+          direction: string
+          id?: string
+          import_id: string
+          line_hash: string
+          running_balance?: number | null
+          signed_amount: number
+          source_line_index: number
+          staging_statement_id: string
+          status?: string
+          transaction_date: string
+          value_date?: string | null
+        }
+        Update: {
+          attempt_id?: string
+          created_at?: string
+          credit_amount?: number | null
+          currency?: string
+          debit_amount?: number | null
+          description_sanitized?: string
+          direction?: string
+          id?: string
+          import_id?: string
+          line_hash?: string
+          running_balance?: number | null
+          signed_amount?: number
+          source_line_index?: number
+          staging_statement_id?: string
+          status?: string
+          transaction_date?: string
+          value_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_lines_staging_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_import_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_staging_staging_statement_id_fkey"
+            columns: ["staging_statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_staging"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statement_staging: {
+        Row: {
+          account_fingerprint: string
+          account_number_masked: string | null
+          attempt_id: string
+          bank: string
+          calculated_closing: number | null
+          closing_balance: number
+          created_at: string
+          created_by: string | null
+          currency: string
+          discrepancy: number | null
+          id: string
+          import_id: string
+          line_count: number
+          opening_balance: number
+          period_end_date: string
+          period_start_date: string
+          raw_text_hash: string
+          statement_date: string | null
+          status: string
+          total_credits: number
+          total_debits: number
+          validation_status: string
+        }
+        Insert: {
+          account_fingerprint: string
+          account_number_masked?: string | null
+          attempt_id: string
+          bank: string
+          calculated_closing?: number | null
+          closing_balance: number
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          discrepancy?: number | null
+          id?: string
+          import_id: string
+          line_count: number
+          opening_balance: number
+          period_end_date: string
+          period_start_date: string
+          raw_text_hash: string
+          statement_date?: string | null
+          status?: string
+          total_credits: number
+          total_debits: number
+          validation_status: string
+        }
+        Update: {
+          account_fingerprint?: string
+          account_number_masked?: string | null
+          attempt_id?: string
+          bank?: string
+          calculated_closing?: number | null
+          closing_balance?: number
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          discrepancy?: number | null
+          id?: string
+          import_id?: string
+          line_count?: number
+          opening_balance?: number
+          period_end_date?: string
+          period_start_date?: string
+          raw_text_hash?: string
+          statement_date?: string | null
+          status?: string
+          total_credits?: number
+          total_debits?: number
+          validation_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_staging_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "bank_statement_import_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_reconciliation: {
         Row: {
           client_code: string
@@ -587,6 +1030,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_structured_bank_statement_needs_review_promotion: {
+        Args: { p_attempt_id: string; p_reason: string }
+        Returns: Json
+      }
       clean_client_name: {
         Args: { client_code: string; description: string }
         Returns: string
@@ -597,6 +1044,100 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      pre_ingest_structured_bank_statement: {
+        Args: {
+          p_account_fingerprint?: string
+          p_account_number_masked?: string
+          p_bank: string
+          p_errors_count?: number
+          p_import_id?: string
+          p_lines?: Json
+          p_parser_validation_status?: string
+          p_parser_version?: string
+          p_raw_text_hash?: string
+          p_rejected_reason?: string
+          p_requested_status: string
+          p_runtime_version?: string
+          p_source_file_name_redacted?: string
+          p_source_format: string
+          p_statement?: Json
+          p_warnings_count?: number
+        }
+        Returns: Json
+      }
+      promote_structured_bank_statement_import: {
+        Args: { p_attempt_id: string }
+        Returns: Json
+      }
+      reject_structured_bank_statement_import: {
+        Args: { p_attempt_id: string; p_reason: string }
+        Returns: Json
+      }
+      request_structured_bank_statement_manager_escalation: {
+        Args: { p_attempt_id: string; p_reason: string }
+        Returns: Json
+      }
+      resolve_structured_bank_statement_conflict_keep_existing: {
+        Args: { p_attempt_id: string; p_reason: string }
+        Returns: Json
+      }
+      structured_csv_acquire_import_lock: {
+        Args: { p_import_id: string }
+        Returns: undefined
+      }
+      structured_csv_append_audit_event: {
+        Args: {
+          p_actor_id: string
+          p_attempt_id: string
+          p_canonical_statement_id: string
+          p_event_type: string
+          p_import_id: string
+          p_new_status: string
+          p_previous_status: string
+          p_raw_text_hash: string
+          p_safe_details: Json
+          p_safe_message: string
+          p_staging_statement_id: string
+        }
+        Returns: string
+      }
+      structured_csv_assert_object_keys: {
+        Args: { p_allowed: string[]; p_object: Json }
+        Returns: undefined
+      }
+      structured_csv_assert_safe_details: {
+        Args: { p_details: Json }
+        Returns: undefined
+      }
+      structured_csv_assert_safe_reason: {
+        Args: { p_reason: string }
+        Returns: undefined
+      }
+      structured_csv_parse_amount_strict: {
+        Args: { p_value: string }
+        Returns: number
+      }
+      structured_csv_parse_date_strict: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      structured_csv_promote_staging_core: {
+        Args: {
+          p_actor: string
+          p_attempt_id: string
+          p_new_canonical_id: string
+          p_staging_id: string
+        }
+        Returns: string
+      }
+      supersede_structured_bank_statement_import: {
+        Args: {
+          p_new_attempt_id: string
+          p_old_canonical_statement_id: string
+          p_reason: string
+        }
+        Returns: Json
       }
     }
     Enums: {
