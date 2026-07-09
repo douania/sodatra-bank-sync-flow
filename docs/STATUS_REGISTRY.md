@@ -621,3 +621,38 @@ Imports correspondants (`Alerts`, `ConsolidatedDashboard`, `BankingReports`) ég
 - **DEF-UX-COUNTERS-01** (nouveau, mineur) : créé dans `DEFERRED_BACKLOG.md`.
 
 **Hors scope** : aucun fichier `src/` modifié, aucun SQL correctif, aucune migration, aucune RLS/auth/schéma, aucun patch runtime, `LOT4D20_BATCH_SAFETY_AUDIT.md` non modifié.
+
+---
+
+## Lot 0M-E — Reproductibilité full-chain (baseline pré-chaîne, Plan B)
+
+**Statut : CLOSED** (patch local + tests Docker uniquement — aucun Supabase live)
+
+**Objectif** : rendre la chaîne `supabase/migrations/` rejouable from-scratch
+(constat 0M-B-RETRY : échec sur staging clean, 7 tables bootstrap absentes),
+sans modifier aucune migration historique.
+
+**Fichiers** :
+- `supabase/migrations/20250625000000_baseline_prechain.sql` — nouveau (baseline 7 tables bootstrap)
+- `supabase/migrations/20250626101100_bridge_neutralize_unique_excel_upsert.sql` — nouveau (bridge Plan B)
+- `supabase/migrations/20260707000000_db_freeze_1b_collection_report_truth.sql` — nouveau (DB-FREEZE-1B v2)
+- `supabase/db-archive/replay-dead-not-in-prod-ledger/` — quarantine `git mv` de `emerald_summit` + `cold_shore` (absents ledger prod, vérif opérateur 2026-07-09) + README
+- `supabase/tests/full_chain_replay/` — shim plateforme minimal + runner + README
+- `docs/DB_TRUTH.md` — §5 note 1B matérialisé, nouveau §8 reproductibilité
+
+**Tests** : rejeu full-chain complet via `supabase db push --db-url` sur Postgres
+Docker jetable → 29/29 versions au ledger local, RLS partout, zéro policy
+permissive, `unique_excel_traceability` = text/NEVER, contrainte UNIQUE +
+`idx_collection_excel_source` + CHECK présents, RPC v2 verrouillées, baseline
+rollback + idempotence 2x, 1B idempotente. Suite v2 (rollback + 10→15 +
+concurrence) re-PASS sur conteneur séparé. Build PASS (artefact MCP intact).
+Lint : **211 erreurs préexistantes sur main @ fa85803**, étrangères au lot
+(scope ESLint = `**/*.{ts,tsx}` ; diff du lot = sql/md/sh uniquement) et non
+corrigeables ici (`src/**` interdit) — lot de nettoyage lint dédié à arbitrer.
+
+**Réserve staging (0M-F)** : l'étape 0 de `20260430150428` (historique, prod)
+exige que l'utilisateur `9539d4f5-…` existe dans `auth.users` — à provisionner
+sur staging avant tout push (le shim de test le seed localement).
+
+**Hors scope** : aucun `src/**`, aucun typegen, aucun Supabase live, aucun
+commit/PR (verdict CTO attendu).

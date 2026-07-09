@@ -88,6 +88,14 @@
 
 ## 5. Brouillon DB-FREEZE-1B (NON exécuté)
 
+> **Lot 0M-E (2026-07-09)** : ce brouillon est **matérialisé et durci** par la
+> migration réelle `supabase/migrations/20260707000000_db_freeze_1b_collection_report_truth.sql`
+> (voir §8). La version réelle ajoute la gestion des artefacts de rejeu
+> from-scratch (colonne GENERATED, index homonyme sur la paire excel) avec
+> guards stricts non destructifs. Le brouillon ci-dessous est conservé pour
+> l'historique ; la migration réelle fait foi. Toujours **non exécutée en
+> prod** (aucun Supabase live dans 0M-E).
+
 Brouillon SQL d'une future migration de vérité, **idempotente**, **NO-OP sur la prod actuelle**, reconstruisant l'état réel sur base neuve.
 **À ne pas créer ni exécuter sans staging + validation CTO explicite.**
 
@@ -196,3 +204,63 @@ T-post = identiques + comparaison stricte. Tout écart → rollback obligatoire.
 - Pas d'`UPDATE` massif des 740 lignes `unique_excel_traceability NULL` sans lot dédié validé CTO.
 - Pas de nettoyage des 125 lignes `client_code='UNKNOWN'` (DEF-14) dans le périmètre DB-FREEZE.
 - Pas de modification du trigger `trg_detect_collection_type` ni de la fonction `detect_collection_type()` dans le périmètre DB-FREEZE.
+
+---
+
+## 8. Reproductibilité from-scratch (lot 0M-E, 2026-07-09)
+
+La chaîne active ne se rejouait pas sur base vierge (constat 0M-B-RETRY :
+les 7 tables bootstrap n'existent pas ; audits 0M-D/0M-D2). Le lot 0M-E
+(Plan B, patch local uniquement, **aucun Supabase live exécuté**) rend le
+rejeu reproductible sans modifier aucune migration historique :
+
+### Vérification opérateur du ledger prod (Dashboard, 2026-07-09)
+
+| Version | Nom | Ledger prod | Décision |
+|---|---|---|---|
+| `20250626100949` | still_violet | **présent** | reste actif |
+| `20250626101422` | yellow_valley | **présent** | reste actif |
+| `20250626101725` | emerald_summit | **absent** | quarantine |
+| `20250628121618` | cold_shore | **absent** | quarantine |
+| `20250628121709` | shiny_waterfall | **présent** | reste actif |
+
+### Pièces du lot
+
+- **Baseline pré-chaîne** `20250625000000_baseline_prechain.sql` : recrée
+  l'état bootstrap Bolt (7 tables) exact d'avant `20250625211827`.
+  Idempotente, no-op sur base initialisée, zéro donnée, zéro policy, RLS
+  activée. **Anachronisme documenté** : `collection_report.unique_excel_traceability`
+  y est créée en `text` simple (la colonne est post-chaîne historiquement)
+  pour que le guard de `shiny_waterfall` skippe la forme `GENERATED ALWAYS`,
+  interdite (§7) et divergente de la prod.
+  **Non recréée volontairement** : `unique_collection_entry` (bootstrap
+  20250623222515) — absente de la vérité prod (§2) et référencée par aucune
+  migration active.
+- **Bridge Plan B** `20250626101100_bridge_neutralize_unique_excel_upsert.sql` :
+  entre `still_violet` et `yellow_valley` ; droppe (IF EXISTS) la contrainte
+  `unique_excel_upsert` que `still_violet` crée sur base vierge, pour que
+  `yellow_valley` (présent prod, non modifiable) passe. No-op prod.
+- **Quarantine** `supabase/db-archive/replay-dead-not-in-prod-ledger/` :
+  `emerald_summit` et `cold_shore` (mortes au rejeu, absentes du ledger prod,
+  retries actifs `raspy_union`/`shiny_waterfall`). `git mv`, contenu inchangé.
+- **DB-FREEZE-1B v2** `20260707000000_db_freeze_1b_collection_report_truth.sql` :
+  version réelle durcie du brouillon §5 (voir note en tête de §5).
+- **Tests** `supabase/tests/full_chain_replay/` : rejeu complet via
+  `supabase db push --db-url` sur Postgres Docker jetable, ledger local réel,
+  post-checks RLS/policies/vérité colonne/index/RPC. Le shim plateforme
+  minimal y seed **une** ligne `auth.users` synthétique (UUID admin de
+  `20260430150428`, déjà versionné dans le repo) — même exigence à anticiper
+  pour un futur apply staging : l'étape 0 de `20260430150428` exige que cet
+  utilisateur existe dans `auth.users`.
+
+### Ordre de rejeu résultant (29 versions)
+
+`baseline` → chaîne historique (avec `bridge` entre `still_violet` et
+`yellow_valley`, sans les 2 quarantinées) → `db_freeze_1b` → `daily v2`.
+
+### Note push prod futur
+
+Les nouvelles migrations (`20250625000000`, `20250626101100`) sont antérieures
+au dernier appliqué prod : un futur `db push` prod exigerait `--include-all`
+(ou un repair-mark) — décision réservée à un lot prod dédié avec GO explicite.
+Elles sont no-op sur base conforme par construction.
