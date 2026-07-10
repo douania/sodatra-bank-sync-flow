@@ -12,6 +12,7 @@
     "test:structured-csv": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts",
     "test:structured-csv-all": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts src/services/structuredBankStatementCsvIdempotencyKeys.synthetic.test.ts src/services/structuredBankStatementCsvImportAdapter.synthetic.test.ts src/services/structuredBankStatementCsvRuntimeDiagnosticService.synthetic.test.ts src/services/structuredBankStatementCsvPreIngestion.synthetic.test.ts src/services/structuredBankStatementCsvNodeIngestionRuntime.synthetic.test.ts",
     "test:structured-csv-e2b": "tsx --test src/services/structuredBankStatementCsvBrowserIdempotencyKeys.synthetic.test.ts src/services/structuredBankStatementCsvRpcPayload.synthetic.test.ts",
+    "test:daily-v2-application": "tsx --test src/services/structuredBankStatementDailyIdentity.synthetic.test.ts src/services/structuredBankStatementDailyRpcPayload.synthetic.test.ts src/features/daily-v2/dailyV2BrowserPipeline.synthetic.test.ts src/features/daily-v2/dailyV2RuntimeTarget.synthetic.test.ts src/features/daily-v2/dailyV2ApplicationContract.synthetic.test.ts src/features/daily-v2/dailyV2BundleSafety.synthetic.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
