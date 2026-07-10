@@ -2,19 +2,20 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { 
-  LayoutDashboard, 
-  Upload, 
+import {
+  LayoutDashboard,
+  Upload,
   FileSearch,
   BarChart3,
-  GitMerge, 
+  GitMerge,
   AlertTriangle,
   Shield,
   Home,
   Building2,
   FileText,
   TrendingUp,
-  LogOut
+  LogOut,
+  CalendarDays
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -33,7 +34,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  
+
   const showNavigation = location.pathname !== '/auth' && user;
 
   const handleSignOut = async () => {
@@ -45,6 +46,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Accueil', href: '/', icon: Home },
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
+    { name: 'Daily v2', href: '/daily-statements', icon: CalendarDays },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
   ];

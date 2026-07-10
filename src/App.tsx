@@ -1,4 +1,3 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,6 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import FileUpload from "./pages/FileUpload";
 import Reconciliation from "./pages/Reconciliation";
 import DocumentUnderstanding from "./pages/DocumentUnderstanding";
+import DailyStatementV2 from "./pages/DailyStatementV2";
 import QualityControl from "./pages/QualityControl";
 import NotFound from "./pages/NotFound";
 
@@ -36,6 +36,7 @@ const App = () => (
               <Route path="/upload-bulk" element={<ProtectedRoute><Navigate to="/upload" replace /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
               <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
+              <Route path="/daily-statements" element={<ProtectedRoute><DailyStatementV2 /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
