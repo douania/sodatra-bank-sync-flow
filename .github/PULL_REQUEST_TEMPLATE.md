@@ -1,6 +1,6 @@
 # Pull Request
 
-> Rappels non négociables :
+> Rappels non négociables (`CLAUDE.md`, workflow : `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md`) :
 > - **Aucun merge sans verdict CTO.**
 > - **Tout fichier non explicitement autorisé par le lot est interdit.**
 > - **Pas de données bancaires réelles.**
@@ -14,6 +14,15 @@
 ## Périmètre
 
 <!-- Lot / chantier concerné, limites explicites du périmètre. -->
+
+## GO reçus
+
+<!-- Identifiants exacts des GO du lot (cycle et environnement). -->
+
+- GO de cycle : <!-- ex. GO_IMPLEMENT_<PACK> ou GO_FIX_<PACK> -->
+- GO d'environnement : <!-- aucun par défaut ; GO_VALIDATE_STAGING_<PACK> / GO_APPLY_STAGING_<PACK> / GO_PRODUCTION_<PACK>_<ACTION> si accordés -->
+- Merge : <!-- uniquement via GO_MERGE_PR_<N> séparé, après vérification du head SHA -->
+
 
 ## Fichiers modifiés
 
@@ -58,11 +67,26 @@
 
 - ...
 
+## Comparaison aux baselines
+
+<!-- Procédure : docs/BASELINES.md. Seuil ESLint exécutable : .github/workflows/ci.yml. -->
+
+| Contrôle | Baseline origin/main | Branche | Nouvelles erreurs |
+|---|---|---|---|
+| Typecheck (`npx tsc -p tsconfig.app.json --noEmit`) | | | |
+| ESLint | | | |
+
 ## Résultats
 
 <!-- PASS/FAIL par commande, extraits pertinents si FAIL. -->
 
 - ...
+
+## Review
+
+- [ ] Review ChatGPT CTO demandée (obligatoire pour tout lot)
+- [ ] Seconde IA indépendante requise — le lot touche : DB / migration / Auth-RLS / sécurité / concurrence / idempotence / calcul financier critique
+- [ ] Seconde IA indépendante effectuée (joindre l'avis) ou explicitement omise par le CTO (lot à faible risque)
 
 ## Risques résiduels
 
