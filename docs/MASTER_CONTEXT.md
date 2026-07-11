@@ -64,6 +64,9 @@ Pas d'API bancaire directe.
 | Backlog différé | `docs/DEFERRED_BACKLOG.md` |
 | Vérité DB actuelle | `docs/DB_TRUTH.md` |
 | Pipelines import | `docs/LOT4A_PIPELINES_AUDIT.md`, `docs/LOT4D0_PIPELINE_CONSOLIDATION_AUDIT.md` |
+| Règles permanentes agents | `CLAUDE.md` (entrée : `AGENTS.md`) |
+| Workflow des lots et GO | `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` |
+| Baselines lint/typecheck/tests | `docs/BASELINES.md` (seuil ESLint exécutable : `.github/workflows/ci.yml`) |
 
 ## Modules actifs
 
@@ -75,6 +78,7 @@ Pas d'API bancaire directe.
 | Document Understanding | `/document-understanding` | Actif, notamment BDK/PDF |
 | Quality Control | `/quality-control` | Actif |
 | Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
+| Daily v2 | `/daily-statements` | Actif (PR #89) : dépôt CSV structuré, staging, promotion/supersede, canonical, audit ; accès par rôles ; cible verrouillée staging |
 
 ## Modules supprimés / retirés
 
@@ -131,7 +135,9 @@ Ne pas modifier sans justification CTO explicite :
 - RLS/Auth Supabase ;
 - pipeline Excel stabilisé Lot 3 ;
 - extraction BDK critique ;
-- DB-FREEZE-1B sans staging.
+- DB-FREEZE-1B sans staging ;
+- verrou de cible Daily v2 (`src/features/daily-v2/dailyV2RuntimeTarget.ts`) ;
+- artefact généré Lovable MCP (`supabase/functions/mcp/index.ts`, règles : `CLAUDE.md` §7).
 
 ## Backlog prioritaire
 

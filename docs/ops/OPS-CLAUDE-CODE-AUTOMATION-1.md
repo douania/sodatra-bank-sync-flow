@@ -1,8 +1,14 @@
 # OPS-CLAUDE-CODE-AUTOMATION-1 — Workflow ChatGPT CTO ↔ Claude Code
 
+> **Remplacé pour le workflow et les GO** par
+> `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` (canonique). Ce document reste la
+> **bibliothèque canonique** des formats de rapport (§8), de verdict (§9) et
+> des templates de prompts (§10). En cas de divergence sur le workflow ou les
+> GO, le V2 prime.
+
 ## 1. Statut
 
-- **PASS DESIGN**
+- **PASS DESIGN** — supplanté partiellement par OPS-WORKFLOW-V2 (voir bandeau)
 - Documentation OPS
 - Non applicatif
 - Aucun impact runtime
@@ -395,12 +401,15 @@ point par point. Cet avis alimente le verdict CTO, il ne le remplace pas.
 | Phase | Contenu | Statut |
 |---|---|---|
 | Phase 1 | Utiliser les templates de la section 10 pour tous les lots, sans patch applicatif lié à l'automatisation elle-même. | Active |
-| Phase 2 | Documentation OPS dans le repo (ce document). | Ce lot |
-| Phase 3 (future) | PR template optionnel (`.github/PULL_REQUEST_TEMPLATE.md`). Chantier séparé. | Non lancée |
+| Phase 2 | Documentation OPS dans le repo (ce document). | Livrée |
+| Phase 3 | PR template (`.github/PULL_REQUEST_TEMPLATE.md`). | Livrée |
 | Phase 4 (future) | Labels GitHub par type/niveau de lot. Chantier séparé ou action manuelle. | Non lancée |
-| Phase 5 (future) | CI minimale (lint/build/tests ciblés sur PR). Chantier séparé. | Non lancée |
+| Phase 5 | CI minimale (`.github/workflows/ci.yml` : lint advisory + ratchet ESLint + build). | Livrée |
+| Phase 6 | Workflow V2 : `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` (canonique workflow/GO). | Livrée |
 
-**Périmètre de ce lot** : le présent document uniquement. Ce lot ne modifie ni la CI, ni `.github`, ni l'application, ni la DB, ni Supabase.
+**Note de périmètre historique** : à sa création, ce lot ne modifiait que le
+présent document ; les phases livrées depuis ont chacune fait l'objet de leur
+propre lot CTO.
 
 ## 12. Critères PASS/FAIL de ce lot
 

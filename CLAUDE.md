@@ -15,7 +15,9 @@ Application bancaire sensible. Ces règles priment sur tout comportement par dé
 - Tout ce qui n'est pas explicitement autorisé par le lot est interdit.
 - Pas de secrets (clés API, tokens, credentials).
 - Pas de données bancaires réelles.
-- Pas de Supabase live sans GO explicite.
+- Pas de Supabase live sans GO explicite. Les GO d'environnement sont
+  distincts et non implicites : `GO_VALIDATE_STAGING`, `GO_APPLY_STAGING`,
+  `GO_PRODUCTION` (taxonomie : `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` §4).
 - Pas de SQL sans GO explicite.
 - Pas de migration sans GO explicite.
 - Pas de refactor global.
@@ -82,6 +84,9 @@ STOP immédiat + rapport BLOCKED si :
 | Structured CSV | `npm run lint` + `npm run build` + `npm run test:structured-csv-all` |
 | DB/RLS draft | pas de SQL live + review indépendante obligatoire |
 
+La liste canonique des scripts `test:*` vit dans `package.json`. La
+comparaison aux baselines (lint, typecheck, tests) suit `docs/BASELINES.md`.
+
 ## 6. Format du rapport final
 
 Chaque lot se termine par un rapport court :
@@ -102,3 +107,16 @@ Chaque lot se termine par un rapport court :
 - Si `npm run build` modifie ce fichier : **STOP**, puis `git restore supabase/functions/mcp/index.ts` avant toute PR.
 - Interdiction de référencer `import.meta.env` dans `src/lib/mcp/**` (risque d'inlining de variables d'environnement locales dans l'artefact).
 - Toute modification MCP (tools, manifest, auth) nécessite une revue CTO séparée.
+
+## 8. Références canoniques
+
+Ce fichier porte les règles permanentes. Le reste vit ailleurs, sans copie :
+
+| Sujet | Source |
+|---|---|
+| Workflow des lots, taxonomie des GO, politique de review | `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` |
+| Point d'entrée agents IA | `AGENTS.md` |
+| Architecture, modules, FROZEN | `docs/MASTER_CONTEXT.md` |
+| Baselines lint/typecheck/tests | `docs/BASELINES.md` |
+| Seuil ESLint exécutable | `.github/workflows/ci.yml` |
+| Templates de prompts, formats rapport/verdict | `docs/ops/OPS-CLAUDE-CODE-AUTOMATION-1.md` |
