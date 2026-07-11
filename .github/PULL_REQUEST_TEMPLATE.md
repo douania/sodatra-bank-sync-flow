@@ -19,8 +19,9 @@
 
 <!-- Identifiants exacts des GO du lot (cycle et environnement). -->
 
-- GO de cycle : <!-- ex. GO_PATCH / GO_COMMIT / GO_PR -->
-- GO d'environnement : <!-- aucun par défaut ; GO_VALIDATE_STAGING / GO_APPLY_STAGING / GO_PRODUCTION si accordés -->
+- GO de cycle : <!-- ex. GO_IMPLEMENT_<PACK> ou GO_FIX_<PACK> -->
+- GO d'environnement : <!-- aucun par défaut ; GO_VALIDATE_STAGING_<PACK> / GO_APPLY_STAGING_<PACK> / GO_PRODUCTION_<PACK>_<ACTION> si accordés -->
+- Merge : <!-- uniquement via GO_MERGE_PR_<N> séparé, après vérification du head SHA -->
 
 
 ## Fichiers modifiés

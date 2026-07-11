@@ -5,6 +5,13 @@
 > **bibliothèque canonique** des formats de rapport (§8), de verdict (§9) et
 > des templates de prompts (§10). En cas de divergence sur le workflow ou les
 > GO, le V2 prime.
+>
+> **Nomenclature des GO — sans ambiguïté** : `GO_PATCH` / `GO_COMMIT` /
+> `GO_PR` / `GO_MERGE`, utilisés dans le tableau §4 et les templates §10
+> ci-dessous, sont une **nomenclature historique**. Pour tout nouveau pack,
+> elle est remplacée par `GO_IMPLEMENT_<PACK>`, `GO_FIX_<PACK>` et
+> `GO_MERGE_PR_<N>` (V2 §4.1). À la réutilisation d'un template §10,
+> substituer les GO historiques par la nomenclature V2.
 
 ## 1. Statut
 
@@ -218,6 +225,10 @@ Le CTO répond à chaque rapport avec le format suivant :
 ```
 
 ## 10. Templates de prompts Claude Code
+
+> Rappel : les mentions `GO_PATCH` / `GO_COMMIT` / `GO_PR` / `GO_MERGE` des
+> templates ci-dessous sont historiques — substituer la nomenclature V2
+> (`GO_IMPLEMENT_<PACK>`, `GO_FIX_<PACK>`, `GO_MERGE_PR_<N>`) à l'usage.
 
 ### 10.1 Audit read-only
 

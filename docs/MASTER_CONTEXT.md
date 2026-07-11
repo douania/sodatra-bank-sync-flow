@@ -135,9 +135,7 @@ Ne pas modifier sans justification CTO explicite :
 - RLS/Auth Supabase ;
 - pipeline Excel stabilisé Lot 3 ;
 - extraction BDK critique ;
-- DB-FREEZE-1B sans staging ;
-- verrou de cible Daily v2 (`src/features/daily-v2/dailyV2RuntimeTarget.ts`) ;
-- artefact généré Lovable MCP (`supabase/functions/mcp/index.ts`, règles : `CLAUDE.md` §7).
+- DB-FREEZE-1B sans staging.
 
 ## Backlog prioritaire
 

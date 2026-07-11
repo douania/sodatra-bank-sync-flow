@@ -48,28 +48,38 @@ document. Un document qui a besoin d'une règle la **référence**.
 
 ## 4. Taxonomie des GO
 
-### 4.1 GO de cycle (par lot)
+Chaque GO est nominatif : il porte l'identifiant du pack (`<PACK>`) ou de la
+PR (`<N>`) qu'il autorise, et ne vaut pour rien d'autre.
 
-- `GO_PATCH` — modifier les fichiers autorisés.
-- `GO_COMMIT` — committer si le diff est conforme.
-- `GO_PR` — ouvrir une PR (draft par défaut) sans merge.
-- `GO_MERGE` — réservé au CTO, jamais implicite.
+### 4.1 GO de cycle (par pack)
 
-### 4.2 GO d'environnement (distincts et cumulatifs)
+- `GO_IMPLEMENT_<PACK>` — autorise, dans le périmètre approuvé du pack :
+  branche dédiée, patch, corrections internes, tests, diff, commit, push vers
+  `origin` et ouverture d'une **draft PR**.
+- `GO_FIX_<PACK>` — autorise les corrections demandées par la review, dans le
+  **même périmètre** et sur la **même branche** : tests, commit, push.
+- `GO_MERGE_PR_<N>` — autorise **uniquement** le merge de la PR désignée,
+  après vérification de son head SHA exact.
+
+`GO_IMPLEMENT_<PACK>` et `GO_FIX_<PACK>` n'autorisent **jamais** : merge,
+staging, DB, migration, déploiement, production, ni élargissement matériel du
+périmètre.
+
+### 4.2 GO d'environnement (distincts et nominatifs)
 
 | GO | Autorise | N'autorise PAS |
 |---|---|---|
-| `GO_VALIDATE_STAGING` | Runtime/lectures de validation sur le staging autorisé (`gbbsqcscryygqlmqncyv`), sans écriture de schéma | migrations, SQL write, production |
-| `GO_APPLY_STAGING` | Application de migrations/SQL sur le staging autorisé | production |
-| `GO_PRODUCTION` | Toute action sur la production | rien d'implicite : chaque action prod reste énumérée par le lot |
+| `GO_VALIDATE_STAGING_<PACK>` | Validation **read-only par défaut** sur le staging autorisé (`gbbsqcscryygqlmqncyv`) ; toute opération runtime au-delà de la lecture doit être **précisément énumérée** par le GO | mutation de données, SQL write, migration, `db push`, production |
+| `GO_APPLY_STAGING_<PACK>` | Uniquement les **écritures staging précisément énumérées**, sur le `project_ref` exact | production |
+| `GO_PRODUCTION_<PACK>_<ACTION>` | **Une action production exacte**, sur une cible exacte, dans un périmètre exact | toute autre action : aucune autorisation générale implicite |
 
 Règles :
 
-- ces trois GO sont **indépendants** : aucun n'implique un autre ;
-- un GO d'environnement ne vaut que pour le lot qui le porte ;
+- ces GO sont **indépendants** : aucun n'implique un autre ;
+- un GO d'environnement ne vaut que pour le pack qui le porte ;
 - en l'absence explicite d'un GO d'environnement, l'environnement est
   interdit ;
-- **aucun de ces trois GO n'est accordé par le présent chantier.**
+- **aucun GO d'environnement n'est accordé par le présent chantier.**
 
 ## 5. Baselines et non-régression
 

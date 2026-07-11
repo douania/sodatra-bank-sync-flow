@@ -16,8 +16,9 @@ Application bancaire sensible. Ces règles priment sur tout comportement par dé
 - Pas de secrets (clés API, tokens, credentials).
 - Pas de données bancaires réelles.
 - Pas de Supabase live sans GO explicite. Les GO d'environnement sont
-  distincts et non implicites : `GO_VALIDATE_STAGING`, `GO_APPLY_STAGING`,
-  `GO_PRODUCTION` (taxonomie : `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` §4).
+  distincts, nominatifs et non implicites : `GO_VALIDATE_STAGING_<PACK>`,
+  `GO_APPLY_STAGING_<PACK>`, `GO_PRODUCTION_<PACK>_<ACTION>`
+  (taxonomie : `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` §4).
 - Pas de SQL sans GO explicite.
 - Pas de migration sans GO explicite.
 - Pas de refactor global.
