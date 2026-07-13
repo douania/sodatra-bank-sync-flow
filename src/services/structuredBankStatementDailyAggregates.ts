@@ -21,10 +21,8 @@
  *    direction, non-strict amount, direction/sign mismatch) comes back as
  *    `errors` with aggregatesStatus 'unavailable' — a bad line never crashes
  *    the composition and never produces partial aggregates.
- *  - Money arithmetic runs on integer cents: amounts are validated against the
- *    strict format first (max 2 decimals, max 16 integer digits, mirror of the
- *    v1 RPC gate), then converted, so float dust can never fake a coherent or
- *    incoherent chain.
+ *  - Money arithmetic runs on bigint cents with a strict exact-output cap, so
+ *    neither per-line conversion nor daily summation can silently lose cents.
  */
 
 /** Minimal structural view of one daily line, decoupled from the 0E module. */
@@ -51,10 +49,8 @@ export interface StructuredBankStatementDailyAggregates {
   warnings: string[];
 }
 
-// Mirror of the v1 RPC amount gate: optional sign, 1-16 integer digits, at
-// most 2 decimals, no exponent/NaN/Infinity. Tested against the number's
-// canonical string form, so float dust (0.30000000000000004) is refused.
-const STRICT_AMOUNT_PATTERN = /^-?\d{1,16}(\.\d{1,2})?$/;
+const STRICT_AMOUNT_PATTERN = /^-?\d{1,13}(\.\d{1,2})?$/;
+const MAX_ABSOLUTE_AMOUNT_CENTS = 100_000_000_000_000n;
 
 /**
  * Derive the day-level aggregates of ONE accounting day from its lines.
@@ -90,7 +86,7 @@ export function deriveStructuredBankStatementDailyAggregates(
     }
     if (!isStrictAmount(line.signedAmount)) {
       errors.push(
-        `lines[${index}]: signedAmount must be a finite amount with at most 2 decimals and 16 integer digits.`
+        `lines[${index}]: signedAmount must be finite, exact to cents and within the monetary safety cap.`
       );
       return;
     }
@@ -104,7 +100,7 @@ export function deriveStructuredBankStatementDailyAggregates(
     }
     if (line.runningBalance !== undefined && !isStrictAmount(line.runningBalance)) {
       errors.push(
-        `lines[${index}]: runningBalance, when present, must be a finite amount with at most 2 decimals and 16 integer digits.`
+        `lines[${index}]: runningBalance, when present, must be finite, exact to cents and within the monetary safety cap.`
       );
     }
   });
@@ -122,8 +118,8 @@ export function deriveStructuredBankStatementDailyAggregates(
   }
 
   // Totals: always derivable from direction + signedAmount, in integer cents.
-  let debitCents = 0;
-  let creditCents = 0;
+  let debitCents = 0n;
+  let creditCents = 0n;
   for (const line of lines) {
     const cents = toCents(line.signedAmount);
     if (line.direction === 'debit') {
@@ -131,6 +127,17 @@ export function deriveStructuredBankStatementDailyAggregates(
     } else {
       creditCents += cents;
     }
+  }
+  if (!isCentsWithinOutputCap(debitCents) || !isCentsWithinOutputCap(creditCents)) {
+    return {
+      lineCount: lines.length,
+      dayTotalDebits: 0,
+      dayTotalCredits: 0,
+      aggregatesStatus: 'unavailable',
+      validationStatus: 'needs_review',
+      errors: ['daily debit or credit total exceeds the exact monetary output cap (fail-closed).'],
+      warnings
+    };
   }
 
   // Opening/closing: derived only from a COMPLETE and COHERENT balance chain.
@@ -146,7 +153,7 @@ export function deriveStructuredBankStatementDailyAggregates(
     );
   } else {
     let coherent = true;
-    let previousBalanceCents = 0;
+    let previousBalanceCents = 0n;
     for (let index = 0; index < lines.length; index++) {
       const balanceCents = toCents(lines[index].runningBalance as number);
       const signedCents = toCents(lines[index].signedAmount);
@@ -164,7 +171,19 @@ export function deriveStructuredBankStatementDailyAggregates(
     if (coherent) {
       const firstBalanceCents = toCents(lines[0].runningBalance as number);
       const firstSignedCents = toCents(lines[0].signedAmount);
-      openingBalanceDerived = fromCents(firstBalanceCents - firstSignedCents);
+      const openingCents = firstBalanceCents - firstSignedCents;
+      if (!isCentsWithinOutputCap(openingCents)) {
+        return {
+          lineCount: lines.length,
+          dayTotalDebits: 0,
+          dayTotalCredits: 0,
+          aggregatesStatus: 'unavailable',
+          validationStatus: 'needs_review',
+          errors: ['derived opening balance exceeds the exact monetary output cap (fail-closed).'],
+          warnings
+        };
+      }
+      openingBalanceDerived = fromCents(openingCents);
       closingBalanceDerived = fromCents(toCents(lines[lines.length - 1].runningBalance as number));
       aggregatesStatus = 'derived';
     }
@@ -184,14 +203,23 @@ export function deriveStructuredBankStatementDailyAggregates(
 }
 
 function isStrictAmount(value: number): boolean {
-  return typeof value === 'number' && Number.isFinite(value) && STRICT_AMOUNT_PATTERN.test(String(value));
+  if (typeof value !== 'number' || !Number.isFinite(value) || !STRICT_AMOUNT_PATTERN.test(String(value))) {
+    return false;
+  }
+  const cents = Math.round(value * 100);
+  return Number.isSafeInteger(cents) &&
+    Math.abs(value * 100 - cents) <= 1e-7 &&
+    Math.abs(cents) <= Number(MAX_ABSOLUTE_AMOUNT_CENTS);
 }
 
-// Amounts passed the strict 2-decimal gate above, so cents are exact integers.
-function toCents(value: number): number {
-  return Math.round(value * 100);
+function toCents(value: number): bigint {
+  return BigInt(Math.round(value * 100));
 }
 
-function fromCents(cents: number): number {
-  return cents / 100;
+function fromCents(cents: bigint): number {
+  return Number(cents) / 100;
+}
+
+function isCentsWithinOutputCap(cents: bigint): boolean {
+  return cents >= -MAX_ABSOLUTE_AMOUNT_CENTS && cents <= MAX_ABSOLUTE_AMOUNT_CENTS;
 }

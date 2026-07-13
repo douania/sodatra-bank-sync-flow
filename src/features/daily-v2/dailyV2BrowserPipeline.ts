@@ -3,16 +3,19 @@
  *
  * Security boundaries:
  * - no Node-only import and no Supabase dependency;
- * - the decoded CSV remains a local variable and is never returned;
+ * - decoded CSV text and Excel bytes remain local and are never returned;
  * - accountFingerprint is trusted caller input and never derived from a masked account;
  * - the payload is built from an allow-listed shape and scanned for forbidden keys;
- * - source file name is used locally for parser bank detection, but is never persisted.
+ * - source file name is used locally for CSV hints/extension checks, but is never persisted.
  */
 import {
   parseStructuredBankStatementCsv,
-  type StructuredBankStatementDocument,
   type StructuredBankStatementLine,
 } from '@/services/structuredBankStatementCsvParser';
+import {
+  parseStructuredBankStatementExcel,
+  type StructuredBankStatementExcelSourceFormat,
+} from '@/services/structuredBankStatementExcelParser';
 import {
   buildStructuredBankStatementDayContentHash,
   buildStructuredBankStatementDailyLineHash,
@@ -31,11 +34,18 @@ import type {
 } from './dailyV2Types';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_ABSOLUTE_AMOUNT_CENTS = 100_000_000_000_000;
 const MAX_DAILY_PERIOD_DAYS = 45;
-const SOURCE_FORMAT = 'structured_bank_statement_csv';
-const RUNTIME_VERSION = 'daily-v2-browser-0n';
-const PARSER_VERSION = 'structured-csv-0b';
+const MAX_BACKFILL_PERIOD_DAYS = 4_000;
+const MAX_BACKFILL_UNITS = 4_000;
+const CSV_SOURCE_FORMAT = 'structured_bank_statement_csv';
+const RUNTIME_VERSION = 'daily-v2-browser-0q';
+const CSV_PARSER_VERSION = 'structured-csv-0b';
+const CSV_BANKS: ReadonlySet<DailyV2SupportedBank> = new Set(['BDK', 'ORA']);
+const EXCEL_BANKS: ReadonlySet<DailyV2SupportedBank> = new Set(['ATB', 'BICIS', 'BIS', 'BRIDGE']);
 const MASKED_ACCOUNT_PATTERN = /^[*]+[0-9]{0,4}$/;
+const TRUSTED_CURRENCY_PATTERN = /^[A-Z]{3}$/;
+const BACKFILL_GRANT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const STRICT_DATE_PATTERN = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 const FORBIDDEN_KEYS = new Set([
   'rawcsv',
@@ -57,18 +67,25 @@ export interface DailyV2BrowserFileLike {
   arrayBuffer(): Promise<ArrayBuffer>;
 }
 
+export type DailyV2SupportedBank = 'BDK' | 'ORA' | 'ATB' | 'BICIS' | 'BIS' | 'BRIDGE';
+export type DailyV2BrowserRequestedMode = 'daily' | 'backfill';
+
 export interface PrepareDailyV2BrowserInput {
   file: DailyV2BrowserFileLike;
-  bank: 'BDK' | 'ORA';
+  bank: DailyV2SupportedBank;
   currency: string;
   accountFingerprint: string;
   exportReferenceDate?: string;
+  requestedMode?: DailyV2BrowserRequestedMode;
+  backfillGrantReference?: string;
 }
 
 export interface DailyV2SafeDiagnostic {
   sourceFileName: string;
-  bank: 'BDK' | 'ORA';
+  bank: DailyV2SupportedBank;
   currency: string;
+  sourceFormat: typeof CSV_SOURCE_FORMAT | StructuredBankStatementExcelSourceFormat;
+  requestedMode: DailyV2BrowserRequestedMode;
   accountNumberMasked: string | null;
   periodStart: string;
   periodEnd: string;
@@ -98,6 +115,24 @@ interface DailyGroup {
   lines: StructuredBankStatementLine[];
 }
 
+interface DailyV2ParsedDocument {
+  bankHint: string;
+  currency?: string;
+  accountNumberMasked?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  statementDate?: string;
+  forceReviewAllUnits?: boolean;
+  lines: StructuredBankStatementLine[];
+  validation: {
+    status: string;
+    errors: string[];
+    warnings: string[];
+  };
+  errors: string[];
+  warnings: string[];
+}
+
 export async function prepareDailyV2BrowserDeposit(
   input: PrepareDailyV2BrowserInput,
 ): Promise<PrepareDailyV2BrowserResult> {
@@ -105,14 +140,23 @@ export async function prepareDailyV2BrowserDeposit(
   const warnings: string[] = [];
 
   const fileName = input.file.name.trim();
-  if (!fileName.toLowerCase().endsWith('.csv')) {
-    return fail(['Only .csv files are supported for Daily v2 deposits.'], warnings);
+  const extension = fileExtension(fileName);
+  const isCsv = extension === '.csv';
+  const isExcel = extension === '.xls' || extension === '.xlsx';
+  if (!isCsv && !isExcel) {
+    return fail(['Only structured .csv, .xls and .xlsx files are supported.'], warnings);
   }
   if (typeof input.file.size === 'number' && input.file.size > MAX_FILE_BYTES) {
-    return fail([`CSV file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB safety limit.`], warnings);
+    return fail([`Source file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB safety limit.`], warnings);
   }
-  if (fileName.toUpperCase().includes('BRIDGE')) {
-    return fail(['BRIDGE-named exports are refused on the structured Daily v2 path.'], warnings);
+  if (isCsv && !CSV_BANKS.has(input.bank)) {
+    return fail([`Bank ${input.bank} is not supported by the structured CSV profile family.`], warnings);
+  }
+  if (isCsv && fileName.toUpperCase().includes('BRIDGE')) {
+    return fail(['BRIDGE-named CSV exports are refused; use the characterized XLSX profile.'], warnings);
+  }
+  if (isExcel && !EXCEL_BANKS.has(input.bank)) {
+    return fail([`Bank ${input.bank} is not supported by the structured Excel profile family.`], warnings);
   }
   if (!isWebCryptoAvailableForStructuredBankStatementHashing()) {
     return fail(['Web Crypto is unavailable; Daily v2 hashing fails closed.'], warnings);
@@ -121,12 +165,32 @@ export async function prepareDailyV2BrowserDeposit(
   const bank = input.bank;
   const currency = input.currency.trim();
   const accountFingerprint = input.accountFingerprint.trim();
-  if (currency === '') errors.push('currency is required.');
+  const requestedMode = input.requestedMode ?? 'daily';
+  const backfillGrantReference = input.backfillGrantReference?.trim();
+  if (!TRUSTED_CURRENCY_PATTERN.test(currency)) {
+    errors.push('currency must be a strict uppercase ISO-like three-letter code.');
+  }
   if (accountFingerprint === '') {
     errors.push('accountFingerprint is required and is never derived from the masked account number.');
   }
   if (MASKED_ACCOUNT_PATTERN.test(accountFingerprint)) {
     errors.push('accountFingerprint must be an opaque pre-provisioned identifier, not a masked account label.');
+  }
+  if (requestedMode === 'daily' && backfillGrantReference) {
+    errors.push('backfillGrantReference is forbidden in daily mode.');
+  }
+  if (requestedMode === 'backfill' && !backfillGrantReference) {
+    errors.push('backfillGrantReference is mandatory in backfill mode.');
+  }
+  if (requestedMode === 'backfill' && bank !== 'BIS') {
+    errors.push('Backfill mode is supported only for the characterized BIS profile in 0Q.');
+  }
+  if (
+    requestedMode === 'backfill' &&
+    backfillGrantReference &&
+    !BACKFILL_GRANT_PATTERN.test(backfillGrantReference)
+  ) {
+    errors.push('backfillGrantReference must be a safe 1-200 character grant identifier.');
   }
 
   const exportReferenceDate = normalizeOptionalDate(
@@ -136,24 +200,47 @@ export async function prepareDailyV2BrowserDeposit(
   );
   if (errors.length > 0) return fail(errors, warnings);
 
-  let decodedText: string;
+  let fileBuffer: ArrayBuffer;
   try {
-    const bytes = await input.file.arrayBuffer();
-    decodedText = new TextDecoder('windows-1252').decode(new Uint8Array(bytes));
+    fileBuffer = await input.file.arrayBuffer();
   } catch {
-    return fail(['CSV decoding failed without exposing file content.'], warnings);
+    return fail(['Source file reading failed without exposing file content.'], warnings);
+  }
+  if (fileBuffer.byteLength > MAX_FILE_BYTES) {
+    new Uint8Array(fileBuffer).fill(0);
+    return fail([`Source file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB safety limit.`], warnings);
   }
 
-  let document: StructuredBankStatementDocument;
+  let document: DailyV2ParsedDocument;
   let rawTextHash: string;
+  let sourceFormat: typeof CSV_SOURCE_FORMAT | StructuredBankStatementExcelSourceFormat;
+  let parserVersion: string;
   try {
-    document = parseStructuredBankStatementCsv(decodedText, { sourceFileName: fileName });
-    rawTextHash = await buildStructuredBankStatementRawTextHash({ decodedText });
+    if (isCsv) {
+      const decodedText = new TextDecoder('windows-1252').decode(new Uint8Array(fileBuffer));
+      document = parseStructuredBankStatementCsv(decodedText, { sourceFileName: fileName });
+      rawTextHash = await buildStructuredBankStatementRawTextHash({ decodedText });
+      sourceFormat = CSV_SOURCE_FORMAT;
+      parserVersion = CSV_PARSER_VERSION;
+    } else {
+      if (!hasExpectedExcelSignature(new Uint8Array(fileBuffer), extension)) {
+        new Uint8Array(fileBuffer).fill(0);
+        return fail([`The ${extension} extension does not match the file signature.`], warnings);
+      }
+      rawTextHash = await buildRawBytesHash(fileBuffer);
+      const excelDocument = parseStructuredBankStatementExcel(fileBuffer, {
+        sourceFileName: fileName,
+        expectedBank: bank as 'ATB' | 'BICIS' | 'BIS' | 'BRIDGE',
+      });
+      document = excelDocument;
+      sourceFormat = excelDocument.sourceFormat;
+      parserVersion = excelDocument.parserVersion;
+    }
   } catch {
-    decodedText = '';
-    return fail(['Structured CSV parsing or hashing failed without exposing file content.'], warnings);
+    new Uint8Array(fileBuffer).fill(0);
+    return fail(['Structured file parsing or hashing failed without exposing file content.'], warnings);
   }
-  decodedText = '';
+  new Uint8Array(fileBuffer).fill(0);
 
   collectUnique(warnings, document.warnings, document.validation.warnings);
   collectUnique(errors, document.errors, document.validation.errors);
@@ -163,9 +250,9 @@ export async function prepareDailyV2BrowserDeposit(
       `Trusted bank (${bank}) does not match the parser bank hint (${document.bankHint}); deposit refused.`,
     );
   }
-  if (document.currency?.trim() !== currency) {
+  if (document.currency && document.currency.trim() !== currency) {
     errors.push(
-      `Trusted currency (${currency}) does not match the parsed currency (${document.currency ?? 'missing'}).`,
+      `Trusted currency (${currency}) does not match the parsed currency (${document.currency}).`,
     );
   }
   if (document.accountNumberMasked && !MASKED_ACCOUNT_PATTERN.test(document.accountNumberMasked)) {
@@ -186,14 +273,26 @@ export async function prepareDailyV2BrowserDeposit(
   const statementDate = normalizeOptionalDate(document.statementDate, 'statementDate', errors) ?? null;
   const periodDays =
     periodStart && periodEnd ? inclusiveDayCount(periodStart, periodEnd, errors) : undefined;
-  if (periodDays !== undefined && periodDays > MAX_DAILY_PERIOD_DAYS) {
+  if (requestedMode === 'daily' && periodDays !== undefined && periodDays > MAX_DAILY_PERIOD_DAYS) {
     errors.push(
       `Export period spans ${periodDays} days, above the ${MAX_DAILY_PERIOD_DAYS}-day Daily v2 limit.`,
+    );
+  }
+  if (
+    requestedMode === 'backfill' &&
+    periodDays !== undefined &&
+    periodDays > MAX_BACKFILL_PERIOD_DAYS
+  ) {
+    errors.push(
+      `Backfill period spans ${periodDays} days, above the ${MAX_BACKFILL_PERIOD_DAYS}-day structural limit.`,
     );
   }
 
   if (document.lines.length === 0) errors.push('At least one transaction line is required.');
   const groups = groupLinesByAccountingDate(document.lines, errors);
+  if (requestedMode === 'backfill' && groups.length > MAX_BACKFILL_UNITS) {
+    errors.push(`Backfill contains more than ${MAX_BACKFILL_UNITS} daily units.`);
+  }
   if (errors.length > 0 || !periodStart || !periodEnd || periodDays === undefined) {
     return fail(errors, warnings);
   }
@@ -287,7 +386,9 @@ export async function prepareDailyV2BrowserDeposit(
         opening_balance_derived: aggregates.openingBalanceDerived ?? null,
         closing_balance_derived: aggregates.closingBalanceDerived ?? null,
         aggregates_status: aggregates.aggregatesStatus,
-        validation_status: aggregates.validationStatus,
+        validation_status: document.forceReviewAllUnits
+          ? 'needs_review'
+          : aggregates.validationStatus,
         requested_unit_status: requestedStatus,
       });
       rpcLines.push(...unitLines);
@@ -305,8 +406,8 @@ export async function prepareDailyV2BrowserDeposit(
 
   const payload: DailyV2PreIngestPayload = {
     p_attempt: {
-      requested_mode: 'daily',
-      source_format: SOURCE_FORMAT,
+      requested_mode: requestedMode,
+      source_format: sourceFormat,
       bank,
       currency,
       account_fingerprint: accountFingerprint,
@@ -321,7 +422,7 @@ export async function prepareDailyV2BrowserDeposit(
       errors_count: uniqueCount(document.errors, document.validation.errors),
       warnings_count: uniqueCount(document.warnings, document.validation.warnings),
       runtime_version: RUNTIME_VERSION,
-      parser_version: PARSER_VERSION,
+      parser_version: parserVersion,
     },
     p_units: rpcUnits,
     p_lines: rpcLines,
@@ -329,7 +430,9 @@ export async function prepareDailyV2BrowserDeposit(
       ingestion_ready: true,
       period_days: periodDays,
       bridge_guard_passed: true,
-      backfill_grant_reference: null,
+      backfill_grant_reference: requestedMode === 'backfill'
+        ? (backfillGrantReference as string)
+        : null,
     },
   };
 
@@ -348,6 +451,8 @@ export async function prepareDailyV2BrowserDeposit(
       sourceFileName: fileName,
       bank,
       currency,
+      sourceFormat,
+      requestedMode,
       accountNumberMasked: document.accountNumberMasked ?? null,
       periodStart,
       periodEnd,
@@ -410,7 +515,12 @@ function assertStrictDate(value: string, label: string): string {
 }
 
 function isStrictAmount(value: number): boolean {
-  return Number.isFinite(value) && /^-?\d{1,16}(\.\d{1,2})?$/.test(String(value));
+  const cents = Math.round(value * 100);
+  return Number.isFinite(value) &&
+    Number.isSafeInteger(cents) &&
+    Math.abs(cents) <= MAX_ABSOLUTE_AMOUNT_CENTS &&
+    Math.abs(value * 100 - cents) <= 1e-7 &&
+    /^-?\d{1,13}(\.\d{1,2})?$/.test(String(value));
 }
 
 function groupLinesByAccountingDate(
@@ -461,7 +571,7 @@ function assignOccurrenceOrdinals(
 }
 
 function resolveRequestedUnitStatus(input: {
-  bank: 'BDK' | 'ORA';
+  bank: DailyV2SupportedBank;
   accountingDate: string;
   latestAccountingDate: string;
   exportReferenceDate?: string;
@@ -475,6 +585,33 @@ function resolveRequestedUnitStatus(input: {
     return 'provisional';
   }
   return 'staged';
+}
+
+function fileExtension(fileName: string): string {
+  const lower = fileName.trim().toLowerCase();
+  const dot = lower.lastIndexOf('.');
+  return dot >= 0 ? lower.slice(dot) : '';
+}
+
+function hasExpectedExcelSignature(bytes: Uint8Array, extension: string): boolean {
+  if (extension === '.xls') {
+    const cfb = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+    return cfb.every((value, index) => bytes[index] === value);
+  }
+  if (extension === '.xlsx') {
+    return bytes.length >= 4 &&
+      bytes[0] === 0x50 &&
+      bytes[1] === 0x4b &&
+      ((bytes[2] === 0x03 && bytes[3] === 0x04) ||
+        (bytes[2] === 0x05 && bytes[3] === 0x06) ||
+        (bytes[2] === 0x07 && bytes[3] === 0x08));
+  }
+  return false;
+}
+
+async function buildRawBytesHash(buffer: ArrayBuffer): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function normalizeOptionalDate(

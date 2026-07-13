@@ -5,6 +5,7 @@ import test from 'node:test';
 const app = readFileSync('src/App.tsx', 'utf8');
 const layout = readFileSync('src/components/Layout.tsx', 'utf8');
 const access = readFileSync('src/features/daily-v2/dailyV2Access.ts', 'utf8');
+const browserPipeline = readFileSync('src/features/daily-v2/dailyV2BrowserPipeline.ts', 'utf8');
 const service = readFileSync('src/features/daily-v2/dailyV2SupabaseService.ts', 'utf8');
 const types = readFileSync('src/features/daily-v2/dailyV2Types.ts', 'utf8');
 const page = readFileSync('src/pages/DailyStatementV2.tsx', 'utf8');
@@ -44,6 +45,20 @@ test('keeps role-gated UI decisions fail closed', () => {
   assert.match(page, /const canReadCanonical = isAdmin \|\| roles\.includes\('auditor'\)/);
   assert.match(tables, /unit\.status === 'staged'/);
   assert.match(tables, /unit\.status === 'conflict'/);
+  assert.match(page, /\{isAdmin && bank === 'BIS' && <SelectItem value="backfill"/);
+  assert.match(page, /requestedMode === 'backfill' && !isAdmin/);
+  assert.match(browserPipeline, /backfillGrantReference is mandatory in backfill mode/);
+  assert.match(browserPipeline, /Backfill mode is supported only for the characterized BIS profile in 0Q/);
+  assert.match(browserPipeline, /MAX_BACKFILL_PERIOD_DAYS = 4_000/);
+});
+
+test('exposes only the characterized structured bank/file matrix', () => {
+  for (const bank of ['BDK', 'ORA', 'ATB', 'BICIS', 'BIS', 'BRIDGE']) {
+    assert.match(page, new RegExp(`<SelectItem value="${bank}"`));
+  }
+  assert.match(page, /'text\/csv': \['\.csv'\]/);
+  assert.match(page, /'application\/vnd\.ms-excel': \['\.xls'\]/);
+  assert.match(page, /spreadsheetml\.sheet': \['\.xlsx'\]/);
 });
 
 test('blocks the Daily v2 page and navigation for the user-only role', () => {

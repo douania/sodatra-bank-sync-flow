@@ -107,5 +107,14 @@ jobs:
           console.log('ESLint debt is within baseline.');
           NODE
 
+      - name: Structured statement and Daily v2 tests
+        run: |
+          npm run test:structured-csv-all
+          npm run test:structured-csv-e2b
+          npm run test:structured-excel
+          npm run test:daily-v2-application
+          npm run test:daily-v2-reporting
+          npm run test:bdk-pdf
+
       - name: Build
         run: npm run build
