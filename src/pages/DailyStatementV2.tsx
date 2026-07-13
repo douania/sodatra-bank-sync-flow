@@ -58,6 +58,7 @@ import {
   StatusBadge,
 } from '@/features/daily-v2/DailyV2Tables';
 import { invalidateDailyV2, shortId } from '@/features/daily-v2/dailyV2UiUtils';
+import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
 
 const PAGE_SIZE = 20;
 const STAGING_STATUSES: Array<'all' | DailyV2StagingStatus> = [
@@ -265,11 +266,12 @@ const DailyStatementV2 = () => {
       </div>
 
       <Tabs defaultValue="import" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="import">Import</TabsTrigger>
           <TabsTrigger value="staging">Staging</TabsTrigger>
           <TabsTrigger value="canonical">Canonical</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
+          <TabsTrigger value="reporting">Reporting</TabsTrigger>
         </TabsList>
 
         <TabsContent value="import" className="space-y-4">
@@ -388,6 +390,10 @@ const DailyStatementV2 = () => {
               <Pager page={auditPage} count={auditQuery.data?.count ?? 0} onChange={setAuditPage} />
             </ListCard>
           )}
+        </TabsContent>
+
+        <TabsContent value="reporting">
+          {!canReadCanonical ? <AccessDenied text="Reporting réservé aux rôles admin et auditor." /> : <DailyV2Reporting />}
         </TabsContent>
       </Tabs>
 
