@@ -11,12 +11,23 @@ import type {
   DailyV2PreIngestPayload,
   DailyV2PreIngestResponse,
   DailyV2PromoteResponse,
+  DailyV2ReportingUnitRow,
   DailyV2StagingLineRow,
   DailyV2StagingStatus,
   DailyV2StagingUnitRow,
   DailyV2SupersedeResponse,
 } from './dailyV2Types';
 import { currentDailyV2RuntimeTargetVerdict } from './dailyV2RuntimeTarget';
+import {
+  DailyV2ServiceError,
+  runDailyV2CanonicalReportingRead,
+  type DailyV2ReportingReadAdapter,
+  type DailyV2ReportingReadFilters,
+} from './dailyV2ReportingReadCore';
+
+// Stable public surface: the error class and the reporting ceiling moved to
+// the pure read core but stay importable from this module.
+export { DAILY_V2_REPORTING_MAX_UNITS, DailyV2ServiceError } from './dailyV2ReportingReadCore';
 
 const dailyV2Supabase = supabase as unknown as SupabaseClient<DailyV2Database>;
 const MAX_SAFE_REASON_LENGTH = 200;
@@ -55,16 +66,6 @@ const supersedeResponseSchema = z.object({
   old_canonical_unit_id: z.string().uuid().optional(),
   new_canonical_unit_id: z.string().uuid().optional(),
 });
-
-export class DailyV2ServiceError extends Error {
-  readonly safeCode?: string;
-
-  constructor(message: string, safeCode?: string) {
-    super(message);
-    this.name = 'DailyV2ServiceError';
-    this.safeCode = safeCode;
-  }
-}
 
 export async function getCurrentUserDailyV2Roles(): Promise<DailyV2AppRole[]> {
   assertAuthorizedDailyV2Target();
@@ -237,6 +238,125 @@ export async function listDailyV2AuditEvents(input: {
     .range(from, to);
   if (error) throw toSafeError(error, 'Lecture de l’audit Daily v2 impossible.');
   return { rows: data ?? [], count: count ?? 0, page, pageSize };
+}
+
+const REPORTING_COLUMNS =
+  'id,accounting_date,bank,currency,account_fingerprint,line_count,' +
+  'day_total_debits,day_total_credits,opening_balance_derived,closing_balance_derived,' +
+  'aggregates_status,validation_status,ingested_at';
+
+/**
+ * Monotone concurrency epoch: exact count of ALL canonical units (active AND
+ * superseded, no status filter). Allowed canonical mutations are append-only
+ * (promotion) or supersede-with-insertion, so any concurrent mutation strictly
+ * increases this count. Read-only HEAD request — no row is ever transferred.
+ */
+async function readDailyV2CanonicalEpochCount(): Promise<number> {
+  const { error, count } = await dailyV2Supabase
+    .from('daily_statement_units_canonical')
+    .select('id', { count: 'exact', head: true });
+  if (error) throw toSafeError(error, 'Lecture reporting canonical impossible.');
+  if (count === null || count === undefined) {
+    throw new DailyV2ServiceError(
+      'Le comptage epoch canonical est indisponible (fail-closed).',
+      'REPORT_EPOCH_COUNT_UNAVAILABLE',
+    );
+  }
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new DailyV2ServiceError(
+      'Le comptage epoch canonical est invalide (fail-closed).',
+      'REPORT_EPOCH_COUNT_INVALID',
+    );
+  }
+  return count;
+}
+
+/**
+ * Real READ-ONLY adapter over the single existing Supabase client. NOT
+ * exported: the UI can never supply its own client nor bypass the runtime
+ * target guard of the public entry point below. Query composition only —
+ * every fail-closed decision lives in the pure read core.
+ */
+const dailyV2ReportingReadAdapter: DailyV2ReportingReadAdapter = {
+  async readEpochCount(): Promise<number> {
+    return readDailyV2CanonicalEpochCount();
+  },
+
+  // Snapshot anchor: the newest active unit of the filtered set. Its
+  // ingested_at becomes the immutable cutoff every page is filtered against.
+  async readAnchor(filters: DailyV2ReportingReadFilters) {
+    let anchorQuery = dailyV2Supabase
+      .from('daily_statement_units_canonical')
+      .select('id,ingested_at', { count: 'exact' })
+      .eq('status', 'ingested')
+      .gte('accounting_date', filters.startDate)
+      .lte('accounting_date', filters.endDate)
+      .order('ingested_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(1);
+    if (filters.bank !== null) anchorQuery = anchorQuery.eq('bank', filters.bank);
+    if (filters.currency !== null) anchorQuery = anchorQuery.eq('currency', filters.currency);
+
+    const { data, error, count } = await anchorQuery;
+    if (error) throw toSafeError(error, 'Lecture reporting canonical impossible.');
+    return { data, count };
+  },
+
+  // Canonical set "active at the cutoff": still ingested, or superseded
+  // strictly after the cutoff (it was active when the snapshot was anchored).
+  // Replacement units promoted after the cutoff are excluded by the
+  // ingested_at <= cutoff page filter. The cutoff comes from the core, which
+  // validated it against the strict ISO anchor schema — never user input.
+  async readPage(input: {
+    filters: DailyV2ReportingReadFilters;
+    snapshotCutoff: string;
+    from: number;
+    to: number;
+  }) {
+    const activeAtSnapshotCondition =
+      `status.eq.ingested,and(status.eq.superseded,superseded_at.gt.${input.snapshotCutoff})`;
+
+    let pageQuery = dailyV2Supabase
+      .from('daily_statement_units_canonical')
+      .select(REPORTING_COLUMNS, { count: 'exact' })
+      .gte('accounting_date', input.filters.startDate)
+      .lte('accounting_date', input.filters.endDate)
+      .lte('ingested_at', input.snapshotCutoff)
+      .or(activeAtSnapshotCondition)
+      .order('accounting_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(input.from, input.to);
+    if (input.filters.bank !== null) pageQuery = pageQuery.eq('bank', input.filters.bank);
+    if (input.filters.currency !== null) {
+      pageQuery = pageQuery.eq('currency', input.filters.currency);
+    }
+
+    const { data, error, count } = await pageQuery;
+    if (error) throw toSafeError(error, 'Lecture reporting canonical impossible.');
+    return { data, count };
+  },
+};
+
+/**
+ * Narrow, bounded canonical read RESERVED for the 0O reporting service.
+ * Returns raw internal rows (id + account_fingerprint included) that must
+ * never reach the UI, a safe report or an export — the reporting service
+ * aggregates them immediately and discards them.
+ *
+ * READ path only: canonical units active at an immutable snapshot cutoff,
+ * never the canonical lines, never staging, never an RPC. The snapshot,
+ * epoch, pagination and validation behavior lives in
+ * dailyV2ReportingReadCore.ts; this wrapper contributes the runtime target
+ * guard and the real PostgREST adapter.
+ */
+export async function listDailyV2CanonicalUnitsForReporting(filters: {
+  startDate: string;
+  endDate: string;
+  bank: string | null;
+  currency: string | null;
+}): Promise<{ rows: DailyV2ReportingUnitRow[]; totalCount: number }> {
+  assertAuthorizedDailyV2Target();
+  return runDailyV2CanonicalReportingRead(dailyV2ReportingReadAdapter, filters);
 }
 
 function assertAuthorizedDailyV2Target(): void {

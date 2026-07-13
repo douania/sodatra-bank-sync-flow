@@ -108,6 +108,27 @@ export interface DailyV2CanonicalUnitRow {
   superseded_at: string | null;
 }
 
+/**
+ * Narrow canonical-unit projection reserved for the 0O reporting read.
+ * INTERNAL ONLY: `id` stabilizes pagination and `account_fingerprint` feeds
+ * the local alias — neither may reach the UI, a safe report or an export.
+ */
+export interface DailyV2ReportingUnitRow {
+  id: string;
+  accounting_date: string;
+  bank: string;
+  currency: string;
+  account_fingerprint: string;
+  line_count: number;
+  day_total_debits: number;
+  day_total_credits: number;
+  opening_balance_derived: number | null;
+  closing_balance_derived: number | null;
+  aggregates_status: DailyV2AggregatesStatus;
+  validation_status: DailyV2ParserValidationStatus;
+  ingested_at: string;
+}
+
 export interface DailyV2CanonicalLineRow {
   id: string;
   canonical_unit_id: string;
