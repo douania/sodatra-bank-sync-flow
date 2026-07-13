@@ -317,6 +317,19 @@ test('aggregates: invalid business input is a controlled error, never a throw', 
   assert.match(empty.errors.join('\n'), /at least one line is required/);
 });
 
+test('aggregates: refuses a daily total that cannot remain exact in cents', () => {
+  const aggregates = deriveStructuredBankStatementDailyAggregates(
+    Array.from({ length: 100 }, () => ({
+      direction: 'credit' as const,
+      signedAmount: 999_999_999_999.99,
+    })),
+  );
+
+  assert.equal(aggregates.aggregatesStatus, 'unavailable');
+  assert.equal(aggregates.dayTotalCredits, 0);
+  assert.match(aggregates.errors.join('\n'), /exceeds the exact monetary output cap/i);
+});
+
 // ---------------------------------------------------------------------------
 // 3. Payload coherence
 // ---------------------------------------------------------------------------

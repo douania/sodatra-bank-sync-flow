@@ -8,6 +8,9 @@ const BROWSER_FILES = [
   'src/features/daily-v2/DailyV2Tables.tsx',
   'src/features/daily-v2/dailyV2UiUtils.ts',
   'src/features/daily-v2/dailyV2RuntimeTarget.ts',
+  'src/services/structuredBankStatementExcelProfiles.ts',
+  'src/services/structuredBankStatementExcelParser.ts',
+  'src/services/structuredBankStatementXlsxArchive.ts',
   'src/pages/DailyStatementV2.tsx',
 ];
 

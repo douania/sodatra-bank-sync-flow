@@ -78,7 +78,7 @@ Pas d'API bancaire directe.
 | Document Understanding | `/document-understanding` | Actif, notamment BDK/PDF |
 | Quality Control | `/quality-control` | Actif |
 | Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
-| Daily v2 | `/daily-statements` | Actif (PR #89) : dépôt CSV structuré, staging, promotion/supersede, canonical, audit ; accès par rôles ; cible verrouillée staging |
+| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt daily ou backfill BIS admin sous grant, staging, promotion/supersede, canonical, audit et reporting ; accès par rôles ; cible verrouillée staging |
 
 ## Modules supprimés / retirés
 
@@ -106,6 +106,12 @@ Deux pipelines restent en parallèle :
    - pipeline enhanced
 
 DEF-05 reste ouvert tant que la consolidation complète n'est pas terminée.
+
+Le flux `/daily-statements` est séparé de ces deux pipelines :
+- seuls les relevés ONLINE correspondant à un profil structurel exact sont acceptés ;
+- les journaux mensuels Internal Book ne sont pas des relevés bancaires Daily v2 ;
+- Excel structuré est la voie principale multi-banques, CSV BDK/ORA reste conservé et PDF reste un fallback séparé ;
+- les fichiers BIS dépassant 45 jours utilisent exclusivement le mode backfill admin déjà borné par le contrat Daily v2.
 
 ## Vérité DB / idempotence
 

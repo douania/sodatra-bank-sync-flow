@@ -12,6 +12,7 @@
     "test:structured-csv": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts",
     "test:structured-csv-all": "tsx --test src/services/structuredBankStatementCsvParser.synthetic.test.ts src/services/structuredBankStatementCsvIdempotencyKeys.synthetic.test.ts src/services/structuredBankStatementCsvImportAdapter.synthetic.test.ts src/services/structuredBankStatementCsvRuntimeDiagnosticService.synthetic.test.ts src/services/structuredBankStatementCsvPreIngestion.synthetic.test.ts src/services/structuredBankStatementCsvNodeIngestionRuntime.synthetic.test.ts",
     "test:structured-csv-e2b": "tsx --test src/services/structuredBankStatementCsvBrowserIdempotencyKeys.synthetic.test.ts src/services/structuredBankStatementCsvRpcPayload.synthetic.test.ts",
+    "test:structured-excel": "tsx --test src/services/structuredBankStatementExcelParser.synthetic.test.ts",
     "test:daily-v2-application": "tsx --test src/services/structuredBankStatementDailyIdentity.synthetic.test.ts src/services/structuredBankStatementDailyRpcPayload.synthetic.test.ts src/features/daily-v2/dailyV2BrowserPipeline.synthetic.test.ts src/features/daily-v2/dailyV2RuntimeTarget.synthetic.test.ts src/features/daily-v2/dailyV2ApplicationContract.synthetic.test.ts src/features/daily-v2/dailyV2BundleSafety.synthetic.test.ts",
     "test:daily-v2-reporting": "tsx --test src/features/daily-v2/dailyV2Money.synthetic.test.ts src/features/daily-v2/dailyV2ReportingCalculations.synthetic.test.ts src/features/daily-v2/dailyV2ReportingRead.synthetic.test.ts src/features/daily-v2/dailyV2SummaryExport.synthetic.test.ts src/features/daily-v2/dailyV2ReportingContract.synthetic.test.ts",
     "preview": "vite preview"
@@ -55,6 +56,7 @@
     "date-fns": "^3.6.0",
     "dompurify": "^3.3.0",
     "embla-carousel-react": "^8.3.0",
+    "fflate": "0.8.2",
     "input-otp": "^1.2.4",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",

@@ -16,6 +16,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
   prepareDailyV2BrowserDeposit,
+  type DailyV2BrowserRequestedMode,
+  type DailyV2SupportedBank,
   type PrepareDailyV2BrowserResult,
 } from '@/features/daily-v2/dailyV2BrowserPipeline';
 import {
@@ -80,10 +82,12 @@ const DailyStatementV2 = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
-  const [bank, setBank] = useState<'BDK' | 'ORA'>('BDK');
+  const [bank, setBank] = useState<DailyV2SupportedBank>('BDK');
   const [currency, setCurrency] = useState('XOF');
   const [fingerprint, setFingerprint] = useState('');
   const [referenceDate, setReferenceDate] = useState('');
+  const [requestedMode, setRequestedMode] = useState<DailyV2BrowserRequestedMode>('daily');
+  const [backfillGrantReference, setBackfillGrantReference] = useState('');
   const [prepared, setPrepared] = useState<Extract<PrepareDailyV2BrowserResult, { success: true }> | null>(null);
   const [prepareErrors, setPrepareErrors] = useState<string[]>([]);
   const [depositResult, setDepositResult] = useState<DailyV2PreIngestResponse | null>(null);
@@ -119,25 +123,35 @@ const DailyStatementV2 = () => {
     setFile(accepted[0] ?? null);
     setFingerprint('');
     setReferenceDate('');
+    setBackfillGrantReference('');
     resetPrepared();
   }, [resetPrepared]);
 
   const dropzone = useDropzone({
     onDrop,
-    accept: { 'text/csv': ['.csv'] },
+    accept: {
+      'text/csv': ['.csv'],
+      'application/vnd.ms-excel': ['.xls'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    },
     multiple: false,
     maxSize: 10 * 1024 * 1024,
   });
 
   const prepareMutation = useMutation<PrepareDailyV2BrowserResult, Error, void>({
     mutationFn: async () => {
-      if (!file) throw new DailyV2ServiceError('Sélectionnez un fichier CSV.');
+      if (!file) throw new DailyV2ServiceError('Sélectionnez un fichier structuré CSV ou Excel.');
+      if (requestedMode === 'backfill' && !isAdmin) {
+        throw new DailyV2ServiceError('Le backfill est réservé au rôle admin.');
+      }
       return prepareDailyV2BrowserDeposit({
         file,
         bank,
         currency,
         accountFingerprint: fingerprint,
         exportReferenceDate: referenceDate.trim() || undefined,
+        requestedMode,
+        backfillGrantReference: backfillGrantReference.trim() || undefined,
       });
     },
     onSuccess: (result) => {
@@ -166,6 +180,7 @@ const DailyStatementV2 = () => {
       setFile(null);
       setFingerprint('');
       setReferenceDate('');
+      setBackfillGrantReference('');
       await invalidateDailyV2(queryClient);
       toast.success('Dépôt Daily v2 terminé');
     },
@@ -256,7 +271,7 @@ const DailyStatementV2 = () => {
         <ShieldCheck className="h-4 w-4" />
         <AlertTitle>Flux contrôlé</AlertTitle>
         <AlertDescription>
-          Aucun CSV brut, numéro complet ou IBAN n’est envoyé en base. Les actions restent soumises à Auth, RLS et rôles serveur.
+          Aucun fichier brut CSV/Excel, numéro complet ou IBAN n’est envoyé en base. Les actions restent soumises à Auth, RLS et rôles serveur.
         </AlertDescription>
       </Alert>
 
@@ -279,20 +294,27 @@ const DailyStatementV2 = () => {
             <>
               <Card>
                 <CardHeader>
-                  <CardTitle>Préparer un CSV structuré</CardTitle>
-                  <CardDescription>BDK ou ORA, 10 MB maximum. Le fingerprint doit être pré-provisionné.</CardDescription>
+                  <CardTitle>Préparer un relevé structuré</CardTitle>
+                  <CardDescription>CSV BDK/ORA ou Excel ONLINE ATB/BICIS/BIS/BRIDGE, 10 MB maximum. Le fingerprint doit être pré-provisionné.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div {...dropzone.getRootProps()} className="cursor-pointer rounded-lg border-2 border-dashed p-8 text-center">
                     <input {...dropzone.getInputProps()} />
                     <Upload className="mx-auto h-8 w-8" />
-                    <p className="mt-2 font-medium">{file?.name ?? 'Déposez un CSV'}</p>
+                    <p className="mt-2 font-medium">{file?.name ?? 'Déposez un CSV, XLS ou XLSX'}</p>
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Banque">
-                      <Select value={bank} onValueChange={(value: 'BDK' | 'ORA') => { setBank(value); setFingerprint(''); setReferenceDate(''); resetPrepared(); }}>
+                      <Select value={bank} onValueChange={(value: DailyV2SupportedBank) => { setBank(value); setFingerprint(''); setReferenceDate(''); setRequestedMode('daily'); setBackfillGrantReference(''); resetPrepared(); }}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectItem value="BDK">BDK</SelectItem><SelectItem value="ORA">ORABANK</SelectItem></SelectContent>
+                        <SelectContent>
+                          <SelectItem value="BDK">BDK</SelectItem>
+                          <SelectItem value="ORA">ORABANK</SelectItem>
+                          <SelectItem value="ATB">ATB</SelectItem>
+                          <SelectItem value="BICIS">BICIS</SelectItem>
+                          <SelectItem value="BIS">BIS</SelectItem>
+                          <SelectItem value="BRIDGE">BRIDGE BANK</SelectItem>
+                        </SelectContent>
                       </Select>
                     </Field>
                     <Field label="Devise">
@@ -304,12 +326,26 @@ const DailyStatementV2 = () => {
                     <Field label="Date de référence export (DD/MM/YYYY)">
                       <Input value={referenceDate} onChange={(e) => { setReferenceDate(e.target.value); resetPrepared(); }} placeholder={bank === 'ORA' ? 'Recommandée pour ORA' : 'Optionnelle'} />
                     </Field>
+                    <Field label="Mode de dépôt">
+                      <Select value={requestedMode} onValueChange={(value: DailyV2BrowserRequestedMode) => { setRequestedMode(value); setBackfillGrantReference(''); resetPrepared(); }}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="daily">Daily — 45 jours maximum</SelectItem>
+                          {isAdmin && bank === 'BIS' && <SelectItem value="backfill">Backfill BIS admin — 4000 jours maximum</SelectItem>}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {requestedMode === 'backfill' && (
+                      <Field label="Référence GO backfill obligatoire">
+                        <Input value={backfillGrantReference} maxLength={200} onChange={(e) => { setBackfillGrantReference(e.target.value); resetPrepared(); }} />
+                      </Field>
+                    )}
                   </div>
                   <div className="flex gap-2">
-                    <Button onClick={() => prepareMutation.mutate()} disabled={!file || !fingerprint.trim() || prepareMutation.isPending}>
+                    <Button onClick={() => prepareMutation.mutate()} disabled={!file || !fingerprint.trim() || (requestedMode === 'backfill' && !backfillGrantReference.trim()) || prepareMutation.isPending}>
                       {prepareMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Préparer
                     </Button>
-                    <Button variant="outline" onClick={() => { setFile(null); setFingerprint(''); setReferenceDate(''); resetPrepared(); }}>Réinitialiser</Button>
+                    <Button variant="outline" onClick={() => { setFile(null); setFingerprint(''); setReferenceDate(''); setBackfillGrantReference(''); resetPrepared(); }}>Réinitialiser</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -323,6 +359,8 @@ const DailyStatementV2 = () => {
                     <div className="grid gap-3 md:grid-cols-4 text-sm">
                       <Fact label="Banque" value={prepared.diagnostic.bank} />
                       <Fact label="Devise" value={prepared.diagnostic.currency} />
+                      <Fact label="Format" value={prepared.diagnostic.sourceFormat} />
+                      <Fact label="Mode" value={prepared.diagnostic.requestedMode} />
                       <Fact label="Compte masqué" value={prepared.diagnostic.accountNumberMasked ?? 'N/A'} />
                       <Fact label="Validation" value={prepared.diagnostic.parserValidationStatus} />
                       <Fact label="Période" value={`${prepared.diagnostic.periodStart} → ${prepared.diagnostic.periodEnd}`} />
