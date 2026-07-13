@@ -250,10 +250,16 @@ export async function prepareDailyV2BrowserDeposit(
       `Trusted bank (${bank}) does not match the parser bank hint (${document.bankHint}); deposit refused.`,
     );
   }
-  if (document.currency && document.currency.trim() !== currency) {
-    errors.push(
-      `Trusted currency (${currency}) does not match the parsed currency (${document.currency}).`,
-    );
+  if (document.currency) {
+    if (document.currency.trim() !== currency) {
+      errors.push(
+        `Trusted currency (${currency}) does not match the parsed currency (${document.currency}).`,
+      );
+    }
+  } else if (document.forceReviewAllUnits !== true) {
+    // Fail closed: only profiles that explicitly force review on every unit
+    // (BRIDGE) may rely on the trusted operator currency alone.
+    errors.push('Parsed document carries no verifiable currency; deposit refused.');
   }
   if (document.accountNumberMasked && !MASKED_ACCOUNT_PATTERN.test(document.accountNumberMasked)) {
     errors.push('Parsed account label does not satisfy the strict masked-account format.');

@@ -153,6 +153,64 @@ function validCsv(periodEnd = '03/06/2026'): string {
   ]);
 }
 
+function currencyFreeCsv(periodEnd = '03/06/2026'): string {
+  return csv([
+    'EXTRAIT DE COMPTE;;;;;',
+    `Periode du;01/06/2026;au;${periodEnd};;`,
+    'Numero de compte;01401-00000000000-00;;;;',
+    'Code IBAN;SN00SN0000000000000000000000;;;;',
+    ';;Solde initial : 1000;;;',
+    "Date;Valeur;Libelle de l'operation;Debit;Credit;Solde",
+    '01/06/2026;01/06/2026;SYNTHETIC DEBIT;100;;900',
+    '02/06/2026;02/06/2026;SYNTHETIC CREDIT;;200;1100',
+    '03/06/2026;03/06/2026;SYNTHETIC DEBIT TWO;50;;1050',
+    ';;Total;150;200;',
+    `;;Solde au ${periodEnd} : 1050;;;`,
+  ]);
+}
+
+test('refuses a BDK CSV without a verifiable parsed currency (fail closed)', async () => {
+  const result = await prepareDailyV2BrowserDeposit({
+    file: file('SYNTHETIC BDK ONLINE.csv', currencyFreeCsv()),
+    bank: 'BDK',
+    currency: 'XOF',
+    accountFingerprint: 'fp-synthetic-bdk-no-currency',
+  });
+
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.match(result.errors.join(' '), /no verifiable currency; deposit refused/i);
+  }
+});
+
+test('refuses an ORA CSV without a verifiable parsed currency (fail closed)', async () => {
+  const result = await prepareDailyV2BrowserDeposit({
+    file: file('SYNTHETIC ORA ONLINE.csv', currencyFreeCsv()),
+    bank: 'ORA',
+    currency: 'XOF',
+    accountFingerprint: 'fp-synthetic-ora-no-currency',
+  });
+
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.match(result.errors.join(' '), /no verifiable currency; deposit refused/i);
+  }
+});
+
+test('still refuses a CSV whose parsed currency differs from the trusted currency', async () => {
+  const result = await prepareDailyV2BrowserDeposit({
+    file: file('SYNTHETIC BDK ONLINE.csv', validCsv()),
+    bank: 'BDK',
+    currency: 'EUR',
+    accountFingerprint: 'fp-synthetic-bdk-currency-mismatch',
+  });
+
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.match(result.errors.join(' '), /does not match the parsed currency/i);
+  }
+});
+
 test('builds a safe BDK Daily v2 payload without raw CSV, full account, IBAN or file name', async () => {
   const source = validCsv();
   const result = await prepareDailyV2BrowserDeposit({
