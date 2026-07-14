@@ -53,6 +53,40 @@ docker rm -f poc0h-pg   # destruction de la base jetable
 Tout `TEST_FAILED:` fait échouer psql (`ON_ERROR_STOP`). Une exécution
 intégralement verte = PASS local.
 
+## E2E local multi-banques 0R (chaîne Excel réel -> RPC -> canonical -> reporting)
+
+```sh
+bash supabase/tests/daily_statement_units_v2/run_e2e_0r.sh
+```
+
+Runner autonome (même doctrine : Postgres Docker **jetable**, jamais Supabase
+live). Il enchaîne : génération des classeurs synthétiques ATB `.xls`,
+BICIS `.xls`, BIS `.xls` et BRIDGE `.xlsx` **en mémoire** → traversée du **vrai
+pipeline TypeScript** `prepareDailyV2BrowserDeposit` → émission d'un artefact SQL
+portant les **payloads RPC réels** → conteneur jetable + shim + seed + migration
+v2 → `30_e2e0r_pipeline.sql` (dépôt, duplicate R1, conflict R2, promotion,
+gate 0K BRIDGE, supersede, R3, provisional, matrice des rôles, audit
+append-only) → extraction des lignes canonical → reporting 0O via les fonctions
+pures réelles → **destruction du conteneur** (trap, y compris en cas d'échec).
+
+Fichiers : `e2e0r_generate_payloads.ts`, `30_e2e0r_pipeline.sql`,
+`e2e0r_reporting_assert.ts`, `run_e2e_0r.sh`.
+
+Deux points de contrat :
+
+- **Anti-faux-E2E** : il n'existe **aucun** payload écrit à la main côté SQL.
+  `30_e2e0r_pipeline.sql` consomme exclusivement `poc_test.e2e0r_payload`,
+  alimentée par l'artefact généré depuis les classeurs Excel.
+- **Frontière assumée** : la lecture du reporting est faite en **SQL direct**
+  (projection et filtre identiques à la requête page réelle), pas via PostgREST.
+  La couche PostgREST/JWT n'est pas exercée par ce harnais.
+
+Sorties de succès : `ALL_E2E_0R_SQL_PASS`, `ALL_E2E_0R_REPORTING_PASS`, puis
+`ALL_LOCAL_E2E_0R_PASS`.
+
+Prérequis : Docker + image `postgres:15-alpine` déjà présente (le runner n'en
+télécharge aucune), `psql` dans le PATH, `node_modules/` installé.
+
 ## Rappel d'arbitrage (lot 0J)
 
 La candidate v1 (`structured_csv_import_v1`) est archivée hors du chemin live
