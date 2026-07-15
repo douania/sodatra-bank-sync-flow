@@ -14,6 +14,10 @@ const migration0U = readFileSync(
   'supabase/migrations/20260715000000_daily_v2_account_registry_review_visibility.sql',
   'utf8',
 );
+const migration0U3 = readFileSync(
+  'supabase/migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 
 test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
@@ -68,6 +72,34 @@ test('keeps the 0U migration additive and makes the historical ingest core inter
   assert.doesNotMatch(migration0U, /DROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX)/i);
   assert.match(e2eRunner, /MIGRATION_0U=/);
   assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U"/);
+});
+
+test('adopts one historical identity without exposing or changing its fingerprint', () => {
+  assert.match(
+    migration0U3,
+    /FUNCTION public\.adopt_daily_statement_historical_account\(\s*p_bank text,\s*p_currency text,\s*p_safe_alias text\s*\)/,
+  );
+  assert.match(migration0U3, /SECURITY DEFINER/);
+  assert.match(migration0U3, /has_role\(v_actor, 'admin'::public\.app_role\)/);
+  assert.match(migration0U3, /count\(DISTINCT c\.account_fingerprint\)/);
+  assert.match(migration0U3, /account_fingerprint, account_number_masked\s*\) VALUES \(\s*v_actor,[\s\S]*v_fingerprint, v_masked/);
+  assert.match(migration0U3, /UPDATE public\.daily_statement_export_attempts/);
+  assert.match(migration0U3, /UPDATE public\.daily_statement_units_staging/);
+  assert.match(migration0U3, /UPDATE public\.daily_statement_units_canonical/);
+  assert.match(migration0U3, /'attempts_mapped', v_attempts_updated/);
+  assert.match(migration0U3, /'staging_units_mapped', v_staging_updated/);
+  assert.match(migration0U3, /'canonical_units_mapped', v_canonical_updated/);
+  assert.doesNotMatch(migration0U3, /p_(account_)?fingerprint/);
+  assert.doesNotMatch(migration0U3, /DROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+  assert.doesNotMatch(migration0U3, /SET\s+(day_unit_id|day_content_hash|active_day_content_hash|status)\s*=/i);
+  assert.match(
+    migration0U3,
+    /REVOKE ALL ON FUNCTION public\.adopt_daily_statement_historical_account\(text,text,text\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+  assert.match(e2eRunner, /MIGRATION_0U3=/);
+  assert.match(e2eRunner, /25_e2e0r_historical_adoption_seed\.sql/);
+  assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U3"/);
+  assert.match(e2eRunner, /26_e2e0r_historical_adoption_assert\.sql/);
 });
 
 test('keeps role-gated UI decisions fail closed', () => {

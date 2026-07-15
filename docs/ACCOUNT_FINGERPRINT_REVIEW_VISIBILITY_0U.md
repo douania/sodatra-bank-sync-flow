@@ -41,6 +41,23 @@ If that identity cannot be corroborated (missing on either side), every unit is
 held as `needs_review` with `ACCOUNT_IDENTITY_NOT_CORROBORATED`; promotion then
 requires an explicit audited admin reason.
 
+### Historical identity adoption bridge (0U3)
+
+The additive follow-up migration
+`20260715010000_daily_v2_historical_identity_adoption_bridge.sql` adds one
+admin-only RPC for a controlled pre-0U identity adoption. The operator supplies
+only bank, currency and a non-sensitive alias. The server selects exactly one
+unmapped historical identity for that context, preserves its existing opaque
+fingerprint and optional masked label, and maps attempts, staging units and
+canonical units in one transaction.
+
+The RPC never accepts, returns or audits the fingerprint. It fails closed on
+multiple fingerprints, cross-context reuse, multiple masked labels, partial
+prior mapping, missing attempts/staging/canonical rows or concurrent count
+changes. It does not modify day identifiers, content or line hashes, statuses,
+amounts or transaction lines. A mapped historical `conflict` remains a
+conflict and can subsequently use the normal audited supersede workflow.
+
 ## Review reason allow-list
 
 - `TRUSTED_CURRENCY_UNCORROBORATED`
@@ -58,9 +75,12 @@ also carry `validation_status=needs_review`. Server-detected R3 conflicts add
 ## Local verification
 
 The existing 0R runner now applies the historical Daily v2 migration followed
-by the additive 0U migration. Its synthetic campaign validates registry
-binding, admin-only lifecycle RPCs, RLS, review-code persistence, one-use grant
-consumption, legacy-core non-bypass and the unchanged canonical/reporting flow.
+by the additive 0U and 0U3 migrations. Before the normal multi-bank campaign,
+it seeds an entirely synthetic pre-0U state (three active canonical days and
+one same-identity conflict), validates the admin-only adoption and its targeted
+teardown. The remaining campaign validates registry binding, admin-only
+lifecycle RPCs, RLS, review-code persistence, one-use grant consumption,
+legacy-core non-bypass and the unchanged canonical/reporting flow.
 
 Run only against the throwaway Docker container:
 
@@ -88,6 +108,14 @@ still requires a canonical decision, especially a unit in `staged` or
 `conflict`: its nullable historical `account_registry_id` would make the 0U
 canonical trigger reject promotion or supersede until an explicit mapping or
 closure plan has been reviewed.
+
+The staging preflight on 2026-07-15 found one coherent historical identity,
+three active canonical units and one same-identity conflict with no other-day
+R3 overlap. Remote application remains forbidden until 0U3 has passed local
+Docker verification and independent DB/security review. During a future
+authorized staging apply, imports must remain paused between 0U, 0U3 and the
+single admin adoption call; any deviation from the reviewed aggregate counts
+is a stop condition.
 
 Before first remote use, rollback is to remove the additive migration from the
 deployment plan. After remote apply but before any 0U deposit, a dedicated,

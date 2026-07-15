@@ -17,9 +17,10 @@
 
 ## DAILY-V2-0U — Account fingerprint et visibilité review
 
-**Statut : IN_PROGRESS — PASS_LOCAL_DOCKER_0U (2026-07-15)**
+**Statut : IN_PROGRESS — IMPLEMENTATION_LOCAL_0U3 (2026-07-15)**
 
-**Base canonique** : `52886f1cdee8ad0fa4f4aa23a61298111b2c0a73`.
+**Base canonique 0U3** : `78cdd585eb9fbf6b1b53e592e8048bcaa28bf50d`
+(merge PR #94).
 
 Le lot remplace la saisie libre du fingerprint par un registre de comptes
 pré-provisionnés, remplace le pseudo-grant backfill texte par un grant serveur
@@ -27,11 +28,20 @@ one-use, et persiste des motifs de revue à code fermé jusque dans staging et
 canonical. Migration additive candidate :
 `20260715000000_daily_v2_account_registry_review_visibility.sql`.
 
-Validation locale obtenue : 378 tests applicatifs verts, build vert, 8 payloads
-synthétiques générés, puis migrations historique + additive 0U, matrice
-SQL/RLS/RPC, canonical et reporting 0O validés dans PostgreSQL 15 Docker
-jetable (`ALL_LOCAL_E2E_0R_PASS`). Aucun Supabase distant, commit, push ou PR
-effectué. Architecture, stop conditions et rollback :
+Le préflight staging read-only 0U2 a observé un contexte historique cohérent :
+un fingerprint opaque pour trois canonical actifs, trois tentatives portant un
+masque unique, et un conflit de la même identité sans chevauchement R3. Le
+sous-lot 0U3 ajoute donc un pont admin fail-closed qui conserve ce fingerprint
+et rattache atomiquement attempts, staging et canonical sans modifier les
+identités de jour ni les statuts. Migration candidate locale :
+`20260715010000_daily_v2_historical_identity_adoption_bridge.sql`.
+
+Validation locale obtenue : 380 tests applicatifs verts, build vert, 8 payloads
+synthétiques générés, puis migrations historique + additives 0U/0U3, pont
+d'adoption, matrice SQL/RLS/RPC, canonical et reporting 0O validés dans
+PostgreSQL 15 Docker jetable (`ALL_E2E_0U3_HISTORICAL_ADOPTION_PASS`,
+`ALL_LOCAL_E2E_0R_PASS`). Aucun Supabase distant, commit, push ou PR effectué.
+Architecture, stop conditions et rollback :
 `docs/ACCOUNT_FINGERPRINT_REVIEW_VISIBILITY_0U.md`.
 
 ---
