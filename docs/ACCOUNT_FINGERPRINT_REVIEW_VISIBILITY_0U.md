@@ -83,7 +83,11 @@ tests, build or baseline comparison fails. Also stop if remote `main` moves or
 the target migration ledger differs from the expected staging ledger.
 If the target already contains Daily v2 canonical fingerprints, stop until a
 separate identity-mapping plan proves that existing day identities will not be
-split by newly generated fingerprints.
+split by newly generated fingerprints. Also stop if any pre-0U staging unit
+still requires a canonical decision, especially a unit in `staged` or
+`conflict`: its nullable historical `account_registry_id` would make the 0U
+canonical trigger reject promotion or supersede until an explicit mapping or
+closure plan has been reviewed.
 
 Before first remote use, rollback is to remove the additive migration from the
 deployment plan. After remote apply but before any 0U deposit, a dedicated,
