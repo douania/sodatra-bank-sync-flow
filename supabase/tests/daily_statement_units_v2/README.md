@@ -2,7 +2,9 @@
 
 Suite de tests SQL pour la migration historique
 `supabase/migrations/20260708130000_daily_statement_units_v2.sql` et le wrapper
-additif 0U `20260715000000_daily_v2_account_registry_review_visibility.sql`.
+additif 0U `20260715000000_daily_v2_account_registry_review_visibility.sql`,
+puis le pont d'adoption historique 0U3
+`20260715010000_daily_v2_historical_identity_adoption_bridge.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -66,13 +68,17 @@ live). Il enchaîne : génération des classeurs synthétiques ATB `.xls`,
 BICIS `.xls`, BIS `.xls` et BRIDGE `.xlsx` **en mémoire** → traversée du **vrai
 pipeline TypeScript** `prepareDailyV2BrowserDeposit` → émission d'un artefact SQL
 portant les **payloads RPC réels** → conteneur jetable + shim + seed + migration
-v2 historique + migration additive 0U → `30_e2e0r_pipeline.sql` (registre de
+v2 historique → fixture historique synthétique (3 canonical + 1 conflit) →
+migrations additives 0U/0U3 → adoption admin fail-closed et teardown ciblé →
+`30_e2e0r_pipeline.sql` (registre de
 comptes, grants one-use, motifs de revue, dépôt, duplicate R1, conflict R2, promotion,
 gate 0K BRIDGE, supersede, R3, provisional, matrice des rôles, audit
 append-only) → extraction des lignes canonical → reporting 0O via les fonctions
 pures réelles → **destruction du conteneur** (trap, y compris en cas d'échec).
 
-Fichiers : `e2e0r_generate_payloads.ts`, `30_e2e0r_pipeline.sql`,
+Fichiers : `e2e0r_generate_payloads.ts`,
+`25_e2e0r_historical_adoption_seed.sql`,
+`26_e2e0r_historical_adoption_assert.sql`, `30_e2e0r_pipeline.sql`,
 `e2e0r_reporting_assert.ts`, `run_e2e_0r.sh`.
 
 Deux points de contrat :
