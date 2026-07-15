@@ -87,6 +87,18 @@ test('keeps role-gated UI decisions fail closed', () => {
   assert.match(browserPipeline, /MAX_BACKFILL_PERIOD_DAYS = 4_000/);
 });
 
+test('keeps review filtering independent from the staging lifecycle status', () => {
+  assert.match(
+    service,
+    /status\.eq\.needs_review,validation_status\.eq\.needs_review,aggregates_status\.eq\.unavailable/,
+  );
+  assert.match(service, /\.neq\('status', 'needs_review'\)/);
+  assert.doesNotMatch(
+    service,
+    /query = query\.eq\('validation_status', 'valid'\)\.eq\('aggregates_status', 'derived'\)/,
+  );
+});
+
 test('exposes only the characterized structured bank/file matrix', () => {
   for (const bank of ['BDK', 'ORA', 'ATB', 'BICIS', 'BIS', 'BRIDGE']) {
     assert.match(page, new RegExp(`<SelectItem value="${bank}"`));
