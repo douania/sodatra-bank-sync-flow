@@ -304,9 +304,14 @@ export async function listDailyV2StagingUnits(input: {
     .range(from, to);
   if (input.status && input.status !== 'all') query = query.eq('status', input.status);
   if (input.review === 'required') {
-    query = query.or('validation_status.eq.needs_review,aggregates_status.eq.unavailable');
+    query = query.or(
+      'status.eq.needs_review,validation_status.eq.needs_review,aggregates_status.eq.unavailable',
+    );
   } else if (input.review === 'clear') {
-    query = query.eq('validation_status', 'valid').eq('aggregates_status', 'derived');
+    query = query
+      .neq('status', 'needs_review')
+      .eq('validation_status', 'valid')
+      .eq('aggregates_status', 'derived');
   }
 
   const { data, error, count } = await query;
