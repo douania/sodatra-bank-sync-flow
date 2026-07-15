@@ -10,12 +10,21 @@ const service = readFileSync('src/features/daily-v2/dailyV2SupabaseService.ts', 
 const types = readFileSync('src/features/daily-v2/dailyV2Types.ts', 'utf8');
 const page = readFileSync('src/pages/DailyStatementV2.tsx', 'utf8');
 const tables = readFileSync('src/features/daily-v2/DailyV2Tables.tsx', 'utf8');
+const migration0U = readFileSync(
+  'supabase/migrations/20260715000000_daily_v2_account_registry_review_visibility.sql',
+  'utf8',
+);
+const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 
-test('uses the three exact Daily v2 RPC names and no direct table mutation', () => {
+test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
   for (const rpc of [
     'pre_ingest_daily_statement_units',
     'promote_daily_statement_unit',
     'supersede_daily_statement_unit',
+    'provision_daily_statement_account',
+    'deactivate_daily_statement_account',
+    'issue_daily_statement_backfill_grant',
+    'revoke_daily_statement_backfill_grant',
   ]) {
     assert.match(service, new RegExp(`\\.rpc\\(['"]${rpc}['"]`));
     assert.match(types, new RegExp(`${rpc}:`));
@@ -26,7 +35,7 @@ test('uses the three exact Daily v2 RPC names and no direct table mutation', () 
   assert.equal(service.includes('service_role'), false);
 });
 
-test('declares only the six frozen Daily v2 tables in the local contract', () => {
+test('keeps the six historical Daily v2 tables and adds the 0U control tables', () => {
   for (const table of [
     'daily_statement_export_attempts',
     'daily_statement_units_staging',
@@ -34,9 +43,31 @@ test('declares only the six frozen Daily v2 tables in the local contract', () =>
     'daily_statement_units_canonical',
     'daily_statement_lines_canonical',
     'daily_statement_import_events',
+    'daily_statement_account_registry',
+    'daily_statement_backfill_grants',
+    'daily_statement_account_events',
   ]) {
     assert.match(types, new RegExp(`${table}:`));
   }
+});
+
+test('keeps the 0U migration additive and makes the historical ingest core internal', () => {
+  for (const table of [
+    'daily_statement_account_registry',
+    'daily_statement_backfill_grants',
+    'daily_statement_account_events',
+  ]) {
+    assert.match(migration0U, new RegExp(`CREATE TABLE public\\.${table}`));
+    assert.match(migration0U, new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY`));
+  }
+  assert.match(migration0U, /RENAME TO daily_stmt_pre_ingest_legacy_core_0u/);
+  assert.match(
+    migration0U,
+    /REVOKE ALL ON FUNCTION public\.daily_stmt_pre_ingest_legacy_core_0u\(jsonb,jsonb,jsonb,jsonb\)/,
+  );
+  assert.doesNotMatch(migration0U, /DROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+  assert.match(e2eRunner, /MIGRATION_0U=/);
+  assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U"/);
 });
 
 test('keeps role-gated UI decisions fail closed', () => {
@@ -47,7 +78,11 @@ test('keeps role-gated UI decisions fail closed', () => {
   assert.match(tables, /unit\.status === 'conflict'/);
   assert.match(page, /\{isAdmin && bank === 'BIS' && <SelectItem value="backfill"/);
   assert.match(page, /requestedMode === 'backfill' && !isAdmin/);
-  assert.match(browserPipeline, /backfillGrantReference is mandatory in backfill mode/);
+  assert.match(browserPipeline, /backfillGrantId is mandatory in backfill mode/);
+  assert.match(browserPipeline, /accountRegistryId must identify a provisioned account/);
+  assert.match(page, /Compte pré-provisionné/);
+  assert.doesNotMatch(page, /Account fingerprint pré-provisionné/);
+  assert.match(page, /Motifs à examiner avant décision/);
   assert.match(browserPipeline, /Backfill mode is supported only for the characterized BIS profile in 0Q/);
   assert.match(browserPipeline, /MAX_BACKFILL_PERIOD_DAYS = 4_000/);
 });

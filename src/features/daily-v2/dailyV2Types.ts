@@ -15,6 +15,58 @@ export type DailyV2StagingStatus =
   | 'promotion_failed'
   | 'superseded';
 export type DailyV2CanonicalStatus = 'ingested' | 'superseded';
+export type DailyV2ReviewReasonCode =
+  | 'TRUSTED_CURRENCY_UNCORROBORATED'
+  | 'RUNNING_BALANCE_MISSING'
+  | 'RUNNING_BALANCE_CHAIN_INCOHERENT'
+  | 'AGGREGATES_UNAVAILABLE'
+  | 'ACTIVE_LINE_HASH_SCOPE_CONFLICT'
+  | 'ACCOUNT_IDENTITY_NOT_CORROBORATED'
+  | 'BACKFILL_REVIEW_REQUIRED';
+
+export interface DailyV2AccountRegistryRow {
+  id: string;
+  created_at: string;
+  created_by: string;
+  bank: string;
+  currency: string;
+  safe_alias: string;
+  account_fingerprint: string;
+  account_number_masked: string | null;
+  status: 'active' | 'inactive';
+  deactivated_at: string | null;
+  deactivated_by: string | null;
+  deactivation_reason: string | null;
+}
+
+export interface DailyV2BackfillGrantRow {
+  id: string;
+  account_registry_id: string;
+  created_at: string;
+  created_by: string;
+  period_start: string;
+  period_end: string;
+  max_units: number;
+  expires_at: string;
+  status: 'active' | 'consumed' | 'revoked';
+  consumed_at: string | null;
+  consumed_by: string | null;
+  consumed_attempt_id: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  revocation_reason: string | null;
+}
+
+export interface DailyV2AccountEventRow {
+  id: string;
+  created_at: string;
+  actor_id: string;
+  account_registry_id: string;
+  backfill_grant_id: string | null;
+  event_type: 'account_provisioned' | 'account_deactivated' | 'backfill_grant_issued' | 'backfill_grant_consumed' | 'backfill_grant_revoked';
+  safe_message: string;
+  safe_details: Json | null;
+}
 
 export interface DailyV2ExportAttemptRow {
   id: string;
@@ -25,6 +77,7 @@ export interface DailyV2ExportAttemptRow {
   bank: string;
   currency: string;
   account_fingerprint: string;
+  account_registry_id: string | null;
   account_number_masked: string | null;
   source_file_name_redacted: string | null;
   raw_text_hash: string;
@@ -41,6 +94,8 @@ export interface DailyV2ExportAttemptRow {
   bridge_guard_passed: boolean;
   period_days: number;
   backfill_grant_reference: string | null;
+  backfill_grant_id: string | null;
+  review_reason_codes: DailyV2ReviewReasonCode[];
   units_total: number;
 }
 
@@ -50,6 +105,7 @@ export interface DailyV2StagingUnitRow {
   day_unit_id: string;
   bank: string;
   account_fingerprint: string;
+  account_registry_id: string | null;
   currency: string;
   accounting_date: string;
   day_content_hash: string;
@@ -60,6 +116,7 @@ export interface DailyV2StagingUnitRow {
   closing_balance_derived: number | null;
   aggregates_status: DailyV2AggregatesStatus;
   validation_status: DailyV2ParserValidationStatus;
+  review_reason_codes: DailyV2ReviewReasonCode[];
   status: DailyV2StagingStatus;
   created_at: string;
   created_by: string | null;
@@ -91,6 +148,7 @@ export interface DailyV2CanonicalUnitRow {
   day_unit_id: string;
   bank: string;
   account_fingerprint: string;
+  account_registry_id: string | null;
   currency: string;
   accounting_date: string;
   active_day_content_hash: string;
@@ -101,6 +159,7 @@ export interface DailyV2CanonicalUnitRow {
   closing_balance_derived: number | null;
   aggregates_status: DailyV2AggregatesStatus;
   validation_status: DailyV2ParserValidationStatus;
+  review_reason_codes: DailyV2ReviewReasonCode[];
   status: DailyV2CanonicalStatus;
   ingested_at: string;
   ingested_by: string | null;
@@ -171,6 +230,7 @@ export interface DailyV2RpcAttempt {
   bank: string;
   currency: string;
   account_fingerprint: string;
+  account_registry_id: string;
   account_number_masked: string | null;
   source_file_name_redacted: string | null;
   raw_text_hash: string;
@@ -183,6 +243,7 @@ export interface DailyV2RpcAttempt {
   warnings_count: number;
   runtime_version: string | null;
   parser_version: string | null;
+  review_reason_codes: DailyV2ReviewReasonCode[];
 }
 
 export interface DailyV2RpcUnit {
@@ -196,6 +257,7 @@ export interface DailyV2RpcUnit {
   closing_balance_derived: number | null;
   aggregates_status: DailyV2AggregatesStatus;
   validation_status: DailyV2ParserValidationStatus;
+  review_reason_codes: DailyV2ReviewReasonCode[];
   requested_unit_status: DailyV2RequestedUnitStatus;
 }
 
@@ -219,7 +281,7 @@ export interface DailyV2RpcGuardContext {
   ingestion_ready: boolean;
   period_days: number;
   bridge_guard_passed: boolean;
-  backfill_grant_reference: string | null;
+  backfill_grant_id: string | null;
 }
 
 export interface DailyV2PreIngestPayload {
@@ -271,6 +333,9 @@ export type DailyV2Database = {
       daily_statement_units_canonical: DailyV2TableDefinition<DailyV2CanonicalUnitRow>;
       daily_statement_lines_canonical: DailyV2TableDefinition<DailyV2CanonicalLineRow>;
       daily_statement_import_events: DailyV2TableDefinition<DailyV2AuditEventRow>;
+      daily_statement_account_registry: DailyV2TableDefinition<DailyV2AccountRegistryRow>;
+      daily_statement_backfill_grants: DailyV2TableDefinition<DailyV2BackfillGrantRow>;
+      daily_statement_account_events: DailyV2TableDefinition<DailyV2AccountEventRow>;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -293,6 +358,33 @@ export type DailyV2Database = {
           p_new_staging_unit_id: string;
           p_reason: string;
         };
+        Returns: Json;
+      };
+      provision_daily_statement_account: {
+        Args: {
+          p_bank: string;
+          p_currency: string;
+          p_safe_alias: string;
+          p_account_number_masked?: string | null;
+        };
+        Returns: Json;
+      };
+      deactivate_daily_statement_account: {
+        Args: { p_account_registry_id: string; p_reason: string };
+        Returns: Json;
+      };
+      issue_daily_statement_backfill_grant: {
+        Args: {
+          p_account_registry_id: string;
+          p_period_start: string;
+          p_period_end: string;
+          p_max_units: number;
+          p_expires_at: string;
+        };
+        Returns: Json;
+      };
+      revoke_daily_statement_backfill_grant: {
+        Args: { p_backfill_grant_id: string; p_reason: string };
         Returns: Json;
       };
     };

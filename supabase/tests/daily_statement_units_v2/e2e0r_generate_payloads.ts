@@ -30,15 +30,20 @@ import {
 // Empreintes opaques propres à la campagne : elles n'entrent en collision avec
 // aucune identité existante, et day_unit_id = H(bank, fingerprint, currency,
 // date) en dépend directement.
-const FP_ATB = 'fp_e2e_0r_atb';
-const FP_BICIS = 'fp_e2e_0r_bicis';
-const FP_BIS = 'fp_e2e_0r_bis';
-const FP_BRIDGE = 'fp_e2e_0r_bridge';
-const FP_PROV = 'fp_e2e_0r_prov';
+const FP_ATB = 'a'.repeat(64);
+const FP_BICIS = 'b'.repeat(64);
+const FP_BIS = 'c'.repeat(64);
+const FP_BRIDGE = 'd'.repeat(64);
+const FP_PROV = 'e'.repeat(64);
+const ACCOUNT_ATB = '00000000-0000-4000-8000-0000000000a1';
+const ACCOUNT_BICIS = '00000000-0000-4000-8000-0000000000b1';
+const ACCOUNT_BIS = '00000000-0000-4000-8000-0000000000c1';
+const ACCOUNT_BRIDGE = '00000000-0000-4000-8000-0000000000d1';
+const ACCOUNT_PROV = '00000000-0000-4000-8000-0000000000e1';
 const CURRENCY = 'XOF';
 const D1 = '09/07/2026';
 const D2 = '10/07/2026';
-const BACKFILL_GRANT = 'GRANT-E2E-0R-BIS-001';
+const BACKFILL_GRANT = '00000000-0000-4000-8000-00000000f001';
 
 // --- Fabriques de classeurs synthétiques ------------------------------------
 function workbookBytes(rows: unknown[][], bookType: 'xls' | 'xlsx'): ArrayBuffer {
@@ -149,9 +154,10 @@ interface Scenario {
   fileName: string;
   bytes: ArrayBuffer;
   accountFingerprint: string;
+  accountRegistryId: string;
   exportReferenceDate?: string;
   requestedMode?: 'daily' | 'backfill';
-  backfillGrantReference?: string;
+  backfillGrantId?: string;
   /** Attentes vérifiées ici même : le générateur échoue si le pipeline dévie. */
   expect: {
     unitsCount: number;
@@ -170,6 +176,7 @@ const SCENARIOS: Scenario[] = [
     fileName: 'e2e 0r atb v1.xls',
     bytes: atbExcel(S1, '200', '-100', '1,100', '900', 'A'),
     accountFingerprint: FP_ATB,
+    accountRegistryId: ACCOUNT_ATB,
     expect: { unitsCount: 1, parserValidationStatus: 'valid', provisionalUnitsCount: 0 },
   },
   {
@@ -179,6 +186,7 @@ const SCENARIOS: Scenario[] = [
     fileName: 'e2e 0r atb v2.xls',
     bytes: atbExcel(S1, '250', '-150', '1,150', '900', 'C'),
     accountFingerprint: FP_ATB,
+    accountRegistryId: ACCOUNT_ATB,
     expect: { unitsCount: 1, parserValidationStatus: 'valid', provisionalUnitsCount: 0 },
   },
   {
@@ -188,6 +196,7 @@ const SCENARIOS: Scenario[] = [
     fileName: 'e2e 0r atb d2.xls',
     bytes: atbExcel(S2, '300', '-100', '1,400', '1,100', 'D'),
     accountFingerprint: FP_ATB,
+    accountRegistryId: ACCOUNT_ATB,
     expect: { unitsCount: 1, parserValidationStatus: 'valid', provisionalUnitsCount: 0 },
   },
   {
@@ -197,6 +206,7 @@ const SCENARIOS: Scenario[] = [
     fileName: 'e2e 0r atb prov.xls',
     bytes: atbExcel(S1, '200', '-100', '1,100', '900', 'P'),
     accountFingerprint: FP_PROV,
+    accountRegistryId: ACCOUNT_PROV,
     exportReferenceDate: D1,
     expect: { unitsCount: 1, parserValidationStatus: 'valid', provisionalUnitsCount: 1 },
   },
@@ -206,6 +216,7 @@ const SCENARIOS: Scenario[] = [
     fileName: 'e2e 0r bicis v1.xls',
     bytes: bicisExcel(),
     accountFingerprint: FP_BICIS,
+    accountRegistryId: ACCOUNT_BICIS,
     expect: { unitsCount: 1, parserValidationStatus: 'valid', provisionalUnitsCount: 0 },
   },
   {
@@ -217,6 +228,7 @@ const SCENARIOS: Scenario[] = [
       { date: D1, debit: 100, credit: 0, balance: '900 Créditeur', tag: 'DEBIT' },
     ]),
     accountFingerprint: FP_BIS,
+    accountRegistryId: ACCOUNT_BIS,
     expect: { unitsCount: 1, parserValidationStatus: 'valid', provisionalUnitsCount: 0 },
   },
   {
@@ -229,8 +241,9 @@ const SCENARIOS: Scenario[] = [
       { date: '01/01/2026', debit: 100, credit: 0, balance: '900 Créditeur', tag: 'DEBIT' },
     ]),
     accountFingerprint: FP_BIS,
+    accountRegistryId: ACCOUNT_BIS,
     requestedMode: 'backfill',
-    backfillGrantReference: BACKFILL_GRANT,
+    backfillGrantId: BACKFILL_GRANT,
     expect: { unitsCount: 2, parserValidationStatus: 'valid', provisionalUnitsCount: 0 },
   },
   {
@@ -240,6 +253,7 @@ const SCENARIOS: Scenario[] = [
     fileName: 'e2e 0r bridge v1.xlsx',
     bytes: bridgeExcel(),
     accountFingerprint: FP_BRIDGE,
+    accountRegistryId: ACCOUNT_BRIDGE,
     expect: { unitsCount: 1, parserValidationStatus: 'needs_review', provisionalUnitsCount: 0 },
   },
 ];
@@ -277,9 +291,10 @@ async function main(): Promise<void> {
       bank: scenario.bank,
       currency: CURRENCY,
       accountFingerprint: scenario.accountFingerprint,
+      accountRegistryId: scenario.accountRegistryId,
       exportReferenceDate: scenario.exportReferenceDate,
       requestedMode: scenario.requestedMode,
-      backfillGrantReference: scenario.backfillGrantReference,
+      backfillGrantId: scenario.backfillGrantId,
     });
 
     if (!isSuccess(result)) {
@@ -332,6 +347,7 @@ async function main(): Promise<void> {
     trace[scenario.key] = {
       bank: scenario.bank,
       accountFingerprint: scenario.accountFingerprint,
+      accountRegistryId: scenario.accountRegistryId,
       requestedMode: payload.p_attempt.requested_mode,
       sourceFormat: payload.p_attempt.source_format,
       diagnostic,

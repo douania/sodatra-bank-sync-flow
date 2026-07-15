@@ -40,6 +40,11 @@ export interface StructuredBankStatementExcelDocument {
   periodEnd?: string;
   statementDate?: string;
   forceReviewAllUnits?: boolean;
+  reviewReasonCodes: Array<
+    | 'TRUSTED_CURRENCY_UNCORROBORATED'
+    | 'RUNNING_BALANCE_MISSING'
+    | 'RUNNING_BALANCE_CHAIN_INCOHERENT'
+  >;
   lines: StructuredBankStatementLine[];
   validation: StructuredBankStatementValidation;
   errors: string[];
@@ -73,6 +78,7 @@ export function parseStructuredBankStatementExcel(
     : 'structured_bank_statement_xls';
   const errors: string[] = [];
   const warnings: string[] = [];
+  const reviewReasonCodes: StructuredBankStatementExcelDocument['reviewReasonCodes'] = [];
 
   if (extension !== '.xls' && extension !== '.xlsx') {
     return failureDocument({
@@ -339,12 +345,15 @@ export function parseStructuredBankStatementExcel(
   const lineBalancesConsistent = validateDailyRunningBalanceChains(lines);
   if (lineBalancesConsistent === false) {
     warnings.push('At least one daily running-balance chain is incoherent; affected units require review.');
+    reviewReasonCodes.push('RUNNING_BALANCE_CHAIN_INCOHERENT');
   }
   if (lines.some((line) => line.balance === undefined)) {
     warnings.push('At least one transaction has no running balance; derived balances may be unavailable.');
+    reviewReasonCodes.push('RUNNING_BALANCE_MISSING');
   }
   if (currencies.size === 0) {
     warnings.push('The matched Excel profile carries no currency; trusted operator currency is required.');
+    reviewReasonCodes.push('TRUSTED_CURRENCY_UNCORROBORATED');
   }
   const forceReviewAllUnits = currencies.size === 0;
 
@@ -372,6 +381,7 @@ export function parseStructuredBankStatementExcel(
     periodStart,
     periodEnd,
     forceReviewAllUnits,
+    reviewReasonCodes,
     lines,
     validation,
     errors: validation.errors,
@@ -743,6 +753,7 @@ function failureDocument(input: {
     sourceFormat: input.sourceFormat,
     sourceFileName: input.sourceFileName,
     parserVersion: 'structured-excel-0q/unmatched',
+    reviewReasonCodes: [],
     lines: [],
     validation,
     errors: validation.errors,

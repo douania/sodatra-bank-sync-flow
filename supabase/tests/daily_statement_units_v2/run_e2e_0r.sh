@@ -28,6 +28,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260708130000_daily_statement_units_v2.sql"
+MIGRATION_0U="$REPO_ROOT/supabase/migrations/20260715000000_daily_v2_account_registry_review_visibility.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -67,6 +68,7 @@ command -v docker >/dev/null 2>&1 || { echo "TEST_FAILED: docker indisponible"; 
 docker info >/dev/null 2>&1 || { echo "TEST_FAILED: le daemon docker ne repond pas"; exit 1; }
 command -v psql >/dev/null 2>&1 || { echo "TEST_FAILED: psql indisponible"; exit 1; }
 [ -f "$MIGRATION" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION"; exit 1; }
+[ -f "$MIGRATION_0U" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -133,7 +135,8 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" < "$SCRIPT_DIR/00_supabase_local_shim.sql" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/01_seed_synthetic_identities.sql" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION" >/dev/null
-echo "migration 20260708130000_daily_statement_units_v2.sql appliquee"
+"${PSQL[@]}" --single-transaction < "$MIGRATION_0U" >/dev/null
+echo "migrations Daily v2 historique + additive 0U appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""

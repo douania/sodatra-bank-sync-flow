@@ -28,6 +28,7 @@ import { deriveStructuredBankStatementDailyAggregates } from '@/services/structu
 import type {
   DailyV2ParserValidationStatus,
   DailyV2PreIngestPayload,
+  DailyV2ReviewReasonCode,
   DailyV2RequestedUnitStatus,
   DailyV2RpcLine,
   DailyV2RpcUnit,
@@ -45,7 +46,7 @@ const CSV_BANKS: ReadonlySet<DailyV2SupportedBank> = new Set(['BDK', 'ORA']);
 const EXCEL_BANKS: ReadonlySet<DailyV2SupportedBank> = new Set(['ATB', 'BICIS', 'BIS', 'BRIDGE']);
 const MASKED_ACCOUNT_PATTERN = /^[*]+[0-9]{0,4}$/;
 const TRUSTED_CURRENCY_PATTERN = /^[A-Z]{3}$/;
-const BACKFILL_GRANT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STRICT_DATE_PATTERN = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 const FORBIDDEN_KEYS = new Set([
   'rawcsv',
@@ -75,9 +76,11 @@ export interface PrepareDailyV2BrowserInput {
   bank: DailyV2SupportedBank;
   currency: string;
   accountFingerprint: string;
+  accountRegistryId: string;
+  registeredAccountNumberMasked?: string | null;
   exportReferenceDate?: string;
   requestedMode?: DailyV2BrowserRequestedMode;
-  backfillGrantReference?: string;
+  backfillGrantId?: string;
 }
 
 export interface DailyV2SafeDiagnostic {
@@ -94,6 +97,8 @@ export interface DailyV2SafeDiagnostic {
   lineCount: number;
   unitsCount: number;
   provisionalUnitsCount: number;
+  reviewRequiredUnitsCount: number;
+  reviewReasonCodes: DailyV2ReviewReasonCode[];
   warnings: string[];
 }
 
@@ -123,6 +128,7 @@ interface DailyV2ParsedDocument {
   periodEnd?: string;
   statementDate?: string;
   forceReviewAllUnits?: boolean;
+  reviewReasonCodes?: DailyV2ReviewReasonCode[];
   lines: StructuredBankStatementLine[];
   validation: {
     status: string;
@@ -165,32 +171,40 @@ export async function prepareDailyV2BrowserDeposit(
   const bank = input.bank;
   const currency = input.currency.trim();
   const accountFingerprint = input.accountFingerprint.trim();
+  const accountRegistryId = input.accountRegistryId.trim();
+  const registeredAccountNumberMasked = input.registeredAccountNumberMasked?.trim() || null;
   const requestedMode = input.requestedMode ?? 'daily';
-  const backfillGrantReference = input.backfillGrantReference?.trim();
+  const backfillGrantId = input.backfillGrantId?.trim();
   if (!TRUSTED_CURRENCY_PATTERN.test(currency)) {
     errors.push('currency must be a strict uppercase ISO-like three-letter code.');
   }
   if (accountFingerprint === '') {
     errors.push('accountFingerprint is required and is never derived from the masked account number.');
   }
+  if (!UUID_PATTERN.test(accountRegistryId)) {
+    errors.push('accountRegistryId must identify a provisioned account.');
+  }
   if (MASKED_ACCOUNT_PATTERN.test(accountFingerprint)) {
     errors.push('accountFingerprint must be an opaque pre-provisioned identifier, not a masked account label.');
   }
-  if (requestedMode === 'daily' && backfillGrantReference) {
-    errors.push('backfillGrantReference is forbidden in daily mode.');
+  if (registeredAccountNumberMasked && !MASKED_ACCOUNT_PATTERN.test(registeredAccountNumberMasked)) {
+    errors.push('registeredAccountNumberMasked does not satisfy the strict masked-account format.');
   }
-  if (requestedMode === 'backfill' && !backfillGrantReference) {
-    errors.push('backfillGrantReference is mandatory in backfill mode.');
+  if (requestedMode === 'daily' && backfillGrantId) {
+    errors.push('backfillGrantId is forbidden in daily mode.');
+  }
+  if (requestedMode === 'backfill' && !backfillGrantId) {
+    errors.push('backfillGrantId is mandatory in backfill mode.');
   }
   if (requestedMode === 'backfill' && bank !== 'BIS') {
     errors.push('Backfill mode is supported only for the characterized BIS profile in 0Q.');
   }
   if (
     requestedMode === 'backfill' &&
-    backfillGrantReference &&
-    !BACKFILL_GRANT_PATTERN.test(backfillGrantReference)
+    backfillGrantId &&
+    !UUID_PATTERN.test(backfillGrantId)
   ) {
-    errors.push('backfillGrantReference must be a safe 1-200 character grant identifier.');
+    errors.push('backfillGrantId must identify a provisioned grant.');
   }
 
   const exportReferenceDate = normalizeOptionalDate(
@@ -267,6 +281,18 @@ export async function prepareDailyV2BrowserDeposit(
   if (document.accountNumberMasked && document.accountNumberMasked === accountFingerprint) {
     errors.push('accountFingerprint must never reuse the masked account label.');
   }
+  if (
+    document.accountNumberMasked &&
+    registeredAccountNumberMasked &&
+    document.accountNumberMasked !== registeredAccountNumberMasked
+  ) {
+    errors.push('Parsed account identity does not match the provisioned account; deposit refused.');
+  }
+  const accountIdentityCorroborated = Boolean(
+    document.accountNumberMasked &&
+    registeredAccountNumberMasked &&
+    document.accountNumberMasked === registeredAccountNumberMasked,
+  );
 
   const parserStatusRaw = document.validation.status;
   if (parserStatusRaw !== 'valid' && parserStatusRaw !== 'needs_review') {
@@ -313,6 +339,9 @@ export async function prepareDailyV2BrowserDeposit(
 
   const rpcUnits: DailyV2RpcUnit[] = [];
   const rpcLines: DailyV2RpcLine[] = [];
+  const attemptReasonCodes = new Set<DailyV2ReviewReasonCode>(document.reviewReasonCodes ?? []);
+  if (!accountIdentityCorroborated) attemptReasonCodes.add('ACCOUNT_IDENTITY_NOT_CORROBORATED');
+  if (requestedMode === 'backfill') attemptReasonCodes.add('BACKFILL_REVIEW_REQUIRED');
 
   try {
     for (const group of groups) {
@@ -370,6 +399,25 @@ export async function prepareDailyV2BrowserDeposit(
         throw new Error(aggregates.errors.join(' '));
       }
       collectUnique(warnings, aggregates.warnings);
+      const reviewReasonCodes = new Set<DailyV2ReviewReasonCode>();
+      if (document.forceReviewAllUnits) {
+        reviewReasonCodes.add('TRUSTED_CURRENCY_UNCORROBORATED');
+      }
+      if (!accountIdentityCorroborated) {
+        reviewReasonCodes.add('ACCOUNT_IDENTITY_NOT_CORROBORATED');
+      }
+      if (group.lines.some((line) => line.balance === undefined)) {
+        reviewReasonCodes.add('RUNNING_BALANCE_MISSING');
+      } else if (aggregates.aggregatesStatus === 'unavailable') {
+        reviewReasonCodes.add('RUNNING_BALANCE_CHAIN_INCOHERENT');
+      }
+      if (aggregates.aggregatesStatus === 'unavailable') {
+        reviewReasonCodes.add('AGGREGATES_UNAVAILABLE');
+      }
+      if (requestedMode === 'backfill') {
+        reviewReasonCodes.add('BACKFILL_REVIEW_REQUIRED');
+      }
+      for (const code of reviewReasonCodes) attemptReasonCodes.add(code);
 
       const requestedStatus = resolveRequestedUnitStatus({
         bank,
@@ -392,9 +440,10 @@ export async function prepareDailyV2BrowserDeposit(
         opening_balance_derived: aggregates.openingBalanceDerived ?? null,
         closing_balance_derived: aggregates.closingBalanceDerived ?? null,
         aggregates_status: aggregates.aggregatesStatus,
-        validation_status: document.forceReviewAllUnits
+        validation_status: reviewReasonCodes.size > 0
           ? 'needs_review'
           : aggregates.validationStatus,
+        review_reason_codes: [...reviewReasonCodes],
         requested_unit_status: requestedStatus,
       });
       rpcLines.push(...unitLines);
@@ -417,6 +466,7 @@ export async function prepareDailyV2BrowserDeposit(
       bank,
       currency,
       account_fingerprint: accountFingerprint,
+      account_registry_id: accountRegistryId,
       account_number_masked: document.accountNumberMasked ?? null,
       source_file_name_redacted: null,
       raw_text_hash: rawTextHash,
@@ -426,9 +476,10 @@ export async function prepareDailyV2BrowserDeposit(
       export_reference_date: exportReferenceDate ?? null,
       parser_validation_status: parserStatus,
       errors_count: uniqueCount(document.errors, document.validation.errors),
-      warnings_count: uniqueCount(document.warnings, document.validation.warnings),
+      warnings_count: warnings.length,
       runtime_version: RUNTIME_VERSION,
       parser_version: parserVersion,
+      review_reason_codes: [...attemptReasonCodes],
     },
     p_units: rpcUnits,
     p_lines: rpcLines,
@@ -436,8 +487,8 @@ export async function prepareDailyV2BrowserDeposit(
       ingestion_ready: true,
       period_days: periodDays,
       bridge_guard_passed: true,
-      backfill_grant_reference: requestedMode === 'backfill'
-        ? (backfillGrantReference as string)
+      backfill_grant_id: requestedMode === 'backfill'
+        ? (backfillGrantId as string)
         : null,
     },
   };
@@ -448,6 +499,11 @@ export async function prepareDailyV2BrowserDeposit(
       forbiddenPaths.map((path) => `Forbidden key detected in outgoing payload at ${path}.`),
       warnings,
     );
+  }
+
+  const diagnosticReviewReasonCodes = new Set<DailyV2ReviewReasonCode>(attemptReasonCodes);
+  for (const unit of rpcUnits) {
+    for (const code of unit.review_reason_codes) diagnosticReviewReasonCodes.add(code);
   }
 
   return {
@@ -469,6 +525,10 @@ export async function prepareDailyV2BrowserDeposit(
       provisionalUnitsCount: rpcUnits.filter(
         (unit) => unit.requested_unit_status === 'provisional',
       ).length,
+      reviewRequiredUnitsCount: rpcUnits.filter(
+        (unit) => unit.validation_status === 'needs_review' || unit.aggregates_status === 'unavailable',
+      ).length,
+      reviewReasonCodes: [...diagnosticReviewReasonCodes],
       warnings: [...warnings],
     },
     warnings,

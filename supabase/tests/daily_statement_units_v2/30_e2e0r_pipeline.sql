@@ -12,6 +12,27 @@
 \set ON_ERROR_STOP on
 SET datestyle TO 'ISO, MDY';
 
+-- Registre et grant 0U 100 % synthétiques. Le fingerprint est désormais lié
+-- côté serveur à un compte provisionné ; le grant backfill est un UUID réel,
+-- borné et consommé atomiquement par le wrapper 0U.
+INSERT INTO public.daily_statement_account_registry (
+  id, created_by, bank, currency, safe_alias, account_fingerprint, account_number_masked
+) VALUES
+  ('00000000-0000-4000-8000-0000000000a1', poc_test.uid_admin(), 'ATB', 'XOF', 'E2E0R ATB', repeat('a',64), '****1111'),
+  ('00000000-0000-4000-8000-0000000000b1', poc_test.uid_admin(), 'BICIS', 'XOF', 'E2E0R BICIS', repeat('b',64), NULL),
+  ('00000000-0000-4000-8000-0000000000c1', poc_test.uid_admin(), 'BIS', 'XOF', 'E2E0R BIS', repeat('c',64), NULL),
+  ('00000000-0000-4000-8000-0000000000d1', poc_test.uid_admin(), 'BRIDGE', 'XOF', 'E2E0R BRIDGE', repeat('d',64), NULL),
+  ('00000000-0000-4000-8000-0000000000e1', poc_test.uid_admin(), 'ATB', 'XOF', 'E2E0R PROVISIONAL', repeat('e',64), NULL);
+
+INSERT INTO public.daily_statement_backfill_grants (
+  id, account_registry_id, created_by, period_start, period_end, max_units, expires_at
+) VALUES (
+  '00000000-0000-4000-8000-00000000f001',
+  '00000000-0000-4000-8000-0000000000c1',
+  poc_test.uid_admin(), DATE '2026-01-01', DATE '2026-02-20', 2,
+  TIMESTAMPTZ '2027-01-01 00:00:00+00'
+);
+
 -- Fenêtre de reporting de la campagne (mirroir de la requête page réelle).
 -- Les journées backfill (janvier/février) restent hors fenêtre volontairement.
 CREATE TABLE poc_test.e2e0r_report_snapshot (
@@ -71,6 +92,75 @@ $fn$;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA poc_test TO PUBLIC;
 
 -- ============================================================================
+-- 0U. Registre de comptes et grants : RPC admin, génération serveur et RLS.
+-- ============================================================================
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.expect_error(
+  $$SELECT public.provision_daily_statement_account('ORA','XOF','E2E0R MANAGER',NULL)$$,
+  '%DAILY_STMT_ACCOUNT_ADMIN_REQUIRED%',
+  '0U-P1: un manager ne provisionne pas de compte');
+COMMIT;
+
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.ctx_set('0u_account_rpc',
+  public.provision_daily_statement_account('ORA','XOF','E2E0R RPC ACCOUNT','****4242') ->> 'id');
+SELECT poc_test.assert(
+  (SELECT account_fingerprint ~ '^[0-9a-f]{64}$'
+   FROM public.daily_statement_account_registry
+   WHERE id = poc_test.ctx_get('0u_account_rpc')::uuid),
+  '0U-P2: fingerprint opaque genere par le serveur');
+SELECT poc_test.expect_error(
+  format('SELECT public.deactivate_daily_statement_account(%L::uuid,%L)',
+         poc_test.ctx_get('0u_account_rpc'), '12345678'),
+  '%DAILY_STMT_REASON_SENSITIVE%',
+  '0U-P2b: une raison ressemblant a un compte est refusee');
+SELECT public.deactivate_daily_statement_account(
+  poc_test.ctx_get('0u_account_rpc')::uuid,
+  'E2E0R lifecycle test'
+);
+SELECT poc_test.assert(
+  (SELECT status FROM public.daily_statement_account_registry
+   WHERE id = poc_test.ctx_get('0u_account_rpc')::uuid) = 'inactive',
+  '0U-P3: desactivation du compte auditee et coherente');
+SELECT poc_test.ctx_set('0u_grant_account',
+  public.provision_daily_statement_account('BIS','XOF','E2E0R GRANT ACCOUNT',NULL) ->> 'id');
+SELECT poc_test.ctx_set('0u_revoked_grant',
+  public.issue_daily_statement_backfill_grant(
+    poc_test.ctx_get('0u_grant_account')::uuid,
+    DATE '2026-01-01', DATE '2026-01-31', 31,
+    TIMESTAMPTZ '2027-01-01 00:00:00+00'
+  ) ->> 'id');
+SELECT public.revoke_daily_statement_backfill_grant(
+  poc_test.ctx_get('0u_revoked_grant')::uuid,
+  'E2E0R revocation test'
+);
+SELECT poc_test.assert(
+  (SELECT status FROM public.daily_statement_backfill_grants
+   WHERE id = poc_test.ctx_get('0u_revoked_grant')::uuid) = 'revoked',
+  '0U-P4: grant revoque par RPC admin');
+COMMIT;
+
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_user());
+SELECT poc_test.assert((SELECT count(*) FROM public.daily_statement_account_registry) = 0,
+  '0U-P5: le role user ne lit aucun compte provisionne');
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_account_registry WHERE status = 'inactive') = 0,
+  '0U-P6: le manager ne lit jamais les comptes inactifs');
+SELECT poc_test.assert((SELECT count(*) FROM public.daily_statement_backfill_grants) = 0,
+  '0U-P7: le manager ne lit aucun grant backfill');
+SELECT poc_test.as_user(poc_test.uid_auditor());
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_account_registry WHERE status = 'inactive') = 1,
+  '0U-P8: l auditor lit le lifecycle des comptes');
+SELECT poc_test.assert((SELECT count(*) FROM public.daily_statement_account_events) >= 5,
+  '0U-P9: l auditor lit les evenements append-only du registre');
+COMMIT;
+
+-- ============================================================================
 -- A. État initial : rien en staging, rien en canonical, rien en audit.
 -- ============================================================================
 BEGIN;
@@ -86,6 +176,39 @@ COMMIT;
 -- B. Dépôts réels des quatre banques (payloads issus du pipeline Excel).
 --    BICIS est déposé par le MANAGER : le dépôt daily lui est ouvert.
 -- ============================================================================
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error($mismatch$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt || jsonb_build_object('account_fingerprint',repeat('f',64)),
+    p_units, p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$mismatch$, '%DAILY_STMT_ACCOUNT_CONTEXT_MISMATCH%',
+  '0U-B0a: fingerprint non lie au registre refuse');
+SELECT poc_test.expect_error($reason$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt || jsonb_build_object('review_reason_codes',jsonb_build_array('UNSAFE_FREE_TEXT')),
+    p_units, p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$reason$, '%DAILY_STMT_REVIEW_CODE_UNSUPPORTED%',
+  '0U-B0b: motif hors allow-list refuse');
+SELECT poc_test.expect_error($status$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,validation_status}','"valid"'::jsonb),
+    p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$status$, '%DAILY_STMT_REVIEW_STATUS_MISMATCH%',
+  '0U-B0c: motif de review avec statut valid refuse et rollback');
+SELECT poc_test.expect_error($mask$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt || jsonb_build_object('account_number_masked','****2222'),
+    p_units, p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$mask$, '%DAILY_STMT_ACCOUNT_MASK_MISMATCH%',
+  '0U-B0d: identite masquee differente du registre refusee');
+COMMIT;
+
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_admin());
 SELECT poc_test.e2e0r_deposit('atb_v1', 'atb1');
@@ -121,12 +244,21 @@ SELECT poc_test.assert(
   '0R-B5: BRIDGE porte validation_status=needs_review (devise absente du fichier)');
 SELECT poc_test.assert(
   (SELECT count(*) FROM public.daily_statement_units_staging
-   WHERE validation_status = 'valid') = 3,
-  '0R-B6: ATB/BICIS/BIS restent valid');
+   WHERE validation_status = 'needs_review') = 4,
+  '0U-B6: les 4 exports sans identite compte corroborable exigent une review');
 -- Chaque dépôt a stagé ses lignes.
 SELECT poc_test.assert(
   (SELECT count(*) FROM public.daily_statement_lines_staging) = 8,
   '0R-B7: 4 unites x 2 lignes stagees');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_units_staging
+   WHERE account_registry_id IS NOT NULL) = 4,
+  '0U-B8: chaque unite staging reference un compte provisionne');
+SELECT poc_test.assert(
+  (SELECT review_reason_codes @> ARRAY['TRUSTED_CURRENCY_UNCORROBORATED']::text[]
+   FROM public.daily_statement_units_staging
+   WHERE id = poc_test.ctx_get('bridge1_staging')::uuid),
+  '0U-B9: motif BRIDGE persiste et visible dans staging');
 COMMIT;
 
 -- ============================================================================
@@ -139,16 +271,25 @@ SELECT poc_test.e2e0r_snapshot('A_before_promotion');
 COMMIT;
 
 -- ============================================================================
--- D. Promotions ATB / BICIS / BIS (unités valid : aucune raison requise).
+-- D. Promotions ATB / BICIS / BIS après confirmation humaine du compte.
 -- ============================================================================
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_admin());
 SELECT poc_test.ctx_set('atb1_canonical',
-  public.promote_daily_statement_unit(poc_test.ctx_get('atb1_staging')::uuid) ->> 'canonical_unit_id');
+  public.promote_daily_statement_unit(
+    poc_test.ctx_get('atb1_staging')::uuid,
+    'E2E0R: compte ATB synthetique confirme'
+  ) ->> 'canonical_unit_id');
 SELECT poc_test.ctx_set('bicis1_canonical',
-  public.promote_daily_statement_unit(poc_test.ctx_get('bicis1_staging')::uuid) ->> 'canonical_unit_id');
+  public.promote_daily_statement_unit(
+    poc_test.ctx_get('bicis1_staging')::uuid,
+    'E2E0R: compte BICIS synthetique confirme'
+  ) ->> 'canonical_unit_id');
 SELECT poc_test.ctx_set('bis1_canonical',
-  public.promote_daily_statement_unit(poc_test.ctx_get('bis1_staging')::uuid) ->> 'canonical_unit_id');
+  public.promote_daily_statement_unit(
+    poc_test.ctx_get('bis1_staging')::uuid,
+    'E2E0R: compte BIS synthetique confirme'
+  ) ->> 'canonical_unit_id');
 COMMIT;
 
 BEGIN;
@@ -172,6 +313,11 @@ SELECT poc_test.assert(
   (SELECT c.day_total_debits FROM public.daily_statement_units_canonical c
    WHERE c.id = poc_test.ctx_get('atb1_canonical')::uuid) = 100.00,
   '0R-D5: totaux ATB promus conformes au classeur synthetique');
+SELECT poc_test.assert(
+  (SELECT review_reason_codes @> ARRAY['ACCOUNT_IDENTITY_NOT_CORROBORATED']::text[]
+   FROM public.daily_statement_units_canonical
+   WHERE id = poc_test.ctx_get('atb1_canonical')::uuid),
+  '0U-D6: canonical conserve le motif examine lors de la promotion');
 COMMIT;
 
 -- ============================================================================
@@ -475,6 +621,11 @@ SELECT poc_test.assert(
    WHERE staging_unit_id = poc_test.ctx_get('r3_staging')::uuid
      AND event_type = 'unit_needs_review') = 1,
   '0R-J4: evenement unit_needs_review emis');
+SELECT poc_test.assert(
+  (SELECT review_reason_codes @> ARRAY['ACTIVE_LINE_HASH_SCOPE_CONFLICT']::text[]
+   FROM public.daily_statement_units_staging
+   WHERE id = poc_test.ctx_get('r3_staging')::uuid),
+  '0U-J5: motif R3 serveur persiste pour la review humaine');
 COMMIT;
 
 -- ============================================================================
@@ -586,6 +737,32 @@ SELECT poc_test.assert(
    WHERE attempt_id = poc_test.ctx_get('bisbf_attempt')::uuid
      AND event_type = 'backfill_deposit') = 1,
   '0R-L15: evenement backfill_deposit emis');
+SELECT poc_test.assert(
+  (SELECT status FROM public.daily_statement_backfill_grants
+   WHERE id = '00000000-0000-4000-8000-00000000f001') = 'consumed',
+  '0U-L16: grant backfill consomme atomiquement');
+SELECT poc_test.assert(
+  (SELECT consumed_attempt_id FROM public.daily_statement_backfill_grants
+   WHERE id = '00000000-0000-4000-8000-00000000f001') =
+   poc_test.ctx_get('bisbf_attempt')::uuid,
+  '0U-L17: grant lie a la tentative qui l a consomme');
+SELECT poc_test.assert(
+  (SELECT bool_and(review_reason_codes @> ARRAY['BACKFILL_REVIEW_REQUIRED']::text[])
+   FROM public.daily_statement_units_staging
+   WHERE attempt_id = poc_test.ctx_get('bisbf_attempt')::uuid),
+  '0U-L18: toutes les unites backfill portent le motif de revue');
+SELECT poc_test.assert(
+  NOT has_function_privilege(
+    'authenticated',
+    'public.daily_stmt_pre_ingest_legacy_core_0u(jsonb,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  ),
+  '0U-L19: le coeur legacy interne ne peut pas contourner le wrapper 0U');
+SELECT poc_test.expect_error($reuse$
+  SELECT public.pre_ingest_daily_statement_units(p_attempt, p_units, p_lines, p_guard)
+  FROM poc_test.e2e0r_payload WHERE key = 'bis_backfill'
+$reuse$, '%DAILY_STMT_BACKFILL_GRANT_INVALID%',
+  '0U-L20: grant consomme impossible a reutiliser');
 COMMIT;
 
 -- ============================================================================
