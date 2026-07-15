@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import type {
   DailyV2AppRole,
+  DailyV2AccountRegistryRow,
+  DailyV2AccountEventRow,
   DailyV2AuditEventRow,
+  DailyV2BackfillGrantRow,
   DailyV2CanonicalLineRow,
   DailyV2CanonicalUnitRow,
   DailyV2Database,
@@ -31,6 +34,26 @@ export { DAILY_V2_REPORTING_MAX_UNITS, DailyV2ServiceError } from './dailyV2Repo
 
 const dailyV2Supabase = supabase as unknown as SupabaseClient<DailyV2Database>;
 const MAX_SAFE_REASON_LENGTH = 200;
+
+const accountRegistrySchema = z.object({
+  id: z.string().uuid(),
+  bank: z.string(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  safe_alias: z.string().min(1).max(80),
+  account_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  account_number_masked: z.string().regex(/^\*+[0-9]{0,4}$/).nullable(),
+  status: z.enum(['active', 'inactive']),
+});
+
+const backfillGrantSchema = z.object({
+  id: z.string().uuid(),
+  account_registry_id: z.string().uuid(),
+  period_start: z.string(),
+  period_end: z.string(),
+  max_units: z.number().int().min(1).max(4000),
+  expires_at: z.string(),
+  status: z.enum(['active', 'consumed', 'revoked']),
+});
 
 const preIngestResponseSchema = z.object({
   attempt_id: z.string().uuid(),
@@ -91,6 +114,126 @@ export async function getCurrentUserDailyV2Roles(): Promise<DailyV2AppRole[]> {
   );
 }
 
+export async function listDailyV2Accounts(input: {
+  bank?: string;
+  currency?: string;
+  includeInactive?: boolean;
+} = {}): Promise<DailyV2AccountRegistryRow[]> {
+  assertAuthorizedDailyV2Target();
+  await assertAuthenticatedSession();
+  let query = dailyV2Supabase
+    .from('daily_statement_account_registry')
+    .select('*')
+    .order('bank', { ascending: true })
+    .order('safe_alias', { ascending: true });
+  if (input.bank) query = query.eq('bank', input.bank);
+  if (input.currency) query = query.eq('currency', input.currency);
+  if (!input.includeInactive) query = query.eq('status', 'active');
+  const { data, error } = await query;
+  if (error) throw toSafeError(error, 'Lecture du registre de comptes impossible.');
+  return data ?? [];
+}
+
+/** Internal pipeline input only; never render, log or export this value. */
+export function getDailyV2AccountOpaqueIdentity(account: DailyV2AccountRegistryRow): string {
+  return account.account_fingerprint;
+}
+
+export async function provisionDailyV2Account(input: {
+  bank: string;
+  currency: string;
+  safeAlias: string;
+  accountNumberMasked?: string;
+}): Promise<DailyV2AccountRegistryRow> {
+  assertAuthorizedDailyV2Target();
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('provision_daily_statement_account', {
+    p_bank: input.bank,
+    p_currency: input.currency,
+    p_safe_alias: input.safeAlias.trim(),
+    p_account_number_masked: input.accountNumberMasked?.trim() || null,
+  });
+  if (error) throw toSafeError(error, 'Provisionnement du compte refusé.');
+  return accountRegistrySchema.parse(data) as DailyV2AccountRegistryRow;
+}
+
+export async function deactivateDailyV2Account(input: {
+  accountRegistryId: string;
+  reason: string;
+}): Promise<void> {
+  assertAuthorizedDailyV2Target();
+  await assertAuthenticatedSession();
+  const { error } = await dailyV2Supabase.rpc('deactivate_daily_statement_account', {
+    p_account_registry_id: input.accountRegistryId,
+    p_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'Désactivation du compte refusée.');
+}
+
+export async function listDailyV2BackfillGrants(
+  accountRegistryId: string,
+): Promise<DailyV2BackfillGrantRow[]> {
+  assertAuthorizedDailyV2Target();
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase
+    .from('daily_statement_backfill_grants')
+    .select('*')
+    .eq('account_registry_id', accountRegistryId)
+    .eq('status', 'active')
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false });
+  if (error) throw toSafeError(error, 'Lecture des autorisations backfill impossible.');
+  return data ?? [];
+}
+
+export async function issueDailyV2BackfillGrant(input: {
+  accountRegistryId: string;
+  periodStart: string;
+  periodEnd: string;
+  maxUnits: number;
+  expiresAt: string;
+}): Promise<DailyV2BackfillGrantRow> {
+  assertAuthorizedDailyV2Target();
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('issue_daily_statement_backfill_grant', {
+    p_account_registry_id: input.accountRegistryId,
+    p_period_start: input.periodStart,
+    p_period_end: input.periodEnd,
+    p_max_units: input.maxUnits,
+    p_expires_at: input.expiresAt,
+  });
+  if (error) throw toSafeError(error, 'Création de l’autorisation backfill refusée.');
+  return backfillGrantSchema.parse(data) as DailyV2BackfillGrantRow;
+}
+
+export async function revokeDailyV2BackfillGrant(input: {
+  backfillGrantId: string;
+  reason: string;
+}): Promise<void> {
+  assertAuthorizedDailyV2Target();
+  await assertAuthenticatedSession();
+  const { error } = await dailyV2Supabase.rpc('revoke_daily_statement_backfill_grant', {
+    p_backfill_grant_id: input.backfillGrantId,
+    p_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'Révocation de l’autorisation backfill refusée.');
+}
+
+export async function listDailyV2AccountEvents(input: {
+  page: number;
+  pageSize: number;
+}): Promise<DailyV2Page<DailyV2AccountEventRow>> {
+  assertAuthorizedDailyV2Target();
+  const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
+  const { data, error, count } = await dailyV2Supabase
+    .from('daily_statement_account_events')
+    .select('*', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(from, to);
+  if (error) throw toSafeError(error, 'Lecture de l’audit du registre impossible.');
+  return { rows: data ?? [], count: count ?? 0, page, pageSize };
+}
+
 export async function preIngestDailyV2(
   payload: DailyV2PreIngestPayload,
 ): Promise<DailyV2PreIngestResponse> {
@@ -149,6 +292,7 @@ export async function listDailyV2StagingUnits(input: {
   page: number;
   pageSize: number;
   status?: 'all' | DailyV2StagingStatus;
+  review?: 'all' | 'required' | 'clear';
 }): Promise<DailyV2Page<DailyV2StagingUnitRow>> {
   assertAuthorizedDailyV2Target();
   const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
@@ -159,6 +303,16 @@ export async function listDailyV2StagingUnits(input: {
     .order('created_at', { ascending: false })
     .range(from, to);
   if (input.status && input.status !== 'all') query = query.eq('status', input.status);
+  if (input.review === 'required') {
+    query = query.or(
+      'status.eq.needs_review,validation_status.eq.needs_review,aggregates_status.eq.unavailable',
+    );
+  } else if (input.review === 'clear') {
+    query = query
+      .neq('status', 'needs_review')
+      .eq('validation_status', 'valid')
+      .eq('aggregates_status', 'derived');
+  }
 
   const { data, error, count } = await query;
   if (error) throw toSafeError(error, 'Lecture des unités staging impossible.');

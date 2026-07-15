@@ -23,18 +23,29 @@ import {
 import {
   DailyV2ServiceError,
   getActiveDailyV2CanonicalUnit,
+  getDailyV2AccountOpaqueIdentity,
   getCurrentUserDailyV2Roles,
+  listDailyV2Accounts,
+  listDailyV2AccountEvents,
+  listDailyV2BackfillGrants,
   listDailyV2AuditEvents,
   listDailyV2CanonicalLines,
   listDailyV2CanonicalUnits,
   listDailyV2StagingLines,
   listDailyV2StagingUnits,
   preIngestDailyV2,
+  provisionDailyV2Account,
+  deactivateDailyV2Account,
+  issueDailyV2BackfillGrant,
+  revokeDailyV2BackfillGrant,
   promoteDailyV2Unit,
   supersedeDailyV2Unit,
 } from '@/features/daily-v2/dailyV2SupabaseService';
 import type {
   DailyV2AppRole,
+  DailyV2AccountEventRow,
+  DailyV2AccountRegistryRow,
+  DailyV2BackfillGrantRow,
   DailyV2CanonicalLineRow,
   DailyV2CanonicalUnitRow,
   DailyV2Page,
@@ -48,6 +59,7 @@ import type {
 } from '@/features/daily-v2/dailyV2Types';
 import {
   AccessDenied,
+  AccountAuditTable,
   AuditTable,
   CanonicalTable,
   ErrorList,
@@ -56,6 +68,7 @@ import {
   LinesTable,
   ListCard,
   Pager,
+  ReviewReasonList,
   StagingTable,
   StatusBadge,
 } from '@/features/daily-v2/DailyV2Tables';
@@ -84,18 +97,28 @@ const DailyStatementV2 = () => {
   const [file, setFile] = useState<File | null>(null);
   const [bank, setBank] = useState<DailyV2SupportedBank>('BDK');
   const [currency, setCurrency] = useState('XOF');
-  const [fingerprint, setFingerprint] = useState('');
+  const [accountRegistryId, setAccountRegistryId] = useState('');
   const [referenceDate, setReferenceDate] = useState('');
   const [requestedMode, setRequestedMode] = useState<DailyV2BrowserRequestedMode>('daily');
-  const [backfillGrantReference, setBackfillGrantReference] = useState('');
+  const [backfillGrantId, setBackfillGrantId] = useState('');
+  const [newAccountAlias, setNewAccountAlias] = useState('');
+  const [newAccountMasked, setNewAccountMasked] = useState('');
+  const [accountDeactivationReason, setAccountDeactivationReason] = useState('');
+  const [grantPeriodStart, setGrantPeriodStart] = useState('');
+  const [grantPeriodEnd, setGrantPeriodEnd] = useState('');
+  const [grantMaxUnits, setGrantMaxUnits] = useState('4000');
+  const [grantExpiresAt, setGrantExpiresAt] = useState('');
+  const [grantRevocationReason, setGrantRevocationReason] = useState('');
   const [prepared, setPrepared] = useState<Extract<PrepareDailyV2BrowserResult, { success: true }> | null>(null);
   const [prepareErrors, setPrepareErrors] = useState<string[]>([]);
   const [depositResult, setDepositResult] = useState<DailyV2PreIngestResponse | null>(null);
   const [stagingPage, setStagingPage] = useState(0);
   const [stagingStatus, setStagingStatus] = useState<'all' | DailyV2StagingStatus>('all');
+  const [stagingReview, setStagingReview] = useState<'all' | 'required' | 'clear'>('all');
   const [canonicalPage, setCanonicalPage] = useState(0);
   const [canonicalStatus, setCanonicalStatus] = useState<'all' | 'ingested' | 'superseded'>('all');
   const [auditPage, setAuditPage] = useState(0);
+  const [accountAuditPage, setAccountAuditPage] = useState(0);
   const [lineDialog, setLineDialog] = useState<LineDialog>(null);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialog>(null);
   const [reason, setReason] = useState('');
@@ -112,6 +135,20 @@ const DailyStatementV2 = () => {
   const canReadStaging = canDeposit;
   const canReadCanonical = isAdmin || roles.includes('auditor');
   const canReadAudit = canReadCanonical;
+  const accountsQuery = useQuery<DailyV2AccountRegistryRow[]>({
+    queryKey: ['daily-v2', 'accounts', bank, currency, isAdmin],
+    queryFn: () => listDailyV2Accounts({ bank, currency, includeInactive: isAdmin }),
+    enabled: canDeposit,
+  });
+  const accounts = accountsQuery.data ?? [];
+  const selectedAccount = accounts.find(
+    (account) => account.id === accountRegistryId && account.status === 'active',
+  );
+  const grantsQuery = useQuery<DailyV2BackfillGrantRow[]>({
+    queryKey: ['daily-v2', 'backfill-grants', accountRegistryId],
+    queryFn: () => listDailyV2BackfillGrants(accountRegistryId),
+    enabled: isAdmin && requestedMode === 'backfill' && Boolean(accountRegistryId),
+  });
 
   const resetPrepared = useCallback(() => {
     setPrepared(null);
@@ -121,9 +158,8 @@ const DailyStatementV2 = () => {
 
   const onDrop = useCallback((accepted: File[]) => {
     setFile(accepted[0] ?? null);
-    setFingerprint('');
     setReferenceDate('');
-    setBackfillGrantReference('');
+    setBackfillGrantId('');
     resetPrepared();
   }, [resetPrepared]);
 
@@ -148,10 +184,12 @@ const DailyStatementV2 = () => {
         file,
         bank,
         currency,
-        accountFingerprint: fingerprint,
+        accountFingerprint: selectedAccount ? getDailyV2AccountOpaqueIdentity(selectedAccount) : '',
+        accountRegistryId: selectedAccount?.id ?? '',
+        registeredAccountNumberMasked: selectedAccount?.account_number_masked,
         exportReferenceDate: referenceDate.trim() || undefined,
         requestedMode,
-        backfillGrantReference: backfillGrantReference.trim() || undefined,
+        backfillGrantId: backfillGrantId || undefined,
       });
     },
     onSuccess: (result) => {
@@ -178,18 +216,87 @@ const DailyStatementV2 = () => {
       setDepositResult(result);
       setPrepared(null);
       setFile(null);
-      setFingerprint('');
       setReferenceDate('');
-      setBackfillGrantReference('');
+      setBackfillGrantId('');
       await invalidateDailyV2(queryClient);
       toast.success('Dépôt Daily v2 terminé');
     },
     onError: (error) => showSafeError(error, 'Dépôt impossible.'),
   });
 
+  const provisionAccountMutation = useMutation({
+    mutationFn: () => provisionDailyV2Account({
+      bank,
+      currency,
+      safeAlias: newAccountAlias,
+      accountNumberMasked: newAccountMasked || undefined,
+    }),
+    onSuccess: async (account) => {
+      setNewAccountAlias('');
+      setNewAccountMasked('');
+      await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'accounts'] });
+      setAccountRegistryId(account.id);
+      toast.success('Compte Daily v2 provisionné');
+    },
+    onError: (error) => showSafeError(error, 'Provisionnement impossible.'),
+  });
+
+  const deactivateAccountMutation = useMutation({
+    mutationFn: () => deactivateDailyV2Account({
+      accountRegistryId,
+      reason: accountDeactivationReason,
+    }),
+    onSuccess: async () => {
+      setAccountRegistryId('');
+      setAccountDeactivationReason('');
+      resetPrepared();
+      await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'accounts'] });
+      toast.success('Compte Daily v2 désactivé');
+    },
+    onError: (error) => showSafeError(error, 'Désactivation impossible.'),
+  });
+
+  const issueGrantMutation = useMutation({
+    mutationFn: () => issueDailyV2BackfillGrant({
+      accountRegistryId,
+      periodStart: grantPeriodStart,
+      periodEnd: grantPeriodEnd,
+      maxUnits: Number(grantMaxUnits),
+      expiresAt: new Date(grantExpiresAt).toISOString(),
+    }),
+    onSuccess: async (grant) => {
+      await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'backfill-grants'] });
+      setRequestedMode('backfill');
+      setBackfillGrantId(grant.id);
+      resetPrepared();
+      toast.success('Autorisation backfill provisionnée');
+    },
+    onError: (error) => showSafeError(error, 'Création du grant impossible.'),
+  });
+
+  const revokeGrantMutation = useMutation({
+    mutationFn: () => revokeDailyV2BackfillGrant({
+      backfillGrantId,
+      reason: grantRevocationReason,
+    }),
+    onSuccess: async () => {
+      setBackfillGrantId('');
+      setGrantRevocationReason('');
+      resetPrepared();
+      await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'backfill-grants'] });
+      toast.success('Autorisation backfill révoquée');
+    },
+    onError: (error) => showSafeError(error, 'Révocation du grant impossible.'),
+  });
+
   const stagingQuery = useQuery<DailyV2Page<DailyV2StagingUnitRow>>({
-    queryKey: ['daily-v2', 'staging', stagingPage, stagingStatus],
-    queryFn: () => listDailyV2StagingUnits({ page: stagingPage, pageSize: PAGE_SIZE, status: stagingStatus }),
+    queryKey: ['daily-v2', 'staging', stagingPage, stagingStatus, stagingReview],
+    queryFn: () => listDailyV2StagingUnits({
+      page: stagingPage,
+      pageSize: PAGE_SIZE,
+      status: stagingStatus,
+      review: stagingReview,
+    }),
     enabled: canReadStaging,
   });
   const canonicalQuery = useQuery<DailyV2Page<DailyV2CanonicalUnitRow>>({
@@ -200,6 +307,11 @@ const DailyStatementV2 = () => {
   const auditQuery = useQuery<DailyV2Page<DailyV2AuditEventRow>>({
     queryKey: ['daily-v2', 'audit', auditPage],
     queryFn: () => listDailyV2AuditEvents({ page: auditPage, pageSize: PAGE_SIZE }),
+    enabled: canReadAudit,
+  });
+  const accountAuditQuery = useQuery<DailyV2Page<DailyV2AccountEventRow>>({
+    queryKey: ['daily-v2', 'account-audit', accountAuditPage],
+    queryFn: () => listDailyV2AccountEvents({ page: accountAuditPage, pageSize: PAGE_SIZE }),
     enabled: canReadAudit,
   });
   const stagingLinesQuery = useQuery<DailyV2StagingLineRow[]>({
@@ -256,7 +368,9 @@ const DailyStatementV2 = () => {
   };
   const reasonRequired = decisionDialog?.kind === 'supersede' ||
     (decisionDialog?.kind === 'promote' &&
-      (decisionDialog.unit.validation_status === 'needs_review' || decisionDialog.unit.aggregates_status === 'unavailable'));
+      (decisionDialog.unit.validation_status === 'needs_review' ||
+       decisionDialog.unit.aggregates_status === 'unavailable' ||
+       decisionDialog.unit.review_reason_codes.length > 0));
   const lineRows = lineDialog?.kind === 'staging' ? stagingLinesQuery.data : canonicalLinesQuery.data;
   const lineLoading = lineDialog?.kind === 'staging' ? stagingLinesQuery.isLoading : canonicalLinesQuery.isLoading;
 
@@ -295,7 +409,7 @@ const DailyStatementV2 = () => {
               <Card>
                 <CardHeader>
                   <CardTitle>Préparer un relevé structuré</CardTitle>
-                  <CardDescription>CSV BDK/ORA ou Excel ONLINE ATB/BICIS/BIS/BRIDGE, 10 MB maximum. Le fingerprint doit être pré-provisionné.</CardDescription>
+                  <CardDescription>CSV BDK/ORA ou Excel ONLINE ATB/BICIS/BIS/BRIDGE, 10 MB maximum. Sélectionnez un compte actif du registre.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div {...dropzone.getRootProps()} className="cursor-pointer rounded-lg border-2 border-dashed p-8 text-center">
@@ -305,7 +419,7 @@ const DailyStatementV2 = () => {
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Banque">
-                      <Select value={bank} onValueChange={(value: DailyV2SupportedBank) => { setBank(value); setFingerprint(''); setReferenceDate(''); setRequestedMode('daily'); setBackfillGrantReference(''); resetPrepared(); }}>
+                      <Select value={bank} onValueChange={(value: DailyV2SupportedBank) => { setBank(value); setAccountRegistryId(''); setReferenceDate(''); setRequestedMode('daily'); setBackfillGrantId(''); resetPrepared(); }}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="BDK">BDK</SelectItem>
@@ -318,16 +432,25 @@ const DailyStatementV2 = () => {
                       </Select>
                     </Field>
                     <Field label="Devise">
-                      <Input value={currency} maxLength={8} onChange={(e) => { setCurrency(e.target.value.toUpperCase()); setFingerprint(''); resetPrepared(); }} />
+                      <Input value={currency} maxLength={3} onChange={(e) => { setCurrency(e.target.value.toUpperCase()); setAccountRegistryId(''); setBackfillGrantId(''); resetPrepared(); }} />
                     </Field>
-                    <Field label="Account fingerprint pré-provisionné">
-                      <Input type="password" autoComplete="off" value={fingerprint} onChange={(e) => { setFingerprint(e.target.value); resetPrepared(); }} />
+                    <Field label="Compte pré-provisionné">
+                      <Select value={accountRegistryId} onValueChange={(value) => { setAccountRegistryId(value); setBackfillGrantId(''); resetPrepared(); }}>
+                        <SelectTrigger><SelectValue placeholder={accountsQuery.isLoading ? 'Chargement…' : 'Choisir un compte actif'} /></SelectTrigger>
+                        <SelectContent>
+                          {accounts.filter((account) => account.status === 'active').map((account) => (
+                            <SelectItem key={account.id} value={account.id}>
+                              {account.safe_alias}{account.account_number_masked ? ` — ${account.account_number_masked}` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </Field>
                     <Field label="Date de référence export (DD/MM/YYYY)">
                       <Input value={referenceDate} onChange={(e) => { setReferenceDate(e.target.value); resetPrepared(); }} placeholder={bank === 'ORA' ? 'Recommandée pour ORA' : 'Optionnelle'} />
                     </Field>
                     <Field label="Mode de dépôt">
-                      <Select value={requestedMode} onValueChange={(value: DailyV2BrowserRequestedMode) => { setRequestedMode(value); setBackfillGrantReference(''); resetPrepared(); }}>
+                      <Select value={requestedMode} onValueChange={(value: DailyV2BrowserRequestedMode) => { setRequestedMode(value); setBackfillGrantId(''); resetPrepared(); }}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="daily">Daily — 45 jours maximum</SelectItem>
@@ -336,19 +459,102 @@ const DailyStatementV2 = () => {
                       </Select>
                     </Field>
                     {requestedMode === 'backfill' && (
-                      <Field label="Référence GO backfill obligatoire">
-                        <Input value={backfillGrantReference} maxLength={200} onChange={(e) => { setBackfillGrantReference(e.target.value); resetPrepared(); }} />
+                      <Field label="Autorisation backfill active">
+                        <Select value={backfillGrantId} onValueChange={(value) => { setBackfillGrantId(value); resetPrepared(); }}>
+                          <SelectTrigger><SelectValue placeholder="Choisir un grant provisionné" /></SelectTrigger>
+                          <SelectContent>{(grantsQuery.data ?? []).map((grant) => (
+                            <SelectItem key={grant.id} value={grant.id}>
+                              {grant.period_start} → {grant.period_end} · {grant.max_units} unités
+                            </SelectItem>
+                          ))}</SelectContent>
+                        </Select>
                       </Field>
                     )}
                   </div>
                   <div className="flex gap-2">
-                    <Button onClick={() => prepareMutation.mutate()} disabled={!file || !fingerprint.trim() || (requestedMode === 'backfill' && !backfillGrantReference.trim()) || prepareMutation.isPending}>
+                    <Button onClick={() => prepareMutation.mutate()} disabled={!file || !selectedAccount || (requestedMode === 'backfill' && !backfillGrantId) || prepareMutation.isPending}>
                       {prepareMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Préparer
                     </Button>
-                    <Button variant="outline" onClick={() => { setFile(null); setFingerprint(''); setReferenceDate(''); setBackfillGrantReference(''); resetPrepared(); }}>Réinitialiser</Button>
+                    <Button variant="outline" onClick={() => { setFile(null); setAccountRegistryId(''); setReferenceDate(''); setBackfillGrantId(''); resetPrepared(); }}>Réinitialiser</Button>
                   </div>
                 </CardContent>
               </Card>
+
+              {isAdmin && (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Registre des comptes</CardTitle>
+                      <CardDescription>Le serveur génère le fingerprint. L’opérateur ne saisit qu’un alias non sensible et, facultativement, un numéro déjà masqué.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <Field label="Alias non sensible">
+                        <Input value={newAccountAlias} maxLength={80} onChange={(event) => setNewAccountAlias(event.target.value)} placeholder="Ex. Compte exploitation Dakar" />
+                      </Field>
+                      <Field label="Numéro masqué facultatif">
+                        <Input value={newAccountMasked} maxLength={64} onChange={(event) => setNewAccountMasked(event.target.value)} placeholder="Ex. ****1234" />
+                      </Field>
+                      <Button
+                        onClick={() => provisionAccountMutation.mutate()}
+                        disabled={!newAccountAlias.trim() || provisionAccountMutation.isPending}
+                      >
+                        {provisionAccountMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Provisionner pour {bank}/{currency}
+                      </Button>
+                      {selectedAccount && (
+                        <div className="space-y-3 rounded border p-3">
+                          <p className="text-sm">Compte sélectionné : <strong>{selectedAccount.safe_alias}</strong></p>
+                          <Field label="Raison de désactivation">
+                            <Textarea value={accountDeactivationReason} maxLength={200} onChange={(event) => setAccountDeactivationReason(event.target.value)} />
+                          </Field>
+                          <Button
+                            variant="destructive"
+                            onClick={() => deactivateAccountMutation.mutate()}
+                            disabled={!accountDeactivationReason.trim() || deactivateAccountMutation.isPending}
+                          >Désactiver ce compte</Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Autorisation backfill BIS</CardTitle>
+                      <CardDescription>Grant serveur à usage unique, borné par compte, période, volume et expiration.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {!selectedAccount || bank !== 'BIS' ? (
+                        <p className="text-sm text-muted-foreground">Sélectionnez un compte BIS actif pour provisionner un grant.</p>
+                      ) : (
+                        <>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <Field label="Début autorisé"><Input type="date" value={grantPeriodStart} onChange={(event) => setGrantPeriodStart(event.target.value)} /></Field>
+                            <Field label="Fin autorisée"><Input type="date" value={grantPeriodEnd} onChange={(event) => setGrantPeriodEnd(event.target.value)} /></Field>
+                            <Field label="Unités maximum"><Input type="number" min="1" max="4000" value={grantMaxUnits} onChange={(event) => setGrantMaxUnits(event.target.value)} /></Field>
+                            <Field label="Expiration"><Input type="datetime-local" value={grantExpiresAt} onChange={(event) => setGrantExpiresAt(event.target.value)} /></Field>
+                          </div>
+                          <Button
+                            onClick={() => issueGrantMutation.mutate()}
+                            disabled={!grantPeriodStart || !grantPeriodEnd || !grantExpiresAt || !grantMaxUnits || issueGrantMutation.isPending}
+                          >Créer un grant</Button>
+                          {backfillGrantId && (
+                            <div className="space-y-3 rounded border p-3">
+                              <Field label="Raison de révocation">
+                                <Textarea value={grantRevocationReason} maxLength={200} onChange={(event) => setGrantRevocationReason(event.target.value)} />
+                              </Field>
+                              <Button
+                                variant="destructive"
+                                onClick={() => revokeGrantMutation.mutate()}
+                                disabled={!grantRevocationReason.trim() || revokeGrantMutation.isPending}
+                              >Révoquer le grant sélectionné</Button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
 
               {prepareErrors.length > 0 && <ErrorList title="Préparation refusée" errors={prepareErrors} />}
 
@@ -365,9 +571,18 @@ const DailyStatementV2 = () => {
                       <Fact label="Validation" value={prepared.diagnostic.parserValidationStatus} />
                       <Fact label="Période" value={`${prepared.diagnostic.periodStart} → ${prepared.diagnostic.periodEnd}`} />
                       <Fact label="Unités" value={String(prepared.diagnostic.unitsCount)} />
+                      <Fact label="Unités à revoir" value={String(prepared.diagnostic.reviewRequiredUnitsCount)} />
                       <Fact label="Lignes" value={String(prepared.diagnostic.lineCount)} />
                       <Fact label="Provisional" value={String(prepared.diagnostic.provisionalUnitsCount)} />
                     </div>
+                    {prepared.diagnostic.reviewReasonCodes.length > 0 && (
+                      <Alert>
+                        <AlertTitle>Revue humaine requise</AlertTitle>
+                        <AlertDescription className="mt-2">
+                          <ReviewReasonList codes={prepared.diagnostic.reviewReasonCodes} />
+                        </AlertDescription>
+                      </Alert>
+                    )}
                     <Button onClick={() => depositMutation.mutate()} disabled={depositMutation.isPending}>
                       {depositMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Déposer via RPC
                     </Button>
@@ -394,10 +609,18 @@ const DailyStatementV2 = () => {
         <TabsContent value="staging">
           {!canReadStaging ? <AccessDenied text="Staging réservé aux rôles admin et manager." /> : (
             <ListCard title="Unités staging" loading={stagingQuery.isLoading} error={stagingQuery.isError} onRefresh={() => stagingQuery.refetch()}>
-              <div className="mb-4 max-w-xs">
+              <div className="mb-4 grid max-w-2xl gap-3 sm:grid-cols-2">
                 <Select value={stagingStatus} onValueChange={(value: 'all' | DailyV2StagingStatus) => { setStagingStatus(value); setStagingPage(0); }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{STAGING_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={stagingReview} onValueChange={(value: 'all' | 'required' | 'clear') => { setStagingReview(value); setStagingPage(0); }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Toutes les revues</SelectItem>
+                    <SelectItem value="required">Revue requise</SelectItem>
+                    <SelectItem value="clear">Sans revue technique</SelectItem>
+                  </SelectContent>
                 </Select>
               </div>
               <StagingTable rows={stagingQuery.data?.rows ?? []} isAdmin={isAdmin} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => setDecisionDialog({ kind, unit })} />
@@ -421,12 +644,18 @@ const DailyStatementV2 = () => {
           )}
         </TabsContent>
 
-        <TabsContent value="audit">
+        <TabsContent value="audit" className="space-y-4">
           {!canReadAudit ? <AccessDenied text="Audit réservé aux rôles admin et auditor." /> : (
-            <ListCard title="Audit trail" loading={auditQuery.isLoading} error={auditQuery.isError} onRefresh={() => auditQuery.refetch()}>
-              <AuditTable rows={auditQuery.data?.rows ?? []} />
-              <Pager page={auditPage} count={auditQuery.data?.count ?? 0} onChange={setAuditPage} />
-            </ListCard>
+            <>
+              <ListCard title="Audit des imports" loading={auditQuery.isLoading} error={auditQuery.isError} onRefresh={() => auditQuery.refetch()}>
+                <AuditTable rows={auditQuery.data?.rows ?? []} />
+                <Pager page={auditPage} count={auditQuery.data?.count ?? 0} onChange={setAuditPage} />
+              </ListCard>
+              <ListCard title="Audit du registre et des grants" loading={accountAuditQuery.isLoading} error={accountAuditQuery.isError} onRefresh={() => accountAuditQuery.refetch()}>
+                <AccountAuditTable rows={accountAuditQuery.data?.rows ?? []} />
+                <Pager page={accountAuditPage} count={accountAuditQuery.data?.count ?? 0} onChange={setAccountAuditPage} />
+              </ListCard>
+            </>
           )}
         </TabsContent>
 
@@ -443,6 +672,12 @@ const DailyStatementV2 = () => {
 
       <Dialog open={decisionDialog !== null} onOpenChange={(open) => !open && closeDecision()}>
         <DialogContent><DialogHeader><DialogTitle>{decisionDialog?.kind === 'supersede' ? 'Supersede canonical' : 'Promouvoir l’unité'}</DialogTitle><DialogDescription>Décision admin auditée. Les conflits ne sont jamais promus automatiquement.</DialogDescription></DialogHeader>
+          {decisionDialog && decisionDialog.unit.review_reason_codes.length > 0 && (
+            <Alert>
+              <AlertTitle>Motifs à examiner avant décision</AlertTitle>
+              <AlertDescription className="mt-2"><ReviewReasonList codes={decisionDialog.unit.review_reason_codes} /></AlertDescription>
+            </Alert>
+          )}
           {reasonRequired && <Field label="Raison obligatoire"><Textarea value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></Field>}
           <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending} onClick={() => {
             if (!decisionDialog) return;

@@ -1,6 +1,8 @@
 # Tests DB — DAILY-RPC-V2-MIGRATION-DRAFT-0H (migration candidate v2)
 
-Suite de tests SQL pour `supabase/migrations/20260708130000_daily_statement_units_v2.sql`.
+Suite de tests SQL pour la migration historique
+`supabase/migrations/20260708130000_daily_statement_units_v2.sql` et le wrapper
+additif 0U `20260715000000_daily_v2_account_registry_review_visibility.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -64,7 +66,8 @@ live). Il enchaîne : génération des classeurs synthétiques ATB `.xls`,
 BICIS `.xls`, BIS `.xls` et BRIDGE `.xlsx` **en mémoire** → traversée du **vrai
 pipeline TypeScript** `prepareDailyV2BrowserDeposit` → émission d'un artefact SQL
 portant les **payloads RPC réels** → conteneur jetable + shim + seed + migration
-v2 → `30_e2e0r_pipeline.sql` (dépôt, duplicate R1, conflict R2, promotion,
+v2 historique + migration additive 0U → `30_e2e0r_pipeline.sql` (registre de
+comptes, grants one-use, motifs de revue, dépôt, duplicate R1, conflict R2, promotion,
 gate 0K BRIDGE, supersede, R3, provisional, matrice des rôles, audit
 append-only) → extraction des lignes canonical → reporting 0O via les fonctions
 pures réelles → **destruction du conteneur** (trap, y compris en cas d'échec).

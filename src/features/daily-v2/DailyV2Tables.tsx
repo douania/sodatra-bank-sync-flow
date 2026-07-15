@@ -8,8 +8,10 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type {
   DailyV2AuditEventRow,
+  DailyV2AccountEventRow,
   DailyV2CanonicalLineRow,
   DailyV2CanonicalUnitRow,
+  DailyV2ReviewReasonCode,
   DailyV2StagingLineRow,
   DailyV2StagingUnitRow,
 } from './dailyV2Types';
@@ -32,6 +34,24 @@ export const ErrorList = ({ title, errors }: { title: string; errors: string[] }
   <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>{title}</AlertTitle><AlertDescription><ul className="list-disc pl-5">{errors.map((error) => <li key={error}>{error}</li>)}</ul></AlertDescription></Alert>
 );
 
+const REVIEW_REASON_LABELS: Record<DailyV2ReviewReasonCode, string> = {
+  TRUSTED_CURRENCY_UNCORROBORATED: 'Devise fournie par le contexte opérateur uniquement',
+  RUNNING_BALANCE_MISSING: 'Solde courant absent pour cette journée',
+  RUNNING_BALANCE_CHAIN_INCOHERENT: 'Chaîne de soldes journalière incohérente',
+  AGGREGATES_UNAVAILABLE: 'Soldes d’ouverture/clôture non dérivables',
+  ACTIVE_LINE_HASH_SCOPE_CONFLICT: 'Ligne active déjà rattachée à une autre journée',
+  ACCOUNT_IDENTITY_NOT_CORROBORATED: 'Identité du compte non corroborée par le fichier',
+  BACKFILL_REVIEW_REQUIRED: 'Dépôt backfill soumis à revue humaine',
+};
+
+export const ReviewReasonList = ({ codes }: { codes: DailyV2ReviewReasonCode[] }) => (
+  codes.length === 0 ? <span className="text-muted-foreground">—</span> : (
+    <ul className="space-y-1 text-xs">
+      {codes.map((code) => <li key={code}><Badge variant="outline">{code}</Badge><span className="ml-2">{REVIEW_REASON_LABELS[code]}</span></li>)}
+    </ul>
+  )
+);
+
 export const ListCard = ({ title, loading, error, onRefresh, children }: {
   title: string;
   loading: boolean;
@@ -48,8 +68,8 @@ export const StagingTable = ({ rows, isAdmin, onLines, onDecision }: {
   onLines: (unit: DailyV2StagingUnitRow) => void;
   onDecision: (kind: 'promote' | 'supersede', unit: DailyV2StagingUnitRow) => void;
 }) => (
-  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Statut</TableHead><TableHead>Validation</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
-    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && unit.status !== 'duplicate' && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{isAdmin && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{isAdmin && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
+  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Statut</TableHead><TableHead>Validation</TableHead><TableHead>Motifs de revue</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && unit.status !== 'duplicate' && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{isAdmin && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{isAdmin && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
   </Table></div>
 );
 
@@ -57,14 +77,20 @@ export const CanonicalTable = ({ rows, onLines }: {
   rows: DailyV2CanonicalUnitRow[];
   onLines: (unit: DailyV2CanonicalUnitRow) => void;
 }) => (
-  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Cycle</TableHead><TableHead>Validation</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
-    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status === 'ingested' ? 'active' : 'superseded'} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button></TableCell></TableRow>)}</TableBody>
+  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Cycle</TableHead><TableHead>Validation</TableHead><TableHead>Motifs de revue</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
+    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status === 'ingested' ? 'active' : 'superseded'} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button></TableCell></TableRow>)}</TableBody>
   </Table></div>
 );
 
 export const AuditTable = ({ rows }: { rows: DailyV2AuditEventRow[] }) => (
   <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Événement</TableHead><TableHead>Transition</TableHead><TableHead>Message</TableHead><TableHead>Détails</TableHead></TableRow></TableHeader>
     <TableBody>{rows.map((event) => <TableRow key={event.id}><TableCell>{new Date(event.created_at).toLocaleString('fr-FR')}</TableCell><TableCell>{event.event_type}</TableCell><TableCell>{event.previous_status ?? '—'} → {event.new_status ?? '—'}</TableCell><TableCell>{event.safe_message ?? '—'}</TableCell><TableCell><code className="text-xs break-all">{safeJson(event.safe_details)}</code></TableCell></TableRow>)}</TableBody>
+  </Table></div>
+);
+
+export const AccountAuditTable = ({ rows }: { rows: DailyV2AccountEventRow[] }) => (
+  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Événement registre</TableHead><TableHead>Message</TableHead><TableHead>Détails sûrs</TableHead></TableRow></TableHeader>
+    <TableBody>{rows.map((event) => <TableRow key={event.id}><TableCell>{new Date(event.created_at).toLocaleString('fr-FR')}</TableCell><TableCell>{event.event_type}</TableCell><TableCell>{event.safe_message}</TableCell><TableCell><code className="text-xs break-all">{safeJson(event.safe_details)}</code></TableCell></TableRow>)}</TableBody>
   </Table></div>
 );
 

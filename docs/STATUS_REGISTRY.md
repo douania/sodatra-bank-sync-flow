@@ -15,6 +15,27 @@
 
 ---
 
+## DAILY-V2-0U — Account fingerprint et visibilité review
+
+**Statut : IN_PROGRESS — PASS_LOCAL_DOCKER_0U (2026-07-15)**
+
+**Base canonique** : `52886f1cdee8ad0fa4f4aa23a61298111b2c0a73`.
+
+Le lot remplace la saisie libre du fingerprint par un registre de comptes
+pré-provisionnés, remplace le pseudo-grant backfill texte par un grant serveur
+one-use, et persiste des motifs de revue à code fermé jusque dans staging et
+canonical. Migration additive candidate :
+`20260715000000_daily_v2_account_registry_review_visibility.sql`.
+
+Validation locale obtenue : 378 tests applicatifs verts, build vert, 8 payloads
+synthétiques générés, puis migrations historique + additive 0U, matrice
+SQL/RLS/RPC, canonical et reporting 0O validés dans PostgreSQL 15 Docker
+jetable (`ALL_LOCAL_E2E_0R_PASS`). Aucun Supabase distant, commit, push ou PR
+effectué. Architecture, stop conditions et rollback :
+`docs/ACCOUNT_FINGERPRINT_REVIEW_VISIBILITY_0U.md`.
+
+---
+
 ## Lot 1 — Sécurité UI + Vérité produit
 
 **Statut : CLOSED_WITH_RESERVE**

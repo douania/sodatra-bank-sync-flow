@@ -1,9 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as XLSX from 'xlsx';
-import { prepareDailyV2BrowserDeposit } from './dailyV2BrowserPipeline';
+import {
+  prepareDailyV2BrowserDeposit as prepareDailyV2BrowserDepositImpl,
+  type PrepareDailyV2BrowserInput,
+} from './dailyV2BrowserPipeline';
 
 const encoder = new TextEncoder();
+const ACCOUNT_REGISTRY_ID = '00000000-0000-4000-8000-000000000001';
+const BACKFILL_GRANT_ID = '00000000-0000-4000-8000-000000000002';
+
+function prepareDailyV2BrowserDeposit(
+  input: Omit<PrepareDailyV2BrowserInput, 'accountRegistryId'>,
+) {
+  return prepareDailyV2BrowserDepositImpl({
+    ...input,
+    accountRegistryId: ACCOUNT_REGISTRY_ID,
+  });
+}
 
 function file(name: string, text: string) {
   const bytes = encoder.encode(text);
@@ -242,6 +256,33 @@ test('builds a safe BDK Daily v2 payload without raw CSV, full account, IBAN or 
   assert.equal(serialized.includes('decoded_text'), false);
 });
 
+test('corroborates a parsed masked account only against the provisioned registry mask', async () => {
+  const uncorroborated = await prepareDailyV2BrowserDeposit({
+    file: file('SYNTHETIC BDK ONLINE.csv', validCsv()),
+    bank: 'BDK',
+    currency: 'XOF',
+    accountFingerprint: 'fp-synthetic-bdk-v2',
+  });
+  assert.equal(uncorroborated.success, true);
+  if (!uncorroborated.success) return;
+  const parsedMask = uncorroborated.diagnostic.accountNumberMasked;
+  assert.ok(parsedMask);
+  assert.equal(uncorroborated.payload.p_units[0].validation_status, 'needs_review');
+  assert.ok(uncorroborated.payload.p_units[0].review_reason_codes.includes('ACCOUNT_IDENTITY_NOT_CORROBORATED'));
+
+  const corroborated = await prepareDailyV2BrowserDeposit({
+    file: file('SYNTHETIC BDK ONLINE.csv', validCsv()),
+    bank: 'BDK',
+    currency: 'XOF',
+    accountFingerprint: 'fp-synthetic-bdk-v2',
+    registeredAccountNumberMasked: parsedMask,
+  });
+  assert.equal(corroborated.success, true);
+  if (!corroborated.success) return;
+  assert.equal(corroborated.payload.p_units[0].validation_status, 'valid');
+  assert.equal(corroborated.payload.p_units[0].review_reason_codes.includes('ACCOUNT_IDENTITY_NOT_CORROBORATED'), false);
+});
+
 test('builds a safe ATB XLS payload through the same Daily v2 identity contract', async () => {
   const source = atbExcel();
   const result = await prepareDailyV2BrowserDeposit({
@@ -257,6 +298,9 @@ test('builds a safe ATB XLS payload through the same Daily v2 identity contract'
   assert.equal(result.payload.p_attempt.requested_mode, 'daily');
   assert.match(result.payload.p_attempt.parser_version ?? '', /atb-online-xls-v1/);
   assert.deepEqual(result.payload.p_lines.map((line) => line.signed_amount), [-100, 200]);
+  assert.equal(result.payload.p_units[0].validation_status, 'needs_review');
+  assert.deepEqual(result.payload.p_units[0].review_reason_codes, ['ACCOUNT_IDENTITY_NOT_CORROBORATED']);
+  assert.deepEqual(result.payload.p_attempt.review_reason_codes, ['ACCOUNT_IDENTITY_NOT_CORROBORATED']);
   assert.equal(result.payload.p_attempt.source_file_name_redacted, null);
   assert.equal(JSON.stringify(result.payload).includes('SYNTHETIC ATB ONLINE.xls'), false);
 });
@@ -274,6 +318,10 @@ test('holds BRIDGE XLSX units for review when currency exists only in trusted co
   assert.equal(result.payload.p_attempt.parser_validation_status, 'needs_review');
   assert.equal(result.payload.p_units[0].aggregates_status, 'derived');
   assert.equal(result.payload.p_units[0].validation_status, 'needs_review');
+  assert.deepEqual(new Set(result.payload.p_attempt.review_reason_codes), new Set([
+    'TRUSTED_CURRENCY_UNCORROBORATED',
+    'ACCOUNT_IDENTITY_NOT_CORROBORATED',
+  ]));
 });
 
 test('refuses a non-canonical trusted currency even when the workbook omits currency', async () => {
@@ -305,16 +353,34 @@ test('requires explicit backfill mode and grant for a BIS export above 45 days',
     currency: 'XOF',
     accountFingerprint: 'fp-synthetic-bis-v2',
     requestedMode: 'backfill',
-    backfillGrantReference: 'GO-BACKFILL-SYNTHETIC-0Q',
+    backfillGrantId: BACKFILL_GRANT_ID,
   });
   assert.equal(backfill.success, true);
   if (!backfill.success) return;
   assert.equal(backfill.payload.p_attempt.requested_mode, 'backfill');
   assert.equal(
-    backfill.payload.p_guard_context.backfill_grant_reference,
-    'GO-BACKFILL-SYNTHETIC-0Q',
+    backfill.payload.p_guard_context.backfill_grant_id,
+    BACKFILL_GRANT_ID,
   );
   assert.equal(backfill.payload.p_units.length, 2);
+  assert.equal(backfill.payload.p_units.every((unit) => unit.validation_status === 'needs_review'), true);
+  assert.equal(
+    backfill.payload.p_units.every((unit) => unit.review_reason_codes.includes('BACKFILL_REVIEW_REQUIRED')),
+    true,
+  );
+});
+
+test('rejects a missing provisioned account registry id before parsing', async () => {
+  const result = await prepareDailyV2BrowserDepositImpl({
+    file: file('SYNTHETIC BDK ONLINE.csv', validCsv()),
+    bank: 'BDK',
+    currency: 'XOF',
+    accountFingerprint: 'fp-synthetic-bdk-v2',
+    accountRegistryId: '',
+  });
+
+  assert.equal(result.success, false);
+  if (!result.success) assert.match(result.errors.join(' '), /provisioned account/i);
 });
 
 test('rejects an Excel extension/signature mismatch before workbook parsing', async () => {

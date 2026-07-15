@@ -143,8 +143,8 @@ async function main(): Promise<void> {
   check(
     reportB.groups
       .filter((group) => group.bank !== 'BRIDGE')
-      .every((group) => group.needsReviewDayCount === 0),
-    '0R-R8: checkpoint B - ATB/BICIS/BIS ne comptent aucun jour a revoir',
+      .every((group) => group.needsReviewDayCount === 1),
+    '0R-R8: checkpoint B - ATB/BICIS/BIS portent la review identite compte 0U',
   );
   check(
     reportB.groups.every((group) => group.unavailableAggregatesDayCount === 0),

@@ -155,6 +155,7 @@ test('parses BRIDGE word dates and the characterized unlabeled running-balance c
   assert.deepEqual(result.lines.map((line) => line.signedAmount), [-100, 200]);
   assert.equal(result.validation.lineBalancesConsistent, true);
   assert.match(result.warnings.join(' '), /trusted operator currency/i);
+  assert.deepEqual(result.reviewReasonCodes, ['TRUSTED_CURRENCY_UNCORROBORATED']);
 });
 
 test('refuses generic Internal Book-shaped workbooks on the statement path', () => {
