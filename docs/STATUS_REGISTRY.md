@@ -17,10 +17,10 @@
 
 ## DAILY-V2-0U — Account fingerprint et visibilité review
 
-**Statut : IN_PROGRESS — IMPLEMENTATION_LOCAL_0U3 (2026-07-15)**
+**Statut : IN_PROGRESS — IMPLEMENTATION_LOCAL_0U4 (2026-07-16)**
 
-**Base canonique 0U3** : `78cdd585eb9fbf6b1b53e592e8048bcaa28bf50d`
-(merge PR #94).
+**Base canonique 0U4** : `3fd2380fdf8aa0a14fac37bf4674a0d625376f43`
+(merge PR #95).
 
 Le lot remplace la saisie libre du fingerprint par un registre de comptes
 pré-provisionnés, remplace le pseudo-grant backfill texte par un grant serveur
@@ -36,7 +36,25 @@ et rattache atomiquement attempts, staging et canonical sans modifier les
 identités de jour ni les statuts. Migration candidate locale :
 `20260715010000_daily_v2_historical_identity_adoption_bridge.sql`.
 
-Validation locale obtenue : 380 tests applicatifs verts, build vert, 8 payloads
+0U et 0U3 ont ensuite été appliqués au staging
+`gbbsqcscryygqlmqncyv`. La première adoption contrôlée a été refusée avant
+toute écriture : le fingerprint historique unique est un jeton opaque sûr de
+31 caractères, non un SHA-256 hex64. Le post-échec a confirmé 0 registre,
+0 événement et 0 rattachement, avec les 3 attempts, 9 staging, 3 canonical et
+leurs statuts strictement inchangés.
+
+0U4 ajoute donc, dans une migration forward-only séparée, un schéma
+`legacy_opaque_v1` fermé et réservé au pont historique. Le provisionnement
+normal reste exclusivement `sha256_hex_v1`; le token historique est repris
+exactement afin de ne scinder aucun `day_unit_id` ou préimage d'idempotence.
+Imports staging suspendus jusqu'au PASS 0U4 et au GO d'environnement dédié.
+
+Validation 0U4 disponible hors Docker : 381/381 tests applicatifs verts, build
+vert, baseline TypeScript 19/19 et ESLint 222/222 strictement identiques. Le
+verdict reste bloqué tant que le replay PostgreSQL 15 jetable n'a pas produit
+`ALL_LOCAL_E2E_0R_PASS`; aucun accès Supabase live n'a été effectué pour ce lot.
+
+Validation locale historique 0U3 : 380 tests applicatifs verts, build vert, 8 payloads
 synthétiques générés, puis migrations historique + additives 0U/0U3, pont
 d'adoption, matrice SQL/RLS/RPC, canonical et reporting 0O validés dans
 PostgreSQL 15 Docker jetable (`ALL_E2E_0U3_HISTORICAL_ADOPTION_PASS`,

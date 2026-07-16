@@ -108,9 +108,10 @@ SELECT poc_test.ctx_set('0u_account_rpc',
   public.provision_daily_statement_account('ORA','XOF','E2E0R RPC ACCOUNT','****4242') ->> 'id');
 SELECT poc_test.assert(
   (SELECT account_fingerprint ~ '^[0-9a-f]{64}$'
+     AND fingerprint_scheme = 'sha256_hex_v1'
    FROM public.daily_statement_account_registry
    WHERE id = poc_test.ctx_get('0u_account_rpc')::uuid),
-  '0U-P2: fingerprint opaque genere par le serveur');
+  '0U-P2: fingerprint SHA-256 opaque genere par le serveur');
 SELECT poc_test.expect_error(
   format('SELECT public.deactivate_daily_statement_account(%L::uuid,%L)',
          poc_test.ctx_get('0u_account_rpc'), '12345678'),

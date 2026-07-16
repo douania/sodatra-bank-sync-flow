@@ -30,6 +30,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260708130000_daily_statement_units_v2.sql"
 MIGRATION_0U="$REPO_ROOT/supabase/migrations/20260715000000_daily_v2_account_registry_review_visibility.sql"
 MIGRATION_0U3="$REPO_ROOT/supabase/migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql"
+MIGRATION_0U4="$REPO_ROOT/supabase/migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -71,6 +72,7 @@ command -v psql >/dev/null 2>&1 || { echo "TEST_FAILED: psql indisponible"; exit
 [ -f "$MIGRATION" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION"; exit 1; }
 [ -f "$MIGRATION_0U" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U"; exit 1; }
 [ -f "$MIGRATION_0U3" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U3"; exit 1; }
+[ -f "$MIGRATION_0U4" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U4"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -140,8 +142,9 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" < "$SCRIPT_DIR/25_e2e0r_historical_adoption_seed.sql"
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U3" >/dev/null
+"${PSQL[@]}" --single-transaction < "$MIGRATION_0U4" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/26_e2e0r_historical_adoption_assert.sql"
-echo "migrations Daily v2 historique + additives 0U/0U3 appliquees"
+echo "migrations Daily v2 historique + additives 0U/0U3/0U4 appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""

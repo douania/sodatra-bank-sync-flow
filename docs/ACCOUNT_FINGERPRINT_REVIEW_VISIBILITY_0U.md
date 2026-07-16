@@ -1,8 +1,11 @@
 # DAILY-V2-0U — Account registry and review visibility
 
-Status: local implementation validated in a throwaway PostgreSQL 15 Docker
-container. The additive migration has not been applied to any remote Supabase
-project.
+Status: 0U and 0U3 are merged and applied to staging. The first controlled
+historical adoption was refused before any write because staging carries one
+safe opaque legacy token of 31 characters rather than a 64-hex SHA-256. The
+forward-only 0U4 compatibility fix is implemented. Its application tests,
+type/lint baselines and build are validated locally; the mandatory PostgreSQL
+15 Docker replay is still pending. It has not been applied to a remote project.
 
 ## Outcome
 
@@ -58,6 +61,29 @@ changes. It does not modify day identifiers, content or line hashes, statuses,
 amounts or transaction lines. A mapped historical `conflict` remains a
 conflict and can subsequently use the normal audited supersede workflow.
 
+### Legacy fingerprint compatibility (0U4)
+
+The forward-only migration
+`20260716000000_daily_v2_legacy_fingerprint_compatibility.sql` does not rewrite
+0U or 0U3 and never updates historical fingerprints, day identifiers, hashes,
+amounts, statuses or lines. It adds an explicit registry discriminator:
+
+- `sha256_hex_v1` remains the mandatory normal-provisioning format;
+- `legacy_opaque_v1` is available only to the admin historical-adoption RPC.
+
+The legacy grammar is closed and server-side: 16–128 ASCII characters from
+`A-Z`, `a-z`, `0-9`, `.`, `_`, `:` or `-`, with at least one letter. Whitespace,
+control characters, eight consecutive digits, IBAN-like values, masked-account
+syntax and case-insensitive hex64 values are rejected. The RPC discovers and
+classifies the existing identity internally; callers cannot submit a
+fingerprint or choose its scheme. The exact historical token is preserved so
+all existing idempotency preimages remain stable.
+
+The application parses registry rows as a discriminated union but continues to
+treat `account_fingerprint` as internal-only. The scheme is non-sensitive; the
+token itself is never rendered, logged, returned by adoption or added to audit
+details.
+
 ## Review reason allow-list
 
 - `TRUSTED_CURRENCY_UNCORROBORATED`
@@ -75,7 +101,7 @@ also carry `validation_status=needs_review`. Server-detected R3 conflicts add
 ## Local verification
 
 The existing 0R runner now applies the historical Daily v2 migration followed
-by the additive 0U and 0U3 migrations. Before the normal multi-bank campaign,
+by the additive 0U, 0U3 and forward-only 0U4 migrations. Before the normal multi-bank campaign,
 it seeds an entirely synthetic pre-0U state (three active canonical days and
 one same-identity conflict), validates the admin-only adoption and its targeted
 teardown. The remaining campaign validates registry binding, admin-only
@@ -92,30 +118,33 @@ The runner must end with `ALL_LOCAL_E2E_0R_PASS` and destroy its container and
 anonymous volume. Never point this runner or its SQL files at a linked Supabase
 project.
 
-Local validation obtained on 2026-07-15: `ALL_E2E_0R_SQL_PASS`,
-`ALL_E2E_0R_REPORTING_PASS` and `ALL_LOCAL_E2E_0R_PASS`, followed by complete
-container and temporary-file teardown.
+The 0U4 campaign additionally proves preservation of a synthetic 31-character
+legacy identity, continued SHA-256 adoption, the closed rejection grammar and
+normal provisioning locked to `sha256_hex_v1`.
+
+Current 0U4 validation state: 381/381 application tests and the production build
+pass; TypeScript (19 diagnostics) and ESLint (222 diagnostics) are identical
+item by item to the canonical baseline. `ALL_LOCAL_E2E_0R_PASS` remains a hard
+stop condition until the campaign has run in a Docker-capable environment.
 
 ## Stop conditions and rollback
 
 Stop before any remote apply if the Docker replay, RLS matrix, application
 tests, build or baseline comparison fails. Also stop if remote `main` moves or
 the target migration ledger differs from the expected staging ledger.
-If the target already contains Daily v2 canonical fingerprints, stop until a
-separate identity-mapping plan proves that existing day identities will not be
-split by newly generated fingerprints. Also stop if any pre-0U staging unit
+Stop if any pre-0U staging unit
 still requires a canonical decision, especially a unit in `staged` or
 `conflict`: its nullable historical `account_registry_id` would make the 0U
 canonical trigger reject promotion or supersede until an explicit mapping or
 closure plan has been reviewed.
 
-The staging preflight on 2026-07-15 found one coherent historical identity,
-three active canonical units and one same-identity conflict with no other-day
-R3 overlap. Remote application remains forbidden until 0U3 has passed local
-Docker verification and independent DB/security review. During a future
-authorized staging apply, imports must remain paused between 0U, 0U3 and the
-single admin adoption call; any deviation from the reviewed aggregate counts
-is a stop condition.
+The staging preflight found one coherent historical identity, three active
+canonical units and one same-identity conflict with no other-day R3 overlap.
+0U/0U3 were applied, but adoption correctly failed before writing because the
+historical token is safe opaque legacy rather than hex64. Imports remain paused.
+Remote 0U4 application and a new single adoption call require separate GOs,
+ledger verification and independent DB/security review; any deviation from the
+reviewed aggregate counts is a stop condition.
 
 Before first remote use, rollback is to remove the additive migration from the
 deployment plan. After remote apply but before any 0U deposit, a dedicated,

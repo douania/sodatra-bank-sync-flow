@@ -1,6 +1,7 @@
 import type { Json } from '@/integrations/supabase/types';
 
 export type DailyV2AppRole = 'admin' | 'auditor' | 'manager' | 'user';
+export type DailyV2FingerprintScheme = 'sha256_hex_v1' | 'legacy_opaque_v1';
 export type DailyV2RequestedMode = 'daily' | 'backfill';
 export type DailyV2ParserValidationStatus = 'valid' | 'needs_review';
 export type DailyV2AggregatesStatus = 'derived' | 'unavailable';
@@ -31,6 +32,7 @@ export interface DailyV2AccountRegistryRow {
   bank: string;
   currency: string;
   safe_alias: string;
+  fingerprint_scheme: DailyV2FingerprintScheme;
   account_fingerprint: string;
   account_number_masked: string | null;
   status: 'active' | 'inactive';

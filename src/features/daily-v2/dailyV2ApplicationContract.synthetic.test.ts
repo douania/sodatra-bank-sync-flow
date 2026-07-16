@@ -18,6 +18,10 @@ const migration0U3 = readFileSync(
   'supabase/migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql',
   'utf8',
 );
+const migration0U4 = readFileSync(
+  'supabase/migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 
 test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
@@ -100,6 +104,44 @@ test('adopts one historical identity without exposing or changing its fingerprin
   assert.match(e2eRunner, /25_e2e0r_historical_adoption_seed\.sql/);
   assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U3"/);
   assert.match(e2eRunner, /26_e2e0r_historical_adoption_assert\.sql/);
+});
+
+test('supports only an explicit safe legacy identity scheme in the 0U4 bridge', () => {
+  assert.match(
+    migration0U4,
+    /ADD COLUMN fingerprint_scheme text NOT NULL DEFAULT 'sha256_hex_v1'/,
+  );
+  assert.match(
+    migration0U4,
+    /DROP CONSTRAINT daily_statement_account_registry_account_fingerprint_check/,
+  );
+  assert.match(migration0U4, /fingerprint_scheme = 'sha256_hex_v1'[\s\S]*\^\[0-9a-f\]\{64\}\$/);
+  assert.match(migration0U4, /fingerprint_scheme = 'legacy_opaque_v1'/);
+  assert.match(migration0U4, /\^\[A-Za-z0-9\._:-\]\+\$/);
+  assert.match(migration0U4, /v_value !~ '\[0-9\]\{8,\}'/);
+  assert.match(migration0U4, /v_value !~\* '\^\[A-Z\]\{2\}\[0-9\]\{2\}\[A-Z0-9\]\{8,\}\$'/);
+  assert.match(
+    migration0U4,
+    /v_fingerprint_scheme := public\.daily_stmt_classify_fingerprint_scheme\(v_fingerprint\)/,
+  );
+  assert.match(
+    migration0U4,
+    /account_fingerprint, account_number_masked, fingerprint_scheme[\s\S]*v_fingerprint, v_masked, v_fingerprint_scheme/,
+  );
+  assert.match(
+    migration0U4,
+    /public\.provision_daily_statement_account[\s\S]*'sha256_hex_v1'/,
+  );
+  assert.doesNotMatch(migration0U4, /p_(account_)?fingerprint/);
+  assert.doesNotMatch(
+    migration0U4,
+    /SET\s+(account_fingerprint|day_unit_id|day_content_hash|active_day_content_hash|status)\s*=/i,
+  );
+  assert.match(service, /z\.discriminatedUnion\('fingerprint_scheme'/);
+  assert.match(service, /fingerprint_scheme: z\.literal\('legacy_opaque_v1'\)/);
+  assert.match(types, /DailyV2FingerprintScheme = 'sha256_hex_v1' \| 'legacy_opaque_v1'/);
+  assert.match(e2eRunner, /MIGRATION_0U4=/);
+  assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U4"/);
 });
 
 test('keeps role-gated UI decisions fail closed', () => {
