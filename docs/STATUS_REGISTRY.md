@@ -17,7 +17,7 @@
 
 ## DAILY-V2-0U — Account fingerprint et visibilité review
 
-**Statut : IN_PROGRESS — IMPLEMENTATION_LOCAL_0U4 (2026-07-16)**
+**Statut : IN_REVIEW — DRAFT_PR_96_0U4 (2026-07-16)**
 
 **Base canonique 0U4** : `3fd2380fdf8aa0a14fac37bf4674a0d625376f43`
 (merge PR #95).
@@ -47,12 +47,14 @@ leurs statuts strictement inchangés.
 `legacy_opaque_v1` fermé et réservé au pont historique. Le provisionnement
 normal reste exclusivement `sha256_hex_v1`; le token historique est repris
 exactement afin de ne scinder aucun `day_unit_id` ou préimage d'idempotence.
-Imports staging suspendus jusqu'au PASS 0U4 et au GO d'environnement dédié.
+Imports staging suspendus jusqu'au GO d'environnement 0U4, à l'adoption
+contrôlée validée et à une reprise explicitement autorisée.
 
-Validation 0U4 disponible hors Docker : 381/381 tests applicatifs verts, build
-vert, baseline TypeScript 19/19 et ESLint 222/222 strictement identiques. Le
-verdict reste bloqué tant que le replay PostgreSQL 15 jetable n'a pas produit
-`ALL_LOCAL_E2E_0R_PASS`; aucun accès Supabase live n'a été effectué pour ce lot.
+Validation 0U4 complète obtenue : 381/381 tests applicatifs verts, build vert,
+baseline TypeScript 19/19 et ESLint 222/222 strictement identiques. Le replay
+PostgreSQL 15 jetable a produit `ALL_LOCAL_E2E_0R_PASS`, avec teardown complet
+du conteneur, nettoyage des fichiers temporaires et delta de volumes nul. La
+PR #96 est ouverte en draft ; aucun apply 0U4 Supabase live n'a été effectué.
 
 Validation locale historique 0U3 : 380 tests applicatifs verts, build vert, 8 payloads
 synthétiques générés, puis migrations historique + additives 0U/0U3, pont

@@ -3,9 +3,11 @@
 Status: 0U and 0U3 are merged and applied to staging. The first controlled
 historical adoption was refused before any write because staging carries one
 safe opaque legacy token of 31 characters rather than a 64-hex SHA-256. The
-forward-only 0U4 compatibility fix is implemented. Its application tests,
-type/lint baselines and build are validated locally; the mandatory PostgreSQL
-15 Docker replay is still pending. It has not been applied to a remote project.
+forward-only 0U4 compatibility fix is implemented and validated locally:
+381/381 application tests, production build, type/lint baselines and the
+PostgreSQL 15 Docker replay all pass. The runner completed with
+`ALL_LOCAL_E2E_0R_PASS`, destroyed its container and left a zero volume delta.
+0U4 has not been applied to any remote project.
 
 ## Outcome
 
@@ -122,10 +124,11 @@ The 0U4 campaign additionally proves preservation of a synthetic 31-character
 legacy identity, continued SHA-256 adoption, the closed rejection grammar and
 normal provisioning locked to `sha256_hex_v1`.
 
-Current 0U4 validation state: 381/381 application tests and the production build
-pass; TypeScript (19 diagnostics) and ESLint (222 diagnostics) are identical
-item by item to the canonical baseline. `ALL_LOCAL_E2E_0R_PASS` remains a hard
-stop condition until the campaign has run in a Docker-capable environment.
+Local 0U4 validation obtained on 2026-07-16: 381/381 application tests and the
+production build pass; TypeScript (19 diagnostics) and ESLint (222 diagnostics)
+are identical item by item to the canonical baseline. The PostgreSQL 15 Docker
+campaign completed with `ALL_LOCAL_E2E_0R_PASS`, followed by complete container
+and temporary-file teardown with a zero volume delta.
 
 ## Stop conditions and rollback
 
