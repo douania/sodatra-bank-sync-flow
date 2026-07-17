@@ -4,7 +4,9 @@ Suite de tests SQL pour la migration historique
 `supabase/migrations/20260708130000_daily_statement_units_v2.sql` et le wrapper
 additif 0U `20260715000000_daily_v2_account_registry_review_visibility.sql`,
 puis le pont d'adoption historique 0U3
-`20260715010000_daily_v2_historical_identity_adoption_bridge.sql`.
+`20260715010000_daily_v2_historical_identity_adoption_bridge.sql`, puis le
+correctif forward-only 0U4
+`20260716000000_daily_v2_legacy_fingerprint_compatibility.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -69,7 +71,9 @@ BICIS `.xls`, BIS `.xls` et BRIDGE `.xlsx` **en mémoire** → traversée du **v
 pipeline TypeScript** `prepareDailyV2BrowserDeposit` → émission d'un artefact SQL
 portant les **payloads RPC réels** → conteneur jetable + shim + seed + migration
 v2 historique → fixture historique synthétique (3 canonical + 1 conflit) →
-migrations additives 0U/0U3 → adoption admin fail-closed et teardown ciblé →
+migrations additives 0U/0U3/0U4 → adoption admin d'un token legacy opaque
+de 31 caractères sans transformation, non-régression SHA-256, refus des formes
+sensibles, puis teardown ciblé →
 `30_e2e0r_pipeline.sql` (registre de
 comptes, grants one-use, motifs de revue, dépôt, duplicate R1, conflict R2, promotion,
 gate 0K BRIDGE, supersede, R3, provisional, matrice des rôles, audit

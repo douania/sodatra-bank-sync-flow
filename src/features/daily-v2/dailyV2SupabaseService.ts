@@ -35,15 +35,45 @@ export { DAILY_V2_REPORTING_MAX_UNITS, DailyV2ServiceError } from './dailyV2Repo
 const dailyV2Supabase = supabase as unknown as SupabaseClient<DailyV2Database>;
 const MAX_SAFE_REASON_LENGTH = 200;
 
-const accountRegistrySchema = z.object({
+const accountRegistryCommonShape = {
   id: z.string().uuid(),
+  created_at: z.string(),
+  created_by: z.string().uuid(),
   bank: z.string(),
   currency: z.string().regex(/^[A-Z]{3}$/),
   safe_alias: z.string().min(1).max(80),
-  account_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   account_number_masked: z.string().regex(/^\*+[0-9]{0,4}$/).nullable(),
   status: z.enum(['active', 'inactive']),
-});
+  deactivated_at: z.string().nullable(),
+  deactivated_by: z.string().uuid().nullable(),
+  deactivation_reason: z.string().nullable(),
+} as const;
+
+const legacyOpaqueFingerprintSchema = z
+  .string()
+  .min(16)
+  .max(128)
+  .regex(/^[A-Za-z0-9._:-]+$/)
+  .regex(/[A-Za-z]/)
+  .refine((value) => !/[0-9]{8,}/.test(value), 'Legacy identity shape refused.')
+  .refine(
+    (value) => !/^[A-Z]{2}[0-9]{2}[A-Z0-9]{8,}$/i.test(value),
+    'Legacy identity shape refused.',
+  )
+  .refine((value) => !/^[0-9a-f]{64}$/i.test(value), 'Legacy identity shape refused.');
+
+const accountRegistrySchema = z.discriminatedUnion('fingerprint_scheme', [
+  z.object({
+    ...accountRegistryCommonShape,
+    fingerprint_scheme: z.literal('sha256_hex_v1'),
+    account_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  }),
+  z.object({
+    ...accountRegistryCommonShape,
+    fingerprint_scheme: z.literal('legacy_opaque_v1'),
+    account_fingerprint: legacyOpaqueFingerprintSchema,
+  }),
+]);
 
 const backfillGrantSchema = z.object({
   id: z.string().uuid(),
@@ -131,7 +161,7 @@ export async function listDailyV2Accounts(input: {
   if (!input.includeInactive) query = query.eq('status', 'active');
   const { data, error } = await query;
   if (error) throw toSafeError(error, 'Lecture du registre de comptes impossible.');
-  return data ?? [];
+  return z.array(accountRegistrySchema).parse(data ?? []) as DailyV2AccountRegistryRow[];
 }
 
 /** Internal pipeline input only; never render, log or export this value. */
