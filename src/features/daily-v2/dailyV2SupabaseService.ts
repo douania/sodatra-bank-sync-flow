@@ -335,10 +335,11 @@ export async function listDailyV2StagingUnits(input: {
   if (input.status && input.status !== 'all') query = query.eq('status', input.status);
   if (input.review === 'required') {
     query = query.or(
-      'status.eq.needs_review,validation_status.eq.needs_review,aggregates_status.eq.unavailable',
+      'status.eq.conflict,status.eq.needs_review,validation_status.eq.needs_review,aggregates_status.eq.unavailable',
     );
   } else if (input.review === 'clear') {
     query = query
+      .neq('status', 'conflict')
       .neq('status', 'needs_review')
       .eq('validation_status', 'valid')
       .eq('aggregates_status', 'derived');
