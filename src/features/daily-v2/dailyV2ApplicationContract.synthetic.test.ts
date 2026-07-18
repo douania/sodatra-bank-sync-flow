@@ -161,15 +161,14 @@ test('keeps role-gated UI decisions fail closed', () => {
   assert.match(browserPipeline, /MAX_BACKFILL_PERIOD_DAYS = 4_000/);
 });
 
-test('keeps review filtering independent from the staging lifecycle status', () => {
+test('classifies pending conflicts as review-required and never technically clear', () => {
   assert.match(
     service,
-    /status\.eq\.needs_review,validation_status\.eq\.needs_review,aggregates_status\.eq\.unavailable/,
+    /status\.eq\.conflict,status\.eq\.needs_review,validation_status\.eq\.needs_review,aggregates_status\.eq\.unavailable/,
   );
-  assert.match(service, /\.neq\('status', 'needs_review'\)/);
-  assert.doesNotMatch(
+  assert.match(
     service,
-    /query = query\.eq\('validation_status', 'valid'\)\.eq\('aggregates_status', 'derived'\)/,
+    /query = query\s*\.neq\('status', 'conflict'\)\s*\.neq\('status', 'needs_review'\)\s*\.eq\('validation_status', 'valid'\)\s*\.eq\('aggregates_status', 'derived'\)/,
   );
 });
 
