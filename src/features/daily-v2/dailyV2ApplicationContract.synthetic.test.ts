@@ -5,6 +5,7 @@ import test from 'node:test';
 const app = readFileSync('src/App.tsx', 'utf8');
 const layout = readFileSync('src/components/Layout.tsx', 'utf8');
 const access = readFileSync('src/features/daily-v2/dailyV2Access.ts', 'utf8');
+const accessState = readFileSync('src/features/daily-v2/dailyV2AccessState.ts', 'utf8');
 const browserPipeline = readFileSync('src/features/daily-v2/dailyV2BrowserPipeline.ts', 'utf8');
 const service = readFileSync('src/features/daily-v2/dailyV2SupabaseService.ts', 'utf8');
 const types = readFileSync('src/features/daily-v2/dailyV2Types.ts', 'utf8');
@@ -190,9 +191,15 @@ test('blocks the Daily v2 page and navigation for the user-only role', () => {
   assert.doesNotMatch(accessRoles, /'user'/);
 
   assert.match(access, /enabled: Boolean\(user\?\.id\) && targetAllowed/);
-  assert.match(access, /canAccessPage: targetAllowed && canAccessDailyV2Page\(roles\)/);
-  assert.match(app, /rolesQuery\.isError \|\| !canAccessPage/);
-  assert.match(app, /<Navigate to="\/dashboard" replace \/>/);
+  assert.match(access, /canAccessPage = targetAllowed && canAccessDailyV2Page\(roles\)/);
+  assert.match(access, /classifyDailyV2AccessState/);
+  assert.match(accessState, /runtime_target_rejected/);
+  assert.match(accessState, /role_lookup_failed/);
+  assert.match(accessState, /insufficient_role/);
+  assert.match(app, /accessState\.status === "checking"/);
+  assert.match(app, /accessState\.status === "blocked"/);
+  assert.match(app, /Aucun accès Daily v2 n’a été accordé/);
+  assert.doesNotMatch(app, /rolesQuery\.isError \|\| !canAccessPage/);
   assert.match(
     layout,
     /\.filter\(\(item\) => item\.href !== '\/daily-statements' \|\| canAccessPage\)/,
