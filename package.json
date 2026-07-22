@@ -15,6 +15,7 @@
     "test:structured-excel": "tsx --test src/services/structuredBankStatementExcelParser.synthetic.test.ts",
     "test:daily-v2-application": "tsx --test src/services/structuredBankStatementDailyIdentity.synthetic.test.ts src/services/structuredBankStatementDailyRpcPayload.synthetic.test.ts src/features/daily-v2/dailyV2BrowserPipeline.synthetic.test.ts src/features/daily-v2/dailyV2RuntimeTarget.synthetic.test.ts src/features/daily-v2/dailyV2ApplicationContract.synthetic.test.ts src/features/daily-v2/dailyV2BundleSafety.synthetic.test.ts",
     "test:daily-v2-reporting": "tsx --test src/features/daily-v2/dailyV2Money.synthetic.test.ts src/features/daily-v2/dailyV2ReportingCalculations.synthetic.test.ts src/features/daily-v2/dailyV2ReportingRead.synthetic.test.ts src/features/daily-v2/dailyV2SummaryExport.synthetic.test.ts src/features/daily-v2/dailyV2ReportingContract.synthetic.test.ts",
+    "test:auth-signin": "tsx --test src/pages/authSignInValidation.synthetic.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
