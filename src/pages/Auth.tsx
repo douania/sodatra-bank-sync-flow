@@ -6,21 +6,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Lock, Mail } from 'lucide-react';
-import { z } from 'zod';
 import { toast } from 'sonner';
+import { signInSchema } from './authSignInValidation';
 
-const authSchema = z.object({
-  email: z.string()
-    .trim()
-    .email('Invalid email address')
-    .max(255, 'Email must be less than 255 characters'),
-  password: z.string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(100, 'Password must be less than 100 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number')
-});
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+
+  return fallback;
+};
 
 const Auth = () => {
   const { signIn, resetPassword } = useAuth();
@@ -35,7 +30,7 @@ const Auth = () => {
     if (!email || !password) return;
     
     // Validate input
-    const validation = authSchema.safeParse({ email, password });
+    const validation = signInSchema.safeParse({ email, password });
     if (!validation.success) {
       toast.error(validation.error.issues[0].message);
       return;
@@ -45,8 +40,8 @@ const Auth = () => {
     try {
       await signIn(email, password);
       navigate('/dashboard');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to sign in');
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'Failed to sign in'));
     } finally {
       setLoading(false);
     }
@@ -64,8 +59,8 @@ const Auth = () => {
       await resetPassword(email);
       setShowResetPassword(false);
       setEmail('');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to send reset email');
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'Failed to send reset email'));
     } finally {
       setLoading(false);
     }
