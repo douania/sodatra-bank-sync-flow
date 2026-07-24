@@ -80,6 +80,10 @@ Règles :
 - en l'absence explicite d'un GO d'environnement, l'environnement est
   interdit ;
 - **aucun GO d'environnement n'est accordé par le présent chantier.**
+- la normalisation technique native de Lovable définie dans `CLAUDE.md`
+  §7bis ne constitue ni une mutation métier ni un `GO_APPLY_STAGING`
+  lorsqu'elle reste dans sa liste blanche ; cette exception est incluse par
+  défaut dans tout prompt Lovable read-only.
 
 ## 5. Baselines et non-régression
 
