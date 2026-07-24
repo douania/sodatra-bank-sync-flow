@@ -122,6 +122,27 @@ Chaque lot se termine par un rapport court :
 - Interdiction de référencer `import.meta.env` dans `src/lib/mcp/**` (risque d'inlining de variables d'environnement locales dans l'artefact).
 - Toute modification MCP (tools, manifest, auth) nécessite une revue CTO séparée.
 
+## 7bis. Normalisation native Lovable
+
+L'utilisation du connecteur Supabase par Lovable peut réécrire automatiquement
+`.env` et créer une nouvelle version interne Lovable. Cet effet est attendu,
+non bloquant, compatible avec un GO read-only, ne nécessite ni GO d'écriture ni
+restauration, uniquement si toutes les conditions suivantes sont réunies :
+
+- le diff est limité à `VITE_SUPABASE_URL`,
+  `VITE_SUPABASE_PUBLISHABLE_KEY` et `VITE_SUPABASE_PROJECT_ID` ;
+- la cible est exclusivement le staging autorisé `gbbsqcscryygqlmqncyv` ;
+- seule une clé publique frontend est utilisée ;
+- aucun autre fichier, secret, dépôt GitHub ou donnée Supabase n'est modifié.
+
+Tout prompt Lovable read-only intègre cette exception sans nouvelle autorisation
+du CTO. Le verdict applicable est
+`PASS_WITH_EXPECTED_LOVABLE_NORMALIZATION`, pas `BLOCKED_SIDE_EFFECT`.
+
+STOP si la production est référencée, si une clé privilégiée apparaît, si un
+autre fichier est modifié, si une mutation DB est effectuée, ou si le diff exact
+ne peut pas être vérifié.
+
 ## 8. Références canoniques
 
 Ce fichier porte les règles permanentes. Le reste vit ailleurs, sans copie :
