@@ -14,7 +14,18 @@ Application bancaire sensible. Ces règles priment sur tout comportement par dé
 - Une seule IA applique un patch à la fois.
 - Tout ce qui n'est pas explicitement autorisé par le lot est interdit.
 - Pas de secrets (clés API, tokens, credentials).
-- Pas de données bancaires réelles.
+- Les fichiers bancaires réels fournis volontairement par le CTO peuvent être
+  utilisés uniquement si le pack les autorise explicitement, pour diagnostic,
+  parsing, validation fonctionnelle ou import dans un environnement SODATRA
+  validé.
+- Il est interdit de committer, pousser, publier ou intégrer ces fichiers — ou
+  leurs données non anonymisées — dans GitHub, les fixtures, les tests, la
+  documentation, les logs, les captures publiques ou les prompts réutilisables.
+- Minimiser les données exposées : ne pas reproduire inutilement les numéros de
+  compte complets, IBAN, opérations, soldes ou identités. Supprimer les copies
+  temporaires après traitement.
+- Toute transmission à Lovable ou à un autre service doit être nécessaire au
+  pack et explicitement autorisée.
 - Pas de Supabase live sans GO explicite. Les GO d'environnement sont
   distincts, nominatifs et non implicites : `GO_VALIDATE_STAGING_<PACK>`,
   `GO_APPLY_STAGING_<PACK>`, `GO_PRODUCTION_<PACK>_<ACTION>`
@@ -68,7 +79,9 @@ STOP immédiat + rapport BLOCKED si :
 - SQL nécessaire sans GO ;
 - Supabase live nécessaire sans GO ;
 - secrets nécessaires ;
-- données bancaires réelles nécessaires ;
+- données bancaires réelles nécessaires mais non volontairement fournies ou non
+  explicitement autorisées par le pack, destination non maîtrisée, ou risque de
+  commit, journalisation ou publication ;
 - Auth/RLS/sécurité touché hors niveau « très approfondi » ;
 - refactor global requis ;
 - ambiguïté métier non tranchée ;
