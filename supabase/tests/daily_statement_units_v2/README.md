@@ -6,7 +6,9 @@ additif 0U `20260715000000_daily_v2_account_registry_review_visibility.sql`,
 puis le pont d'adoption historique 0U3
 `20260715010000_daily_v2_historical_identity_adoption_bridge.sql`, puis le
 correctif forward-only 0U4
-`20260716000000_daily_v2_legacy_fingerprint_compatibility.sql`.
+`20260716000000_daily_v2_legacy_fingerprint_compatibility.sql`, puis le cycle
+de vie provisional 0Z
+`20260728000000_daily_v2_provisional_lifecycle_0z.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -53,6 +55,16 @@ sleep 2 && $PSQL -f 21_concurrency_promote_session_b.sql
 wait
 $PSQL -f 24_concurrency_asserts.sql
 
+# 6. Cycle de vie provisional 0Z : la suite 16 exige la chaîne additive
+#    complète (0U/0U3/0U4/0Z) par-dessus le socle 0H. Elle s'exécute APRÈS
+#    les suites 10-15 et la concurrence, qui déposent en style 0H (sans
+#    registre) et seraient refusées par le wrapper 0U.
+$PSQL --single-transaction -f ../../migrations/20260715000000_daily_v2_account_registry_review_visibility.sql
+$PSQL --single-transaction -f ../../migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql
+$PSQL --single-transaction -f ../../migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql
+$PSQL --single-transaction -f ../../migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql
+$PSQL -f 16_provisional_lifecycle_0z.sql
+
 docker rm -f poc0h-pg   # destruction de la base jetable
 ```
 
@@ -77,12 +89,22 @@ sensibles, puis teardown ciblé →
 `30_e2e0r_pipeline.sql` (registre de
 comptes, grants one-use, motifs de revue, dépôt, duplicate R1, conflict R2, promotion,
 gate 0K BRIDGE, supersede, R3, provisional, matrice des rôles, audit
-append-only) → extraction des lignes canonical → reporting 0O via les fonctions
+append-only) → cycle de vie provisional 0Z (`16_provisional_lifecycle_0z.sql`,
+payloads synthétiques dédiés) → concurrence provisional 0Z en **deux sessions
+psql réelles** (`27`/`28a`/`28b`/`29` : la session A tient le verrou journée
+~6 s, la session B bloque puis finit duplicate sans lignes ; blocage
+chronométré, unicité de la provisional vivante et audit vérifiés) →
+extraction des lignes canonical → reporting 0O via les fonctions
 pures réelles → **destruction du conteneur** (trap, y compris en cas d'échec).
 
 Fichiers : `e2e0r_generate_payloads.ts`,
 `25_e2e0r_historical_adoption_seed.sql`,
-`26_e2e0r_historical_adoption_assert.sql`, `30_e2e0r_pipeline.sql`,
+`26_e2e0r_historical_adoption_assert.sql`,
+`16_provisional_lifecycle_0z.sql`,
+`27_provisional_concurrency_setup_0z.sql`,
+`28a_provisional_concurrency_session_a_0z.sql`,
+`28b_provisional_concurrency_session_b_0z.sql`,
+`29_provisional_concurrency_asserts_0z.sql`, `30_e2e0r_pipeline.sql`,
 `e2e0r_reporting_assert.ts`, `run_e2e_0r.sh`.
 
 Deux points de contrat :
