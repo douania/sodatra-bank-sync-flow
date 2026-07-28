@@ -89,12 +89,22 @@ sensibles, puis teardown ciblé →
 `30_e2e0r_pipeline.sql` (registre de
 comptes, grants one-use, motifs de revue, dépôt, duplicate R1, conflict R2, promotion,
 gate 0K BRIDGE, supersede, R3, provisional, matrice des rôles, audit
-append-only) → extraction des lignes canonical → reporting 0O via les fonctions
+append-only) → cycle de vie provisional 0Z (`16_provisional_lifecycle_0z.sql`,
+payloads synthétiques dédiés) → concurrence provisional 0Z en **deux sessions
+psql réelles** (`27`/`28a`/`28b`/`29` : la session A tient le verrou journée
+~6 s, la session B bloque puis finit duplicate sans lignes ; blocage
+chronométré, unicité de la provisional vivante et audit vérifiés) →
+extraction des lignes canonical → reporting 0O via les fonctions
 pures réelles → **destruction du conteneur** (trap, y compris en cas d'échec).
 
 Fichiers : `e2e0r_generate_payloads.ts`,
 `25_e2e0r_historical_adoption_seed.sql`,
-`26_e2e0r_historical_adoption_assert.sql`, `30_e2e0r_pipeline.sql`,
+`26_e2e0r_historical_adoption_assert.sql`,
+`16_provisional_lifecycle_0z.sql`,
+`27_provisional_concurrency_setup_0z.sql`,
+`28a_provisional_concurrency_session_a_0z.sql`,
+`28b_provisional_concurrency_session_b_0z.sql`,
+`29_provisional_concurrency_asserts_0z.sql`, `30_e2e0r_pipeline.sql`,
 `e2e0r_reporting_assert.ts`, `run_e2e_0r.sh`.
 
 Deux points de contrat :

@@ -161,6 +161,20 @@ echo "--- [4b] cycle de vie provisional 0Z (suite synthetique 16)"
 "${PSQL[@]}" < "$SCRIPT_DIR/02_payload_helpers.sql" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/16_provisional_lifecycle_0z.sql"
 
+# --- 4c. Concurrence provisional 0Z (deux sessions psql REELLES) --------------
+# La session A tient le verrou journee ~6 s ; B, lancee ~2 s plus tard sur la
+# meme journee, doit bloquer puis finir duplicate. Les asserts 29 verifient la
+# preuve chronometree, l'unicite de la provisional vivante et l'audit.
+echo ""
+echo "--- [4c] concurrence provisional 0Z (deux sessions reelles)"
+"${PSQL[@]}" < "$SCRIPT_DIR/27_provisional_concurrency_setup_0z.sql"
+"${PSQL[@]}" < "$SCRIPT_DIR/28a_provisional_concurrency_session_a_0z.sql" &
+ZC_A_PID=$!
+sleep 2
+"${PSQL[@]}" < "$SCRIPT_DIR/28b_provisional_concurrency_session_b_0z.sql"
+wait "$ZC_A_PID"
+"${PSQL[@]}" < "$SCRIPT_DIR/29_provisional_concurrency_asserts_0z.sql"
+
 # --- 5. Extraction des lignes canonical réelles ------------------------------
 echo ""
 echo "--- [5/6] extraction des snapshots canonical"
