@@ -648,6 +648,33 @@ SELECT poc_test.assert(
   '0R-K3: evenement unit_provisional_held emis');
 COMMIT;
 
+-- 0Z : le redepot STRICTEMENT IDENTIQUE du meme payload reel (journee toujours
+-- non close) est idempotent : duplicate R1-provisional, aucune ligne sensible
+-- re-stagee, la provisional d origine reste l unique version vivante.
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.e2e0r_deposit('atb_provisional', 'prov2');
+SELECT poc_test.assert(poc_test.ctx_get('prov2_status') = 'duplicate',
+  '0Z-K4: redepot identique d une journee non close -> duplicate (R1-provisional)');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_lines_staging
+   WHERE staging_unit_id = poc_test.ctx_get('prov2_staging')::uuid) = 0,
+  '0Z-K5: aucune ligne re-stagee par le redepot identique');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_units_staging
+   WHERE day_unit_id = poc_test.ctx_get('prov_duid')
+     AND status = 'provisional') = 1
+  AND (SELECT status FROM public.daily_statement_units_staging
+       WHERE id = poc_test.ctx_get('prov_staging')::uuid) = 'provisional',
+  '0Z-K6: une seule provisional vivante, l originale est conservee');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_import_events
+   WHERE staging_unit_id = poc_test.ctx_get('prov2_staging')::uuid
+     AND event_type = 'unit_duplicate'
+     AND safe_details ->> 'reason_code' = 'provisional_redeposit_duplicate') = 1,
+  '0Z-K7: evenement unit_duplicate R1-provisional audite');
+COMMIT;
+
 -- ============================================================================
 -- L. Matrice des rôles réelle.
 -- ============================================================================

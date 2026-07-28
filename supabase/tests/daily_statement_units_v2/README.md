@@ -6,7 +6,9 @@ additif 0U `20260715000000_daily_v2_account_registry_review_visibility.sql`,
 puis le pont d'adoption historique 0U3
 `20260715010000_daily_v2_historical_identity_adoption_bridge.sql`, puis le
 correctif forward-only 0U4
-`20260716000000_daily_v2_legacy_fingerprint_compatibility.sql`.
+`20260716000000_daily_v2_legacy_fingerprint_compatibility.sql`, puis le cycle
+de vie provisional 0Z
+`20260728000000_daily_v2_provisional_lifecycle_0z.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -52,6 +54,16 @@ $PSQL -f 20_concurrency_promote_session_a.sql &   # tient le verrou quelques sec
 sleep 2 && $PSQL -f 21_concurrency_promote_session_b.sql
 wait
 $PSQL -f 24_concurrency_asserts.sql
+
+# 6. Cycle de vie provisional 0Z : la suite 16 exige la chaîne additive
+#    complète (0U/0U3/0U4/0Z) par-dessus le socle 0H. Elle s'exécute APRÈS
+#    les suites 10-15 et la concurrence, qui déposent en style 0H (sans
+#    registre) et seraient refusées par le wrapper 0U.
+$PSQL --single-transaction -f ../../migrations/20260715000000_daily_v2_account_registry_review_visibility.sql
+$PSQL --single-transaction -f ../../migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql
+$PSQL --single-transaction -f ../../migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql
+$PSQL --single-transaction -f ../../migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql
+$PSQL -f 16_provisional_lifecycle_0z.sql
 
 docker rm -f poc0h-pg   # destruction de la base jetable
 ```

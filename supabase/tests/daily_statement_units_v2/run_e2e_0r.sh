@@ -31,6 +31,7 @@ MIGRATION="$REPO_ROOT/supabase/migrations/20260708130000_daily_statement_units_v
 MIGRATION_0U="$REPO_ROOT/supabase/migrations/20260715000000_daily_v2_account_registry_review_visibility.sql"
 MIGRATION_0U3="$REPO_ROOT/supabase/migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql"
 MIGRATION_0U4="$REPO_ROOT/supabase/migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql"
+MIGRATION_0Z="$REPO_ROOT/supabase/migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -73,6 +74,7 @@ command -v psql >/dev/null 2>&1 || { echo "TEST_FAILED: psql indisponible"; exit
 [ -f "$MIGRATION_0U" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U"; exit 1; }
 [ -f "$MIGRATION_0U3" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U3"; exit 1; }
 [ -f "$MIGRATION_0U4" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U4"; exit 1; }
+[ -f "$MIGRATION_0Z" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0Z"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -143,14 +145,21 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U3" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U4" >/dev/null
+"${PSQL[@]}" --single-transaction < "$MIGRATION_0Z" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/26_e2e0r_historical_adoption_assert.sql"
-echo "migrations Daily v2 historique + additives 0U/0U3/0U4 appliquees"
+echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""
 echo "--- [4/6] chargement de l artefact et execution de la suite 0R"
 "${PSQL[@]}" < "$WORKDIR/e2e0r_payloads.sql" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/30_e2e0r_pipeline.sql"
+
+# --- 4b. Cycle de vie provisional 0Z (payloads synthetiques dedies) ----------
+echo ""
+echo "--- [4b] cycle de vie provisional 0Z (suite synthetique 16)"
+"${PSQL[@]}" < "$SCRIPT_DIR/02_payload_helpers.sql" >/dev/null
+"${PSQL[@]}" < "$SCRIPT_DIR/16_provisional_lifecycle_0z.sql"
 
 # --- 5. Extraction des lignes canonical réelles ------------------------------
 echo ""
