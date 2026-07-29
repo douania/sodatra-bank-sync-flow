@@ -131,7 +131,7 @@ test('the public wrapper keeps the guard and the real adapter stays private', ()
   // Guarded public entry point delegating to the pure core.
   assert.match(
     serviceReadRegion,
-    /assertAuthorizedDailyV2Target\(\);\s*return runDailyV2CanonicalReportingRead\(dailyV2ReportingReadAdapter, filters\);/,
+    /assertAuthorizedDailyV2Target\('read'\);\s*return runDailyV2CanonicalReportingRead\(dailyV2ReportingReadAdapter, filters\);/,
   );
   // The real adapter is module-private: the UI can never inject a client.
   assert.equal(supabaseService.includes('export const dailyV2ReportingReadAdapter'), false);
@@ -285,13 +285,22 @@ test('a monotone canonical epoch brackets the reporting read, empty report inclu
   );
 });
 
-test('the frozen staging runtime lock is untouched', () => {
+test('the runtime lock keeps staging complete and production read-only', () => {
   assert.match(
     runtimeTarget,
     /DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF = 'gbbsqcscryygqlmqncyv'/,
   );
+  assert.match(
+    runtimeTarget,
+    /DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF = 'leakcdbbawzysfqyqsnr'/,
+  );
   assert.match(runtimeTarget, /hostname !== `\$\{EXPECTED_REF\}\.supabase\.co`|hostname\.endsWith\('\.supabase\.co'\)/);
+  // La production n'accorde que la lecture ; aucune mutation n'y est exposée.
+  assert.match(runtimeTarget, /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read'\]/);
+  // Le reporting reste strictement read et ne référence aucune cible en dur.
+  assert.match(supabaseService, /assertAuthorizedDailyV2Target\('read'\);\s*\n\s*return runDailyV2CanonicalReportingRead/);
   for (const source of newReportingSources) {
     assert.equal(source.includes('leakcdbbawzysfqyqsnr'), false);
+    assert.equal(source.includes('gbbsqcscryygqlmqncyv'), false);
   }
 });

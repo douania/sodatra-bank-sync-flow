@@ -74,8 +74,11 @@ import {
 } from '@/features/daily-v2/DailyV2Tables';
 import { invalidateDailyV2, shortId } from '@/features/daily-v2/dailyV2UiUtils';
 import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
+import { currentDailyV2Capabilities } from '@/features/daily-v2/dailyV2RuntimeTarget';
 
 const PAGE_SIZE = 20;
+const READ_ONLY_TARGET_MESSAGE =
+  'Cible en lecture seule : cette opération nécessite une cible autorisée (GO CTO distinct).';
 const STAGING_STATUSES: Array<'all' | DailyV2StagingStatus> = [
   'all', 'staged', 'provisional', 'duplicate', 'conflict',
   'needs_review', 'promoted', 'promotion_failed', 'superseded',
@@ -135,6 +138,14 @@ const DailyStatementV2 = () => {
   const canReadStaging = canDeposit;
   const canReadCanonical = isAdmin || roles.includes('auditor');
   const canReadAudit = canReadCanonical;
+  // Capacités de la CIBLE déployée (garde d'interface, jamais une barrière de
+  // sécurité : Auth, rôles, RLS et gates RPC restent serveur). Chaque action
+  // combine le rôle ET la capacité ; une cible read-only n'expose aucune mutation.
+  const capabilities = currentDailyV2Capabilities();
+  const readOnlyTarget = !capabilities.deposit && !capabilities.promote && !capabilities.admin;
+  const canSubmitDeposit = canDeposit && capabilities.deposit;
+  const canDecide = isAdmin && capabilities.promote;
+  const canAdminister = isAdmin && capabilities.admin;
   const accountsQuery = useQuery<DailyV2AccountRegistryRow[]>({
     queryKey: ['daily-v2', 'accounts', bank, currency, isAdmin],
     queryFn: () => listDailyV2Accounts({ bank, currency, includeInactive: isAdmin }),
@@ -209,6 +220,7 @@ const DailyStatementV2 = () => {
 
   const depositMutation = useMutation<DailyV2PreIngestResponse, Error, void>({
     mutationFn: async () => {
+      if (!canSubmitDeposit) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       if (!prepared) throw new DailyV2ServiceError('Aucun payload validé à déposer.');
       return preIngestDailyV2(prepared.payload);
     },
@@ -225,12 +237,15 @@ const DailyStatementV2 = () => {
   });
 
   const provisionAccountMutation = useMutation({
-    mutationFn: () => provisionDailyV2Account({
-      bank,
-      currency,
-      safeAlias: newAccountAlias,
-      accountNumberMasked: newAccountMasked || undefined,
-    }),
+    mutationFn: async () => {
+      if (!canAdminister) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
+      return provisionDailyV2Account({
+        bank,
+        currency,
+        safeAlias: newAccountAlias,
+        accountNumberMasked: newAccountMasked || undefined,
+      });
+    },
     onSuccess: async (account) => {
       setNewAccountAlias('');
       setNewAccountMasked('');
@@ -242,10 +257,13 @@ const DailyStatementV2 = () => {
   });
 
   const deactivateAccountMutation = useMutation({
-    mutationFn: () => deactivateDailyV2Account({
-      accountRegistryId,
-      reason: accountDeactivationReason,
-    }),
+    mutationFn: async () => {
+      if (!canAdminister) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
+      return deactivateDailyV2Account({
+        accountRegistryId,
+        reason: accountDeactivationReason,
+      });
+    },
     onSuccess: async () => {
       setAccountRegistryId('');
       setAccountDeactivationReason('');
@@ -257,13 +275,16 @@ const DailyStatementV2 = () => {
   });
 
   const issueGrantMutation = useMutation({
-    mutationFn: () => issueDailyV2BackfillGrant({
-      accountRegistryId,
-      periodStart: grantPeriodStart,
-      periodEnd: grantPeriodEnd,
-      maxUnits: Number(grantMaxUnits),
-      expiresAt: new Date(grantExpiresAt).toISOString(),
-    }),
+    mutationFn: async () => {
+      if (!canAdminister) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
+      return issueDailyV2BackfillGrant({
+        accountRegistryId,
+        periodStart: grantPeriodStart,
+        periodEnd: grantPeriodEnd,
+        maxUnits: Number(grantMaxUnits),
+        expiresAt: new Date(grantExpiresAt).toISOString(),
+      });
+    },
     onSuccess: async (grant) => {
       await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'backfill-grants'] });
       setRequestedMode('backfill');
@@ -275,10 +296,13 @@ const DailyStatementV2 = () => {
   });
 
   const revokeGrantMutation = useMutation({
-    mutationFn: () => revokeDailyV2BackfillGrant({
-      backfillGrantId,
-      reason: grantRevocationReason,
-    }),
+    mutationFn: async () => {
+      if (!canAdminister) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
+      return revokeDailyV2BackfillGrant({
+        backfillGrantId,
+        reason: grantRevocationReason,
+      });
+    },
     onSuccess: async () => {
       setBackfillGrantId('');
       setGrantRevocationReason('');
@@ -330,8 +354,10 @@ const DailyStatementV2 = () => {
     Error,
     { unit: DailyV2StagingUnitRow; approvalReason?: string }
   >({
-    mutationFn: ({ unit, approvalReason }: { unit: DailyV2StagingUnitRow; approvalReason?: string }) =>
-      promoteDailyV2Unit(unit.id, approvalReason),
+    mutationFn: async ({ unit, approvalReason }: { unit: DailyV2StagingUnitRow; approvalReason?: string }) => {
+      if (!canDecide) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
+      return promoteDailyV2Unit(unit.id, approvalReason);
+    },
     onSuccess: async (result) => {
       closeDecision();
       await invalidateDailyV2(queryClient);
@@ -346,6 +372,7 @@ const DailyStatementV2 = () => {
     { unit: DailyV2StagingUnitRow; supersedeReason: string }
   >({
     mutationFn: async ({ unit, supersedeReason }: { unit: DailyV2StagingUnitRow; supersedeReason: string }) => {
+      if (!canDecide) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       const active = await getActiveDailyV2CanonicalUnit(unit.day_unit_id);
       if (!active) throw new DailyV2ServiceError('Aucune unité canonical active correspondante.');
       return supersedeDailyV2Unit({
@@ -388,6 +415,16 @@ const DailyStatementV2 = () => {
           Aucun fichier brut CSV/Excel, numéro complet ou IBAN n’est envoyé en base. Les actions restent soumises à Auth, RLS et rôles serveur.
         </AlertDescription>
       </Alert>
+
+      {readOnlyTarget && (
+        <Alert>
+          <ShieldCheck className="h-4 w-4" />
+          <AlertTitle>Production en lecture seule</AlertTitle>
+          <AlertDescription>
+            Consultation autorisée. Dépôt, promotion, supersede et administration du registre sont désactivés sur cette cible.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <Badge variant="outline">Session requise</Badge>
@@ -480,7 +517,7 @@ const DailyStatementV2 = () => {
                 </CardContent>
               </Card>
 
-              {isAdmin && (
+              {canAdminister && (
                 <div className="grid gap-4 lg:grid-cols-2">
                   <Card>
                     <CardHeader>
@@ -583,7 +620,7 @@ const DailyStatementV2 = () => {
                         </AlertDescription>
                       </Alert>
                     )}
-                    <Button onClick={() => depositMutation.mutate()} disabled={depositMutation.isPending}>
+                    <Button onClick={() => depositMutation.mutate()} disabled={!canSubmitDeposit || depositMutation.isPending}>
                       {depositMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Déposer via RPC
                     </Button>
                   </CardContent>
@@ -623,7 +660,13 @@ const DailyStatementV2 = () => {
                   </SelectContent>
                 </Select>
               </div>
-              <StagingTable rows={stagingQuery.data?.rows ?? []} isAdmin={isAdmin} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => setDecisionDialog({ kind, unit })} />
+              <StagingTable rows={stagingQuery.data?.rows ?? []} isAdmin={isAdmin} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => {
+                if (!canDecide) {
+                  toast.error(READ_ONLY_TARGET_MESSAGE);
+                  return;
+                }
+                setDecisionDialog({ kind, unit });
+              }} />
               <Pager page={stagingPage} count={stagingQuery.data?.count ?? 0} onChange={setStagingPage} />
             </ListCard>
           )}
@@ -679,7 +722,7 @@ const DailyStatementV2 = () => {
             </Alert>
           )}
           {reasonRequired && <Field label="Raison obligatoire"><Textarea value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></Field>}
-          <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending} onClick={() => {
+          <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={!canDecide || Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending} onClick={() => {
             if (!decisionDialog) return;
             if (decisionDialog.kind === 'promote') promoteMutation.mutate({ unit: decisionDialog.unit, approvalReason: reason.trim() || undefined });
             else supersedeMutation.mutate({ unit: decisionDialog.unit, supersedeReason: reason });

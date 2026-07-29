@@ -182,6 +182,96 @@ test('exposes only the characterized structured bank/file matrix', () => {
   assert.match(page, /spreadsheetml\.sheet': \['\.xlsx'\]/);
 });
 
+test('gives every Daily v2 network operation an explicit capability', () => {
+  const runtimeTarget = readFileSync('src/features/daily-v2/dailyV2RuntimeTarget.ts', 'utf8');
+  const CAPABILITY_BY_OPERATION: Record<string, 'read' | 'deposit' | 'promote' | 'admin'> = {
+    getCurrentUserDailyV2Roles: 'read',
+    listDailyV2Accounts: 'read',
+    listDailyV2BackfillGrants: 'read',
+    listDailyV2AccountEvents: 'read',
+    listDailyV2StagingUnits: 'read',
+    listDailyV2StagingLines: 'read',
+    listDailyV2CanonicalUnits: 'read',
+    listDailyV2CanonicalLines: 'read',
+    getActiveDailyV2CanonicalUnit: 'read',
+    listDailyV2AuditEvents: 'read',
+    listDailyV2CanonicalUnitsForReporting: 'read',
+    preIngestDailyV2: 'deposit',
+    promoteDailyV2Unit: 'promote',
+    supersedeDailyV2Unit: 'promote',
+    provisionDailyV2Account: 'admin',
+    deactivateDailyV2Account: 'admin',
+    issueDailyV2BackfillGrant: 'admin',
+    revokeDailyV2BackfillGrant: 'admin',
+  };
+
+  // Chaque opération réseau publique déclare sa capacité, et une seule.
+  const declarations = service.match(/assertAuthorizedDailyV2Target\('(\w+)'\)/g) ?? [];
+  assert.equal(declarations.length, Object.keys(CAPABILITY_BY_OPERATION).length);
+  assert.doesNotMatch(service, /assertAuthorizedDailyV2Target\(\)/);
+
+  const bodies = service.split(/export (?:async )?function /).slice(1);
+  const seen = new Set<string>();
+  for (const body of bodies) {
+    const name = /^([A-Za-z0-9_]+)/.exec(body)?.[1] ?? '';
+    const expected = CAPABILITY_BY_OPERATION[name];
+    const declared = /assertAuthorizedDailyV2Target\('(\w+)'\)/.exec(body)?.[1];
+    if (expected === undefined) {
+      assert.equal(declared, undefined, `${name} is a pure helper and must not call the guard`);
+      continue;
+    }
+    assert.equal(declared, expected, `${name} must declare the ${expected} capability`);
+    seen.add(name);
+  }
+  assert.equal(seen.size, Object.keys(CAPABILITY_BY_OPERATION).length);
+
+  // La capacité est obligatoire côté garde : aucune valeur par défaut.
+  assert.match(runtimeTarget, /capability: DailyV2Capability,\s*\)/);
+  assert.doesNotMatch(runtimeTarget, /capability: DailyV2Capability = /);
+  assert.match(
+    runtimeTarget,
+    /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read'\]/,
+  );
+  assert.match(
+    runtimeTarget,
+    /\[DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF\]: \['read', 'deposit', 'promote', 'admin'\]/,
+  );
+});
+
+test('keeps production mutations fail closed in the Daily v2 UI', () => {
+  // Accès page et navigation : capacité read uniquement.
+  assert.match(access, /currentDailyV2RuntimeTargetVerdict\('read'\)/);
+  assert.match(access, /capabilities: Record<DailyV2Capability, boolean> = currentDailyV2Capabilities\(\)/);
+
+  // Rôle ET capacité pour chaque famille d'actions.
+  assert.match(page, /const canSubmitDeposit = canDeposit && capabilities\.deposit/);
+  assert.match(page, /const canDecide = isAdmin && capabilities\.promote/);
+  assert.match(page, /const canAdminister = isAdmin && capabilities\.admin/);
+
+  // Handlers fail closed, y compris si un bouton résiduel était déclenché.
+  for (const guarded of [
+    /if \(!canSubmitDeposit\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
+    /if \(!canDecide\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
+    /if \(!canAdminister\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
+  ]) {
+    assert.match(page, guarded);
+  }
+  assert.equal((page.match(/if \(!canAdminister\) throw new DailyV2ServiceError/g) ?? []).length, 4);
+  assert.equal((page.match(/if \(!canDecide\) throw new DailyV2ServiceError/g) ?? []).length, 2);
+
+  // Boutons et cartes de mutation neutralisés sans la capacité.
+  assert.match(page, /disabled=\{!canSubmitDeposit \|\| depositMutation\.isPending\}/);
+  assert.match(page, /disabled=\{!canDecide \|\| Boolean\(reasonRequired/);
+  assert.match(page, /\{canAdminister && \(/);
+  assert.match(page, /if \(!canDecide\) \{\s*toast\.error\(READ_ONLY_TARGET_MESSAGE\);\s*return;/);
+  assert.match(page, /Production en lecture seule/);
+
+  // Les lectures par rôle restent inchangées.
+  assert.match(page, /enabled: canReadStaging/);
+  assert.match(page, /enabled: canReadCanonical/);
+  assert.match(page, /enabled: canReadAudit/);
+});
+
 test('blocks the Daily v2 page and navigation for the user-only role', () => {
   const accessRoles = access.match(/new Set\(\[([\s\S]*?)\]\)/)?.[1];
   assert.ok(accessRoles, 'Daily v2 page access roles must be declared explicitly');

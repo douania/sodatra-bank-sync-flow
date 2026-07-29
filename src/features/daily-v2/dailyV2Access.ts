@@ -1,6 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
-import { currentDailyV2RuntimeTargetVerdict } from './dailyV2RuntimeTarget';
+import {
+  currentDailyV2Capabilities,
+  currentDailyV2RuntimeTargetVerdict,
+  type DailyV2Capability,
+} from './dailyV2RuntimeTarget';
 import { getCurrentUserDailyV2Roles } from './dailyV2SupabaseService';
 import type { DailyV2AppRole } from './dailyV2Types';
 import { classifyDailyV2AccessState } from './dailyV2AccessState';
@@ -17,8 +21,10 @@ export function canAccessDailyV2Page(roles: readonly DailyV2AppRole[]): boolean 
 
 export function useDailyV2Access() {
   const { user } = useAuth();
-  const targetVerdict = currentDailyV2RuntimeTargetVerdict();
+  // L'accès à la page et à la navigation relève de la seule capacité read.
+  const targetVerdict = currentDailyV2RuntimeTargetVerdict('read');
   const targetAllowed = targetVerdict.allowed;
+  const capabilities: Record<DailyV2Capability, boolean> = currentDailyV2Capabilities();
   const rolesQuery = useQuery<DailyV2AppRole[]>({
     queryKey: ['daily-v2', 'roles', user?.id],
     queryFn: getCurrentUserDailyV2Roles,
@@ -38,6 +44,7 @@ export function useDailyV2Access() {
     roles,
     rolesQuery,
     targetAllowed,
+    capabilities,
     canAccessPage,
     accessState,
   };
