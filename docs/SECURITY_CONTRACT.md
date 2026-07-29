@@ -76,10 +76,28 @@ les **trois** valeurs publiques frontend :
 - `VITE_SUPABASE_PUBLISHABLE_KEY` ;
 - `VITE_SUPABASE_PROJECT_ID`.
 
-La clé publishable/anon est **publique par conception** : elle est embarquée
-dans tout bundle navigateur livré. Elle n'accorde rien par elle-même — l'accès
-réel reste déterminé par Auth, les rôles, RLS et les grants. Aucune donnée
-n'est lisible sans session autorisée.
+Ce que cette clé est, exactement :
+
+- elle est **publique par conception** et embarquée dans tout bundle navigateur
+  livré ; elle n'est pas un secret ;
+- elle **permet d'émettre des appels API sous le rôle `anon`** vers le projet
+  visé — la publier revient donc à publier cette capacité d'appel ;
+- elle **ne contourne ni les grants ni la RLS** : elle n'élève aucun privilège
+  et ne donne accès à rien qui ne soit déjà ouvert au rôle `anon` ;
+- les droits effectifs dépendent **des grants, des policies RLS, d'Auth/JWT et
+  des surfaces API exposées** (tables, vues, RPC, Storage, Edge Functions).
+
+Constat d'exposition daté — **29 juillet 2026** : sur les surfaces
+effectivement testées à cette date (tables métier héritées et tables Daily v2,
+via requêtes REST anonymes et lecture des métadonnées de policies), aucune
+donnée n'était lisible sans session autorisée : réponses vides sous RLS, ou
+refus de privilège. Ce constat est **limité aux surfaces testées** et **daté** :
+ce n'est pas une propriété universelle garantie par la clé elle-même, et il ne
+couvre pas les surfaces non exercées ce jour-là.
+
+En conséquence, toute modification de grants, de policies RLS, de RPC, de vues,
+de Storage ou d'Edge Functions **impose une nouvelle validation de l'exposition
+anonyme** avant d'être considérée comme sûre.
 
 Interdits dans ce fichier, sans exception :
 - `service_role`, `sb_secret_*` ou toute clé backend/privilégiée ;
