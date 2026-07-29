@@ -63,8 +63,33 @@ La clé anon est publishable côté frontend, mais ne doit pas être hardcodée 
 Règle :
 - utiliser `VITE_SUPABASE_URL` ;
 - utiliser `VITE_SUPABASE_PUBLISHABLE_KEY` ;
-- ne jamais committer `.env` réel ;
+- ne jamais committer `.env` réel ni `.env.local` (ils restent ignorés) ;
 - rotation manuelle requise si clé exposée dans historiques/zips/commits.
+
+Exception unique et bornée — `.env.production` :
+
+`.env.production` est **autorisé au dépôt** parce que le build frontend Lovable
+n'a pas d'autre canal pour recevoir sa configuration Vite. Il ne contient que
+les **trois** valeurs publiques frontend :
+
+- `VITE_SUPABASE_URL` ;
+- `VITE_SUPABASE_PUBLISHABLE_KEY` ;
+- `VITE_SUPABASE_PROJECT_ID`.
+
+La clé publishable/anon est **publique par conception** : elle est embarquée
+dans tout bundle navigateur livré. Elle n'accorde rien par elle-même — l'accès
+réel reste déterminé par Auth, les rôles, RLS et les grants. Aucune donnée
+n'est lisible sans session autorisée.
+
+Interdits dans ce fichier, sans exception :
+- `service_role`, `sb_secret_*` ou toute clé backend/privilégiée ;
+- toute variable non `VITE_` ;
+- toute valeur d'un projet autre que la production autorisée ;
+- toute donnée bancaire.
+
+Les rapports et les journaux **masquent toujours la valeur complète** de la clé
+(préfixe et longueur uniquement). Toute autre clé, tout autre fichier `.env`
+réel restent interdits au dépôt.
 
 ## 7. Données bancaires
 
