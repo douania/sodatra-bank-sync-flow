@@ -22,4 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.env
+# .env est VERSIONNE : Lovable exige les VITE_* au depot (SECURITY_CONTRACT 6).
+# Les surcharges locales restent ignorees.
+.env.local
+.env.*.local

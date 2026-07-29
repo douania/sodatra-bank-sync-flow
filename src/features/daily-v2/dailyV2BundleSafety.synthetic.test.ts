@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const BROWSER_FILES = [
@@ -47,7 +47,10 @@ test('Daily v2 application uses the existing Supabase client and never creates a
 // fichier versionné. Ces assertions sont statiques : elles ne comparent jamais
 // la valeur de la clé et ne l'écrivent dans aucun message d'échec.
 test('the production build env carries exactly the three public frontend values', () => {
-  const env = readFileSync('.env.production', 'utf8');
+  // Lovable ne lit que `.env` versionné : `.env.production` n'est pas un canal
+  // valide et doit rester absent pour écarter toute ambiguïté de configuration.
+  assert.equal(existsSync('.env.production'), false, '.env.production must not exist');
+  const env = readFileSync('.env', 'utf8');
   const assignments = env
     .split('\n')
     .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'));
@@ -87,6 +90,21 @@ test('the production build env carries exactly the three public frontend values'
   for (const name of names) {
     assert.match(name, /^VITE_/, 'only VITE_ variables belong to a frontend build');
   }
+});
+
+test('the versioned .env is committable while local overrides stay ignored', () => {
+  const gitignore = readFileSync('.gitignore', 'utf8');
+  const patterns = gitignore
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+
+  // `.env` doit être versionnable : aucune règle ne doit l'ignorer.
+  assert.equal(patterns.includes('.env'), false, '.env must not be ignored');
+  assert.equal(patterns.includes('.env*'), false, '.env must not be ignored by a wildcard');
+  // Les surcharges locales, elles, restent ignorées.
+  assert.ok(patterns.includes('.env.local'), '.env.local must stay ignored');
+  assert.ok(patterns.includes('.env.*.local'), '.env.*.local must stay ignored');
 });
 
 test('no Supabase key is ever hardcoded in TypeScript sources', () => {

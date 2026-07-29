@@ -63,15 +63,19 @@ La clé anon est publishable côté frontend, mais ne doit pas être hardcodée 
 Règle :
 - utiliser `VITE_SUPABASE_URL` ;
 - utiliser `VITE_SUPABASE_PUBLISHABLE_KEY` ;
-- ne jamais committer `.env` réel ni `.env.local` (ils restent ignorés) ;
+- ne jamais committer de surcharge locale : `.env.local` et `.env.*.local`
+  restent ignorés ;
 - rotation manuelle requise si une clé est exposée dans historiques/zips/commits,
   **sauf** le cas explicitement prévu ci-dessous du versionnement intentionnel de
-  la clé frontend publishable/anon vérifiée dans `.env.production`.
+  la clé frontend publishable/anon vérifiée dans `.env`.
 
-Exception unique et bornée — `.env.production` :
+Exception unique et bornée — `.env` :
 
-`.env.production` est **autorisé au dépôt** parce que le build frontend Lovable
-n'a pas d'autre canal pour recevoir sa configuration Vite. Il ne contient que
+`.env` est **versionné** parce que c'est le **seul canal supporté par Lovable**
+pour transmettre les variables `VITE_*` au build : le fichier doit être au
+dépôt, sous ce nom exact. Un `.env.production` versionné **n'est pas lu** par
+ce build — constat vérifié le 29 juillet 2026 sur le preview reconstruit, où
+les variables restaient compilées à `undefined`. Ce fichier ne contient que
 les **trois** valeurs publiques frontend :
 
 - `VITE_SUPABASE_URL` ;
@@ -108,12 +112,13 @@ Interdits dans ce fichier, sans exception :
 - toute donnée bancaire.
 
 Les rapports et les journaux **masquent toujours la valeur complète** de la clé
-(préfixe et longueur uniquement). Toute autre clé, tout autre fichier `.env`
-réel restent interdits au dépôt.
+(préfixe et longueur uniquement). Toute autre clé, tout autre fichier
+d'environnement (`.env.local`, `.env.*.local`, `.env.production`…) restent
+interdits au dépôt : `.env` est le seul fichier d'environnement versionné.
 
 Rotation — ce qui l'exige et ce qui ne l'exige pas :
 
-- le **versionnement intentionnel**, dans `.env.production` et nulle part
+- le **versionnement intentionnel**, dans `.env` et nulle part
   ailleurs, de la clé production publishable/anon **vérifiée** (claims
   `role = anon`, `ref` du projet autorisé, `iss = supabase`) **n'est pas à lui
   seul un incident** et **n'exige aucune rotation** : c'est le régime normal
@@ -123,8 +128,12 @@ Rotation — ce qui l'exige et ce qui ne l'exige pas :
   autorisée d'une autre clé, de compromission avérée ou suspectée, ou sur
   décision de sécurité du CTO ;
 - toute rotation de la clé **frontend** n'implique **aucune modification de la
-  logique applicative**, mais impose de mettre à jour `.env.production`, de
-  **reconstruire** le frontend, puis de **valider le runtime** sur la cible.
+  logique applicative**, mais impose de mettre à jour `.env`, de
+  **reconstruire** le frontend, puis de **valider le runtime** sur la cible ;
+- le versionnement historique de cette **même clé vérifiée** sous le nom
+  `.env.production` (PR #104) relève exactement du même régime : ce
+  **n'est pas un incident** et n'appelle aucune rotation ; seul le nom du
+  fichier change, pour se conformer au canal supporté par Lovable.
 
 L'interdiction absolue des clés backend au dépôt demeure inchangée, sans
 exception d'aucune sorte.
