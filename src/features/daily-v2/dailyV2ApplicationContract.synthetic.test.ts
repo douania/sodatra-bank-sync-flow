@@ -272,6 +272,27 @@ test('keeps production mutations fail closed in the Daily v2 UI', () => {
   assert.match(page, /enabled: canReadAudit/);
 });
 
+test('separates staging line reading from decision actions', () => {
+  // StagingTable expose deux permissions distinctes.
+  assert.match(tables, /isAdmin: boolean;/);
+  assert.match(tables, /canDecide: boolean;/);
+  assert.match(tables, /StagingTable = \(\{ rows, isAdmin, canDecide, onLines, onDecision \}/);
+
+  // Consultation des lignes : règle de rôle existante, inchangée.
+  assert.match(tables, /\{isAdmin && unit\.status !== 'duplicate' && <Button[\s\S]*?onLines\(unit\)/);
+
+  // Décisions : rendues uniquement avec la capacité promote.
+  assert.match(tables, /\{canDecide && unit\.status === 'staged' && <Button[\s\S]*?onDecision\('promote', unit\)/);
+  assert.match(tables, /\{canDecide && unit\.status === 'conflict' && <Button[\s\S]*?onDecision\('supersede', unit\)/);
+  assert.doesNotMatch(tables, /\{isAdmin && unit\.status === 'staged'/);
+  assert.doesNotMatch(tables, /\{isAdmin && unit\.status === 'conflict'/);
+
+  // La page transmet la règle de rôle pour les lignes et rôle × capacité pour
+  // les décisions : en production read-only, Lignes reste rendu, jamais
+  // Promouvoir ni Supersede ; en staging admin, les deux restent disponibles.
+  assert.match(page, /<StagingTable rows=\{stagingQuery\.data\?\.rows \?\? \[\]\} isAdmin=\{isAdmin\} canDecide=\{canDecide\}/);
+});
+
 test('blocks the Daily v2 page and navigation for the user-only role', () => {
   const accessRoles = access.match(/new Set\(\[([\s\S]*?)\]\)/)?.[1];
   assert.ok(accessRoles, 'Daily v2 page access roles must be declared explicitly');

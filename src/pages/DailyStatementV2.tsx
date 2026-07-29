@@ -660,7 +660,7 @@ const DailyStatementV2 = () => {
                   </SelectContent>
                 </Select>
               </div>
-              <StagingTable rows={stagingQuery.data?.rows ?? []} isAdmin={isAdmin} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => {
+              <StagingTable rows={stagingQuery.data?.rows ?? []} isAdmin={isAdmin} canDecide={canDecide} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => {
                 if (!canDecide) {
                   toast.error(READ_ONLY_TARGET_MESSAGE);
                   return;
