@@ -63,8 +63,71 @@ La clé anon est publishable côté frontend, mais ne doit pas être hardcodée 
 Règle :
 - utiliser `VITE_SUPABASE_URL` ;
 - utiliser `VITE_SUPABASE_PUBLISHABLE_KEY` ;
-- ne jamais committer `.env` réel ;
-- rotation manuelle requise si clé exposée dans historiques/zips/commits.
+- ne jamais committer `.env` réel ni `.env.local` (ils restent ignorés) ;
+- rotation manuelle requise si une clé est exposée dans historiques/zips/commits,
+  **sauf** le cas explicitement prévu ci-dessous du versionnement intentionnel de
+  la clé frontend publishable/anon vérifiée dans `.env.production`.
+
+Exception unique et bornée — `.env.production` :
+
+`.env.production` est **autorisé au dépôt** parce que le build frontend Lovable
+n'a pas d'autre canal pour recevoir sa configuration Vite. Il ne contient que
+les **trois** valeurs publiques frontend :
+
+- `VITE_SUPABASE_URL` ;
+- `VITE_SUPABASE_PUBLISHABLE_KEY` ;
+- `VITE_SUPABASE_PROJECT_ID`.
+
+Ce que cette clé est, exactement :
+
+- elle est **publique par conception** et embarquée dans tout bundle navigateur
+  livré ; elle n'est pas un secret ;
+- elle **permet d'émettre des appels API sous le rôle `anon`** vers le projet
+  visé — la publier revient donc à publier cette capacité d'appel ;
+- elle **ne contourne ni les grants ni la RLS** : elle n'élève aucun privilège
+  et ne donne accès à rien qui ne soit déjà ouvert au rôle `anon` ;
+- les droits effectifs dépendent **des grants, des policies RLS, d'Auth/JWT et
+  des surfaces API exposées** (tables, vues, RPC, Storage, Edge Functions).
+
+Constat d'exposition daté — **29 juillet 2026** : sur les surfaces
+effectivement testées à cette date (tables métier héritées et tables Daily v2,
+via requêtes REST anonymes et lecture des métadonnées de policies), aucune
+donnée n'était lisible sans session autorisée : réponses vides sous RLS, ou
+refus de privilège. Ce constat est **limité aux surfaces testées** et **daté** :
+ce n'est pas une propriété universelle garantie par la clé elle-même, et il ne
+couvre pas les surfaces non exercées ce jour-là.
+
+En conséquence, toute modification de grants, de policies RLS, de RPC, de vues,
+de Storage ou d'Edge Functions **impose une nouvelle validation de l'exposition
+anonyme** avant d'être considérée comme sûre.
+
+Interdits dans ce fichier, sans exception :
+- `service_role`, `sb_secret_*` ou toute clé backend/privilégiée ;
+- toute variable non `VITE_` ;
+- toute valeur d'un projet autre que la production autorisée ;
+- toute donnée bancaire.
+
+Les rapports et les journaux **masquent toujours la valeur complète** de la clé
+(préfixe et longueur uniquement). Toute autre clé, tout autre fichier `.env`
+réel restent interdits au dépôt.
+
+Rotation — ce qui l'exige et ce qui ne l'exige pas :
+
+- le **versionnement intentionnel**, dans `.env.production` et nulle part
+  ailleurs, de la clé production publishable/anon **vérifiée** (claims
+  `role = anon`, `ref` du projet autorisé, `iss = supabase`) **n'est pas à lui
+  seul un incident** et **n'exige aucune rotation** : c'est le régime normal
+  d'une valeur publique de build, décidé et tracé par GO CTO ;
+- la rotation **reste obligatoire** en cas d'exposition d'une clé backend
+  (`service_role`, `sb_secret_*`, toute clé privilégiée), d'exposition non
+  autorisée d'une autre clé, de compromission avérée ou suspectée, ou sur
+  décision de sécurité du CTO ;
+- toute rotation de la clé **frontend** n'implique **aucune modification de la
+  logique applicative**, mais impose de mettre à jour `.env.production`, de
+  **reconstruire** le frontend, puis de **valider le runtime** sur la cible.
+
+L'interdiction absolue des clés backend au dépôt demeure inchangée, sans
+exception d'aucune sorte.
 
 ## 7. Données bancaires
 
