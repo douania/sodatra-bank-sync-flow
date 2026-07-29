@@ -753,6 +753,673 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_statement_account_events: {
+        Row: {
+          account_registry_id: string
+          actor_id: string
+          backfill_grant_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          safe_details: Json | null
+          safe_message: string
+        }
+        Insert: {
+          account_registry_id: string
+          actor_id: string
+          backfill_grant_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          safe_details?: Json | null
+          safe_message: string
+        }
+        Update: {
+          account_registry_id?: string
+          actor_id?: string
+          backfill_grant_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          safe_details?: Json | null
+          safe_message?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_account_events_account_registry_id_fkey"
+            columns: ["account_registry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_account_registry"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_account_events_backfill_grant_id_fkey"
+            columns: ["backfill_grant_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_backfill_grants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_account_registry: {
+        Row: {
+          account_fingerprint: string
+          account_number_masked: string | null
+          bank: string
+          created_at: string
+          created_by: string
+          currency: string
+          deactivated_at: string | null
+          deactivated_by: string | null
+          deactivation_reason: string | null
+          fingerprint_scheme: string
+          id: string
+          safe_alias: string
+          status: string
+        }
+        Insert: {
+          account_fingerprint?: string
+          account_number_masked?: string | null
+          bank: string
+          created_at?: string
+          created_by: string
+          currency: string
+          deactivated_at?: string | null
+          deactivated_by?: string | null
+          deactivation_reason?: string | null
+          fingerprint_scheme?: string
+          id?: string
+          safe_alias: string
+          status?: string
+        }
+        Update: {
+          account_fingerprint?: string
+          account_number_masked?: string | null
+          bank?: string
+          created_at?: string
+          created_by?: string
+          currency?: string
+          deactivated_at?: string | null
+          deactivated_by?: string | null
+          deactivation_reason?: string | null
+          fingerprint_scheme?: string
+          id?: string
+          safe_alias?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      daily_statement_backfill_grants: {
+        Row: {
+          account_registry_id: string
+          consumed_at: string | null
+          consumed_attempt_id: string | null
+          consumed_by: string | null
+          created_at: string
+          created_by: string
+          expires_at: string
+          id: string
+          max_units: number
+          period_end: string
+          period_start: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+        }
+        Insert: {
+          account_registry_id: string
+          consumed_at?: string | null
+          consumed_attempt_id?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          created_by: string
+          expires_at: string
+          id?: string
+          max_units: number
+          period_end: string
+          period_start: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+        }
+        Update: {
+          account_registry_id?: string
+          consumed_at?: string | null
+          consumed_attempt_id?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          created_by?: string
+          expires_at?: string
+          id?: string
+          max_units?: number
+          period_end?: string
+          period_start?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_backfill_grants_account_registry_id_fkey"
+            columns: ["account_registry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_account_registry"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_backfill_grants_consumed_attempt_id_fkey"
+            columns: ["consumed_attempt_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_export_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_export_attempts: {
+        Row: {
+          account_fingerprint: string
+          account_number_masked: string | null
+          account_registry_id: string | null
+          backfill_grant_id: string | null
+          backfill_grant_reference: string | null
+          bank: string
+          bridge_guard_passed: boolean
+          created_at: string
+          created_by: string | null
+          currency: string
+          errors_count: number
+          export_period_end: string
+          export_period_start: string
+          export_reference_date: string | null
+          id: string
+          ingestion_ready: boolean
+          parser_validation_status: string
+          parser_version: string | null
+          period_days: number
+          raw_text_hash: string
+          requested_mode: string
+          review_reason_codes: string[]
+          runtime_version: string | null
+          source_file_name_redacted: string | null
+          source_format: string
+          statement_date: string | null
+          units_total: number
+          warnings_count: number
+        }
+        Insert: {
+          account_fingerprint: string
+          account_number_masked?: string | null
+          account_registry_id?: string | null
+          backfill_grant_id?: string | null
+          backfill_grant_reference?: string | null
+          bank: string
+          bridge_guard_passed: boolean
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          errors_count?: number
+          export_period_end: string
+          export_period_start: string
+          export_reference_date?: string | null
+          id?: string
+          ingestion_ready: boolean
+          parser_validation_status: string
+          parser_version?: string | null
+          period_days: number
+          raw_text_hash: string
+          requested_mode: string
+          review_reason_codes?: string[]
+          runtime_version?: string | null
+          source_file_name_redacted?: string | null
+          source_format: string
+          statement_date?: string | null
+          units_total: number
+          warnings_count?: number
+        }
+        Update: {
+          account_fingerprint?: string
+          account_number_masked?: string | null
+          account_registry_id?: string | null
+          backfill_grant_id?: string | null
+          backfill_grant_reference?: string | null
+          bank?: string
+          bridge_guard_passed?: boolean
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          errors_count?: number
+          export_period_end?: string
+          export_period_start?: string
+          export_reference_date?: string | null
+          id?: string
+          ingestion_ready?: boolean
+          parser_validation_status?: string
+          parser_version?: string | null
+          period_days?: number
+          raw_text_hash?: string
+          requested_mode?: string
+          review_reason_codes?: string[]
+          runtime_version?: string | null
+          source_file_name_redacted?: string | null
+          source_format?: string
+          statement_date?: string | null
+          units_total?: number
+          warnings_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_export_attempts_account_registry_id_fkey"
+            columns: ["account_registry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_account_registry"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_export_attempts_backfill_grant_id_fkey"
+            columns: ["backfill_grant_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_backfill_grants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_import_events: {
+        Row: {
+          actor_id: string | null
+          attempt_id: string | null
+          canonical_unit_id: string | null
+          created_at: string
+          day_unit_id: string | null
+          event_type: string
+          id: string
+          new_status: string | null
+          previous_status: string | null
+          raw_text_hash: string | null
+          safe_details: Json | null
+          safe_message: string | null
+          staging_unit_id: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          attempt_id?: string | null
+          canonical_unit_id?: string | null
+          created_at?: string
+          day_unit_id?: string | null
+          event_type: string
+          id?: string
+          new_status?: string | null
+          previous_status?: string | null
+          raw_text_hash?: string | null
+          safe_details?: Json | null
+          safe_message?: string | null
+          staging_unit_id?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          attempt_id?: string | null
+          canonical_unit_id?: string | null
+          created_at?: string
+          day_unit_id?: string | null
+          event_type?: string
+          id?: string
+          new_status?: string | null
+          previous_status?: string | null
+          raw_text_hash?: string | null
+          safe_details?: Json | null
+          safe_message?: string | null
+          staging_unit_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_import_events_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_export_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_import_events_canonical_unit_id_fkey"
+            columns: ["canonical_unit_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_units_canonical"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_import_events_staging_unit_id_fkey"
+            columns: ["staging_unit_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_units_staging"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_lines_canonical: {
+        Row: {
+          accounting_date: string
+          canonical_unit_id: string
+          created_at: string
+          credit_amount: number | null
+          currency: string
+          daily_line_hash: string
+          daily_occurrence_ordinal: number
+          day_unit_id: string
+          debit_amount: number | null
+          description_sanitized: string
+          direction: string
+          id: string
+          is_active: boolean
+          running_balance: number | null
+          signed_amount: number
+          source_line_index: number
+          value_date: string | null
+        }
+        Insert: {
+          accounting_date: string
+          canonical_unit_id: string
+          created_at?: string
+          credit_amount?: number | null
+          currency: string
+          daily_line_hash: string
+          daily_occurrence_ordinal: number
+          day_unit_id: string
+          debit_amount?: number | null
+          description_sanitized: string
+          direction: string
+          id?: string
+          is_active: boolean
+          running_balance?: number | null
+          signed_amount: number
+          source_line_index: number
+          value_date?: string | null
+        }
+        Update: {
+          accounting_date?: string
+          canonical_unit_id?: string
+          created_at?: string
+          credit_amount?: number | null
+          currency?: string
+          daily_line_hash?: string
+          daily_occurrence_ordinal?: number
+          day_unit_id?: string
+          debit_amount?: number | null
+          description_sanitized?: string
+          direction?: string
+          id?: string
+          is_active?: boolean
+          running_balance?: number | null
+          signed_amount?: number
+          source_line_index?: number
+          value_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_lines_canonical_canonical_unit_id_fkey"
+            columns: ["canonical_unit_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_units_canonical"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_lines_staging: {
+        Row: {
+          accounting_date: string
+          attempt_id: string
+          created_at: string
+          credit_amount: number | null
+          currency: string
+          daily_line_hash: string
+          daily_occurrence_ordinal: number
+          day_unit_id: string
+          debit_amount: number | null
+          description_sanitized: string
+          direction: string
+          id: string
+          running_balance: number | null
+          signed_amount: number
+          source_line_index: number
+          staging_unit_id: string
+          value_date: string | null
+        }
+        Insert: {
+          accounting_date: string
+          attempt_id: string
+          created_at?: string
+          credit_amount?: number | null
+          currency: string
+          daily_line_hash: string
+          daily_occurrence_ordinal: number
+          day_unit_id: string
+          debit_amount?: number | null
+          description_sanitized: string
+          direction: string
+          id?: string
+          running_balance?: number | null
+          signed_amount: number
+          source_line_index: number
+          staging_unit_id: string
+          value_date?: string | null
+        }
+        Update: {
+          accounting_date?: string
+          attempt_id?: string
+          created_at?: string
+          credit_amount?: number | null
+          currency?: string
+          daily_line_hash?: string
+          daily_occurrence_ordinal?: number
+          day_unit_id?: string
+          debit_amount?: number | null
+          description_sanitized?: string
+          direction?: string
+          id?: string
+          running_balance?: number | null
+          signed_amount?: number
+          source_line_index?: number
+          staging_unit_id?: string
+          value_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_lines_staging_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_export_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_lines_staging_staging_unit_id_fkey"
+            columns: ["staging_unit_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_units_staging"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_units_canonical: {
+        Row: {
+          account_fingerprint: string
+          account_registry_id: string | null
+          accounting_date: string
+          active_day_content_hash: string
+          aggregates_status: string
+          bank: string
+          closing_balance_derived: number | null
+          currency: string
+          day_total_credits: number
+          day_total_debits: number
+          day_unit_id: string
+          id: string
+          ingested_at: string
+          ingested_by: string | null
+          line_count: number
+          opening_balance_derived: number | null
+          promoted_from_staging_unit_id: string
+          review_reason_codes: string[]
+          status: string
+          superseded_at: string | null
+          superseded_by: string | null
+          validation_status: string
+        }
+        Insert: {
+          account_fingerprint: string
+          account_registry_id?: string | null
+          accounting_date: string
+          active_day_content_hash: string
+          aggregates_status: string
+          bank: string
+          closing_balance_derived?: number | null
+          currency: string
+          day_total_credits: number
+          day_total_debits: number
+          day_unit_id: string
+          id?: string
+          ingested_at?: string
+          ingested_by?: string | null
+          line_count: number
+          opening_balance_derived?: number | null
+          promoted_from_staging_unit_id: string
+          review_reason_codes?: string[]
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          validation_status: string
+        }
+        Update: {
+          account_fingerprint?: string
+          account_registry_id?: string | null
+          accounting_date?: string
+          active_day_content_hash?: string
+          aggregates_status?: string
+          bank?: string
+          closing_balance_derived?: number | null
+          currency?: string
+          day_total_credits?: number
+          day_total_debits?: number
+          day_unit_id?: string
+          id?: string
+          ingested_at?: string
+          ingested_by?: string | null
+          line_count?: number
+          opening_balance_derived?: number | null
+          promoted_from_staging_unit_id?: string
+          review_reason_codes?: string[]
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          validation_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_units_canonic_promoted_from_staging_unit_i_fkey"
+            columns: ["promoted_from_staging_unit_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_units_staging"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_units_canonical_account_registry_id_fkey"
+            columns: ["account_registry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_account_registry"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_units_canonical_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_units_canonical"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_statement_units_staging: {
+        Row: {
+          account_fingerprint: string
+          account_registry_id: string | null
+          accounting_date: string
+          aggregates_status: string
+          attempt_id: string
+          bank: string
+          closing_balance_derived: number | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          day_content_hash: string
+          day_total_credits: number
+          day_total_debits: number
+          day_unit_id: string
+          id: string
+          line_count: number
+          opening_balance_derived: number | null
+          review_reason_codes: string[]
+          status: string
+          validation_status: string
+        }
+        Insert: {
+          account_fingerprint: string
+          account_registry_id?: string | null
+          accounting_date: string
+          aggregates_status: string
+          attempt_id: string
+          bank: string
+          closing_balance_derived?: number | null
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          day_content_hash: string
+          day_total_credits: number
+          day_total_debits: number
+          day_unit_id: string
+          id?: string
+          line_count: number
+          opening_balance_derived?: number | null
+          review_reason_codes?: string[]
+          status: string
+          validation_status: string
+        }
+        Update: {
+          account_fingerprint?: string
+          account_registry_id?: string | null
+          accounting_date?: string
+          aggregates_status?: string
+          attempt_id?: string
+          bank?: string
+          closing_balance_derived?: number | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          day_content_hash?: string
+          day_total_credits?: number
+          day_total_debits?: number
+          day_unit_id?: string
+          id?: string
+          line_count?: number
+          opening_balance_derived?: number | null
+          review_reason_codes?: string[]
+          status?: string
+          validation_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_statement_units_staging_account_registry_id_fkey"
+            columns: ["account_registry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_account_registry"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_statement_units_staging_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "daily_statement_export_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       deposits_not_cleared: {
         Row: {
           bank_report_id: string | null
@@ -1030,6 +1697,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      adopt_daily_statement_historical_account: {
+        Args: { p_bank: string; p_currency: string; p_safe_alias: string }
+        Returns: Json
+      }
       approve_structured_bank_statement_needs_review_promotion: {
         Args: { p_attempt_id: string; p_reason: string }
         Returns: Json
@@ -1038,12 +1709,137 @@ export type Database = {
         Args: { client_code: string; description: string }
         Returns: string
       }
+      daily_stmt_acquire_day_lock: {
+        Args: { p_day_unit_id: string }
+        Returns: undefined
+      }
+      daily_stmt_append_audit_event: {
+        Args: {
+          p_actor_id: string
+          p_attempt_id: string
+          p_canonical_unit_id: string
+          p_day_unit_id: string
+          p_event_type: string
+          p_new_status: string
+          p_previous_status: string
+          p_raw_text_hash: string
+          p_safe_details: Json
+          p_safe_message: string
+          p_staging_unit_id: string
+        }
+        Returns: string
+      }
+      daily_stmt_assert_hex64: {
+        Args: { p_label: string; p_value: string }
+        Returns: string
+      }
+      daily_stmt_assert_masked_account: {
+        Args: { p_value: string }
+        Returns: undefined
+      }
+      daily_stmt_assert_no_forbidden_keys: {
+        Args: { p_path?: string; p_value: Json }
+        Returns: undefined
+      }
+      daily_stmt_assert_object_keys: {
+        Args: { p_allowed: string[]; p_label: string; p_object: Json }
+        Returns: undefined
+      }
+      daily_stmt_assert_safe_alias: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      daily_stmt_assert_safe_details: {
+        Args: { p_details: Json }
+        Returns: undefined
+      }
+      daily_stmt_assert_safe_file_name: {
+        Args: { p_value: string }
+        Returns: undefined
+      }
+      daily_stmt_assert_safe_operator_reason: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      daily_stmt_assert_safe_reason: {
+        Args: { p_reason: string }
+        Returns: undefined
+      }
+      daily_stmt_classify_fingerprint_scheme: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      daily_stmt_day_content_hash: {
+        Args: { p_day_unit_id: string; p_hashes: string[] }
+        Returns: string
+      }
+      daily_stmt_day_unit_id: {
+        Args: {
+          p_accounting_date: string
+          p_bank: string
+          p_currency: string
+          p_fingerprint: string
+        }
+        Returns: string
+      }
+      daily_stmt_parse_amount_strict: {
+        Args: { p_value: string }
+        Returns: number
+      }
+      daily_stmt_parse_date_strict: {
+        Args: { p_value: string }
+        Returns: string
+      }
+      daily_stmt_pre_ingest_legacy_core_0u: {
+        Args: {
+          p_attempt: Json
+          p_guard_context: Json
+          p_lines: Json
+          p_units: Json
+        }
+        Returns: Json
+      }
+      daily_stmt_promote_unit_core: {
+        Args: {
+          p_actor: string
+          p_new_canonical_id: string
+          p_staging_unit_id: string
+        }
+        Returns: string
+      }
+      daily_stmt_review_reason_codes: {
+        Args: { p_value: Json }
+        Returns: string[]
+      }
+      deactivate_daily_statement_account: {
+        Args: { p_account_registry_id: string; p_reason: string }
+        Returns: Json
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
+      }
+      issue_daily_statement_backfill_grant: {
+        Args: {
+          p_account_registry_id: string
+          p_expires_at: string
+          p_max_units: number
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: Json
+      }
+      pre_ingest_daily_statement_units: {
+        Args: {
+          p_attempt: Json
+          p_guard_context: Json
+          p_lines: Json
+          p_units: Json
+        }
+        Returns: Json
       }
       pre_ingest_structured_bank_statement: {
         Args: {
@@ -1066,8 +1862,21 @@ export type Database = {
         }
         Returns: Json
       }
+      promote_daily_statement_unit: {
+        Args: { p_approval_reason?: string; p_staging_unit_id: string }
+        Returns: Json
+      }
       promote_structured_bank_statement_import: {
         Args: { p_attempt_id: string }
+        Returns: Json
+      }
+      provision_daily_statement_account: {
+        Args: {
+          p_account_number_masked?: string
+          p_bank: string
+          p_currency: string
+          p_safe_alias: string
+        }
         Returns: Json
       }
       reject_structured_bank_statement_import: {
@@ -1080,6 +1889,10 @@ export type Database = {
       }
       resolve_structured_bank_statement_conflict_keep_existing: {
         Args: { p_attempt_id: string; p_reason: string }
+        Returns: Json
+      }
+      revoke_daily_statement_backfill_grant: {
+        Args: { p_backfill_grant_id: string; p_reason: string }
         Returns: Json
       }
       structured_csv_acquire_import_lock: {
@@ -1130,6 +1943,14 @@ export type Database = {
           p_staging_id: string
         }
         Returns: string
+      }
+      supersede_daily_statement_unit: {
+        Args: {
+          p_new_staging_unit_id: string
+          p_old_canonical_unit_id: string
+          p_reason: string
+        }
+        Returns: Json
       }
       supersede_structured_bank_statement_import: {
         Args: {
