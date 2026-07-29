@@ -62,14 +62,17 @@ export const ListCard = ({ title, loading, error, onRefresh, children }: {
   <Card><CardHeader><div className="flex items-center justify-between"><CardTitle>{title}</CardTitle><Button variant="outline" size="sm" onClick={onRefresh}>Actualiser</Button></div></CardHeader><CardContent>{loading ? <Loading /> : error ? <AccessDenied text="Lecture impossible ou non autorisée." /> : children}</CardContent></Card>
 );
 
-export const StagingTable = ({ rows, isAdmin, onLines, onDecision }: {
+export const StagingTable = ({ rows, isAdmin, canDecide, onLines, onDecision }: {
   rows: DailyV2StagingUnitRow[];
+  /** Consultation des lignes : regle de role existante (admin). */
   isAdmin: boolean;
+  /** Actions de decision : role admin ET capacite promote de la cible. */
+  canDecide: boolean;
   onLines: (unit: DailyV2StagingUnitRow) => void;
   onDecision: (kind: 'promote' | 'supersede', unit: DailyV2StagingUnitRow) => void;
 }) => (
   <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Statut</TableHead><TableHead>Validation</TableHead><TableHead>Motifs de revue</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
-    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && unit.status !== 'duplicate' && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{isAdmin && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{isAdmin && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
+    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && unit.status !== 'duplicate' && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{canDecide && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{canDecide && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
   </Table></div>
 );
 

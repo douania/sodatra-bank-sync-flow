@@ -20,7 +20,10 @@ import type {
   DailyV2StagingUnitRow,
   DailyV2SupersedeResponse,
 } from './dailyV2Types';
-import { currentDailyV2RuntimeTargetVerdict } from './dailyV2RuntimeTarget';
+import {
+  currentDailyV2RuntimeTargetVerdict,
+  type DailyV2Capability,
+} from './dailyV2RuntimeTarget';
 import {
   DailyV2ServiceError,
   runDailyV2CanonicalReportingRead,
@@ -121,7 +124,7 @@ const supersedeResponseSchema = z.object({
 });
 
 export async function getCurrentUserDailyV2Roles(): Promise<DailyV2AppRole[]> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError || !sessionData.session?.user) {
     throw new DailyV2ServiceError('Une session authentifiée est requise.', 'AUTH_REQUIRED');
@@ -149,7 +152,7 @@ export async function listDailyV2Accounts(input: {
   currency?: string;
   includeInactive?: boolean;
 } = {}): Promise<DailyV2AccountRegistryRow[]> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   await assertAuthenticatedSession();
   let query = dailyV2Supabase
     .from('daily_statement_account_registry')
@@ -175,7 +178,7 @@ export async function provisionDailyV2Account(input: {
   safeAlias: string;
   accountNumberMasked?: string;
 }): Promise<DailyV2AccountRegistryRow> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('admin');
   await assertAuthenticatedSession();
   const { data, error } = await dailyV2Supabase.rpc('provision_daily_statement_account', {
     p_bank: input.bank,
@@ -191,7 +194,7 @@ export async function deactivateDailyV2Account(input: {
   accountRegistryId: string;
   reason: string;
 }): Promise<void> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('admin');
   await assertAuthenticatedSession();
   const { error } = await dailyV2Supabase.rpc('deactivate_daily_statement_account', {
     p_account_registry_id: input.accountRegistryId,
@@ -203,7 +206,7 @@ export async function deactivateDailyV2Account(input: {
 export async function listDailyV2BackfillGrants(
   accountRegistryId: string,
 ): Promise<DailyV2BackfillGrantRow[]> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   await assertAuthenticatedSession();
   const { data, error } = await dailyV2Supabase
     .from('daily_statement_backfill_grants')
@@ -223,7 +226,7 @@ export async function issueDailyV2BackfillGrant(input: {
   maxUnits: number;
   expiresAt: string;
 }): Promise<DailyV2BackfillGrantRow> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('admin');
   await assertAuthenticatedSession();
   const { data, error } = await dailyV2Supabase.rpc('issue_daily_statement_backfill_grant', {
     p_account_registry_id: input.accountRegistryId,
@@ -240,7 +243,7 @@ export async function revokeDailyV2BackfillGrant(input: {
   backfillGrantId: string;
   reason: string;
 }): Promise<void> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('admin');
   await assertAuthenticatedSession();
   const { error } = await dailyV2Supabase.rpc('revoke_daily_statement_backfill_grant', {
     p_backfill_grant_id: input.backfillGrantId,
@@ -253,7 +256,7 @@ export async function listDailyV2AccountEvents(input: {
   page: number;
   pageSize: number;
 }): Promise<DailyV2Page<DailyV2AccountEventRow>> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
   const { data, error, count } = await dailyV2Supabase
     .from('daily_statement_account_events')
@@ -267,7 +270,7 @@ export async function listDailyV2AccountEvents(input: {
 export async function preIngestDailyV2(
   payload: DailyV2PreIngestPayload,
 ): Promise<DailyV2PreIngestResponse> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('deposit');
   await assertAuthenticatedSession();
   const { data, error } = await dailyV2Supabase.rpc('pre_ingest_daily_statement_units', payload);
   if (error) throw toSafeError(error, 'Le dépôt Daily v2 a été refusé.');
@@ -282,7 +285,7 @@ export async function promoteDailyV2Unit(
   stagingUnitId: string,
   approvalReason?: string,
 ): Promise<DailyV2PromoteResponse> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('promote');
   await assertAuthenticatedSession();
   const reason = normalizeOptionalReason(approvalReason);
   const { data, error } = await dailyV2Supabase.rpc('promote_daily_statement_unit', {
@@ -302,7 +305,7 @@ export async function supersedeDailyV2Unit(input: {
   newStagingUnitId: string;
   reason: string;
 }): Promise<DailyV2SupersedeResponse> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('promote');
   await assertAuthenticatedSession();
   const reason = normalizeRequiredReason(input.reason);
   const { data, error } = await dailyV2Supabase.rpc('supersede_daily_statement_unit', {
@@ -324,7 +327,7 @@ export async function listDailyV2StagingUnits(input: {
   status?: 'all' | DailyV2StagingStatus;
   review?: 'all' | 'required' | 'clear';
 }): Promise<DailyV2Page<DailyV2StagingUnitRow>> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
   let query = dailyV2Supabase
     .from('daily_statement_units_staging')
@@ -353,7 +356,7 @@ export async function listDailyV2StagingUnits(input: {
 export async function listDailyV2StagingLines(
   stagingUnitId: string,
 ): Promise<DailyV2StagingLineRow[]> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { data, error } = await dailyV2Supabase
     .from('daily_statement_lines_staging')
     .select('*')
@@ -368,7 +371,7 @@ export async function listDailyV2CanonicalUnits(input: {
   pageSize: number;
   status?: 'all' | 'ingested' | 'superseded';
 }): Promise<DailyV2Page<DailyV2CanonicalUnitRow>> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
   let query = dailyV2Supabase
     .from('daily_statement_units_canonical')
@@ -386,7 +389,7 @@ export async function listDailyV2CanonicalUnits(input: {
 export async function listDailyV2CanonicalLines(
   canonicalUnitId: string,
 ): Promise<DailyV2CanonicalLineRow[]> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { data, error } = await dailyV2Supabase
     .from('daily_statement_lines_canonical')
     .select('*')
@@ -399,7 +402,7 @@ export async function listDailyV2CanonicalLines(
 export async function getActiveDailyV2CanonicalUnit(
   dayUnitId: string,
 ): Promise<DailyV2CanonicalUnitRow | null> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { data, error } = await dailyV2Supabase
     .from('daily_statement_units_canonical')
     .select('*')
@@ -414,7 +417,7 @@ export async function listDailyV2AuditEvents(input: {
   page: number;
   pageSize: number;
 }): Promise<DailyV2Page<DailyV2AuditEventRow>> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
   const { data, error, count } = await dailyV2Supabase
     .from('daily_statement_import_events')
@@ -540,12 +543,12 @@ export async function listDailyV2CanonicalUnitsForReporting(filters: {
   bank: string | null;
   currency: string | null;
 }): Promise<{ rows: DailyV2ReportingUnitRow[]; totalCount: number }> {
-  assertAuthorizedDailyV2Target();
+  assertAuthorizedDailyV2Target('read');
   return runDailyV2CanonicalReportingRead(dailyV2ReportingReadAdapter, filters);
 }
 
-function assertAuthorizedDailyV2Target(): void {
-  const verdict = currentDailyV2RuntimeTargetVerdict();
+function assertAuthorizedDailyV2Target(capability: DailyV2Capability): void {
+  const verdict = currentDailyV2RuntimeTargetVerdict(capability);
   if (verdict.allowed === false) {
     throw new DailyV2ServiceError(verdict.reason, 'TARGET_NOT_ALLOWED');
   }
