@@ -64,7 +64,9 @@ Règle :
 - utiliser `VITE_SUPABASE_URL` ;
 - utiliser `VITE_SUPABASE_PUBLISHABLE_KEY` ;
 - ne jamais committer `.env` réel ni `.env.local` (ils restent ignorés) ;
-- rotation manuelle requise si clé exposée dans historiques/zips/commits.
+- rotation manuelle requise si une clé est exposée dans historiques/zips/commits,
+  **sauf** le cas explicitement prévu ci-dessous du versionnement intentionnel de
+  la clé frontend publishable/anon vérifiée dans `.env.production`.
 
 Exception unique et bornée — `.env.production` :
 
@@ -108,6 +110,24 @@ Interdits dans ce fichier, sans exception :
 Les rapports et les journaux **masquent toujours la valeur complète** de la clé
 (préfixe et longueur uniquement). Toute autre clé, tout autre fichier `.env`
 réel restent interdits au dépôt.
+
+Rotation — ce qui l'exige et ce qui ne l'exige pas :
+
+- le **versionnement intentionnel**, dans `.env.production` et nulle part
+  ailleurs, de la clé production publishable/anon **vérifiée** (claims
+  `role = anon`, `ref` du projet autorisé, `iss = supabase`) **n'est pas à lui
+  seul un incident** et **n'exige aucune rotation** : c'est le régime normal
+  d'une valeur publique de build, décidé et tracé par GO CTO ;
+- la rotation **reste obligatoire** en cas d'exposition d'une clé backend
+  (`service_role`, `sb_secret_*`, toute clé privilégiée), d'exposition non
+  autorisée d'une autre clé, de compromission avérée ou suspectée, ou sur
+  décision de sécurité du CTO ;
+- toute rotation de la clé **frontend** n'implique **aucune modification de la
+  logique applicative**, mais impose de mettre à jour `.env.production`, de
+  **reconstruire** le frontend, puis de **valider le runtime** sur la cible.
+
+L'interdiction absolue des clés backend au dépôt demeure inchangée, sans
+exception d'aucune sorte.
 
 ## 7. Données bancaires
 
