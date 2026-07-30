@@ -42,7 +42,10 @@ const FileUpload = () => {
   // ⭐ 0Z_AM : garde d'interface production read-only — réutilise la politique
   // canonique cible × capacité (production : read uniquement, fail-closed).
   // Jamais une barrière de sécurité : Auth, rôles, RLS et grants restent serveur.
-  const uploadMutationAllowed = isUploadMutationAllowed();
+  // Chaque famille d'actions déclare sa capacité exacte : sélection/traitement
+  // = deposit ; promotion Collection = promote.
+  const canProcessFiles = isUploadMutationAllowed('deposit');
+  const canPromoteCollections = isUploadMutationAllowed('promote');
 
   // ⭐ PACK-C.1 : toute modification de la liste des fichiers invalide la review,
   // la promotion et les résultats précédents — sinon l'UI afficherait un staging
@@ -88,7 +91,7 @@ const FileUpload = () => {
     onDrop,
     // ⭐ 0Z_AM : ceinture et bretelles — la dropzone n'est jamais rendue en
     // read-only (retour anticipé ci-dessous), et reste désactivée si montée.
-    disabled: !uploadMutationAllowed,
+    disabled: !canProcessFiles,
     accept: {
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -157,8 +160,9 @@ const FileUpload = () => {
   };
 
   const handleSubmit = async () => {
-    // ⭐ 0Z_AM : fail-closed même si un bouton résiduel était déclenché.
-    if (!uploadMutationAllowed) {
+    // ⭐ 0Z_AM : fail-closed même si un bouton résiduel était déclenché —
+    // le traitement exige la capacité deposit.
+    if (!canProcessFiles) {
       toast({
         variant: "destructive",
         title: "Production en lecture seule",
@@ -236,8 +240,9 @@ const FileUpload = () => {
   // ⭐ PACK-C : promotion explicite des lignes validées — seul point d'écriture DB
   // du flux Collection Report.
   const handlePromote = async (reviewWithSelection: CollectionImportReview) => {
-    // ⭐ 0Z_AM : fail-closed même si un bouton résiduel était déclenché.
-    if (!uploadMutationAllowed) {
+    // ⭐ 0Z_AM : fail-closed même si un bouton résiduel était déclenché —
+    // la promotion exige la capacité promote.
+    if (!canPromoteCollections) {
       toast({
         variant: "destructive",
         title: "Production en lecture seule",
@@ -336,9 +341,10 @@ const FileUpload = () => {
     return 'bg-gray-100 text-gray-800';
   };
 
-  // ⭐ 0Z_AM : production read-only — aucun élément d'import actif n'est rendu
-  // (ni dropzone, ni sélecteur, ni bouton de traitement, ni panneau de promotion).
-  if (!uploadMutationAllowed) {
+  // ⭐ 0Z_AM : production read-only — sans la capacité deposit (cœur de la
+  // page d'import), aucun élément d'import actif n'est rendu (ni dropzone,
+  // ni sélecteur, ni bouton de traitement, ni panneau de promotion).
+  if (!canProcessFiles) {
     return (
       <div className="container mx-auto py-10">
         <div className="mb-6">

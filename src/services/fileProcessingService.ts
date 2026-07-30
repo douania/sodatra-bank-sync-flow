@@ -35,8 +35,8 @@ export class FileProcessingService {
     };
 
     // ⭐ 0Z_AM : refus fail-closed AVANT timeout, heartbeat et tout traitement —
-    // la cible courante doit autoriser la mutation d'import (production = lecture seule).
-    const uploadGate = currentUploadMutationVerdict();
+    // la cible courante doit autoriser la capacité deposit (production = lecture seule).
+    const uploadGate = currentUploadMutationVerdict('deposit');
     if (!uploadGate.allowed) {
       results.errors.push(UPLOAD_READ_ONLY_TARGET_MESSAGE);
       return results;

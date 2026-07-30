@@ -178,10 +178,11 @@ export async function promoteValidatedCollections(
   engine?: CollectionSyncEngine,
   // ⭐ 0Z_AM : garde injectable comme le moteur de sync — les tests synthétiques
   // injectent une garde explicite ; le défaut reste canonique et fail-closed.
-  uploadMutationGate: UploadMutationGate = currentUploadMutationVerdict
+  uploadMutationGate: UploadMutationGate = () => currentUploadMutationVerdict('promote')
 ): Promise<CollectionPromotionResult> {
   // ⭐ 0Z_AM : refus fail-closed AVANT toute analyse ou écriture — la cible
-  // courante doit autoriser la mutation d'import (production = lecture seule).
+  // courante doit autoriser la capacité promote (production = lecture seule).
+  // Une cible qui saurait déposer sans promouvoir serait refusée ici.
   if (!uploadMutationGate().allowed) {
     throw new Error(UPLOAD_READ_ONLY_TARGET_MESSAGE);
   }

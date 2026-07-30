@@ -7,8 +7,12 @@
  * de Daily v2 (src/features/daily-v2/dailyV2RuntimeTarget.ts) — production :
  * read uniquement — sans créer de seconde logique d'environnement.
  *
- * Toute mutation du flux d'import global (traitement de fichiers, promotion
- * Collection) exige la capacité canonique « deposit » sur la cible courante :
+ * Capacités du flux d'import global, alignées sur la table canonique :
+ *   - « deposit » : sélection et traitement de fichiers (processFiles) ;
+ *   - « promote » : promotion Collection (promoteValidatedCollections).
+ * Aucune capacité n'a de valeur par défaut : chaque appelant la déclare.
+ *
+ * Verdicts :
  *   - staging autorisé : mutations permises, comportement inchangé ;
  *   - production : refus ;
  *   - cible inconnue, URL invalide, contradiction URL/projet, environnement
@@ -24,28 +28,34 @@ import {
 export const UPLOAD_READ_ONLY_TARGET_MESSAGE =
   "Production en lecture seule : l'import, le traitement et la promotion de fichiers sont désactivés sur cette cible.";
 
-/** Pure et testable : la mutation d'import exige la capacité « deposit ». */
+/** Sous-ensemble mutation de la politique canonique — jamais « read »/« admin ». */
+export type UploadMutationCapability = 'deposit' | 'promote';
+
+/** Pure et testable : chaque mutation d'import déclare sa capacité exacte. */
 export function validateUploadMutationTarget(
   input: DailyV2RuntimeTargetInput,
+  capability: UploadMutationCapability,
 ): DailyV2RuntimeTargetVerdict {
-  return validateDailyV2RuntimeTarget(input, 'deposit');
+  return validateDailyV2RuntimeTarget(input, capability);
 }
 
 /**
  * Verdict sur la cible courante. Hors runtime Vite (import.meta.env absent),
  * la lecture de l'environnement lève : le refus reste fail-closed.
  */
-export function currentUploadMutationVerdict(): DailyV2RuntimeTargetVerdict {
+export function currentUploadMutationVerdict(
+  capability: UploadMutationCapability,
+): DailyV2RuntimeTargetVerdict {
   try {
-    return currentDailyV2RuntimeTargetVerdict('deposit');
+    return currentDailyV2RuntimeTargetVerdict(capability);
   } catch {
     return { allowed: false, reason: UPLOAD_READ_ONLY_TARGET_MESSAGE };
   }
 }
 
-/** Garde d'interface : true uniquement si la cible courante autorise la mutation. */
-export function isUploadMutationAllowed(): boolean {
-  return currentUploadMutationVerdict().allowed;
+/** Garde d'interface : true uniquement si la cible courante autorise la capacité. */
+export function isUploadMutationAllowed(capability: UploadMutationCapability): boolean {
+  return currentUploadMutationVerdict(capability).allowed;
 }
 
 /**

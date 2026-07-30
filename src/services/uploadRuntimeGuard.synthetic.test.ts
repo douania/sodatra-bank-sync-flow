@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { register } from 'node:module';
 import test from 'node:test';
 
 import {
   currentUploadMutationVerdict,
   validateUploadMutationTarget,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
+  type UploadMutationCapability,
 } from './uploadRuntimeGuard';
 import {
   promoteValidatedCollections,
@@ -17,7 +19,42 @@ import type { CollectionImportReview } from '@/types/processing';
 // Aucune donnée bancaire réelle, aucun accès Supabase. La garde /upload est une
 // barrière d'interface (jamais de sécurité) qui réutilise la politique
 // canonique cible × capacité de Daily v2 : production = read uniquement,
-// inconnu/invalide = refus fail-closed.
+// inconnu/invalide = refus fail-closed. Capacités du flux d'import :
+// sélection/traitement = deposit ; promotion Collection = promote.
+
+// Note runner : le client Supabase généré (`@/integrations/supabase/client`)
+// est Vite-only et crashe sous Node ; comme dans
+// collectionImportReviewService.classification.synthetic.test.ts, il est
+// court-circuité par un stub inerte via un hook de résolution auto-contenu.
+// Le stub jette au moindre accès : ce test ne peut physiquement pas toucher
+// Supabase, ce qui prouve aussi qu'aucun traitement ne démarre sous refus.
+const SUPABASE_CLIENT_SPECIFIER = '@/integrations/supabase/client';
+
+const supabaseStubModuleUrl =
+  'data:text/javascript,' +
+  encodeURIComponent(
+    'export const supabase = new Proxy({}, {' +
+      ' get() { throw new Error("synthetic test: supabase client must never be used"); }' +
+      ' });'
+  );
+
+const resolverHooksUrl =
+  'data:text/javascript,' +
+  encodeURIComponent(
+    `export function resolve(specifier, context, nextResolve) {
+      if (specifier === ${JSON.stringify(SUPABASE_CLIENT_SPECIFIER)}) {
+        return { shortCircuit: true, url: ${JSON.stringify(supabaseStubModuleUrl)} };
+      }
+      return nextResolve(specifier, context);
+    }`
+  );
+
+register(resolverHooksUrl);
+
+// Import dynamique APRÈS l'enregistrement du hook (chaîne legacy complète).
+const processingModulePromise = import('./fileProcessingService');
+
+const MUTATION_CAPABILITIES: readonly UploadMutationCapability[] = ['deposit', 'promote'];
 
 const STAGING_URL = 'https://gbbsqcscryygqlmqncyv.supabase.co';
 const PRODUCTION_URL = 'https://leakcdbbawzysfqyqsnr.supabase.co';
@@ -27,59 +64,8 @@ const processing = readFileSync('src/services/fileProcessingService.ts', 'utf8')
 const promotion = readFileSync('src/services/collectionImportPromotionService.ts', 'utf8');
 const guard = readFileSync('src/services/uploadRuntimeGuard.ts', 'utf8');
 
-// --- Politique de cible : staging inchangé, production et inconnu refusés ----
-
-test('staging autorisé : la mutation d\'import reste permise (comportement inchangé)', () => {
-  const withProjectId = validateUploadMutationTarget({
-    supabaseUrl: STAGING_URL,
-    projectId: 'gbbsqcscryygqlmqncyv',
-  });
-  assert.equal(withProjectId.allowed, true);
-
-  const urlOnly = validateUploadMutationTarget({ supabaseUrl: STAGING_URL });
-  assert.equal(urlOnly.allowed, true);
-});
-
-test('production : la mutation d\'import est refusée (lecture seule)', () => {
-  assert.equal(validateUploadMutationTarget({ supabaseUrl: PRODUCTION_URL }).allowed, false);
-  assert.equal(
-    validateUploadMutationTarget({
-      supabaseUrl: PRODUCTION_URL,
-      projectId: 'leakcdbbawzysfqyqsnr',
-    }).allowed,
-    false,
-  );
-});
-
-test('cible inconnue, invalide, absente ou contradictoire : refus fail-closed', () => {
-  assert.equal(validateUploadMutationTarget({}).allowed, false);
-  assert.equal(validateUploadMutationTarget({ supabaseUrl: '   ' }).allowed, false);
-  assert.equal(validateUploadMutationTarget({ supabaseUrl: 'not-an-url' }).allowed, false);
-  assert.equal(validateUploadMutationTarget({ supabaseUrl: 'https://example.com' }).allowed, false);
-  assert.equal(
-    validateUploadMutationTarget({ supabaseUrl: 'https://aaaabbbbccccdddd.supabase.co' }).allowed,
-    false,
-  );
-  assert.equal(
-    validateUploadMutationTarget({
-      supabaseUrl: STAGING_URL,
-      projectId: 'leakcdbbawzysfqyqsnr',
-    }).allowed,
-    false,
-  );
-});
-
-test('environnement runtime illisible (hors Vite) : refus fail-closed sans lever', () => {
-  // Sous Node/tsx, import.meta.env est absent : le verdict courant doit
-  // refuser proprement, jamais autoriser ni jeter.
-  const verdict = currentUploadMutationVerdict();
-  assert.equal(verdict.allowed, false);
-});
-
-// --- Refus runtime fail-closed de la promotion avec la garde par défaut ------
-
-test('promotion avec garde par défaut hors cible autorisée : rejet avant tout appel moteur', async () => {
-  const trappedEngine: CollectionSyncEngine = {
+function trappedEngine(): CollectionSyncEngine {
+  return {
     async analyze() {
       throw new Error('analyze ne doit jamais être appelé sous la garde read-only');
     },
@@ -87,8 +73,10 @@ test('promotion avec garde par défaut hors cible autorisée : rejet avant tout 
       throw new Error('sync ne doit jamais être appelé sous la garde read-only');
     },
   };
+}
 
-  const review: CollectionImportReview = {
+function syntheticReadyReview(): CollectionImportReview {
+  return {
     reviewReady: true,
     files: ['COLLECTION_REPORT_SYNTHETIC.xlsx'],
     acceptedRows: [
@@ -118,19 +106,133 @@ test('promotion avec garde par défaut hors cible autorisée : rejet avant tout 
     },
     preparedAt: '2026-07-30T00:00:00.000Z',
   };
+}
+
+// --- Matrice capacité × cible : staging inchangé, production/inconnu refusés -
+
+test('matrice : staging autorise deposit ET promote (comportement inchangé)', () => {
+  for (const capability of MUTATION_CAPABILITIES) {
+    assert.equal(
+      validateUploadMutationTarget(
+        { supabaseUrl: STAGING_URL, projectId: 'gbbsqcscryygqlmqncyv' },
+        capability,
+      ).allowed,
+      true,
+      `staging must allow ${capability}`,
+    );
+    assert.equal(
+      validateUploadMutationTarget({ supabaseUrl: STAGING_URL }, capability).allowed,
+      true,
+      `staging (URL seule) must allow ${capability}`,
+    );
+  }
+});
+
+test('matrice : production refuse deposit ET promote (lecture seule)', () => {
+  for (const capability of MUTATION_CAPABILITIES) {
+    assert.equal(
+      validateUploadMutationTarget({ supabaseUrl: PRODUCTION_URL }, capability).allowed,
+      false,
+      `production must refuse ${capability}`,
+    );
+    assert.equal(
+      validateUploadMutationTarget(
+        { supabaseUrl: PRODUCTION_URL, projectId: 'leakcdbbawzysfqyqsnr' },
+        capability,
+      ).allowed,
+      false,
+      `production (avec projectId) must refuse ${capability}`,
+    );
+  }
+});
+
+test('matrice : cible inconnue, invalide, absente ou contradictoire refusée pour chaque capacité', () => {
+  for (const capability of MUTATION_CAPABILITIES) {
+    for (const input of [
+      {},
+      { supabaseUrl: '   ' },
+      { supabaseUrl: 'not-an-url' },
+      { supabaseUrl: 'https://example.com' },
+      { supabaseUrl: 'https://aaaabbbbccccdddd.supabase.co' },
+      { supabaseUrl: STAGING_URL, projectId: 'leakcdbbawzysfqyqsnr' },
+    ]) {
+      assert.equal(
+        validateUploadMutationTarget(input, capability).allowed,
+        false,
+        `${JSON.stringify(input)} must refuse ${capability} fail-closed`,
+      );
+    }
+  }
+});
+
+test('environnement runtime illisible (hors Vite) : refus fail-closed des deux capacités sans lever', () => {
+  // Sous Node/tsx, import.meta.env est absent : le verdict courant doit
+  // refuser proprement, jamais autoriser ni jeter.
+  for (const capability of MUTATION_CAPABILITIES) {
+    assert.equal(currentUploadMutationVerdict(capability).allowed, false);
+  }
+});
+
+// --- Matrice deposit sans promote : la promotion refuse ----------------------
+
+test('matrice : une cible déposante mais non promouvante est refusée pour la promotion', async () => {
+  // Politique canonique actuelle : aucune cible n'accorde deposit sans
+  // promote. Cette cible hypothétique fige le contrat de capacité : la
+  // promotion interroge « promote », jamais « deposit » — si une telle cible
+  // apparaissait, la promotion resterait refusée avant tout appel moteur.
+  const hypotheticalDepositOnlyTarget = {
+    deposit: { allowed: true },
+    promote: { allowed: false },
+  } as const;
+
+  assert.equal(hypotheticalDepositOnlyTarget.deposit.allowed, true);
 
   await assert.rejects(
-    promoteValidatedCollections(review, trappedEngine),
+    promoteValidatedCollections(
+      syntheticReadyReview(),
+      trappedEngine(),
+      () => hypotheticalDepositOnlyTarget.promote,
+    ),
     new RegExp(UPLOAD_READ_ONLY_TARGET_MESSAGE.slice(0, 30)),
   );
+});
+
+test('promotion avec garde par défaut hors cible autorisée : rejet avant tout appel moteur', async () => {
+  await assert.rejects(
+    promoteValidatedCollections(syntheticReadyReview(), trappedEngine()),
+    new RegExp(UPLOAD_READ_ONLY_TARGET_MESSAGE.slice(0, 30)),
+  );
+});
+
+// --- Comportement réel : processFiles([]) refuse avant tout traitement -------
+
+test('processFiles exécuté sous cible non autorisée : refus structuré avant tout traitement', async () => {
+  const { fileProcessingService } = await processingModulePromise;
+
+  const result = await fileProcessingService.processFiles([]);
+
+  assert.equal(result.success, false);
+  assert.deepEqual(result.errors, [UPLOAD_READ_ONLY_TARGET_MESSAGE]);
+  assert.deepEqual(result.data?.bankReports, []);
+  assert.deepEqual(result.data?.collectionReports, []);
+  assert.equal(result.data?.syncResult, undefined);
+  // Preuve d'absence de traitement : le stub Supabase piégé jette au moindre
+  // accès et n'a pas jeté ; le contrat ci-dessous fige en plus que la garde
+  // précède timeout et heartbeat dans le source.
 });
 
 // --- Contrat : le guard réutilise la politique canonique, sans doublon -------
 
 test('le guard réutilise la politique canonique Daily v2 sans dupliquer les refs projet', () => {
   assert.match(guard, /from '@\/features\/daily-v2\/dailyV2RuntimeTarget'/);
-  assert.match(guard, /validateDailyV2RuntimeTarget\(input, 'deposit'\)/);
-  assert.match(guard, /currentDailyV2RuntimeTargetVerdict\('deposit'\)/);
+  assert.match(guard, /validateDailyV2RuntimeTarget\(input, capability\)/);
+  assert.match(guard, /currentDailyV2RuntimeTargetVerdict\(capability\)/);
+  // La capacité est obligatoire : aucune valeur par défaut, chaque appelant
+  // la déclare (même règle que la garde canonique).
+  assert.match(guard, /capability: UploadMutationCapability,/);
+  assert.doesNotMatch(guard, /capability: UploadMutationCapability = /);
+  // Sous-ensemble mutation uniquement : jamais read/admin.
+  assert.match(guard, /export type UploadMutationCapability = 'deposit' \| 'promote';/);
   // Source unique de vérité : aucune ref projet recopiée dans le guard.
   assert.doesNotMatch(guard, /gbbsqcscryygqlmqncyv/);
   assert.doesNotMatch(guard, /leakcdbbawzysfqyqsnr/);
@@ -138,31 +240,37 @@ test('le guard réutilise la politique canonique Daily v2 sans dupliquer les ref
 
 // --- Contrat : la page /upload est fail-closed en lecture seule --------------
 
-test('la page /upload rend un état lecture seule fail-closed sans interface active', () => {
-  // Garde d'interface calculée depuis la politique canonique.
-  assert.match(page, /const uploadMutationAllowed = isUploadMutationAllowed\(\);/);
+test('la page /upload déclare une capacité par famille d\'actions et reste fail-closed', () => {
+  // Sélection/traitement = deposit ; promotion = promote.
+  assert.match(page, /const canProcessFiles = isUploadMutationAllowed\('deposit'\);/);
+  assert.match(page, /const canPromoteCollections = isUploadMutationAllowed\('promote'\);/);
 
-  // Dropzone jamais active sans capacité de mutation.
-  assert.match(page, /disabled: !uploadMutationAllowed,/);
+  // Dropzone jamais active sans la capacité deposit.
+  assert.match(page, /disabled: !canProcessFiles,/);
 
   // Retour anticipé lecture seule AVANT toute interface active, avec bandeau
   // explicite ; la dropzone n'est rendue que dans la branche autorisée.
   assert.match(
     page,
-    /if \(!uploadMutationAllowed\) \{\s*return \([\s\S]*?Production en lecture seule[\s\S]*?\);\s*\}\s*return \(/,
+    /if \(!canProcessFiles\) \{\s*return \([\s\S]*?Production en lecture seule[\s\S]*?\);\s*\}\s*return \(/,
   );
   const readOnlyReturn = page.indexOf('Production en lecture seule</AlertTitle>');
   const activeDropzone = page.indexOf('{...getRootProps(');
   assert.ok(readOnlyReturn >= 0 && activeDropzone >= 0);
   assert.ok(readOnlyReturn < activeDropzone, 'read-only state must render before the dropzone');
 
-  // Handlers fail-closed (traitement ET promotion), même si un bouton résiduel
-  // était déclenché : trois gardes au total (2 handlers + 1 rendu).
-  const handlerGuards = page.match(
-    /if \(!uploadMutationAllowed\) \{\s*toast\(\{\s*variant: "destructive",\s*title: "Production en lecture seule",\s*description: UPLOAD_READ_ONLY_TARGET_MESSAGE,\s*\}\);\s*return;\s*\}/g,
+  // Handlers fail-closed, chacun sur SA capacité, même si un bouton résiduel
+  // était déclenché.
+  assert.match(
+    page,
+    /if \(!canProcessFiles\) \{\s*toast\(\{\s*variant: "destructive",\s*title: "Production en lecture seule",\s*description: UPLOAD_READ_ONLY_TARGET_MESSAGE,\s*\}\);\s*return;\s*\}/,
   );
-  assert.equal(handlerGuards?.length, 2);
-  assert.equal((page.match(/if \(!uploadMutationAllowed\) \{/g) ?? []).length, 3);
+  assert.match(
+    page,
+    /if \(!canPromoteCollections\) \{\s*toast\(\{\s*variant: "destructive",\s*title: "Production en lecture seule",\s*description: UPLOAD_READ_ONLY_TARGET_MESSAGE,\s*\}\);\s*return;\s*\}/,
+  );
+  assert.equal((page.match(/if \(!canProcessFiles\) \{/g) ?? []).length, 2);
+  assert.equal((page.match(/if \(!canPromoteCollections\) \{/g) ?? []).length, 1);
 });
 
 test('staging : le pipeline d\'import de la page reste strictement inchangé', () => {
@@ -176,21 +284,24 @@ test('staging : le pipeline d\'import de la page reste strictement inchangé', (
 
 // --- Contrat : services fail-closed avant tout travail -----------------------
 
-test('processFiles refuse fail-closed avant timeout, heartbeat et tout traitement', () => {
+test('processFiles exige la capacité deposit avant timeout, heartbeat et tout traitement', () => {
   assert.match(processing, /from '\.\/uploadRuntimeGuard'/);
   assert.match(
     processing,
-    /const uploadGate = currentUploadMutationVerdict\(\);\s*if \(!uploadGate\.allowed\) \{\s*results\.errors\.push\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*return results;\s*\}/,
+    /const uploadGate = currentUploadMutationVerdict\('deposit'\);\s*if \(!uploadGate\.allowed\) \{\s*results\.errors\.push\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*return results;\s*\}/,
   );
-  const gateIndex = processing.indexOf('currentUploadMutationVerdict()');
+  const gateIndex = processing.indexOf("currentUploadMutationVerdict('deposit')");
   const timeoutIndex = processing.indexOf('setTimeout');
   assert.ok(gateIndex >= 0 && timeoutIndex >= 0);
   assert.ok(gateIndex < timeoutIndex, 'the gate must precede the processing timeout setup');
 });
 
-test('promoteValidatedCollections garde une entrée fail-closed par défaut', () => {
+test('promoteValidatedCollections exige la capacité promote par défaut, fail-closed', () => {
   assert.match(promotion, /from '\.\/uploadRuntimeGuard'/);
-  assert.match(promotion, /uploadMutationGate: UploadMutationGate = currentUploadMutationVerdict/);
+  assert.match(
+    promotion,
+    /uploadMutationGate: UploadMutationGate = \(\) => currentUploadMutationVerdict\('promote'\)/,
+  );
   assert.match(
     promotion,
     /if \(!uploadMutationGate\(\)\.allowed\) \{\s*throw new Error\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*\}/,
