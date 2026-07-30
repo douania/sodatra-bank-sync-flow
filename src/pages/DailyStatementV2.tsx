@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, Upload } from 'lucide-react';
@@ -24,6 +24,7 @@ import {
   DailyV2ServiceError,
   getActiveDailyV2CanonicalUnit,
   getDailyV2AccountOpaqueIdentity,
+  getDailyV2MutationsEnabled,
   getCurrentUserDailyV2Roles,
   listDailyV2Accounts,
   listDailyV2AccountEvents,
@@ -74,7 +75,10 @@ import {
 } from '@/features/daily-v2/DailyV2Tables';
 import { invalidateDailyV2, shortId } from '@/features/daily-v2/dailyV2UiUtils';
 import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
-import { currentDailyV2Capabilities } from '@/features/daily-v2/dailyV2RuntimeTarget';
+import {
+  applyDailyV2RuntimeMutationLock,
+  currentDailyV2Capabilities,
+} from '@/features/daily-v2/dailyV2RuntimeTarget';
 
 const PAGE_SIZE = 20;
 const READ_ONLY_TARGET_MESSAGE =
@@ -141,11 +145,46 @@ const DailyStatementV2 = () => {
   // Capacités de la CIBLE déployée (garde d'interface, jamais une barrière de
   // sécurité : Auth, rôles, RLS et gates RPC restent serveur). Chaque action
   // combine le rôle ET la capacité ; une cible read-only n'expose aucune mutation.
-  const capabilities = currentDailyV2Capabilities();
-  const readOnlyTarget = !capabilities.deposit && !capabilities.promote && !capabilities.admin;
+  const targetCapabilities = currentDailyV2Capabilities();
+  const staticReadOnlyTarget =
+    !targetCapabilities.deposit && !targetCapabilities.promote && !targetCapabilities.admin;
+  const runtimeLockQuery = useQuery<boolean>({
+    queryKey: ['daily-v2', 'runtime-mutations-enabled', user?.id],
+    queryFn: getDailyV2MutationsEnabled,
+    enabled: Boolean(user?.id) && targetCapabilities.read && !staticReadOnlyTarget,
+    staleTime: 15 * 1000,
+    refetchInterval: 30 * 1000,
+  });
+  // TanStack Query conserve la dernière donnée réussie après une erreur de
+  // refetch. Neutraliser explicitement cette valeur évite qu'un ancien `true`
+  // maintienne les commandes ouvertes pendant que le verrou est indisponible.
+  const runtimeMutationsEnabled =
+    staticReadOnlyTarget || runtimeLockQuery.isError ? false : runtimeLockQuery.data;
+  const capabilities = applyDailyV2RuntimeMutationLock(
+    targetCapabilities,
+    runtimeMutationsEnabled,
+  );
+  const readOnlyTarget =
+    !capabilities.deposit && !capabilities.promote && !capabilities.admin;
   const canSubmitDeposit = canDeposit && capabilities.deposit;
   const canDecide = isAdmin && capabilities.promote;
   const canAdminister = isAdmin && capabilities.admin;
+  const readOnlyTitle = staticReadOnlyTarget
+    ? 'Production en lecture seule'
+    : runtimeLockQuery.isPending
+      ? 'Vérification du verrou serveur'
+      : runtimeLockQuery.isError
+        ? 'Verrou serveur indisponible'
+        : 'Environnement en lecture seule';
+  const runtimeLockLabel = staticReadOnlyTarget
+    ? 'lecture seule imposée'
+    : runtimeLockQuery.isPending
+      ? 'vérification…'
+      : runtimeLockQuery.isError
+        ? 'indisponible — lecture seule'
+        : runtimeLockQuery.data === true
+          ? 'mutations autorisées'
+          : 'lecture seule';
   const accountsQuery = useQuery<DailyV2AccountRegistryRow[]>({
     queryKey: ['daily-v2', 'accounts', bank, currency, isAdmin],
     queryFn: () => listDailyV2Accounts({ bank, currency, includeInactive: isAdmin }),
@@ -167,12 +206,21 @@ const DailyStatementV2 = () => {
     setDepositResult(null);
   }, []);
 
+  useEffect(() => {
+    if (canSubmitDeposit) return;
+    setFile(null);
+    setReferenceDate('');
+    setBackfillGrantId('');
+    resetPrepared();
+  }, [canSubmitDeposit, resetPrepared]);
+
   const onDrop = useCallback((accepted: File[]) => {
+    if (!canSubmitDeposit) return;
     setFile(accepted[0] ?? null);
     setReferenceDate('');
     setBackfillGrantId('');
     resetPrepared();
-  }, [resetPrepared]);
+  }, [canSubmitDeposit, resetPrepared]);
 
   const dropzone = useDropzone({
     onDrop,
@@ -183,10 +231,12 @@ const DailyStatementV2 = () => {
     },
     multiple: false,
     maxSize: 10 * 1024 * 1024,
+    disabled: !canSubmitDeposit,
   });
 
   const prepareMutation = useMutation<PrepareDailyV2BrowserResult, Error, void>({
     mutationFn: async () => {
+      if (!canSubmitDeposit) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       if (!file) throw new DailyV2ServiceError('Sélectionnez un fichier structuré CSV ou Excel.');
       if (requestedMode === 'backfill' && !isAdmin) {
         throw new DailyV2ServiceError('Le backfill est réservé au rôle admin.');
@@ -419,9 +469,10 @@ const DailyStatementV2 = () => {
       {readOnlyTarget && (
         <Alert>
           <ShieldCheck className="h-4 w-4" />
-          <AlertTitle>Production en lecture seule</AlertTitle>
+          <AlertTitle>{readOnlyTitle}</AlertTitle>
           <AlertDescription>
-            Consultation autorisée. Dépôt, promotion, supersede et administration du registre sont désactivés sur cette cible.
+            Consultation autorisée. Dépôt, promotion, supersede et administration du registre
+            sont désactivés tant que le verrou serveur n’autorise pas explicitement les mutations.
           </AlertDescription>
         </Alert>
       )}
@@ -429,6 +480,7 @@ const DailyStatementV2 = () => {
       <div className="flex flex-wrap gap-2">
         <Badge variant="outline">Session requise</Badge>
         <Badge variant="secondary">Rôles : {rolesQuery.isLoading ? 'chargement…' : roles.join(', ') || 'aucun'}</Badge>
+        <Badge variant="secondary">Verrou serveur : {runtimeLockLabel}</Badge>
       </div>
 
       <Tabs defaultValue="import" className="space-y-4">
@@ -441,7 +493,10 @@ const DailyStatementV2 = () => {
         </TabsList>
 
         <TabsContent value="import" className="space-y-4">
-          {!canDeposit ? <AccessDenied text="Dépôt réservé aux rôles admin et manager." /> : (
+          {!canDeposit ? <AccessDenied text="Dépôt réservé aux rôles admin et manager." /> :
+          !canSubmitDeposit ? (
+            <AccessDenied text="Environnement en lecture seule : import et administration désactivés." />
+          ) : (
             <>
               <Card>
                 <CardHeader>

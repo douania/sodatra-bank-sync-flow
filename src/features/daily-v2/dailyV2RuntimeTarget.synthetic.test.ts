@@ -4,6 +4,7 @@ import {
   DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF,
   DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF,
   DAILY_V2_CAPABILITIES,
+  applyDailyV2RuntimeMutationLock,
   validateDailyV2RuntimeTarget,
   type DailyV2Capability,
 } from './dailyV2RuntimeTarget';
@@ -97,5 +98,46 @@ test('an unknown capability fails closed even on staging', () => {
       'superadmin' as unknown as DailyV2Capability,
     ).allowed,
     false,
+  );
+});
+
+test('the server runtime lock closes every mutation capability but preserves read', () => {
+  const stagingCapabilities = {
+    read: true,
+    deposit: true,
+    promote: true,
+    admin: true,
+  };
+
+  assert.deepEqual(applyDailyV2RuntimeMutationLock(stagingCapabilities, false), {
+    read: true,
+    deposit: false,
+    promote: false,
+    admin: false,
+  });
+  for (const unavailable of [undefined, null]) {
+    assert.deepEqual(applyDailyV2RuntimeMutationLock(stagingCapabilities, unavailable), {
+      read: true,
+      deposit: false,
+      promote: false,
+      admin: false,
+    });
+  }
+  assert.deepEqual(
+    applyDailyV2RuntimeMutationLock(stagingCapabilities, true),
+    stagingCapabilities,
+  );
+});
+
+test('the server lock never widens a statically refused target capability', () => {
+  const productionCapabilities = {
+    read: true,
+    deposit: false,
+    promote: false,
+    admin: false,
+  };
+  assert.deepEqual(
+    applyDailyV2RuntimeMutationLock(productionCapabilities, true),
+    productionCapabilities,
   );
 });

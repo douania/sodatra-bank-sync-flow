@@ -116,3 +116,23 @@ export function currentDailyV2Capabilities(): Record<DailyV2Capability, boolean>
     admin: currentDailyV2RuntimeTargetVerdict('admin').allowed,
   };
 }
+
+/**
+ * Combine la politique statique de cible avec le verrou PostgreSQL.
+ *
+ * Seule la valeur booléenne explicite `true` ouvre les capacités de mutation.
+ * Une réponse absente, invalide ou en erreur reste donc fail-closed, tandis que
+ * la capacité de lecture conserve sa politique statique.
+ */
+export function applyDailyV2RuntimeMutationLock(
+  targetCapabilities: Record<DailyV2Capability, boolean>,
+  mutationsEnabled: boolean | null | undefined,
+): Record<DailyV2Capability, boolean> {
+  const serverAllowsMutations = mutationsEnabled === true;
+  return {
+    read: targetCapabilities.read,
+    deposit: targetCapabilities.deposit && serverAllowsMutations,
+    promote: targetCapabilities.promote && serverAllowsMutations,
+    admin: targetCapabilities.admin && serverAllowsMutations,
+  };
+}

@@ -23,6 +23,10 @@ const migration0U4 = readFileSync(
   'supabase/migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql',
   'utf8',
 );
+const migrationRuntimeLockReadApi = readFileSync(
+  'supabase/migrations/20260730180000_daily_v2_runtime_lock_read_api.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 
 test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
@@ -58,6 +62,34 @@ test('keeps the six historical Daily v2 tables and adds the 0U control tables', 
   ]) {
     assert.match(types, new RegExp(`${table}:`));
   }
+});
+
+test('exposes only a fail-closed read API for the private runtime lock', () => {
+  assert.match(
+    migrationRuntimeLockReadApi,
+    /FUNCTION public\.daily_stmt_mutations_enabled\(\)\s*RETURNS boolean/,
+  );
+  assert.match(migrationRuntimeLockReadApi, /STABLE\s+SECURITY DEFINER/);
+  assert.match(migrationRuntimeLockReadApi, /SET search_path = pg_catalog, pg_temp/);
+  assert.match(
+    migrationRuntimeLockReadApi,
+    /SELECT COALESCE\([\s\S]*daily_v2_private\.runtime_control[\s\S]*false/,
+  );
+  assert.match(
+    migrationRuntimeLockReadApi,
+    /REVOKE ALL ON FUNCTION public\.daily_stmt_mutations_enabled\(\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+  assert.match(
+    migrationRuntimeLockReadApi,
+    /GRANT EXECUTE ON FUNCTION public\.daily_stmt_mutations_enabled\(\)[\s\S]*TO authenticated, service_role/,
+  );
+  assert.doesNotMatch(migrationRuntimeLockReadApi, /\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i);
+  assert.doesNotMatch(migrationRuntimeLockReadApi, /mutations_enabled\s*=/);
+  assert.match(service, /\.rpc\('daily_stmt_mutations_enabled'\)/);
+  assert.match(types, /daily_stmt_mutations_enabled:/);
+  assert.match(e2eRunner, /MIGRATION_RUNTIME_LOCK_READ_API=/);
+  assert.match(e2eRunner, /18_runtime_lock_read_api\.sql/);
+  assert.match(e2eRunner, /18a_runtime_lock_read_api_enabled\.sql/);
 });
 
 test('keeps the 0U migration additive and makes the historical ingest core internal', () => {
@@ -186,6 +218,7 @@ test('gives every Daily v2 network operation an explicit capability', () => {
   const runtimeTarget = readFileSync('src/features/daily-v2/dailyV2RuntimeTarget.ts', 'utf8');
   const CAPABILITY_BY_OPERATION: Record<string, 'read' | 'deposit' | 'promote' | 'admin'> = {
     getCurrentUserDailyV2Roles: 'read',
+    getDailyV2MutationsEnabled: 'read',
     listDailyV2Accounts: 'read',
     listDailyV2BackfillGrants: 'read',
     listDailyV2AccountEvents: 'read',
@@ -247,6 +280,20 @@ test('keeps production mutations fail closed in the Daily v2 UI', () => {
   assert.match(page, /const canSubmitDeposit = canDeposit && capabilities\.deposit/);
   assert.match(page, /const canDecide = isAdmin && capabilities\.promote/);
   assert.match(page, /const canAdminister = isAdmin && capabilities\.admin/);
+  assert.match(page, /queryFn: getDailyV2MutationsEnabled/);
+  assert.match(
+    page,
+    /const runtimeMutationsEnabled =\s*staticReadOnlyTarget \|\| runtimeLockQuery\.isError\s*\? false\s*: runtimeLockQuery\.data/,
+  );
+  assert.match(
+    page,
+    /const capabilities = applyDailyV2RuntimeMutationLock\(\s*targetCapabilities,\s*runtimeMutationsEnabled/,
+  );
+  assert.match(page, /disabled: !canSubmitDeposit/);
+  assert.match(
+    page,
+    /if \(!canSubmitDeposit\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
+  );
 
   // Handlers fail closed, y compris si un bouton résiduel était déclenché.
   for (const guarded of [
@@ -265,6 +312,12 @@ test('keeps production mutations fail closed in the Daily v2 UI', () => {
   assert.match(page, /\{canAdminister && \(/);
   assert.match(page, /if \(!canDecide\) \{\s*toast\.error\(READ_ONLY_TARGET_MESSAGE\);\s*return;/);
   assert.match(page, /Production en lecture seule/);
+  assert.match(page, /Environnement en lecture seule/);
+  assert.match(page, /Verrou serveur : \{runtimeLockLabel\}/);
+  assert.match(
+    page,
+    /!canSubmitDeposit \? \(\s*<AccessDenied text="Environnement en lecture seule : import et administration désactivés\."/,
+  );
 
   // Les lectures par rôle restent inchangées.
   assert.match(page, /enabled: canReadStaging/);
@@ -289,7 +342,8 @@ test('separates staging line reading from decision actions', () => {
 
   // La page transmet la règle de rôle pour les lignes et rôle × capacité pour
   // les décisions : en production read-only, Lignes reste rendu, jamais
-  // Promouvoir ni Supersede ; en staging admin, les deux restent disponibles.
+  // Promouvoir ni Supersede ; en staging admin, ils ne reviennent que lorsque
+  // le verrou serveur autorise explicitement les mutations.
   assert.match(page, /<StagingTable rows=\{stagingQuery\.data\?\.rows \?\? \[\]\} isAdmin=\{isAdmin\} canDecide=\{canDecide\}/);
 });
 

@@ -341,6 +341,10 @@ export type DailyV2Database = {
     };
     Views: { [_ in never]: never };
     Functions: {
+      daily_stmt_mutations_enabled: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
       pre_ingest_daily_statement_units: {
         Args: {
           p_attempt: DailyV2RpcAttempt;

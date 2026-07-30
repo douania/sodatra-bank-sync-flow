@@ -1782,6 +1782,10 @@ export type Database = {
         }
         Returns: string
       }
+      daily_stmt_mutations_enabled: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
       daily_stmt_parse_amount_strict: {
         Args: { p_value: string }
         Returns: number
