@@ -116,6 +116,7 @@ jobs:
           npm run test:daily-v2-reporting
           npm run test:auth-signin
           npm run test:bdk-pdf
+          npm run test:upload-guard
 
       - name: Build
         run: npm run build

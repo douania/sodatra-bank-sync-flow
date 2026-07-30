@@ -1,4 +1,9 @@
 import { aggregateBatchSyncResults } from './syncResultAggregator';
+import {
+  currentUploadMutationVerdict,
+  UPLOAD_READ_ONLY_TARGET_MESSAGE,
+  type UploadMutationGate,
+} from './uploadRuntimeGuard';
 import type { CollectionReport } from '@/types/banking';
 import type {
   CollectionImportReview,
@@ -170,8 +175,18 @@ async function createDefaultCollectionSyncEngine(): Promise<CollectionSyncEngine
  */
 export async function promoteValidatedCollections(
   review: CollectionImportReview,
-  engine?: CollectionSyncEngine
+  engine?: CollectionSyncEngine,
+  // ⭐ 0Z_AM : garde injectable comme le moteur de sync — les tests synthétiques
+  // injectent une garde explicite ; le défaut reste canonique et fail-closed.
+  uploadMutationGate: UploadMutationGate = () => currentUploadMutationVerdict('promote')
 ): Promise<CollectionPromotionResult> {
+  // ⭐ 0Z_AM : refus fail-closed AVANT toute analyse ou écriture — la cible
+  // courante doit autoriser la capacité promote (production = lecture seule).
+  // Une cible qui saurait déposer sans promouvoir serait refusée ici.
+  if (!uploadMutationGate().allowed) {
+    throw new Error(UPLOAD_READ_ONLY_TARGET_MESSAGE);
+  }
+
   const gate = assertPromotionAllowed(review);
   if (!gate.allowed) {
     throw new Error(gate.reason ?? 'Promotion non autorisée.');

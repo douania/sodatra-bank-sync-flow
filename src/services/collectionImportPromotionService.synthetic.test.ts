@@ -19,6 +19,12 @@ import type { CollectionComparison } from './intelligentSyncService';
 // une simulation en mémoire qui reproduit la sémantique d'idempotence existante
 // SELECT-then-INSERT/UPDATE sur la clé (excel_filename, excel_source_row).
 
+// ⭐ 0Z_AM : les tests de LOGIQUE de promotion injectent une garde de cible
+// autorisante (équivalent staging). La garde par défaut — canonique et
+// fail-closed hors cible autorisée — est couverte par
+// uploadRuntimeGuard.synthetic.test.ts.
+const allowMutationGate = () => ({ allowed: true });
+
 function syntheticCollection(sourceRow: number, overrides: Partial<CollectionReport> = {}): CollectionReport {
   return {
     reportDate: '2026-06-05',
@@ -126,7 +132,7 @@ test('promotion sans review prête : refusée, aucun appel au moteur de sync', a
 
   const notReady = syntheticReview([{ sourceRow: 2, selected: true }], { reviewReady: false });
   assert.equal(assertPromotionAllowed(notReady).allowed, false);
-  await assert.rejects(promoteValidatedCollections(notReady, engine), /review n'est pas prête/i);
+  await assert.rejects(promoteValidatedCollections(notReady, engine, allowMutationGate), /review n'est pas prête/i);
 
   assert.equal(calls.analyze, 0);
   assert.equal(calls.sync, 0);
@@ -144,7 +150,7 @@ test('promotion avec zéro ligne validée : refusée, aucune écriture', async (
   assert.equal(gate.allowed, false);
   assert.match(gate.reason ?? '', /Aucune ligne validée/);
 
-  await assert.rejects(promoteValidatedCollections(review, engine), /Aucune ligne validée/);
+  await assert.rejects(promoteValidatedCollections(review, engine, allowMutationGate), /Aucune ligne validée/);
   assert.equal(calls.analyze, 0);
   assert.equal(calls.sync, 0);
   assert.equal(store.size, 0);
@@ -162,7 +168,7 @@ test('promotion avec zéro ligne acceptée (fichier entièrement rejeté) : refu
   assert.equal(gate.allowed, false);
   assert.match(gate.reason ?? '', /Aucune ligne acceptée/);
 
-  await assert.rejects(promoteValidatedCollections(review, engine));
+  await assert.rejects(promoteValidatedCollections(review, engine, allowMutationGate));
   assert.equal(calls.sync, 0);
 });
 
@@ -180,7 +186,7 @@ test('promotion des lignes validées uniquement : les lignes non cochées ne son
   assert.equal(validated.length, 2);
   assert.deepEqual(validated.map(c => c.excelSourceRow), [2, 4]);
 
-  const promotion = await promoteValidatedCollections(review, engine);
+  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
 
   assert.equal(promotion.promoted, true);
   assert.equal(promotion.validatedCount, 2);
@@ -204,12 +210,12 @@ test('réimport du même fichier/ligne : update idempotent via (excel_filename, 
     { sourceRow: 3, selected: true },
   ]);
 
-  const firstRun = await promoteValidatedCollections(review, engine);
+  const firstRun = await promoteValidatedCollections(review, engine, allowMutationGate);
   assert.equal(firstRun.syncResult.new_collections, 2);
   assert.equal(firstRun.syncResult.idempotent_updates, 0);
   assert.equal(store.size, 2);
 
-  const secondRun = await promoteValidatedCollections(review, engine);
+  const secondRun = await promoteValidatedCollections(review, engine, allowMutationGate);
   assert.equal(secondRun.syncResult.new_collections, 0);
   assert.equal(secondRun.syncResult.idempotent_updates, 2);
   // Pas de doublon : la "base" synthétique contient toujours exactement 2 lignes.
@@ -227,7 +233,7 @@ test('échec d\'un lot : erreur visible dans syncResult.errors, les autres lots 
   }));
   const review = syntheticReview(rows);
 
-  const promotion = await promoteValidatedCollections(review, engine);
+  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
 
   assert.equal(promotion.promoted, true);
   assert.equal(promotion.validatedCount, 120);
@@ -271,7 +277,7 @@ test('les erreurs collection remontées par le moteur restent visibles après ag
     { sourceRow: 3, selected: true },
   ]);
 
-  const promotion = await promoteValidatedCollections(review, failingEngine);
+  const promotion = await promoteValidatedCollections(review, failingEngine, allowMutationGate);
 
   assert.equal(promotion.syncResult.errors.length, 1);
   assert.equal(promotion.syncResult.errors[0].collection.clientCode, 'CLIENT_SYN_2');
@@ -358,7 +364,7 @@ test('0C décalage massif : insertion au milieu simulée -> promotion bloquée, 
   const snapshot = new Map(store);
 
   await assert.rejects(
-    promoteValidatedCollections(review, engine),
+    promoteValidatedCollections(review, engine, allowMutationGate),
     /Promotion bloquée : possible décalage massif des lignes Collection/
   );
 
@@ -373,7 +379,7 @@ test('0C décalage : réimport strictement identique -> aucune fausse alerte, id
   );
 
   const { engine, calls } = createFakeSyncEngineWithExistingBase(existing);
-  const promotion = await promoteValidatedCollections(review, engine);
+  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
 
   assert.equal(calls.sync, 1);
   assert.equal(promotion.syncResult.idempotent_updates, 10);
@@ -399,7 +405,7 @@ test('0C décalage : des enrichissements non identitaires ne déclenchent jamais
   );
 
   const { engine, calls } = createFakeSyncEngineWithExistingBase(existing);
-  const promotion = await promoteValidatedCollections(review, engine);
+  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
 
   assert.equal(calls.sync, 1);
   assert.equal(promotion.syncResult.errors.length, 0);
