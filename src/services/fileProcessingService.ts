@@ -14,6 +14,10 @@ import {
   processInternalBookRuntimeFile,
 } from './internalBookRuntimeProcessingService';
 import { aggregateBatchSyncResults } from './syncResultAggregator';
+import {
+  currentUploadMutationVerdict,
+  UPLOAD_READ_ONLY_TARGET_MESSAGE,
+} from './uploadRuntimeGuard';
 export type { ProcessingResult } from '@/types/processing';
 
 export class FileProcessingService {
@@ -29,6 +33,14 @@ export class FileProcessingService {
       },
       errors: []
     };
+
+    // ⭐ 0Z_AM : refus fail-closed AVANT timeout, heartbeat et tout traitement —
+    // la cible courante doit autoriser la mutation d'import (production = lecture seule).
+    const uploadGate = currentUploadMutationVerdict();
+    if (!uploadGate.allowed) {
+      results.errors.push(UPLOAD_READ_ONLY_TARGET_MESSAGE);
+      return results;
+    }
 
     // ⭐ TIMEOUT DE SÉCURITÉ ÉTENDU - 15 minutes au lieu de 5
     const processingTimeout = setTimeout(() => {

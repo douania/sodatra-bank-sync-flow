@@ -3,8 +3,8 @@ import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge'; 
-import { Alert, AlertDescription } from '@/components/ui/alert'; 
-import { FileSpreadsheet, FileText, Upload, Building2, X, AlertTriangle, CheckCircle, FileUp, ArrowRight } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { FileSpreadsheet, FileText, Upload, Building2, X, AlertTriangle, CheckCircle, FileUp, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { fileProcessingService, type ProcessingResult } from '@/services/fileProcessingService';
 import { progressService } from '@/services/progressService';
@@ -22,6 +22,10 @@ import {
   promoteValidatedCollections,
 } from '@/services/collectionImportPromotionService';
 import type { CollectionImportReview } from '@/types/processing';
+import {
+  isUploadMutationAllowed,
+  UPLOAD_READ_ONLY_TARGET_MESSAGE,
+} from '@/services/uploadRuntimeGuard';
 
 const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -35,6 +39,10 @@ const FileUpload = () => {
   const [promoting, setPromoting] = useState(false);
   const [promotionResult, setPromotionResult] = useState<ProcessingResult | null>(null);
   const { toast } = useToast();
+  // ⭐ 0Z_AM : garde d'interface production read-only — réutilise la politique
+  // canonique cible × capacité (production : read uniquement, fail-closed).
+  // Jamais une barrière de sécurité : Auth, rôles, RLS et grants restent serveur.
+  const uploadMutationAllowed = isUploadMutationAllowed();
 
   // ⭐ PACK-C.1 : toute modification de la liste des fichiers invalide la review,
   // la promotion et les résultats précédents — sinon l'UI afficherait un staging
@@ -78,6 +86,9 @@ const FileUpload = () => {
   
   const { getRootProps, getInputProps } = useDropzone({
     onDrop,
+    // ⭐ 0Z_AM : ceinture et bretelles — la dropzone n'est jamais rendue en
+    // read-only (retour anticipé ci-dessous), et reste désactivée si montée.
+    disabled: !uploadMutationAllowed,
     accept: {
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -146,6 +157,16 @@ const FileUpload = () => {
   };
 
   const handleSubmit = async () => {
+    // ⭐ 0Z_AM : fail-closed même si un bouton résiduel était déclenché.
+    if (!uploadMutationAllowed) {
+      toast({
+        variant: "destructive",
+        title: "Production en lecture seule",
+        description: UPLOAD_READ_ONLY_TARGET_MESSAGE,
+      });
+      return;
+    }
+
     setProcessing(true);
     setProcessingStartTime(Date.now());
     setProcessingResults(null);
@@ -215,6 +236,16 @@ const FileUpload = () => {
   // ⭐ PACK-C : promotion explicite des lignes validées — seul point d'écriture DB
   // du flux Collection Report.
   const handlePromote = async (reviewWithSelection: CollectionImportReview) => {
+    // ⭐ 0Z_AM : fail-closed même si un bouton résiduel était déclenché.
+    if (!uploadMutationAllowed) {
+      toast({
+        variant: "destructive",
+        title: "Production en lecture seule",
+        description: UPLOAD_READ_ONLY_TARGET_MESSAGE,
+      });
+      return;
+    }
+
     const gate = assertPromotionAllowed(reviewWithSelection);
     if (!gate.allowed) {
       toast({
@@ -304,6 +335,29 @@ const FileUpload = () => {
     }
     return 'bg-gray-100 text-gray-800';
   };
+
+  // ⭐ 0Z_AM : production read-only — aucun élément d'import actif n'est rendu
+  // (ni dropzone, ni sélecteur, ni bouton de traitement, ni panneau de promotion).
+  if (!uploadMutationAllowed) {
+    return (
+      <div className="container mx-auto py-10">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Importation des Données</h1>
+          <p className="text-gray-600 mt-2">
+            Import de fichiers indisponible sur cette cible.
+          </p>
+        </div>
+        <Alert>
+          <ShieldCheck className="h-4 w-4" />
+          <AlertTitle>Production en lecture seule</AlertTitle>
+          <AlertDescription>
+            {UPLOAD_READ_ONLY_TARGET_MESSAGE} Consultation des données uniquement ;
+            toute mutation exige un GO CTO distinct sur une cible autorisée.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto py-10">
