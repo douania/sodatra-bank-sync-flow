@@ -10,7 +10,9 @@ correctif forward-only 0U4
 de vie provisional 0Z
 `20260728000000_daily_v2_provisional_lifecycle_0z.sql`, puis la garde serveur
 fail-closed
-`20260730170000_daily_v2_server_readonly_guard.sql`.
+`20260730170000_daily_v2_server_readonly_guard.sql`, puis son API booléenne
+read-only
+`20260730180000_daily_v2_runtime_lock_read_api.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -66,9 +68,13 @@ $PSQL --single-transaction -f ../../migrations/20260715010000_daily_v2_historica
 $PSQL --single-transaction -f ../../migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql
 $PSQL --single-transaction -f ../../migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql
 $PSQL --single-transaction -f ../../migrations/20260730170000_daily_v2_server_readonly_guard.sql
+$PSQL --single-transaction -f ../../migrations/20260730180000_daily_v2_runtime_lock_read_api.sql
+$PSQL -f 18_runtime_lock_read_api.sql
 $PSQL -f 17a_server_readonly_guard_pre.sql
+$PSQL -f 18a_runtime_lock_read_api_enabled.sql
 $PSQL -f 16_provisional_lifecycle_0z.sql
 $PSQL -f 17b_server_readonly_guard_post.sql
+$PSQL -f 18_runtime_lock_read_api.sql
 
 docker rm -f poc0h-pg   # destruction de la base jetable
 ```
@@ -111,12 +117,19 @@ partielle, l'append-only du journal et le comportement fail-closed si le
 singleton manque. Cette activation locale ne vaut jamais autorisation staging
 ou production.
 
+L'API read-only est vérifiée avant activation, pendant l'activation locale
+jetable, puis après le retour à `false`. Les tests prouvent qu'elle reflète
+dynamiquement le singleton sans accorder au frontend un accès direct au schéma
+privé ni exposer de setter.
+
 Fichiers : `e2e0r_generate_payloads.ts`,
 `25_e2e0r_historical_adoption_seed.sql`,
 `26_e2e0r_historical_adoption_assert.sql`,
 `16_provisional_lifecycle_0z.sql`,
 `17a_server_readonly_guard_pre.sql`,
 `17b_server_readonly_guard_post.sql`,
+`18_runtime_lock_read_api.sql`,
+`18a_runtime_lock_read_api_enabled.sql`,
 `27_provisional_concurrency_setup_0z.sql`,
 `28a_provisional_concurrency_session_a_0z.sql`,
 `28b_provisional_concurrency_session_b_0z.sql`,

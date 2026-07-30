@@ -147,6 +147,22 @@ export async function getCurrentUserDailyV2Roles(): Promise<DailyV2AppRole[]> {
   );
 }
 
+export async function getDailyV2MutationsEnabled(): Promise<boolean> {
+  assertAuthorizedDailyV2Target('read');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('daily_stmt_mutations_enabled');
+  if (error) throw toSafeError(error, 'Lecture du verrou Daily v2 impossible.');
+
+  const parsed = z.boolean().safeParse(data);
+  if (!parsed.success) {
+    throw new DailyV2ServiceError(
+      'Réponse du verrou Daily v2 invalide (fail-closed).',
+      'RUNTIME_LOCK_RESPONSE_INVALID',
+    );
+  }
+  return parsed.data;
+}
+
 export async function listDailyV2Accounts(input: {
   bank?: string;
   currency?: string;
