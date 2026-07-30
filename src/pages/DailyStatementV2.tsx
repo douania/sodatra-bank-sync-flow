@@ -155,9 +155,14 @@ const DailyStatementV2 = () => {
     staleTime: 15 * 1000,
     refetchInterval: 30 * 1000,
   });
+  // TanStack Query conserve la dernière donnée réussie après une erreur de
+  // refetch. Neutraliser explicitement cette valeur évite qu'un ancien `true`
+  // maintienne les commandes ouvertes pendant que le verrou est indisponible.
+  const runtimeMutationsEnabled =
+    staticReadOnlyTarget || runtimeLockQuery.isError ? false : runtimeLockQuery.data;
   const capabilities = applyDailyV2RuntimeMutationLock(
     targetCapabilities,
-    staticReadOnlyTarget ? false : runtimeLockQuery.data,
+    runtimeMutationsEnabled,
   );
   const readOnlyTarget =
     !capabilities.deposit && !capabilities.promote && !capabilities.admin;

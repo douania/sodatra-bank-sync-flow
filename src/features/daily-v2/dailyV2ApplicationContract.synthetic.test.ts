@@ -283,7 +283,11 @@ test('keeps production mutations fail closed in the Daily v2 UI', () => {
   assert.match(page, /queryFn: getDailyV2MutationsEnabled/);
   assert.match(
     page,
-    /const capabilities = applyDailyV2RuntimeMutationLock\([\s\S]*runtimeLockQuery\.data/,
+    /const runtimeMutationsEnabled =\s*staticReadOnlyTarget \|\| runtimeLockQuery\.isError\s*\? false\s*: runtimeLockQuery\.data/,
+  );
+  assert.match(
+    page,
+    /const capabilities = applyDailyV2RuntimeMutationLock\(\s*targetCapabilities,\s*runtimeMutationsEnabled/,
   );
   assert.match(page, /disabled: !canSubmitDeposit/);
   assert.match(
