@@ -32,6 +32,7 @@ MIGRATION_0U="$REPO_ROOT/supabase/migrations/20260715000000_daily_v2_account_reg
 MIGRATION_0U3="$REPO_ROOT/supabase/migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql"
 MIGRATION_0U4="$REPO_ROOT/supabase/migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql"
 MIGRATION_0Z="$REPO_ROOT/supabase/migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql"
+MIGRATION_SERVER_READONLY="$REPO_ROOT/supabase/migrations/20260730170000_daily_v2_server_readonly_guard.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -75,6 +76,7 @@ command -v psql >/dev/null 2>&1 || { echo "TEST_FAILED: psql indisponible"; exit
 [ -f "$MIGRATION_0U3" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U3"; exit 1; }
 [ -f "$MIGRATION_0U4" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U4"; exit 1; }
 [ -f "$MIGRATION_0Z" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0Z"; exit 1; }
+[ -f "$MIGRATION_SERVER_READONLY" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_SERVER_READONLY"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -146,8 +148,10 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U3" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0U4" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0Z" >/dev/null
+"${PSQL[@]}" --single-transaction < "$MIGRATION_SERVER_READONLY" >/dev/null
+"${PSQL[@]}" < "$SCRIPT_DIR/17a_server_readonly_guard_pre.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/26_e2e0r_historical_adoption_assert.sql"
-echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z appliquees"
+echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""
@@ -174,6 +178,11 @@ sleep 2
 "${PSQL[@]}" < "$SCRIPT_DIR/28b_provisional_concurrency_session_b_0z.sql"
 wait "$ZC_A_PID"
 "${PSQL[@]}" < "$SCRIPT_DIR/29_provisional_concurrency_asserts_0z.sql"
+
+# --- 4d. Retour fail-closed apres toutes les mutations synthetiques -----------
+echo ""
+echo "--- [4d] garde serveur : retour lecture seule et refus post-suite"
+"${PSQL[@]}" < "$SCRIPT_DIR/17b_server_readonly_guard_post.sql"
 
 # --- 5. Extraction des lignes canonical réelles ------------------------------
 echo ""

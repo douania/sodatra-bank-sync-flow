@@ -8,7 +8,9 @@ puis le pont d'adoption historique 0U3
 correctif forward-only 0U4
 `20260716000000_daily_v2_legacy_fingerprint_compatibility.sql`, puis le cycle
 de vie provisional 0Z
-`20260728000000_daily_v2_provisional_lifecycle_0z.sql`.
+`20260728000000_daily_v2_provisional_lifecycle_0z.sql`, puis la garde serveur
+fail-closed
+`20260730170000_daily_v2_server_readonly_guard.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -63,7 +65,10 @@ $PSQL --single-transaction -f ../../migrations/20260715000000_daily_v2_account_r
 $PSQL --single-transaction -f ../../migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql
 $PSQL --single-transaction -f ../../migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql
 $PSQL --single-transaction -f ../../migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql
+$PSQL --single-transaction -f ../../migrations/20260730170000_daily_v2_server_readonly_guard.sql
+$PSQL -f 17a_server_readonly_guard_pre.sql
 $PSQL -f 16_provisional_lifecycle_0z.sql
+$PSQL -f 17b_server_readonly_guard_post.sql
 
 docker rm -f poc0h-pg   # destruction de la base jetable
 ```
@@ -97,10 +102,21 @@ chronométré, unicité de la provisional vivante et audit vérifiés) →
 extraction des lignes canonical → reporting 0O via les fonctions
 pures réelles → **destruction du conteneur** (trap, y compris en cas d'échec).
 
+La garde serveur est appliquée avant les scénarios mutateurs :
+`17a_server_readonly_guard_pre.sql` vérifie l'état initial fail-closed puis
+active uniquement la base Docker jetable avec une raison auditée. Après les
+suites E2E et concurrence, `17b_server_readonly_guard_post.sql` restaure
+`mutations_enabled = false`, vérifie le refus RPC, l'absence d'écriture
+partielle, l'append-only du journal et le comportement fail-closed si le
+singleton manque. Cette activation locale ne vaut jamais autorisation staging
+ou production.
+
 Fichiers : `e2e0r_generate_payloads.ts`,
 `25_e2e0r_historical_adoption_seed.sql`,
 `26_e2e0r_historical_adoption_assert.sql`,
 `16_provisional_lifecycle_0z.sql`,
+`17a_server_readonly_guard_pre.sql`,
+`17b_server_readonly_guard_post.sql`,
 `27_provisional_concurrency_setup_0z.sql`,
 `28a_provisional_concurrency_session_a_0z.sql`,
 `28b_provisional_concurrency_session_b_0z.sql`,
