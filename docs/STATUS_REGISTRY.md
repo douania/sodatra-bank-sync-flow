@@ -15,6 +15,59 @@
 
 ---
 
+## SEC-05 — GraphQL et grants anon fail-closed
+
+**Statut : IN_REVIEW — migration candidate (2026-07-31)**
+
+L'audit production read-only a confirmé `pg_graphql` actif, 13 tables métier
+historiques exposées dans le schéma GraphQL anonyme par leurs grants, et
+`clean_client_name(text,text)` générée comme mutation. Aucun consommateur
+GraphQL n'existe dans le frontend ou les services versionnés ; le runtime
+applicatif utilise Supabase JS/PostgREST.
+
+La migration candidate
+`20260731120000_sec_05_graphql_and_anon_grants.sql` supprime l'extension sans
+`CASCADE`, retire tous les privilèges `PUBLIC`/`anon` sur les 13 tables et sur
+la fonction historique, puis ferme les default privileges `public` futurs pour
+`anon`. Les grants `authenticated`/`service_role` et la RLS ne sont pas
+modifiés. Le replay full-chain contrôle aussi leur préservation et crée des
+objets synthétiques temporaires pour tester les default privileges.
+
+La révocation du défaut natif `EXECUTE` de `PUBLIC` sur les futures fonctions
+créées par `postgres` est nécessairement globale à tous les schémas : une
+révocation limitée à `public` n'annule pas ce privilège global. Les expositions
+futures doivent donc recevoir un `GRANT` explicite.
+
+**Impact attendu** : `/graphql/v1` devient indisponible pour tous les rôles ;
+les appels REST/RPC anonymes vers ce périmètre sont refusés au niveau grants,
+avant la RLS. Les parcours authentifiés existants restent inchangés.
+
+**Rollback borné** : sous GO d'environnement séparé, réinstaller uniquement
+`pg_graphql` dans son schéma `graphql` si un consommateur GraphQL non inventorié
+est découvert. Ne pas rétablir les grants `anon` historiques sans décision CTO
+et matrice d'accès dédiée. Ne pas restaurer le défaut global `EXECUTE TO PUBLIC`
+sans décision sécurité séparée : le rollback GraphQL n'en dépend pas.
+
+**Validation locale** : replay full-chain PostgreSQL 15 jetable vert, 36/36
+migrations au ledger, RLS/policies historiques vertes, assertions SEC-05 vertes
+et teardown confirmé (`ALL_FULL_CHAIN_PASS`). La suite prouve l'absence de
+privilèges anon hérités de `PUBLIC`, la préservation des grants CRUD
+`authenticated` historiques et la fermeture des futurs tables, séquences et
+fonctions `public`.
+
+**Limite de preuve** : l'image locale `postgres:15-alpine` ne fournit pas
+`pg_graphql`. Le replay prouve la syntaxe de la migration et l'absence finale,
+mais pas le retrait d'une extension réellement installée ; cette vérification
+est réservée au staging Supabase sous GO d'environnement séparé.
+
+**Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
+
+**Avant clôture** : draft PR, puis apply staging et contrôles
+REST/GraphQL/auth sous GO séparé. Aucun apply Supabase live n'appartient à ce
+lot d'implémentation Git.
+
+---
+
 ## DAILY-V2-0U — Account fingerprint et visibilité review
 
 **Statut : IN_REVIEW — DRAFT_PR_96_0U4 (2026-07-16)**

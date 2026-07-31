@@ -195,6 +195,17 @@ BEGIN
   END LOOP;
   RAISE NOTICE 'OK: RPC v2 exposees a authenticated, fermees a anon';
 
+  -- 7.8bis API read-only du verrou runtime : exposee a authenticated, jamais
+  -- a anon. Elle est volontairement exclue de la boucle des helpers internes.
+  IF NOT has_function_privilege(
+    'authenticated', 'public.daily_stmt_mutations_enabled()'::regprocedure, 'EXECUTE'
+  ) OR has_function_privilege(
+    'anon', 'public.daily_stmt_mutations_enabled()'::regprocedure, 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: privileges daily_stmt_mutations_enabled() non conformes';
+  END IF;
+  RAISE NOTICE 'OK: API read-only du verrou exposee a authenticated seulement';
+
   -- 7.9 helpers v2 verrouilles pour anon/authenticated
   FOR r IN
     SELECT p.oid::regprocedure AS sig
@@ -202,6 +213,7 @@ BEGIN
     JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public'
       AND p.proname LIKE 'daily\_stmt\_%'
+      AND p.proname <> 'daily_stmt_mutations_enabled'
   LOOP
     IF has_function_privilege('anon', r.sig, 'EXECUTE')
        OR has_function_privilege('authenticated', r.sig, 'EXECUTE') THEN
@@ -209,8 +221,117 @@ BEGIN
     END IF;
   END LOOP;
   RAISE NOTICE 'OK: helpers daily_stmt_%% verrouilles';
+
+  -- 7.10 SEC-05 : extension GraphQL absente
+  PERFORM 1 FROM pg_extension WHERE extname = 'pg_graphql';
+  IF FOUND THEN
+    RAISE EXCEPTION 'TEST_FAILED: extension pg_graphql encore installee';
+  END IF;
+  RAISE NOTICE 'OK: pg_graphql absent';
+
+  -- 7.11 SEC-05 : aucun privilege anon sur les 13 tables historiques. Les
+  -- fonctions has_* incluent les privileges herites de PUBLIC.
+  FOR r IN
+    SELECT unnest(ARRAY[
+      'public.bank_audit_log',
+      'public.bank_evolution_tracking',
+      'public.bank_facilities',
+      'public.bank_reports',
+      'public.client_reconciliation',
+      'public.collection_report',
+      'public.deposits_not_cleared',
+      'public.fund_position',
+      'public.fund_position_detail',
+      'public.fund_position_hold',
+      'public.impayes',
+      'public.universal_bank_reports',
+      'public.user_roles'
+    ])::regclass AS tbl
+  LOOP
+    IF has_table_privilege(
+      'anon', r.tbl,
+      'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+    ) THEN
+      RAISE EXCEPTION 'TEST_FAILED: anon conserve un privilege sur %', r.tbl;
+    END IF;
+
+    IF NOT (
+      has_table_privilege('authenticated', r.tbl, 'SELECT')
+      AND has_table_privilege('authenticated', r.tbl, 'INSERT')
+      AND has_table_privilege('authenticated', r.tbl, 'UPDATE')
+      AND has_table_privilege('authenticated', r.tbl, 'DELETE')
+    ) THEN
+      RAISE EXCEPTION 'TEST_FAILED: grants authenticated alteres sur %', r.tbl;
+    END IF;
+
+    IF NOT (
+      has_table_privilege('service_role', r.tbl, 'SELECT')
+      AND has_table_privilege('service_role', r.tbl, 'INSERT')
+      AND has_table_privilege('service_role', r.tbl, 'UPDATE')
+      AND has_table_privilege('service_role', r.tbl, 'DELETE')
+    ) THEN
+      RAISE EXCEPTION 'TEST_FAILED: grants service_role alteres sur %', r.tbl;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'OK: 13 tables fermees a anon, grants authenticated/service_role preserves';
+
+  -- 7.12 SEC-05 : helper historique non executable par anon/PUBLIC, sans
+  -- retirer le grant authenticated existant.
+  IF has_function_privilege(
+    'anon', 'public.clean_client_name(text,text)'::regprocedure, 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: anon peut executer clean_client_name(text,text)';
+  END IF;
+  IF NOT has_function_privilege(
+    'authenticated', 'public.clean_client_name(text,text)'::regprocedure, 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: grant authenticated retire de clean_client_name(text,text)';
+  END IF;
+  IF NOT has_function_privilege(
+    'service_role', 'public.clean_client_name(text,text)'::regprocedure, 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: grant service_role retire de clean_client_name(text,text)';
+  END IF;
+  RAISE NOTICE 'OK: clean_client_name fermee a anon, grants auth/service preserves';
 END
 $$;
+
+-- 7.13 SEC-05 : preuve dynamique des default privileges. Ces objets sont
+-- exclusivement synthetiques et supprimes avant la fin du test.
+CREATE TABLE public.sec05_default_table_probe (id bigint PRIMARY KEY);
+CREATE SEQUENCE public.sec05_default_sequence_probe;
+CREATE FUNCTION public.sec05_default_function_probe()
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS 'SELECT true';
+
+DO $$
+BEGIN
+  IF has_table_privilege(
+    'anon', 'public.sec05_default_table_probe',
+    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: future table public accessible a anon';
+  END IF;
+  IF has_sequence_privilege(
+    'anon', 'public.sec05_default_sequence_probe', 'USAGE, SELECT, UPDATE'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: future sequence public accessible a anon';
+  END IF;
+  IF has_function_privilege(
+    'anon', 'public.sec05_default_function_probe()'::regprocedure, 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'TEST_FAILED: future fonction public executable par anon';
+  END IF;
+  RAISE NOTICE 'OK: default privileges public fail-closed pour anon';
+END
+$$;
+
+DROP FUNCTION public.sec05_default_function_probe();
+DROP SEQUENCE public.sec05_default_sequence_probe;
+DROP TABLE public.sec05_default_table_probe;
+
 SELECT 'POSTCHECKS_EXECUTED' AS sentinel;
 SQL
 )
