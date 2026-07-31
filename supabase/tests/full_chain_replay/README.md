@@ -41,7 +41,16 @@ bash supabase/tests/full_chain_replay/run_full_chain.sh
    tables métier vides (`user_roles` = rôles du seul user fixture, posés par
    la chaîne elle-même), `unique_excel_traceability` = `text`/`NEVER`,
    contrainte UNIQUE + `idx_collection_excel_source` + CHECK présents,
-   privilèges RPC v2 (3 RPC → `authenticated` seulement, helpers verrouillés).
+   privilèges RPC v2 (3 RPC → `authenticated` seulement, helpers verrouillés),
+   SEC-05 (`pg_graphql` absent dans l'état final, 13 tables historiques et
+   `clean_client_name(text,text)` fermées à `anon`, grants `authenticated` et
+   `service_role` préservés, futurs objets `public` fermés à `anon` par défaut).
+
+Limite de preuve SEC-05 : l'image jetable `postgres:15-alpine` ne fournit pas
+`pg_graphql`. Le replay valide la syntaxe de `DROP EXTENSION IF EXISTS ...
+RESTRICT` et l'absence finale, mais pas la suppression d'une installation
+réelle. Ce post-check doit être rejoué sur un staging Supabase autorisé sous GO
+séparé avant production.
 8. Destruction du conteneur. Sortie `ALL_FULL_CHAIN_PASS` = PASS.
 
 Tout `TEST_FAILED:` fait échouer le script (`ON_ERROR_STOP`).

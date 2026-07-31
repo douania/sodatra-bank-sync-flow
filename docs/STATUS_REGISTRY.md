@@ -15,6 +15,95 @@
 
 ---
 
+## SEC-05 — GraphQL et grants anon fail-closed
+
+**Statut : IN_REVIEW — STAGING_VALIDATED (2026-07-31), production inchangée**
+
+L'audit production read-only a confirmé `pg_graphql` actif, 13 tables métier
+historiques exposées dans le schéma GraphQL anonyme par leurs grants, et
+`clean_client_name(text,text)` générée comme mutation. Aucun consommateur
+GraphQL n'existe dans le frontend ou les services versionnés ; le runtime
+applicatif utilise Supabase JS/PostgREST.
+
+La migration candidate
+`20260731120000_sec_05_graphql_and_anon_grants.sql` supprime l'extension sans
+`CASCADE`, retire tous les privilèges `PUBLIC`/`anon` sur les 13 tables et sur
+la fonction historique, puis ferme les default privileges `public` futurs pour
+`anon`. Les grants `authenticated`/`service_role` et la RLS ne sont pas
+modifiés. Le replay full-chain contrôle aussi leur préservation et crée des
+objets synthétiques temporaires pour tester les default privileges.
+
+La révocation du défaut natif `EXECUTE` de `PUBLIC` sur les futures fonctions
+créées par `postgres` est nécessairement globale à tous les schémas : une
+révocation limitée à `public` n'annule pas ce privilège global. Les expositions
+futures doivent donc recevoir un `GRANT` explicite.
+
+**Impact attendu en production** : `/graphql/v1` devient indisponible pour tous les rôles ;
+les appels REST/RPC anonymes vers ce périmètre sont refusés au niveau grants,
+avant la RLS. Les grants `authenticated`/`service_role` existants restent
+inchangés ; leur préservation est validée sur un parcours staging authentifié.
+
+**Rollback borné** : sous GO d'environnement séparé, réinstaller uniquement
+`pg_graphql` dans son schéma `graphql` si un consommateur GraphQL non inventorié
+est découvert. Ne pas rétablir les grants `anon` historiques sans décision CTO
+et matrice d'accès dédiée. Ne pas restaurer le défaut global `EXECUTE TO PUBLIC`
+sans décision sécurité séparée : le rollback GraphQL n'en dépend pas.
+
+**Validation locale** : replay full-chain PostgreSQL 15 jetable vert, 36/36
+migrations au ledger, RLS/policies historiques vertes, assertions SEC-05 vertes
+et teardown confirmé (`ALL_FULL_CHAIN_PASS`). La suite prouve l'absence de
+privilèges anon hérités de `PUBLIC`, la préservation des grants CRUD
+`authenticated` historiques et la fermeture des futures tables, séquences et
+fonctions `public`.
+
+**Apply staging** — projet exact `gbbsqcscryygqlmqncyv` :
+
+- préflight ledger : 35 migrations, dernière version `20260730180000`, seule
+  SEC-05 absente ;
+- préflight ACL : 13/13 tables avec CRUD anon, `clean_client_name(text,text)`
+  exécutable par anon, grants `authenticated`/`service_role` présents, RLS
+  activée sur 13/13 tables ;
+- `pg_graphql` était déjà absent avant l'apply staging ;
+- apply atomique migration + ledger : `SEC05_STAGING_APPLY_OK` ;
+- post-check ledger : 36/36, dernière version `20260731120000` ;
+- zéro privilège table restant pour anon, fonction non exécutable par anon,
+  grants CRUD `authenticated`/`service_role` préservés sur 13/13 tables ;
+- zéro fuite `PUBLIC`/anon dans les default ACL SEC-05 concernées, RLS activée
+  sur 13/13 tables ;
+- HTTP anon read-only : REST `401` / code PostgreSQL `42501` ; GraphQL HTTP
+  200 sans `data.__schema`, erreur `pg_graphql extension is not enabled` ;
+- aucune requête métier de mutation exécutée.
+
+**Validation runtime `authenticated` staging** — frontend local ciblant
+exclusivement `gbbsqcscryygqlmqncyv` :
+
+- le preview Lovable disponible ciblait en réalité la production
+  `leakcdbbawzysfqyqsnr` ; il a été exclu dès la détection, après des lectures
+  `GET` uniquement et sans mutation production ;
+- session utilisateur staging réelle reconnue avec les rôles `user` et `admin`,
+  sans inspection des identifiants ni du jeton ;
+- lectures applicatives Dashboard et Daily v2 via Supabase JS/PostgREST vertes ;
+- requêtes `HEAD` authentifiées sur les 13 tables exactes SEC-05 : 13/13 HTTP
+  200, sans téléchargement de lignes ;
+- RPC pure `clean_client_name(text,text)` : HTTP 200 sur entrée synthétique ;
+- Daily v2 affiche `Verrou serveur : lecture seule` et refuse les capacités de
+  mutation dans l'interface ;
+- zéro requête du frontend local vers la production et zéro requête métier de
+  mutation. Les seuls
+  `POST` observés appelaient les RPC read-only `daily_stmt_mutations_enabled()`
+  et `clean_client_name(text,text)`.
+
+**Limites de preuve** : ni l'image locale ni le staging ne contenaient
+`pg_graphql`; le retrait d'une extension réellement active n'a donc pas encore
+été exercé.
+
+**Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
+
+**Avant clôture** : review de la draft PR, puis GO production séparé. Aucun
+apply production ni merge n'a été effectué.
+
+---
+
 ## DAILY-V2-0U — Account fingerprint et visibilité review
 
 **Statut : IN_REVIEW — DRAFT_PR_96_0U4 (2026-07-16)**

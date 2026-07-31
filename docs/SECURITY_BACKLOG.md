@@ -88,9 +88,48 @@ Le linter Supabase détecte **60 warnings** :
 
 ### SEC-05 : GraphQL schema exposé à anon
 
-**État** : À corriger
-**Risque** : Toutes les tables sont découvrables via l'API GraphQL sans authentification.
-**Action** : Révoquer `SELECT` sur `anon` pour toutes les tables, ou désactiver pg_graphql si non utilisé.
+**État** : `IN_REVIEW` — migration
+`20260731120000_sec_05_graphql_and_anon_grants.sql` appliquée au staging
+`gbbsqcscryygqlmqncyv` le 2026-07-31 ; production inchangée.
+**Constat vérifié le 2026-07-31** : `pg_graphql` est actif en production et
+expose à `anon` les opérations GraphQL générées par les grants de 13 tables
+historiques, ainsi que `clean_client_name(text,text)`. La RLS empêchait la
+lecture de lignes lors des contrôles anonymes, mais les grants CRUD conservaient
+une surface inutile et transformeraient une future régression RLS en accès réel.
+Le frontend et les services versionnés n'utilisent pas GraphQL.
+**Correction candidate fail-closed** : désactiver `pg_graphql` sans `CASCADE`,
+révoquer tous les privilèges `PUBLIC`/`anon` sur les 13 tables, révoquer
+`EXECUTE` sur `clean_client_name` pour `PUBLIC`/`anon`, puis fermer les default
+privileges futurs `public` (tables, séquences et fonctions). Les grants
+`authenticated`/`service_role` et les policies RLS restent inchangés.
+**Validation locale** : replay full-chain PostgreSQL 15 jetable vert, 36/36
+migrations au ledger, assertions SEC-05 vertes et teardown confirmé
+(`ALL_FULL_CHAIN_PASS`). Limite : l'image `postgres:15-alpine` ne contient pas
+`pg_graphql`; elle valide la syntaxe et l'état final absent, pas le retrait
+d'une extension réellement installée.
+**Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
+**Validation staging** : préflight 35 migrations, 13/13 tables avec CRUD anon,
+`clean_client_name` exécutable par anon et `pg_graphql` déjà absent. Apply
+atomique vert (`SEC05_STAGING_APPLY_OK`). Post-check : ledger 36/36, zéro table
+SEC-05 privilégiée pour anon, 13/13 grants CRUD préservés pour `authenticated`
+et `service_role`, fonction fermée à anon, zéro fuite `PUBLIC`/anon dans les
+default ACL SEC-05 concernées, RLS activée sur 13/13 tables.
+HTTP anon read-only : REST `401/42501`; GraphQL HTTP 200 sans schéma et erreur
+`pg_graphql extension is not enabled`. Aucune mutation de test.
+**Validation runtime `authenticated` staging** : frontend local configuré
+exclusivement pour `gbbsqcscryygqlmqncyv`, session réelle `user` + `admin`,
+lectures Dashboard/Daily v2 vertes, verrou serveur read-only affiché et 13/13
+tables exactes SEC-05 accessibles en `HEAD` HTTP 200 sans téléchargement de
+lignes. `clean_client_name(text,text)` reste exécutable par `authenticated`
+(HTTP 200, entrée synthétique). Zéro trafic du frontend local vers la production
+et zéro mutation métier ; les seuls `POST` observés étaient les RPC read-only de
+lecture du verrou et de nettoyage de chaîne.
+Le preview Lovable disponible ciblait la production `leakcdbbawzysfqyqsnr` ;
+il a été exclu dès la détection, après des lectures `GET` uniquement et sans
+mutation production.
+**Réserve avant clôture** : le staging n'avait déjà plus `pg_graphql`, donc le
+chemin de désinstallation d'une extension réellement active reste à surveiller
+lors du GO production séparé.
 
 ### SEC-06 : Fonctions SECURITY DEFINER callable par anon
 

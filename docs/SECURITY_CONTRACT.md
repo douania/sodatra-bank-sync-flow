@@ -46,6 +46,25 @@ Règles générales :
 - DELETE : `admin` uniquement ;
 - audit logs : append-only, pas d'UPDATE/DELETE utilisateur.
 
+## 4.1. Surfaces API et privilèges `anon`
+
+La RLS et les grants sont deux barrières complémentaires : la RLS filtre les
+lignes, tandis que les grants déterminent si une table, vue, séquence ou
+fonction est atteignable par les API Supabase.
+
+Règles :
+- `anon` et `PUBLIC` ne reçoivent aucun privilège sur les objets métier ;
+- les futurs objets du schéma `public` naissent fermés à `anon` ;
+- toute ouverture anonyme exige une justification CTO explicite, une matrice
+  grants/RLS et des tests dédiés ;
+- `pg_graphql` reste désactivé tant qu'aucun consommateur versionné et approuvé
+  ne le requiert ; sa réactivation exige un GO sécurité séparé ;
+- le défaut PostgreSQL `EXECUTE` accordé à `PUBLIC` sur les nouvelles fonctions
+  créées par `postgres` est révoqué globalement, tous schémas confondus ; chaque
+  exposition future doit être un `GRANT` explicite au rôle nécessaire ;
+- masquer l'introspection GraphQL ne constitue pas un contrôle d'accès et ne
+  remplace ni la révocation des grants ni la RLS.
+
 ## 5. Fonctions SECURITY DEFINER
 
 Toute fonction `SECURITY DEFINER` doit être auditée.
