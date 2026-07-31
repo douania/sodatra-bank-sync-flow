@@ -485,8 +485,8 @@ backend, tandis que l'URL et le project ID continuent de verrouiller la cible.
   pour une clé invalide) et les clés JWT legacy staging restent actives pour le
   rollback ;
 - un premier harness local a chargé par erreur la configuration production :
-  le login staging a été refusé avec `Invalid API key`, aucune mutation n'a été
-  tentée, puis ce harness a été arrêté ;
+  le login staging a été refusé avec `Invalid API key` ; aucune mutation métier
+  n'a été tentée, puis ce harness a été arrêté ;
 - le harness corrigé a été vérifié avant connexion : URL, project ID et vraie
   clé publishable staging injectés uniquement dans le processus, URL production
   absente ;

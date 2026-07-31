@@ -49,8 +49,9 @@ ciblant explicitement `gbbsqcscryygqlmqncyv`. Auth reconnaît la clé publishabl
 moderne ; le login manuel, le maintien de session après reload et les lectures
 `/dashboard` puis `/daily-statements` passent sans erreur Auth/réseau/console.
 L'UI confirme que dépôt, promotion, supersede et administration sont désactivés.
-Aucune mutation n'a été tentée. Un premier harness mal ciblé production a été
-refusé avec `Invalid API key`, diagnostiqué puis arrêté avant le test concluant.
+Aucune mutation métier n'a été tentée et aucun bouton de mutation n'a été
+utilisé. Un premier harness mal ciblé production a été refusé avec
+`Invalid API key`, diagnostiqué puis arrêté avant le test concluant.
 
 **Réserve cleanup locale** : le worktree de validation est propre et sans
 `.env.local`, mais un worktree voisin conserve une surcharge ignorée préexistante
