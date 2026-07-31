@@ -75,18 +75,21 @@ Règles :
 - `search_path` maîtrisé si applicable ;
 - usage `service_role` strictement limité aux opérations nécessaires.
 
-## 6. Clé Supabase anon / environnement
+## 6. Clé API Supabase publishable / environnement
 
-La clé anon est publishable côté frontend, mais ne doit pas être hardcodée dans le code source.
+La clé API publishable moderne (`sb_publishable_*`) est publique côté frontend,
+mais ne doit pas être hardcodée dans le code TypeScript. Les anciennes clés JWT
+`anon` ne doivent pas être réintroduites après leur retrait du build.
 
 Règle :
 - utiliser `VITE_SUPABASE_URL` ;
 - utiliser `VITE_SUPABASE_PUBLISHABLE_KEY` ;
 - ne jamais committer de surcharge locale : `.env.local` et `.env.*.local`
   restent ignorés ;
-- rotation manuelle requise si une clé est exposée dans historiques/zips/commits,
-  **sauf** le cas explicitement prévu ci-dessous du versionnement intentionnel de
-  la clé frontend publishable/anon vérifiée dans `.env`.
+- migration ou rotation manuelle requise sur décision CTO lorsqu'une clé legacy
+  doit être retirée, ou si une clé est compromise, **sauf** le cas explicitement
+  prévu ci-dessous du versionnement intentionnel de la clé frontend publishable
+  moderne dans `.env`.
 
 Exception unique et bornée — `.env` :
 
@@ -103,7 +106,8 @@ les **trois** valeurs publiques frontend :
 
 Ce que cette clé est, exactement :
 
-- elle est **publique par conception** et embarquée dans tout bundle navigateur
+- elle porte le préfixe `sb_publishable_`, est **publique par conception** et
+  embarquée dans tout bundle navigateur
   livré ; elle n'est pas un secret ;
 - elle **permet d'émettre des appels API sous le rôle `anon`** vers le projet
   visé — la publier revient donc à publier cette capacité d'appel ;
@@ -137,11 +141,12 @@ interdits au dépôt : `.env` est le seul fichier d'environnement versionné.
 
 Rotation — ce qui l'exige et ce qui ne l'exige pas :
 
-- le **versionnement intentionnel**, dans `.env` et nulle part
-  ailleurs, de la clé production publishable/anon **vérifiée** (claims
-  `role = anon`, `ref` du projet autorisé, `iss = supabase`) **n'est pas à lui
-  seul un incident** et **n'exige aucune rotation** : c'est le régime normal
-  d'une valeur publique de build, décidé et tracé par GO CTO ;
+- le **versionnement intentionnel**, dans `.env` et nulle part ailleurs, de la
+  clé production `sb_publishable_*` sélectionnée dans le Dashboard du projet
+  autorisé **n'est pas à lui seul un incident** et **n'exige aucune rotation** :
+  c'est le régime normal d'une valeur publique de build, décidé et tracé par GO
+  CTO. Les clés modernes sont opaques : la cible reste verrouillée séparément
+  par `VITE_SUPABASE_URL` et `VITE_SUPABASE_PROJECT_ID` ;
 - la rotation **reste obligatoire** en cas d'exposition d'une clé backend
   (`service_role`, `sb_secret_*`, toute clé privilégiée), d'exposition non
   autorisée d'une autre clé, de compromission avérée ou suspectée, ou sur
@@ -149,10 +154,13 @@ Rotation — ce qui l'exige et ce qui ne l'exige pas :
 - toute rotation de la clé **frontend** n'implique **aucune modification de la
   logique applicative**, mais impose de mettre à jour `.env`, de
   **reconstruire** le frontend, puis de **valider le runtime** sur la cible ;
-- le versionnement historique de cette **même clé vérifiée** sous le nom
-  `.env.production` (PR #104) relève exactement du même régime : ce
-  **n'est pas un incident** et n'appelle aucune rotation ; seul le nom du
-  fichier change, pour se conformer au canal supporté par Lovable.
+- le versionnement historique de l'ancienne clé JWT `anon` sous le nom
+  `.env.production` (PR #104), puis `.env`, n'était pas un incident de secret :
+  cette clé était elle aussi publique. Elle reste néanmoins interdite dans le
+  build après la migration SEC-ENV-1 vers `sb_publishable_*` ;
+- la désactivation des clés JWT d'API historiques et la migration des clés de
+  signature Auth sont deux opérations distinctes, chacune soumise à son GO
+  d'environnement et à une validation runtime dédiée.
 
 L'interdiction absolue des clés backend au dépôt demeure inchangée, sans
 exception d'aucune sorte.

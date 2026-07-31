@@ -64,25 +64,14 @@ test('the production build env carries exactly the three public frontend values'
   assert.match(env, /^VITE_SUPABASE_URL=https:\/\/leakcdbbawzysfqyqsnr\.supabase\.co$/m);
   assert.match(env, /^VITE_SUPABASE_PROJECT_ID=leakcdbbawzysfqyqsnr$/m);
 
-  // Clé présente et de forme JWT publishable, sans jamais exposer sa valeur.
+  // Clé API publishable moderne présente, sans jamais exposer sa valeur.
   const key = /^VITE_SUPABASE_PUBLISHABLE_KEY=(.+)$/m.exec(env)?.[1] ?? '';
-  assert.ok(key.length > 100, 'the publishable key must be present');
-  assert.ok(/^eyJ[A-Za-z0-9._-]+$/.test(key), 'the publishable key must be a JWT-shaped public key');
-
-  // Provenance durablement vérifiable : le payload du JWT legacy anon est
-  // décodé LOCALEMENT (aucun appel réseau). Les messages d'échec restent
-  // génériques : ni la clé, ni un fragment de token n'y apparaissent.
-  const segments = key.split('.');
-  assert.equal(segments.length, 3, 'the publishable key must be a three-segment JWT');
-  let claims: Record<string, unknown>;
-  try {
-    claims = JSON.parse(Buffer.from(segments[1], 'base64').toString('utf8')) as Record<string, unknown>;
-  } catch {
-    assert.fail('the publishable key payload must be decodable');
-  }
-  assert.equal(claims.role, 'anon', 'the key must carry the anon role, never a backend role');
-  assert.equal(claims.ref, 'leakcdbbawzysfqyqsnr', 'the key must belong to the authorized production project');
-  assert.equal(claims.iss, 'supabase', 'the key must be issued by Supabase');
+  assert.match(
+    key,
+    /^sb_publishable_[A-Za-z0-9_-]{20,}$/,
+    'the frontend key must use the modern Supabase publishable-key format',
+  );
+  assert.equal(key.includes('.'), false, 'the legacy JWT-based anon key must not return');
 
   // Aucune cible staging, aucune clé backend, aucune variable hors VITE.
   assert.equal(env.includes('gbbsqcscryygqlmqncyv'), false);
@@ -117,6 +106,11 @@ test('no Supabase key is ever hardcoded in TypeScript sources', () => {
   for (const path of [...BROWSER_FILES, CLIENT]) {
     const source = readFileSync(path, 'utf8');
     assert.doesNotMatch(source, /eyJ[A-Za-z0-9._-]{60,}/, `${path} must not embed a key literal`);
+    assert.doesNotMatch(
+      source,
+      /sb_publishable_[A-Za-z0-9_-]{20,}/,
+      `${path} must not embed a publishable key literal`,
+    );
     assert.doesNotMatch(source, /sb_secret|service_role/, `${path} must not reference a backend key`);
   }
 });

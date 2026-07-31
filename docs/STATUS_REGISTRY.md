@@ -442,21 +442,41 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 
 ## SEC-ENV-1 — Supabase env vars + hygiène configuration
 
-**Statut runtime/config : `CLOSED` (2026-05-05)**
-**Réserve** : rotation manuelle de la clé anon Supabase pending (à effectuer dans le dashboard Supabase par le CTO — clé publishable mais exposée dans des zips/commits historiques).
+**Statut : `IN_REVIEW — PUBLISHABLE_KEY_MIGRATION` (2026-07-31)**
+**Réserve production** : les clés JWT d'API historiques restent actives ; leur
+désactivation n'est pas autorisée par ce GO Git.
 
-**Objectif** : externaliser l'URL Supabase et la clé anon hardcodées dans `src/integrations/supabase/client.ts` vers des variables d'environnement Vite, sans toucher au reste.
+**Objectif historique** : externaliser l'URL Supabase et la clé anon hardcodées
+dans `src/integrations/supabase/client.ts` vers des variables d'environnement
+Vite, sans toucher au reste.
+
+**Migration candidate 2026-07-31** : remplacer dans le seul canal Lovable
+versionné `.env` le JWT `anon` historique par la clé API publishable moderne
+`web` du projet production. Le client Supabase et la logique applicative restent
+inchangés. Le test de bundle refuse désormais tout JWT historique et toute clé
+backend, tandis que l'URL et le project ID continuent de verrouiller la cible.
 
 **Fichiers modifiés (runtime)** :
 - `src/integrations/supabase/client.ts` — lecture via `import.meta.env.VITE_SUPABASE_URL` et `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY`, `throw` explicite si absente.
 - `src/vite-env.d.ts` — typage `ImportMetaEnv` pour `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
 - `.env.example` — créé, noms de variables uniquement, aucune valeur réelle.
+- `.env` — migration candidate vers `sb_publishable_*`, valeur publique
+  frontend autorisée par `docs/SECURITY_CONTRACT.md` §6.
+- `src/features/daily-v2/dailyV2BundleSafety.synthetic.test.ts` — contrat
+  statique modernisé et retour au JWT legacy interdit.
 
 **Non modifié (volontaire)** :
-- `.gitignore` — `.env` et `*.local` déjà ignorés, pas de risque de régression Git type Dakar Cargo Quotes.
-- `.env` — auto-peuplé par Lovable, non touché.
+- `.gitignore` — `.env` reste volontairement versionné ; `.env.local` et
+  `.env.*.local` restent ignorés.
 - `src/integrations/supabase/types.ts`, `intelligentSyncService.ts`, `excelMappingService.ts`, `fileProcessingService.ts`, `enhancedFileProcessingService.ts`.
 - Supabase / migrations / RLS / auth / schéma / pipeline Excel / UX-SYNC-COUNTERS / Lot 4.
+
+**Validation locale candidate (2026-07-31)** :
+- matrice CI complète PASS, dont 99/99 tests Daily v2 ; build PASS ;
+- bundle produit avec la clé publishable, sans ancienne clé JWT ni marqueur
+  backend ; cible production conservée ;
+- dette ESLint strictement identique à `origin/main` (209 erreurs,
+  11 warnings) et dette TypeScript strictement identique (19 erreurs).
 
 **Validation runtime (2026-05-05)** :
 - `.env` présent avec les 3 variables attendues.
@@ -464,7 +484,9 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 - `/upload` à confirmer par rechargement complet navigateur côté CTO (warning HMR `useAuth must be used within an AuthProvider` considéré transitoire suite à `page reload src/vite-env.d.ts`).
 - Warning `Unknown message type: RESET_BLANK_CHECK` non lié (harness Lovable).
 
-**Suite** : voir P0-01 dans `docs/SECURITY_BACKLOG.md` — statut `CLOSED_PENDING_KEY_ROTATION`.
+**Suite** : validation locale du patch, draft PR et review indépendante, puis
+GO staging/runtime et GO production séparé avant toute désactivation des clés
+JWT d'API historiques. La migration de signature Auth reste hors périmètre.
 
 ---
 
