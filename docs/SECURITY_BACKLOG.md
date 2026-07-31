@@ -20,22 +20,36 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `CLOSED_PENDING_KEY_ROTATION` (2026-05-05)
+**État** : `IN_REVIEW — PUBLISHABLE_KEY_MIGRATION` (2026-07-31)
 
-**Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé anon est publishable (frontend) mais a été exposée dans plusieurs zips et commits historiques, justifiant une hygiène de configuration et une rotation manuelle.
+**Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
 **Action runtime appliquée (lot SEC-ENV-1)** :
 - `src/integrations/supabase/client.ts` lit désormais `import.meta.env.VITE_SUPABASE_URL` et `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY`, avec `throw` explicite si l'une des deux est absente au démarrage.
 - `src/vite-env.d.ts` typé pour `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
 - `.env.example` créé à la racine, sans valeur réelle.
-- `.gitignore` non modifié (volontaire) : `.env` et `*.local` déjà ignorés.
+- `.gitignore` non modifié (volontaire) : `.env` est le canal public versionné
+  requis par Lovable ; `.env.local` et `.env.*.local` restent ignorés.
 
-**Action manuelle restante (hors périmètre Lovable)** :
-- Rotation de la clé anon Supabase dans le dashboard (Settings → API → rotate anon key).
-- Mise à jour du `.env` après rotation.
-- Une fois fait : passer P0-01 à `CLOSED`.
+**Migration candidate** :
+- `.env` remplace le JWT `anon` par la clé API publishable moderne `web` déjà
+  créée pour la production ; aucune clé backend n'est ajoutée ;
+- le test de bundle exige désormais `sb_publishable_*` et refuse le retour
+  d'un JWT historique ;
+- les exemples documentaires utilisent uniquement
+  `VITE_SUPABASE_PUBLISHABLE_KEY` et `VITE_SUPABASE_PROJECT_ID`.
 
-**Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api
+**Validation locale candidate (2026-07-31)** : matrice CI complète PASS, dont
+99/99 tests Daily v2 ; build PASS ; bundle confirmé avec la clé publishable et
+sans ancienne clé JWT ni marqueur backend ; dette ESLint (209 erreurs,
+11 warnings) et TypeScript (19 erreurs) strictement identique à `origin/main`.
+
+**Production inchangée pendant ce GO Git** : les clés JWT d'API historiques
+restent actives. Leur désactivation nécessite un GO production séparé après
+validation staging, merge, reconstruction Lovable et validation authenticated
+production. La migration du secret de signature Auth est hors de ce lot.
+
+**Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys
 
 **Voir aussi** : `docs/STATUS_REGISTRY.md` → `SEC-ENV-1`.
 

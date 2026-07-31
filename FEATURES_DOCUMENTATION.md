@@ -144,7 +144,8 @@ Sources Multiples → Réconciliation → Agrégation → Visualisation → Expo
 ### Variables d'Environnement Requises
 ```env
 VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+VITE_SUPABASE_PROJECT_ID=your_supabase_project_id
 ```
 
 ### Scripts de Build

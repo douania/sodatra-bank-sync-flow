@@ -124,7 +124,8 @@ npm run build
 ### Variables d'Environnement de Production
 ```env
 VITE_SUPABASE_URL=your_production_supabase_url
-VITE_SUPABASE_ANON_KEY=your_production_supabase_anon_key
+VITE_SUPABASE_PUBLISHABLE_KEY=your_production_supabase_publishable_key
+VITE_SUPABASE_PROJECT_ID=your_production_supabase_project_id
 ```
 
 ## Support et Documentation

@@ -22,7 +22,7 @@ npm --version
 ### 2. Configuration Supabase
 Vous devrez créer un nouveau projet Supabase avec:
 - URL du projet: `https://leakcdbbawzysfqyqsnr.supabase.co`
-- Clé publique: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
+- Clé API publishable moderne : `sb_publishable_...`
 
 ## Étapes de Migration
 
@@ -109,7 +109,8 @@ npm run preview
 ### 2. Variables d'Environnement
 ```env
 VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+VITE_SUPABASE_PROJECT_ID=your_supabase_project_id
 ```
 
 ### 3. Services de Traitement
@@ -131,7 +132,8 @@ npm run build
 
 # Variables d'environnement de production
 VITE_SUPABASE_URL=your_production_supabase_url
-VITE_SUPABASE_ANON_KEY=your_production_supabase_anon_key
+VITE_SUPABASE_PUBLISHABLE_KEY=your_production_supabase_publishable_key
+VITE_SUPABASE_PROJECT_ID=your_production_supabase_project_id
 ```
 
 ## Support et Dépannage
