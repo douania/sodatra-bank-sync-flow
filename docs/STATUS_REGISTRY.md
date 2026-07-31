@@ -77,6 +77,9 @@ fonctions `public`.
 **Validation runtime `authenticated` staging** — frontend local ciblant
 exclusivement `gbbsqcscryygqlmqncyv` :
 
+- le preview Lovable disponible ciblait en réalité la production
+  `leakcdbbawzysfqyqsnr` ; il a été exclu dès la détection, après des lectures
+  `GET` uniquement et sans mutation production ;
 - session utilisateur staging réelle reconnue avec les rôles `user` et `admin`,
   sans inspection des identifiants ni du jeton ;
 - lectures applicatives Dashboard et Daily v2 via Supabase JS/PostgREST vertes ;
@@ -85,7 +88,8 @@ exclusivement `gbbsqcscryygqlmqncyv` :
 - RPC pure `clean_client_name(text,text)` : HTTP 200 sur entrée synthétique ;
 - Daily v2 affiche `Verrou serveur : lecture seule` et refuse les capacités de
   mutation dans l'interface ;
-- zéro requête vers la production et zéro requête métier de mutation. Les seuls
+- zéro requête du frontend local vers la production et zéro requête métier de
+  mutation. Les seuls
   `POST` observés appelaient les RPC read-only `daily_stmt_mutations_enabled()`
   et `clean_client_name(text,text)`.
 

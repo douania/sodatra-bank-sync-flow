@@ -121,9 +121,12 @@ exclusivement pour `gbbsqcscryygqlmqncyv`, session réelle `user` + `admin`,
 lectures Dashboard/Daily v2 vertes, verrou serveur read-only affiché et 13/13
 tables exactes SEC-05 accessibles en `HEAD` HTTP 200 sans téléchargement de
 lignes. `clean_client_name(text,text)` reste exécutable par `authenticated`
-(HTTP 200, entrée synthétique). Zéro trafic production et zéro mutation métier ;
-les seuls `POST` observés étaient les RPC read-only de lecture du verrou et de
-nettoyage de chaîne.
+(HTTP 200, entrée synthétique). Zéro trafic du frontend local vers la production
+et zéro mutation métier ; les seuls `POST` observés étaient les RPC read-only de
+lecture du verrou et de nettoyage de chaîne.
+Le preview Lovable disponible ciblait la production `leakcdbbawzysfqyqsnr` ;
+il a été exclu dès la détection, après des lectures `GET` uniquement et sans
+mutation production.
 **Réserve avant clôture** : le staging n'avait déjà plus `pg_graphql`, donc le
 chemin de désinstallation d'une extension réellement active reste à surveiller
 lors du GO production séparé.
