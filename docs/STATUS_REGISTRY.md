@@ -442,7 +442,7 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 
 ## SEC-ENV-1 — Supabase env vars + hygiène configuration
 
-**Statut : `IN_REVIEW — PUBLISHABLE_KEY_MIGRATION` (2026-07-31)**
+**Statut : `STAGING_RUNTIME_VALIDATED — LOCAL_CLEANUP_OPEN` (2026-07-31)**
 **Réserve production** : les clés JWT d'API historiques restent actives ; leur
 désactivation n'est pas autorisée par ce GO Git.
 
@@ -478,15 +478,42 @@ backend, tandis que l'URL et le project ID continuent de verrouiller la cible.
 - dette ESLint strictement identique à `origin/main` (209 erreurs,
   11 warnings) et dette TypeScript strictement identique (19 erreurs).
 
+**Validation staging authenticated (2026-07-31)** — PASS runtime :
+- `origin/main` et Lovable synchronisés sur le merge PR #111
+  `a50273924f88cafe8aceb059e44dfb76e1deb86c` ;
+- la clé publishable staging moderne est reconnue par Auth (`200`, contre `401`
+  pour une clé invalide) et les clés JWT legacy staging restent actives pour le
+  rollback ;
+- un premier harness local a chargé par erreur la configuration production :
+  le login staging a été refusé avec `Invalid API key` ; aucune mutation métier
+  n'a été tentée, puis ce harness a été arrêté ;
+- le harness corrigé a été vérifié avant connexion : URL, project ID et vraie
+  clé publishable staging injectés uniquement dans le processus, URL production
+  absente ;
+- connexion manuelle réussie, session maintenue après rechargement de
+  `/dashboard`, puis lecture de `/daily-statements` sans erreur Auth, réseau ou
+  console ;
+- l'UI a confirmé le mode lecture seule : dépôt, promotion, supersede et
+  administration désactivés ; aucun bouton de mutation n'a été utilisé ;
+- cleanup du harness validé : onglet fermé, ports locaux libérés, clé effacée de
+  la mémoire du processus, worktree de validation propre et sans `.env.local`.
+
+**Réserve cleanup locale** : un autre worktree local conserve un `.env.local`
+ignoré, préexistant à ce harness, limité aux trois valeurs publiques staging
+(`URL`, `PUBLISHABLE_KEY`, `PROJECT_ID`). Aucun JWT legacy ni marqueur backend
+n'y a été détecté. Ce GO documentaire ne le supprime pas ; son nettoyage exige
+une autorisation explicite avant le GO production.
+
 **Validation runtime (2026-05-05)** :
 - `.env` présent avec les 3 variables attendues.
 - Vite démarre sans erreur `Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY`.
 - `/upload` à confirmer par rechargement complet navigateur côté CTO (warning HMR `useAuth must be used within an AuthProvider` considéré transitoire suite à `page reload src/vite-env.d.ts`).
 - Warning `Unknown message type: RESET_BLANK_CHECK` non lié (harness Lovable).
 
-**Suite** : validation locale du patch, draft PR et review indépendante, puis
-GO staging/runtime et GO production séparé avant toute désactivation des clés
-JWT d'API historiques. La migration de signature Auth reste hors périmètre.
+**Suite** : review/merge de ce record, cleanup explicite du `.env.local` du
+worktree voisin, puis préflight et validation production séparés avant toute
+désactivation des clés JWT d'API historiques. La migration de signature Auth
+reste hors périmètre.
 
 ---
 
