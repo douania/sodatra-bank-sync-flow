@@ -75,6 +75,14 @@ aucune révocation n'a été effectuée.
 review, merge et reconstruction Lovable. La désactivation des clés JWT legacy et
 la migration du secret de signature Auth restent hors de ce lot.
 
+**Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
+pas réintroduire la clé JWT legacy dans le build, conformément à
+`docs/SECURITY_CONTRACT.md`. En cas d'échec runtime, arrêter le rollout et la
+validation, conserver les clés legacy actives mais inutilisées, puis corriger en
+avant vers une publishable `sb_publishable_*` valide. Toute réutilisation legacy
+exige un GO CTO et une décision contractuelle séparés. Aucune restauration DB
+n'est nécessaire.
+
 **Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys
 
 **Voir aussi** : `docs/STATUS_REGISTRY.md` → `SEC-ENV-1`.

@@ -508,8 +508,10 @@ contrôlés.
   `3440111af887ddad2b1d206fa9ed822f18a7fc13` ;
 - la publishable `web` embarquée et la publishable `mobile` listée dans le
   Dashboard répondaient toutes deux `401` sur Auth et PostgREST ;
-- la clé JWT legacy production restait reconnue par Auth (`200`), assurant le
-  rollback ;
+- la clé JWT legacy production restait reconnue par Auth (`200`), mais
+  `docs/SECURITY_CONTRACT.md` interdit sa réintroduction dans un build après la
+  migration ; sa disponibilité technique ne constitue donc pas un rollback
+  autorisé ;
 - aucune donnée métier téléchargée et aucune mutation métier exécutée.
 
 **Initialisation additive du système de clés modernes** : le Dashboard exigeait
@@ -522,6 +524,13 @@ versionnée. Les clés JWT legacy restent actives ; aucune révocation n'a eu li
 **Correction Git candidate** : `.env` référence la publishable `default` active.
 Le bundle et le runtime authenticated production doivent encore être validés
 après review, merge et reconstruction Lovable.
+
+**Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
+pas réintroduire la clé JWT legacy dans le build. En cas d'échec runtime,
+arrêter le rollout et la validation, conserver les clés legacy actives mais
+inutilisées, puis corriger en avant vers une publishable `sb_publishable_*`
+valide. Toute réutilisation legacy exige un GO CTO et une décision contractuelle
+séparés. Aucune restauration DB n'est nécessaire.
 
 **Validation runtime (2026-05-05)** :
 - `.env` présent avec les 3 variables attendues.
