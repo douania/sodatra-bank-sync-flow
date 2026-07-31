@@ -17,7 +17,7 @@
 
 ## SEC-05 — GraphQL et grants anon fail-closed
 
-**Statut : IN_REVIEW — STAGING_VALIDATED (2026-07-31), production inchangée**
+**Statut : CLOSED — PRODUCTION_VALIDATED (2026-07-31)**
 
 L'audit production read-only a confirmé `pg_graphql` actif, 13 tables métier
 historiques exposées dans le schéma GraphQL anonyme par leurs grants, et
@@ -25,7 +25,7 @@ historiques exposées dans le schéma GraphQL anonyme par leurs grants, et
 GraphQL n'existe dans le frontend ou les services versionnés ; le runtime
 applicatif utilise Supabase JS/PostgREST.
 
-La migration candidate
+La migration
 `20260731120000_sec_05_graphql_and_anon_grants.sql` supprime l'extension sans
 `CASCADE`, retire tous les privilèges `PUBLIC`/`anon` sur les 13 tables et sur
 la fonction historique, puis ferme les default privileges `public` futurs pour
@@ -38,10 +38,11 @@ créées par `postgres` est nécessairement globale à tous les schémas : une
 révocation limitée à `public` n'annule pas ce privilège global. Les expositions
 futures doivent donc recevoir un `GRANT` explicite.
 
-**Impact attendu en production** : `/graphql/v1` devient indisponible pour tous les rôles ;
+**Impact confirmé en production** : `/graphql/v1` est indisponible pour tous les rôles ;
 les appels REST/RPC anonymes vers ce périmètre sont refusés au niveau grants,
 avant la RLS. Les grants `authenticated`/`service_role` existants restent
-inchangés ; leur préservation est validée sur un parcours staging authentifié.
+inchangés ; leur préservation est validée sur des parcours staging et production
+authentifiés.
 
 **Rollback borné** : sous GO d'environnement séparé, réinstaller uniquement
 `pg_graphql` dans son schéma `graphql` si un consommateur GraphQL non inventorié
@@ -93,14 +94,60 @@ exclusivement `gbbsqcscryygqlmqncyv` :
   `POST` observés appelaient les RPC read-only `daily_stmt_mutations_enabled()`
   et `clean_client_name(text,text)`.
 
-**Limites de preuve** : ni l'image locale ni le staging ne contenaient
-`pg_graphql`; le retrait d'une extension réellement active n'a donc pas encore
-été exercé.
+**Apply production** — projet exact `leakcdbbawzysfqyqsnr` :
+
+- base canonique verrouillée sur le merge PR #109
+  `c13afbf818edcd840c5fcdc0b62e3dc9a562892b` ;
+- préflight : 35 migrations, dernière version `20260730180000`, SEC-05 absente,
+  13/13 tables avec RLS et privilèges anon, grants CRUD
+  `authenticated`/`service_role` présents sur 13/13 tables ;
+- `pg_graphql 1.5.11` était réellement actif et détenu par `supabase_admin`.
+  Le rôle d'exécution `postgres` ne pouvait pas supprimer l'extension ; elle a
+  donc été désactivée au préalable via le contrôle privilégié Extensions du
+  Dashboard Supabase, après vérification de zéro dépendant externe ;
+- apply atomique des sept instructions SEC-05 et du ledger :
+  `SEC05_PRODUCTION_APPLY_OK` ; post-check 36/36 migrations, dernière version
+  `20260731120000` ;
+- zéro privilège effectif restant pour anon sur les 13 tables et sur
+  `clean_client_name(text,text)` ; grants `authenticated`/`service_role`
+  préservés, RLS activée sur 13/13 tables ;
+- default privileges futurs du schéma `public` fermés à anon et défaut global
+  `EXECUTE TO PUBLIC` fermé. Les defaults du schéma `storage`, hors périmètre,
+  sont restés inchangés ;
+- HTTP anon read-only : 13/13 routes REST refusées en `401`, RPC
+  `clean_client_name` refusée en `401/42501`, GraphQL HTTP 200 sans schéma avec
+  `pg_graphql extension is not enabled` ;
+- intégrité `collection_report` strictement identique avant/après : 1 661 lignes,
+  1 661 couples `(excel_filename, excel_source_row)` distincts et 748 valeurs
+  legacy `unique_excel_traceability` nulles ;
+- aucune mutation métier, policy RLS, table, index ou contrainte modifiée.
+
+**Validation runtime `authenticated` production** — preview Lovable canonique
+sur `c13afbf818edcd840c5fcdc0b62e3dc9a562892b`, ciblant exclusivement
+`leakcdbbawzysfqyqsnr` :
+
+- session production reconnue avec les rôles `user` et `admin`, sans inspection
+  des identifiants, cookies ou jetons ;
+- Dashboard chargé puis actualisé sans erreur d'autorisation ;
+- Daily v2 chargé avec `Production en lecture seule` et
+  `Verrou serveur : lecture seule imposée` ; vues Staging, Canonical, Audit et
+  Reporting chargées sans erreur console, `401`, `403` ou `42501` ;
+- la matrice SQL exhaustive confirme les grants CRUD `authenticated` et
+  `service_role` sur 13/13 tables ainsi que l'exécution de
+  `clean_client_name(text,text)` pour ces rôles. Les tables sans consommateur UI
+  n'ont pas été appelées individuellement depuis le navigateur ; cette limite
+  non bloquante est couverte par la matrice SQL ;
+- aucune importation, promotion, supersede, administration ou mutation métier.
+
+**Limite historique levée** : le staging ne contenait pas `pg_graphql`, mais le
+chemin de désactivation de l'extension réellement active a été exercé avec
+succès en production avant l'apply de la migration.
 
 **Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
 
-**Avant clôture** : review de la draft PR, puis GO production séparé. Aucun
-apply production ni merge n'a été effectué.
+**Clôture CTO** : apply production `PASS`, validation authenticated production
+`PASS`, aucun finding bloquant restant. SEC-05 est fermé ; toute réactivation de
+GraphQL ou réouverture de grants anon exige un GO sécurité séparé.
 
 ---
 
