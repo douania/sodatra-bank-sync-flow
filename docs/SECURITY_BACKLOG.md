@@ -20,7 +20,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `STAGING_RUNTIME_VALIDATED — LOCAL_CLEANUP_OPEN` (2026-07-31)
+**État** : `IN_REVIEW — PRODUCTION_DEFAULT_PUBLISHABLE_KEY` (2026-07-31)
 
 **Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
@@ -32,8 +32,9 @@ Le linter Supabase détecte **60 warnings** :
   requis par Lovable ; `.env.local` et `.env.*.local` restent ignorés.
 
 **Migration candidate** :
-- `.env` remplace le JWT `anon` par la clé API publishable moderne `web` déjà
-  créée pour la production ; aucune clé backend n'est ajoutée ;
+- `.env` remplace le JWT `anon`, puis la clé moderne `web` refusée par la
+  passerelle, par la clé API publishable `default` active de production ; aucune
+  clé backend n'est ajoutée ;
 - le test de bundle exige désormais `sb_publishable_*` et refuse le retour
   d'un JWT historique ;
 - les exemples documentaires utilisent uniquement
@@ -53,15 +54,34 @@ Aucune mutation métier n'a été tentée et aucun bouton de mutation n'a été
 utilisé. Un premier harness mal ciblé production a été refusé avec
 `Invalid API key`, diagnostiqué puis arrêté avant le test concluant.
 
-**Réserve cleanup locale** : le worktree de validation est propre et sans
-`.env.local`, mais un worktree voisin conserve une surcharge ignorée préexistante
-avec uniquement les trois valeurs publiques staging ; aucun JWT legacy ni clé
-backend n'y est présent. Suppression différée à un GO explicite avant production.
+**Cleanup local (2026-07-31)** : la surcharge `.env.local` staging préexistante
+a été supprimée sous GO explicite ; aucun `.env.local` ne subsiste dans les
+worktrees contrôlés.
 
-**Production inchangée pendant ce GO Git** : les clés JWT d'API historiques
-restent actives. Leur désactivation nécessite un GO production séparé après
-validation staging, merge, reconstruction Lovable et validation authenticated
-production. La migration du secret de signature Auth est hors de ce lot.
+**Préflight production (2026-07-31)** : GitHub et Lovable étaient alignés sur le
+merge PR #112 `3440111af887ddad2b1d206fa9ed822f18a7fc13`. Les clés publishable
+`web` embarquée et `mobile` listée répondaient toutes deux `401` sur Auth et
+PostgREST, tandis que la clé JWT legacy production restait valide (`200`).
+
+**Initialisation additive des clés modernes** : le Dashboard Supabase exigeait
+la création couplée d'une paire `default`. La publishable `default` est reconnue
+par Auth (`200`) et atteint PostgREST avant le refus de grant attendu sur
+`collection_report` (`401` / `42501`). La clé secret `default` n'a jamais été
+révélée, copiée, utilisée ou versionnée. Les clés JWT legacy restent actives et
+aucune révocation n'a été effectuée.
+
+**Correction Git candidate** : `.env` référence désormais la publishable
+`default`. La validation authenticated production reste obligatoire après
+review, merge et reconstruction Lovable. La désactivation des clés JWT legacy et
+la migration du secret de signature Auth restent hors de ce lot.
+
+**Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
+pas réintroduire la clé JWT legacy dans le build, conformément à
+`docs/SECURITY_CONTRACT.md`. En cas d'échec runtime, arrêter le rollout et la
+validation, conserver les clés legacy actives mais inutilisées, puis corriger en
+avant vers une publishable `sb_publishable_*` valide. Toute réutilisation legacy
+exige un GO CTO et une décision contractuelle séparés. Aucune restauration DB
+n'est nécessaire.
 
 **Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys
 
