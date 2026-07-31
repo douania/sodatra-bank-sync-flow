@@ -88,8 +88,9 @@ Le linter Supabase détecte **60 warnings** :
 
 ### SEC-05 : GraphQL schema exposé à anon
 
-**État** : `IN_REVIEW` — migration candidate
-`20260731120000_sec_05_graphql_and_anon_grants.sql`, aucun apply Supabase live.
+**État** : `IN_REVIEW` — migration
+`20260731120000_sec_05_graphql_and_anon_grants.sql` appliquée au staging
+`gbbsqcscryygqlmqncyv` le 2026-07-31 ; production inchangée.
 **Constat vérifié le 2026-07-31** : `pg_graphql` est actif en production et
 expose à `anon` les opérations GraphQL générées par les grants de 13 tables
 historiques, ainsi que `clean_client_name(text,text)`. La RLS empêchait la
@@ -105,10 +106,21 @@ privileges futurs `public` (tables, séquences et fonctions). Les grants
 migrations au ledger, assertions SEC-05 vertes et teardown confirmé
 (`ALL_FULL_CHAIN_PASS`). Limite : l'image `postgres:15-alpine` ne contient pas
 `pg_graphql`; elle valide la syntaxe et l'état final absent, pas le retrait
-d'une extension réellement installée. Cette preuve appartient au staging.
+d'une extension réellement installée.
 **Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
-**Validation requise avant clôture** : apply staging sous GO séparé, matrice
-REST/GraphQL anon et parcours authentifiés, puis GO production séparé.
+**Validation staging** : préflight 35 migrations, 13/13 tables avec CRUD anon,
+`clean_client_name` exécutable par anon et `pg_graphql` déjà absent. Apply
+atomique vert (`SEC05_STAGING_APPLY_OK`). Post-check : ledger 36/36, zéro table
+SEC-05 privilégiée pour anon, 13/13 grants CRUD préservés pour `authenticated`
+et `service_role`, fonction fermée à anon, zéro fuite `PUBLIC`/anon dans les
+default ACL SEC-05 concernées, RLS activée sur 13/13 tables.
+HTTP anon read-only : REST `401/42501`; GraphQL HTTP 200 sans schéma et erreur
+`pg_graphql extension is not enabled`. Aucune mutation de test.
+**Réserves avant clôture** : aucun JWT utilisateur staging n'était disponible ;
+la préservation authentifiée est donc prouvée par les ACL, pas par un parcours
+UI/API utilisateur. Le staging n'avait déjà plus `pg_graphql`, donc le chemin
+de désinstallation d'une extension réellement active reste à surveiller lors
+du GO production séparé.
 
 ### SEC-06 : Fonctions SECURITY DEFINER callable par anon
 

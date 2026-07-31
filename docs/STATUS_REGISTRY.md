@@ -17,7 +17,7 @@
 
 ## SEC-05 — GraphQL et grants anon fail-closed
 
-**Statut : IN_REVIEW — migration candidate (2026-07-31)**
+**Statut : IN_REVIEW — STAGING_APPLIED (2026-07-31), production inchangée**
 
 L'audit production read-only a confirmé `pg_graphql` actif, 13 tables métier
 historiques exposées dans le schéma GraphQL anonyme par leurs grants, et
@@ -38,9 +38,10 @@ créées par `postgres` est nécessairement globale à tous les schémas : une
 révocation limitée à `public` n'annule pas ce privilège global. Les expositions
 futures doivent donc recevoir un `GRANT` explicite.
 
-**Impact attendu** : `/graphql/v1` devient indisponible pour tous les rôles ;
+**Impact attendu en production** : `/graphql/v1` devient indisponible pour tous les rôles ;
 les appels REST/RPC anonymes vers ce périmètre sont refusés au niveau grants,
-avant la RLS. Les parcours authentifiés existants restent inchangés.
+avant la RLS. Les grants `authenticated`/`service_role` existants restent
+inchangés ; le parcours utilisateur authentifié reste une réserve de validation.
 
 **Rollback borné** : sous GO d'environnement séparé, réinstaller uniquement
 `pg_graphql` dans son schéma `graphql` si un consommateur GraphQL non inventorié
@@ -52,19 +53,38 @@ sans décision sécurité séparée : le rollback GraphQL n'en dépend pas.
 migrations au ledger, RLS/policies historiques vertes, assertions SEC-05 vertes
 et teardown confirmé (`ALL_FULL_CHAIN_PASS`). La suite prouve l'absence de
 privilèges anon hérités de `PUBLIC`, la préservation des grants CRUD
-`authenticated` historiques et la fermeture des futurs tables, séquences et
+`authenticated` historiques et la fermeture des futures tables, séquences et
 fonctions `public`.
 
-**Limite de preuve** : l'image locale `postgres:15-alpine` ne fournit pas
-`pg_graphql`. Le replay prouve la syntaxe de la migration et l'absence finale,
-mais pas le retrait d'une extension réellement installée ; cette vérification
-est réservée au staging Supabase sous GO d'environnement séparé.
+**Apply staging** — projet exact `gbbsqcscryygqlmqncyv` :
+
+- préflight ledger : 35 migrations, dernière version `20260730180000`, seule
+  SEC-05 absente ;
+- préflight ACL : 13/13 tables avec CRUD anon, `clean_client_name(text,text)`
+  exécutable par anon, grants `authenticated`/`service_role` présents, RLS
+  activée sur 13/13 tables ;
+- `pg_graphql` était déjà absent avant l'apply staging ;
+- apply atomique migration + ledger : `SEC05_STAGING_APPLY_OK` ;
+- post-check ledger : 36/36, dernière version `20260731120000` ;
+- zéro privilège table restant pour anon, fonction non exécutable par anon,
+  grants CRUD `authenticated`/`service_role` préservés sur 13/13 tables ;
+- zéro fuite `PUBLIC`/anon dans les default ACL SEC-05 concernées, RLS activée
+  sur 13/13 tables ;
+- HTTP anon read-only : REST `401` / code PostgreSQL `42501` ; GraphQL HTTP
+  200 sans `data.__schema`, erreur `pg_graphql extension is not enabled` ;
+- aucune requête métier de mutation exécutée.
+
+**Limites de preuve** : ni l'image locale ni le staging ne contenaient
+`pg_graphql`; le retrait d'une extension réellement active n'a donc pas encore
+été exercé. Aucun JWT utilisateur staging n'était disponible : les parcours
+authentifiés sont couverts structurellement par les grants et la RLS, pas par
+un test UI/API utilisateur.
 
 **Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
 
-**Avant clôture** : draft PR, puis apply staging et contrôles
-REST/GraphQL/auth sous GO séparé. Aucun apply Supabase live n'appartient à ce
-lot d'implémentation Git.
+**Avant clôture** : review de la draft PR, résolution éventuelle de la réserve
+de parcours authentifié, puis GO production séparé. Aucun apply production ni
+merge n'a été effectué.
 
 ---
 
