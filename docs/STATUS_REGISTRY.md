@@ -442,7 +442,7 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 
 ## SEC-ENV-1 — Supabase env vars + hygiène configuration
 
-**Statut : `STAGING_RUNTIME_VALIDATED — LOCAL_CLEANUP_OPEN` (2026-07-31)**
+**Statut : `IN_REVIEW — PRODUCTION_DEFAULT_PUBLISHABLE_KEY` (2026-07-31)**
 **Réserve production** : les clés JWT d'API historiques restent actives ; leur
 désactivation n'est pas autorisée par ce GO Git.
 
@@ -451,10 +451,11 @@ dans `src/integrations/supabase/client.ts` vers des variables d'environnement
 Vite, sans toucher au reste.
 
 **Migration candidate 2026-07-31** : remplacer dans le seul canal Lovable
-versionné `.env` le JWT `anon` historique par la clé API publishable moderne
-`web` du projet production. Le client Supabase et la logique applicative restent
-inchangés. Le test de bundle refuse désormais tout JWT historique et toute clé
-backend, tandis que l'URL et le project ID continuent de verrouiller la cible.
+versionné `.env` le JWT `anon` historique, puis la clé moderne `web` refusée par
+la passerelle, par la clé API publishable `default` active du projet production.
+Le client Supabase et la logique applicative restent inchangés. Le test de bundle
+refuse tout JWT historique et toute clé backend, tandis que l'URL et le project
+ID continuent de verrouiller la cible.
 
 **Fichiers modifiés (runtime)** :
 - `src/integrations/supabase/client.ts` — lecture via `import.meta.env.VITE_SUPABASE_URL` et `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY`, `throw` explicite si absente.
@@ -465,11 +466,11 @@ backend, tandis que l'URL et le project ID continuent de verrouiller la cible.
 - `src/features/daily-v2/dailyV2BundleSafety.synthetic.test.ts` — contrat
   statique modernisé et retour au JWT legacy interdit.
 
-**Non modifié (volontaire)** :
+**Non modifié par le patch Git (volontaire)** :
 - `.gitignore` — `.env` reste volontairement versionné ; `.env.local` et
   `.env.*.local` restent ignorés.
 - `src/integrations/supabase/types.ts`, `intelligentSyncService.ts`, `excelMappingService.ts`, `fileProcessingService.ts`, `enhancedFileProcessingService.ts`.
-- Supabase / migrations / RLS / auth / schéma / pipeline Excel / UX-SYNC-COUNTERS / Lot 4.
+- migrations / RLS / Auth / schéma / pipeline Excel / UX-SYNC-COUNTERS / Lot 4.
 
 **Validation locale candidate (2026-07-31)** :
 - matrice CI complète PASS, dont 99/99 tests Daily v2 ; build PASS ;
@@ -498,11 +499,29 @@ backend, tandis que l'URL et le project ID continuent de verrouiller la cible.
 - cleanup du harness validé : onglet fermé, ports locaux libérés, clé effacée de
   la mémoire du processus, worktree de validation propre et sans `.env.local`.
 
-**Réserve cleanup locale** : un autre worktree local conserve un `.env.local`
-ignoré, préexistant à ce harness, limité aux trois valeurs publiques staging
-(`URL`, `PUBLISHABLE_KEY`, `PROJECT_ID`). Aucun JWT legacy ni marqueur backend
-n'y a été détecté. Ce GO documentaire ne le supprime pas ; son nettoyage exige
-une autorisation explicite avant le GO production.
+**Cleanup local** : la surcharge `.env.local` staging préexistante a été
+supprimée sous GO explicite. Aucun `.env.local` ne subsiste dans les worktrees
+contrôlés.
+
+**Préflight production (2026-07-31)** :
+- GitHub `main` et Lovable alignés sur le merge PR #112
+  `3440111af887ddad2b1d206fa9ed822f18a7fc13` ;
+- la publishable `web` embarquée et la publishable `mobile` listée dans le
+  Dashboard répondaient toutes deux `401` sur Auth et PostgREST ;
+- la clé JWT legacy production restait reconnue par Auth (`200`), assurant le
+  rollback ;
+- aucune donnée métier téléchargée et aucune mutation métier exécutée.
+
+**Initialisation additive du système de clés modernes** : le Dashboard exigeait
+la création couplée d'une paire `default`. La publishable `default` est reconnue
+par Auth (`200`). Sur PostgREST, elle atteint le contrôle de grants puis reçoit le
+refus fail-closed attendu sur `collection_report` (`401`, code `42501`). La clé
+secret `default` est restée masquée : jamais révélée, copiée, utilisée ou
+versionnée. Les clés JWT legacy restent actives ; aucune révocation n'a eu lieu.
+
+**Correction Git candidate** : `.env` référence la publishable `default` active.
+Le bundle et le runtime authenticated production doivent encore être validés
+après review, merge et reconstruction Lovable.
 
 **Validation runtime (2026-05-05)** :
 - `.env` présent avec les 3 variables attendues.
@@ -510,10 +529,9 @@ une autorisation explicite avant le GO production.
 - `/upload` à confirmer par rechargement complet navigateur côté CTO (warning HMR `useAuth must be used within an AuthProvider` considéré transitoire suite à `page reload src/vite-env.d.ts`).
 - Warning `Unknown message type: RESET_BLANK_CHECK` non lié (harness Lovable).
 
-**Suite** : review/merge de ce record, cleanup explicite du `.env.local` du
-worktree voisin, puis préflight et validation production séparés avant toute
-désactivation des clés JWT d'API historiques. La migration de signature Auth
-reste hors périmètre.
+**Suite** : review/merge de la correction `default`, reconstruction Lovable, puis
+validation authenticated production avant toute désactivation des clés JWT
+d'API historiques. La migration de signature Auth reste hors périmètre.
 
 ---
 
