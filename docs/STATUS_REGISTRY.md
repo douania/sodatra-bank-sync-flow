@@ -17,7 +17,7 @@
 
 ## SEC-05 — GraphQL et grants anon fail-closed
 
-**Statut : IN_REVIEW — STAGING_APPLIED (2026-07-31), production inchangée**
+**Statut : IN_REVIEW — STAGING_VALIDATED (2026-07-31), production inchangée**
 
 L'audit production read-only a confirmé `pg_graphql` actif, 13 tables métier
 historiques exposées dans le schéma GraphQL anonyme par leurs grants, et
@@ -41,7 +41,7 @@ futures doivent donc recevoir un `GRANT` explicite.
 **Impact attendu en production** : `/graphql/v1` devient indisponible pour tous les rôles ;
 les appels REST/RPC anonymes vers ce périmètre sont refusés au niveau grants,
 avant la RLS. Les grants `authenticated`/`service_role` existants restent
-inchangés ; le parcours utilisateur authentifié reste une réserve de validation.
+inchangés ; leur préservation est validée sur un parcours staging authentifié.
 
 **Rollback borné** : sous GO d'environnement séparé, réinstaller uniquement
 `pg_graphql` dans son schéma `graphql` si un consommateur GraphQL non inventorié
@@ -74,17 +74,29 @@ fonctions `public`.
   200 sans `data.__schema`, erreur `pg_graphql extension is not enabled` ;
 - aucune requête métier de mutation exécutée.
 
+**Validation runtime `authenticated` staging** — frontend local ciblant
+exclusivement `gbbsqcscryygqlmqncyv` :
+
+- session utilisateur staging réelle reconnue avec les rôles `user` et `admin`,
+  sans inspection des identifiants ni du jeton ;
+- lectures applicatives Dashboard et Daily v2 via Supabase JS/PostgREST vertes ;
+- requêtes `HEAD` authentifiées sur les 13 tables exactes SEC-05 : 13/13 HTTP
+  200, sans téléchargement de lignes ;
+- RPC pure `clean_client_name(text,text)` : HTTP 200 sur entrée synthétique ;
+- Daily v2 affiche `Verrou serveur : lecture seule` et refuse les capacités de
+  mutation dans l'interface ;
+- zéro requête vers la production et zéro requête métier de mutation. Les seuls
+  `POST` observés appelaient les RPC read-only `daily_stmt_mutations_enabled()`
+  et `clean_client_name(text,text)`.
+
 **Limites de preuve** : ni l'image locale ni le staging ne contenaient
 `pg_graphql`; le retrait d'une extension réellement active n'a donc pas encore
-été exercé. Aucun JWT utilisateur staging n'était disponible : les parcours
-authentifiés sont couverts structurellement par les grants et la RLS, pas par
-un test UI/API utilisateur.
+été exercé.
 
 **Review IA indépendante** : `PASS`, aucun finding P0/P1/P2 restant.
 
-**Avant clôture** : review de la draft PR, résolution éventuelle de la réserve
-de parcours authentifié, puis GO production séparé. Aucun apply production ni
-merge n'a été effectué.
+**Avant clôture** : review de la draft PR, puis GO production séparé. Aucun
+apply production ni merge n'a été effectué.
 
 ---
 

@@ -116,11 +116,17 @@ et `service_role`, fonction fermée à anon, zéro fuite `PUBLIC`/anon dans les
 default ACL SEC-05 concernées, RLS activée sur 13/13 tables.
 HTTP anon read-only : REST `401/42501`; GraphQL HTTP 200 sans schéma et erreur
 `pg_graphql extension is not enabled`. Aucune mutation de test.
-**Réserves avant clôture** : aucun JWT utilisateur staging n'était disponible ;
-la préservation authentifiée est donc prouvée par les ACL, pas par un parcours
-UI/API utilisateur. Le staging n'avait déjà plus `pg_graphql`, donc le chemin
-de désinstallation d'une extension réellement active reste à surveiller lors
-du GO production séparé.
+**Validation runtime `authenticated` staging** : frontend local configuré
+exclusivement pour `gbbsqcscryygqlmqncyv`, session réelle `user` + `admin`,
+lectures Dashboard/Daily v2 vertes, verrou serveur read-only affiché et 13/13
+tables exactes SEC-05 accessibles en `HEAD` HTTP 200 sans téléchargement de
+lignes. `clean_client_name(text,text)` reste exécutable par `authenticated`
+(HTTP 200, entrée synthétique). Zéro trafic production et zéro mutation métier ;
+les seuls `POST` observés étaient les RPC read-only de lecture du verrou et de
+nettoyage de chaîne.
+**Réserve avant clôture** : le staging n'avait déjà plus `pg_graphql`, donc le
+chemin de désinstallation d'une extension réellement active reste à surveiller
+lors du GO production séparé.
 
 ### SEC-06 : Fonctions SECURITY DEFINER callable par anon
 
