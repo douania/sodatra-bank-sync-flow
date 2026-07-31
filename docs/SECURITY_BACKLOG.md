@@ -20,7 +20,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `IN_REVIEW — PRODUCTION_DEFAULT_PUBLISHABLE_KEY` (2026-07-31)
+**État** : `PRODUCTION_RUNTIME_VALIDATED — LEGACY_KEYS_ACTIVE` (2026-07-31)
 
 **Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
@@ -31,7 +31,7 @@ Le linter Supabase détecte **60 warnings** :
 - `.gitignore` non modifié (volontaire) : `.env` est le canal public versionné
   requis par Lovable ; `.env.local` et `.env.*.local` restent ignorés.
 
-**Migration candidate** :
+**Migration appliquée** :
 - `.env` remplace le JWT `anon`, puis la clé moderne `web` refusée par la
   passerelle, par la clé API publishable `default` active de production ; aucune
   clé backend n'est ajoutée ;
@@ -70,10 +70,23 @@ par Auth (`200`) et atteint PostgREST avant le refus de grant attendu sur
 révélée, copiée, utilisée ou versionnée. Les clés JWT legacy restent actives et
 aucune révocation n'a été effectuée.
 
-**Correction Git candidate** : `.env` référence désormais la publishable
-`default`. La validation authenticated production reste obligatoire après
-review, merge et reconstruction Lovable. La désactivation des clés JWT legacy et
-la migration du secret de signature Auth restent hors de ce lot.
+**Correction Git fusionnée** : la PR #113 a placé sur `main` la publishable
+`default`, au merge `777adc47cd91833566a5058f238dd0865688a2ca`. GitHub, la CI et
+le preview Lovable canonique sont alignés sur ce commit.
+
+**Validation runtime `authenticated` production (2026-07-31)** : PASS. La
+session production reste reconnue après rechargement complet. `/upload` affiche
+le garde `Production en lecture seule` et maintient import, traitement et
+promotion désactivés. Le Dashboard se charge puis s'actualise avec quatre appels
+Supabase `GET`, tous `200`, et la clé réellement envoyée correspond à la
+publishable `default` attendue sans révélation de sa valeur. Aucune erreur
+`Invalid API key`, variable Vite manquante ou `AuthProvider` n'est observée.
+Aucun import, export, téléchargement de fichier ou appel métier de mutation n'a
+été exécuté.
+
+**Réserve** : les clés JWT legacy restent actives mais inutilisées. Leur
+désactivation et la migration du secret de signature Auth restent deux
+opérations séparées, chacune soumise à un GO d'environnement dédié.
 
 **Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
 pas réintroduire la clé JWT legacy dans le build, conformément à

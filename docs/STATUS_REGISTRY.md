@@ -442,7 +442,7 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 
 ## SEC-ENV-1 — Supabase env vars + hygiène configuration
 
-**Statut : `IN_REVIEW — PRODUCTION_DEFAULT_PUBLISHABLE_KEY` (2026-07-31)**
+**Statut : `PRODUCTION_RUNTIME_VALIDATED — LEGACY_KEYS_ACTIVE` (2026-07-31)**
 **Réserve production** : les clés JWT d'API historiques restent actives ; leur
 désactivation n'est pas autorisée par ce GO Git.
 
@@ -450,7 +450,7 @@ désactivation n'est pas autorisée par ce GO Git.
 dans `src/integrations/supabase/client.ts` vers des variables d'environnement
 Vite, sans toucher au reste.
 
-**Migration candidate 2026-07-31** : remplacer dans le seul canal Lovable
+**Migration appliquée 2026-07-31** : remplacer dans le seul canal Lovable
 versionné `.env` le JWT `anon` historique, puis la clé moderne `web` refusée par
 la passerelle, par la clé API publishable `default` active du projet production.
 Le client Supabase et la logique applicative restent inchangés. Le test de bundle
@@ -521,9 +521,10 @@ refus fail-closed attendu sur `collection_report` (`401`, code `42501`). La clé
 secret `default` est restée masquée : jamais révélée, copiée, utilisée ou
 versionnée. Les clés JWT legacy restent actives ; aucune révocation n'a eu lieu.
 
-**Correction Git candidate** : `.env` référence la publishable `default` active.
-Le bundle et le runtime authenticated production doivent encore être validés
-après review, merge et reconstruction Lovable.
+**Correction Git fusionnée** : la PR #113 a placé sur `main` la publishable
+`default` active, au merge `777adc47cd91833566a5058f238dd0865688a2ca`.
+GitHub, la CI et le preview Lovable canonique sont alignés sur ce commit ; le
+projet Lovable est `ready` et reconstruit sans erreur.
 
 **Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
 pas réintroduire la clé JWT legacy dans le build. En cas d'échec runtime,
@@ -532,15 +533,25 @@ inutilisées, puis corriger en avant vers une publishable `sb_publishable_*`
 valide. Toute réutilisation legacy exige un GO CTO et une décision contractuelle
 séparés. Aucune restauration DB n'est nécessaire.
 
-**Validation runtime (2026-05-05)** :
-- `.env` présent avec les 3 variables attendues.
-- Vite démarre sans erreur `Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY`.
-- `/upload` à confirmer par rechargement complet navigateur côté CTO (warning HMR `useAuth must be used within an AuthProvider` considéré transitoire suite à `page reload src/vite-env.d.ts`).
-- Warning `Unknown message type: RESET_BLANK_CHECK` non lié (harness Lovable).
+**Validation runtime `authenticated` production (2026-07-31)** — PASS :
+- la session production reste reconnue après rechargement complet et le
+  Dashboard authentifié demeure accessible ;
+- `/upload` passe le rechargement complet exigé et affiche le garde `Production
+  en lecture seule` ; import, traitement et promotion restent désactivés ;
+- le Dashboard se charge puis s'actualise avec quatre appels Supabase `GET`
+  (`collection_report`, `bank_reports`, `collection_report`, `fund_position`),
+  tous `200` et aucun verbe de mutation ;
+- la clé réellement envoyée par le runtime correspond, par empreinte non
+  révélatrice, à la publishable `default` attendue ; elle n'est ni un JWT legacy
+  ni une clé backend ;
+- aucune erreur console ou réseau `Invalid API key`, variable Vite manquante ou
+  `useAuth must be used within an AuthProvider` ;
+- aucun import, export, téléchargement de fichier ou appel métier de mutation ;
+  aucune modification Git, Lovable ou Supabase pendant la validation.
 
-**Suite** : review/merge de la correction `default`, reconstruction Lovable, puis
-validation authenticated production avant toute désactivation des clés JWT
-d'API historiques. La migration de signature Auth reste hors périmètre.
+**Suite** : review/merge de ce record. Les clés JWT d'API historiques restent
+actives mais inutilisées ; leur désactivation et la migration de signature Auth
+exigent chacune un GO d'environnement et une validation runtime dédiés.
 
 ---
 
