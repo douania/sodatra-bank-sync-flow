@@ -88,16 +88,17 @@ Le linter Supabase détecte **60 warnings** :
 
 ### SEC-05 : GraphQL schema exposé à anon
 
-**État** : `IN_REVIEW` — migration
+**État** : `CLOSED` — migration
 `20260731120000_sec_05_graphql_and_anon_grants.sql` appliquée au staging
-`gbbsqcscryygqlmqncyv` le 2026-07-31 ; production inchangée.
-**Constat vérifié le 2026-07-31** : `pg_graphql` est actif en production et
-expose à `anon` les opérations GraphQL générées par les grants de 13 tables
+`gbbsqcscryygqlmqncyv`, puis en production `leakcdbbawzysfqyqsnr` le
+2026-07-31. Validation authenticated production : `PASS`.
+**Constat initial vérifié le 2026-07-31** : `pg_graphql` était actif en production
+et exposait à `anon` les opérations GraphQL générées par les grants de 13 tables
 historiques, ainsi que `clean_client_name(text,text)`. La RLS empêchait la
 lecture de lignes lors des contrôles anonymes, mais les grants CRUD conservaient
 une surface inutile et transformeraient une future régression RLS en accès réel.
 Le frontend et les services versionnés n'utilisent pas GraphQL.
-**Correction candidate fail-closed** : désactiver `pg_graphql` sans `CASCADE`,
+**Correction fail-closed appliquée** : désactiver `pg_graphql` sans `CASCADE`,
 révoquer tous les privilèges `PUBLIC`/`anon` sur les 13 tables, révoquer
 `EXECUTE` sur `clean_client_name` pour `PUBLIC`/`anon`, puis fermer les default
 privileges futurs `public` (tables, séquences et fonctions). Les grants
@@ -127,9 +128,32 @@ lecture du verrou et de nettoyage de chaîne.
 Le preview Lovable disponible ciblait la production `leakcdbbawzysfqyqsnr` ;
 il a été exclu dès la détection, après des lectures `GET` uniquement et sans
 mutation production.
-**Réserve avant clôture** : le staging n'avait déjà plus `pg_graphql`, donc le
-chemin de désinstallation d'une extension réellement active reste à surveiller
-lors du GO production séparé.
+**Apply production** : base canonique PR #109
+`c13afbf818edcd840c5fcdc0b62e3dc9a562892b`. Le préflight a confirmé
+`pg_graphql 1.5.11` actif mais détenu par `supabase_admin`, non supprimable par
+le rôle `postgres`. Après vérification de zéro dépendant externe, l'extension a
+été désactivée via le contrôle privilégié Extensions du Dashboard Supabase. La
+migration et son entrée de ledger ont ensuite été appliquées atomiquement
+(`SEC05_PRODUCTION_APPLY_OK`) : ledger 36/36, dernière version
+`20260731120000`, zéro privilège anon sur les 13 tables et la fonction, grants
+CRUD `authenticated`/`service_role` préservés sur 13/13 tables, RLS inchangée.
+Les default privileges du schéma `public` sont fermés à anon et le défaut global
+`EXECUTE TO PUBLIC` est retiré ; les defaults `storage`, hors périmètre, sont
+inchangés. HTTP anon read-only : 13/13 routes REST `401`, RPC
+`clean_client_name` `401/42501`, GraphQL désactivé. L'intégrité agrégée de
+`collection_report` est strictement identique avant/après et aucune mutation
+métier n'a été exécutée.
+**Validation runtime `authenticated` production** : preview Lovable canonique
+sur `c13afbf818edcd840c5fcdc0b62e3dc9a562892b`, session `user` + `admin` sans
+inspection d'identifiant ni de jeton, Dashboard chargé et actualisé, Daily v2
+chargé en lecture seule avec les vues Staging, Canonical, Audit et Reporting.
+Aucune erreur console, `401`, `403` ou `42501`, et aucune capacité de mutation
+utilisée. La matrice SQL exhaustive couvre 13/13 tables ; les tables sans
+consommateur UI n'ont pas été appelées individuellement depuis le navigateur,
+limite non bloquante.
+**Clôture** : le retrait de l'extension réellement active a été exercé avec
+succès en production. Toute réactivation de GraphQL ou réouverture de grants
+anon exige un GO sécurité séparé.
 
 ### SEC-06 : Fonctions SECURITY DEFINER callable par anon
 
