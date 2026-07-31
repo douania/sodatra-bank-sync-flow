@@ -20,7 +20,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `IN_REVIEW — PUBLISHABLE_KEY_MIGRATION` (2026-07-31)
+**État** : `STAGING_RUNTIME_VALIDATED — LOCAL_CLEANUP_OPEN` (2026-07-31)
 
 **Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
@@ -43,6 +43,19 @@ Le linter Supabase détecte **60 warnings** :
 99/99 tests Daily v2 ; build PASS ; bundle confirmé avec la clé publishable et
 sans ancienne clé JWT ni marqueur backend ; dette ESLint (209 erreurs,
 11 warnings) et TypeScript (19 erreurs) strictement identique à `origin/main`.
+
+**Validation staging authenticated (2026-07-31)** : PASS sur le runtime corrigé
+ciblant explicitement `gbbsqcscryygqlmqncyv`. Auth reconnaît la clé publishable
+moderne ; le login manuel, le maintien de session après reload et les lectures
+`/dashboard` puis `/daily-statements` passent sans erreur Auth/réseau/console.
+L'UI confirme que dépôt, promotion, supersede et administration sont désactivés.
+Aucune mutation n'a été tentée. Un premier harness mal ciblé production a été
+refusé avec `Invalid API key`, diagnostiqué puis arrêté avant le test concluant.
+
+**Réserve cleanup locale** : le worktree de validation est propre et sans
+`.env.local`, mais un worktree voisin conserve une surcharge ignorée préexistante
+avec uniquement les trois valeurs publiques staging ; aucun JWT legacy ni clé
+backend n'y est présent. Suppression différée à un GO explicite avant production.
 
 **Production inchangée pendant ce GO Git** : les clés JWT d'API historiques
 restent actives. Leur désactivation nécessite un GO production séparé après
