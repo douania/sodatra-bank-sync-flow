@@ -20,7 +20,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `PRODUCTION_RUNTIME_VALIDATED — LEGACY_KEYS_ACTIVE` (2026-07-31)
+**État** : `PRODUCTION_LEGACY_API_KEYS_DISABLED — RUNTIME_VALIDATED` (2026-08-01)
 
 **Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
@@ -71,8 +71,10 @@ révélée, copiée, utilisée ou versionnée. Les clés JWT legacy restent acti
 aucune révocation n'a été effectuée.
 
 **Correction Git fusionnée** : la PR #113 a placé sur `main` la publishable
-`default`, au merge `777adc47cd91833566a5058f238dd0865688a2ca`. GitHub, la CI et
-le preview Lovable canonique sont alignés sur ce commit.
+`default`, au merge `777adc47cd91833566a5058f238dd0865688a2ca`. La PR #114 a
+consigné la validation runtime initiale ; son merge
+`5ada2680dcc69572a36c64f8cc88c8901103c4fc` est aligné entre GitHub et le
+preview Lovable canonique.
 
 **Validation runtime `authenticated` production (2026-07-31)** : PASS. La
 session production reste reconnue après rechargement complet. `/upload` affiche
@@ -84,17 +86,44 @@ publishable `default` attendue sans révélation de sa valeur. Aucune erreur
 Aucun import, export, téléchargement de fichier ou appel métier de mutation n'a
 été exécuté.
 
-**Réserve** : les clés JWT legacy restent actives mais inutilisées. Leur
-désactivation et la migration du secret de signature Auth restent deux
-opérations séparées, chacune soumise à un GO d'environnement dédié.
+**Désactivation legacy production et correction de cible (2026-08-01)** :
+- cartographie canonique confirmée par `.env`, les contrats runtime et le trafic
+  observé : staging `gbbsqcscryygqlmqncyv`, production
+  `leakcdbbawzysfqyqsnr` ; le libellé Supabase `main — Production` désigne la
+  branche principale d'un projet et ne prouve pas l'environnement SODATRA ;
+- une première désactivation a visé staging après interprétation erronée de ce
+  libellé. Le trafic Lovable a révélé l'écart avant toute validation concluante ;
+  staging a été réactivé immédiatement et son état initial restauré ;
+- la production exacte, affichée `sodatra-accounting`, a ensuite été verrouillée
+  par son `project_ref`. Les clés modernes `default` étaient présentes, puis les
+  clés legacy `anon` et `service_role` ont été désactivées ensemble comme clés
+  d'API. Le contrôle de réactivation est disponible.
+
+**Validation post-désactivation `authenticated` production (2026-08-01)** :
+PASS. Après rechargements complets, la session reste reconnue. Le Dashboard émet
+5 lectures Supabase (`collection_report`, `user_roles`, `bank_reports`,
+`collection_report`, `fund_position`), `/upload` émet 1 lecture `user_roles` et
+Daily v2 émet 6 lectures (`user_roles`, `daily_statement_units_staging`,
+`daily_statement_units_canonical`, `daily_statement_import_events`,
+`daily_statement_account_events`, `daily_statement_account_registry`). Les 12
+appels sont des `GET` en `200`, avec une publishable moderne dans `apikey` et le
+JWT utilisateur dans `Authorization`. Aucun appel n'utilise une clé legacy ou
+secrète ; aucune mutation métier ni erreur console/réseau n'est observée.
+`/upload` et Daily v2 conservent le garde `Production en lecture seule`. Aucune
+valeur de clé n'a été révélée ou copiée.
+
+**État cryptographique résiduel** : la désactivation concerne l'usage de
+`anon` et `service_role` dans l'en-tête `apikey`. Ces valeurs restent valides en
+tant que JWT tant que l'ancienne clé de signature n'est pas révoquée. Cette
+révocation reste un lot d'environnement séparé. Les clés legacy staging restent
+actives après le rollback de correction de cible.
 
 **Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
-pas réintroduire la clé JWT legacy dans le build, conformément à
-`docs/SECURITY_CONTRACT.md`. En cas d'échec runtime, arrêter le rollout et la
-validation, conserver les clés legacy actives mais inutilisées, puis corriger en
-avant vers une publishable `sb_publishable_*` valide. Toute réutilisation legacy
-exige un GO CTO et une décision contractuelle séparés. Aucune restauration DB
-n'est nécessaire.
+pas réintroduire de JWT legacy dans le build. La réactivation production des
+clés legacy reste techniquement disponible dans le Dashboard, mais n'est
+autorisée qu'en réponse à un client hors inventaire effectivement cassé et sous
+GO CTO explicite. Corriger ensuite en avant vers une publishable ou une secret
+moderne. Aucune restauration DB n'est nécessaire.
 
 **Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys
 
