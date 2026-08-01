@@ -442,10 +442,11 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 
 ## SEC-ENV-1 — Supabase env vars + hygiène configuration
 
-**Statut : `PRODUCTION_LEGACY_API_KEYS_DISABLED — RUNTIME_VALIDATED` (2026-08-01)**
-**État final** : les clés legacy d'API production sont désactivées ; staging a
-été restauré après correction de cible. La clé de signature JWT historique n'a
-pas été révoquée.
+**Statut : `PRODUCTION_ES256_CURRENT — RUNTIME_VALIDATED` (2026-08-01)**
+**État final** : les clés legacy d'API production sont désactivées ; la clé de
+signature courante est désormais ECC P-256 / ES256. La clé Legacy HS256 reste
+acceptée comme clé précédente et n'a pas été révoquée. Staging a été restauré
+après correction de cible et n'est pas concerné par cette rotation production.
 
 **Objectif historique** : externaliser l'URL Supabase et la clé anon hardcodées
 dans `src/integrations/supabase/client.ts` vers des variables d'environnement
@@ -579,14 +580,50 @@ vers une clé moderne. Aucune restauration DB n'est nécessaire.
   0 réponse non-`200`, 0 mutation métier et 0 erreur console ;
 - aucune valeur de clé révélée ou copiée.
 
-**Portée exacte de la désactivation** : `anon` et `service_role` sont refusées
-comme clés dans l'en-tête `apikey`, mais restent valides comme JWT jusqu'à la
-révocation séparée de l'ancienne clé de signature. Les clés legacy staging sont
-actives après rollback. La migration/revocation de signature Auth reste hors de
-ce lot et exige un GO d'environnement dédié.
+**Préflight de migration des clés de signature Auth (2026-08-01)** :
+- production exacte verrouillée sur `leakcdbbawzysfqyqsnr` ; clés API legacy
+  déjà désactivées et publishable `default` active ;
+- durée de vie des access tokens : 3 600 secondes ; limites de durée maximale
+  et d'inactivité des sessions désactivées ; protection contre le rejeu des
+  refresh tokens active avec intervalle de 10 secondes ;
+- seule Edge Function inventoriée : `mcp`, avec vérification JWT par secret
+  legacy désactivée ; aucun validateur JWT custom, consommateur Realtime,
+  Storage signed URL ou backend custom versionné n'a été trouvé ;
+- migration additive réalisée sans rotation immédiate : Legacy HS256 courante,
+  ECC P-256 / ES256 en standby, JWKS public exposant la clé EC/ES256 avec `kid`.
 
-**Suite** : review/merge de ce record, puis préflight séparé avant toute
-révocation de la clé de signature JWT historique.
+**Rotation production vers ES256 (2026-08-01)** — PASS :
+- rotation confirmée à `2026-08-01T10:44:22.586Z` sur le projet exact ;
+- ECC P-256 / ES256 est devenue la clé courante ; Legacy HS256 est passée dans
+  `Previously used keys` et reste disponible pour vérifier les jetons non
+  expirés ; aucune révocation ni suppression n'a été déclenchée ;
+- les clés API legacy `anon` / `service_role` restent désactivées ;
+- le JWKS public contient une clé `EC` / `ES256` / `sig` avec `kid` ; aucune
+  valeur de clé ou de jeton n'a été consignée.
+
+**Validation runtime post-rotation production (2026-08-01)** — PASS :
+- la session existante a continué à charger le Dashboard, `/upload` et Daily v2,
+  comportement compatible avec le maintien attendu des jetons non expirés
+  antérieurs à la rotation ;
+- après déconnexion puis reconnexion manuelle, une nouvelle session a été émise
+  avec succès alors qu'ES256 était la clé courante et l'unique clé publiée par
+  le JWKS ; le jeton n'a été ni lu, ni décodé, ni journalisé ;
+- le Dashboard authentifié a chargé les données ; `/upload` a conservé le garde
+  `Production en lecture seule` ; Daily v2 a chargé avec
+  `Verrou serveur : lecture seule imposée` ;
+- aucune importation, promotion, supersede, administration ou mutation métier ;
+  aucune modification Git, Lovable ou Supabase pendant la validation.
+
+**Portée résiduelle et révocation** : les clés legacy `anon` / `service_role`
+restent refusées comme clés API. La Legacy HS256 reste volontairement acceptée
+comme clé de signature précédente. Avec des access tokens de 3 600 secondes, le
+délai de sécurité de 1 h 15 après rotation expirait à
+`2026-08-01T11:59:22.586Z`. Son expiration ne vaut pas autorisation : toute
+révocation exige un préflight et un GO production distincts, puis une validation
+runtime dédiée. Les clés legacy staging restent actives après rollback.
+
+**Suite** : review/merge de ce record, puis préflight séparé de révocation de la
+clé de signature JWT historique.
 
 ---
 
