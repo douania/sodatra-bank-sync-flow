@@ -80,6 +80,13 @@ Règles :
 - en l'absence explicite d'un GO d'environnement, l'environnement est
   interdit ;
 - **aucun GO d'environnement n'est accordé par le présent chantier.**
+- pour SODATRA, le ciblage doit vérifier le `project_ref` contre les sources
+  canoniques avant toute mutation : staging `gbbsqcscryygqlmqncyv`, production
+  `leakcdbbawzysfqyqsnr`. Le libellé Supabase `main — Production` décrit la
+  branche principale du projet et ne suffit jamais à identifier l'environnement.
+  Tout écart entre GO, `.env`, contrat runtime et hôte réseau impose l'arrêt et,
+  si une mutation vient d'être appliquée à la mauvaise cible, son rollback
+  immédiat avant de poursuivre ;
 - la normalisation technique native de Lovable définie dans `CLAUDE.md`
   §7bis ne constitue ni une mutation métier ni un `GO_APPLY_STAGING`
   lorsqu'elle reste dans sa liste blanche ; cette exception est incluse par
