@@ -121,11 +121,12 @@ secret legacy. La migration additive a conservé Legacy HS256 comme clé courant
 et créé une clé ECC P-256 / ES256 en standby, sans révocation.
 
 **Rotation production vers ES256 (2026-08-01)** : PASS. La rotation a été
-confirmée à `2026-08-01T10:44:22.586Z` sur le projet exact
-`leakcdbbawzysfqyqsnr`. ECC P-256 / ES256 est désormais courante ; Legacy HS256
-est une clé précédente encore acceptée pour les jetons non expirés. Aucune clé
-n'a été révoquée ou supprimée. Les clés API legacy restent désactivées et le
-JWKS public expose une clé `EC` / `ES256` / `sig` avec `kid`.
+déclenchée à `2026-08-01T10:44:22.586Z` sur le projet exact
+`leakcdbbawzysfqyqsnr`, puis l'état final ES256 a été confirmé quelques secondes
+plus tard. ECC P-256 / ES256 est désormais courante ; Legacy HS256 est une clé
+précédente encore acceptée pour les jetons non expirés. Aucune clé n'a été
+révoquée ou supprimée. Les clés API legacy restent désactivées et le JWKS public
+expose une clé `EC` / `ES256` / `sig` avec `kid`.
 
 **Validation runtime post-rotation (2026-08-01)** : PASS. La session existante
 a continué à charger le Dashboard, `/upload` et Daily v2. Après déconnexion puis
@@ -137,11 +138,11 @@ modification Git, Lovable ou Supabase n'a été effectuée pendant la validation
 
 **État cryptographique résiduel** : `anon` et `service_role` restent refusées
 comme clés dans l'en-tête `apikey`. Legacy HS256 reste volontairement acceptée
-comme clé de signature précédente. Le délai minimal de 1 h 15 après rotation
-expirait à `2026-08-01T11:59:22.586Z`, mais toute révocation demeure un lot
-d'environnement séparé avec préflight, GO production et validation runtime
-dédiés. Les clés legacy staging restent actives après le rollback de correction
-de cible.
+comme clé de signature précédente. Après le délai minimal de 1 h 15, la borne
+conservatrice retenue est `2026-08-01T12:00:00Z`, mais toute révocation demeure
+un lot d'environnement séparé avec préflight, GO production et validation
+runtime dédiés. Les clés legacy staging restent actives après le rollback de
+correction de cible.
 
 **Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
 pas réintroduire de JWT legacy dans le build. La réactivation production des

@@ -593,7 +593,8 @@ vers une clé moderne. Aucune restauration DB n'est nécessaire.
   ECC P-256 / ES256 en standby, JWKS public exposant la clé EC/ES256 avec `kid`.
 
 **Rotation production vers ES256 (2026-08-01)** — PASS :
-- rotation confirmée à `2026-08-01T10:44:22.586Z` sur le projet exact ;
+- rotation déclenchée à `2026-08-01T10:44:22.586Z` sur le projet exact ; état
+  final ES256 confirmé quelques secondes plus tard ;
 - ECC P-256 / ES256 est devenue la clé courante ; Legacy HS256 est passée dans
   `Previously used keys` et reste disponible pour vérifier les jetons non
   expirés ; aucune révocation ni suppression n'a été déclenchée ;
@@ -617,8 +618,8 @@ vers une clé moderne. Aucune restauration DB n'est nécessaire.
 **Portée résiduelle et révocation** : les clés legacy `anon` / `service_role`
 restent refusées comme clés API. La Legacy HS256 reste volontairement acceptée
 comme clé de signature précédente. Avec des access tokens de 3 600 secondes, le
-délai de sécurité de 1 h 15 après rotation expirait à
-`2026-08-01T11:59:22.586Z`. Son expiration ne vaut pas autorisation : toute
+délai de sécurité de 1 h 15 après rotation, la borne conservatrice retenue est
+`2026-08-01T12:00:00Z`. Son expiration ne vaut pas autorisation : toute
 révocation exige un préflight et un GO production distincts, puis une validation
 runtime dédiée. Les clés legacy staging restent actives après rollback.
 
