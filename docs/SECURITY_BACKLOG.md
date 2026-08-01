@@ -20,7 +20,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `PRODUCTION_LEGACY_API_KEYS_DISABLED — RUNTIME_VALIDATED` (2026-08-01)
+**État** : `PRODUCTION_ES256_CURRENT — RUNTIME_VALIDATED` (2026-08-01)
 
 **Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
@@ -112,20 +112,50 @@ secrète ; aucune mutation métier ni erreur console/réseau n'est observée.
 `/upload` et Daily v2 conservent le garde `Production en lecture seule`. Aucune
 valeur de clé n'a été révélée ou copiée.
 
-**État cryptographique résiduel** : la désactivation concerne l'usage de
-`anon` et `service_role` dans l'en-tête `apikey`. Ces valeurs restent valides en
-tant que JWT tant que l'ancienne clé de signature n'est pas révoquée. Cette
-révocation reste un lot d'environnement séparé. Les clés legacy staging restent
-actives après le rollback de correction de cible.
+**Migration additive des clés de signature Auth (2026-08-01)** : le préflight
+production a confirmé des access tokens de 3 600 secondes, l'absence de limite
+maximale ou d'inactivité de session, la protection contre le rejeu des refresh
+tokens et l'absence de consommateur versionné dépendant du secret JWT legacy.
+La seule Edge Function inventoriée, `mcp`, n'utilise pas la vérification JWT par
+secret legacy. La migration additive a conservé Legacy HS256 comme clé courante
+et créé une clé ECC P-256 / ES256 en standby, sans révocation.
+
+**Rotation production vers ES256 (2026-08-01)** : PASS. La rotation a été
+déclenchée à `2026-08-01T10:44:22.586Z` sur le projet exact
+`leakcdbbawzysfqyqsnr`, puis l'état final ES256 a été confirmé quelques secondes
+plus tard. ECC P-256 / ES256 est désormais courante ; Legacy HS256 est une clé
+précédente encore acceptée pour les jetons non expirés. Aucune clé n'a été
+révoquée ou supprimée. Les clés API legacy restent désactivées et le JWKS public
+expose une clé `EC` / `ES256` / `sig` avec `kid`.
+
+**Validation runtime post-rotation (2026-08-01)** : PASS. La session existante
+a continué à charger le Dashboard, `/upload` et Daily v2. Après déconnexion puis
+reconnexion manuelle, une nouvelle session a été créée avec succès sous la clé
+courante ES256, sans lecture ni décodage du jeton. Le Dashboard a chargé ses
+données, `/upload` est resté en `Production en lecture seule` et Daily v2 a
+confirmé `Verrou serveur : lecture seule imposée`. Aucune mutation métier,
+modification Git, Lovable ou Supabase n'a été effectuée pendant la validation.
+
+**État cryptographique résiduel** : `anon` et `service_role` restent refusées
+comme clés dans l'en-tête `apikey`. Legacy HS256 reste volontairement acceptée
+comme clé de signature précédente. Après le délai minimal de 1 h 15, la borne
+conservatrice retenue est `2026-08-01T12:00:00Z`, mais toute révocation demeure
+un lot d'environnement séparé avec préflight, GO production et validation
+runtime dédiés. Les clés legacy staging restent actives après le rollback de
+correction de cible.
 
 **Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
 pas réintroduire de JWT legacy dans le build. La réactivation production des
 clés legacy reste techniquement disponible dans le Dashboard, mais n'est
 autorisée qu'en réponse à un client hors inventaire effectivement cassé et sous
 GO CTO explicite. Corriger ensuite en avant vers une publishable ou une secret
-moderne. Aucune restauration DB n'est nécessaire.
+moderne. Tant que Legacy HS256 n'est pas révoquée, un rollback de signature
+consiste à la remettre courante sous GO production distinct ; aucune restauration
+DB n'est nécessaire.
 
-**Lien** : https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys
+**Liens** :
+- https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys
+- https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/jwt
 
 **Voir aussi** : `docs/STATUS_REGISTRY.md` → `SEC-ENV-1`.
 
