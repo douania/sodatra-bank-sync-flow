@@ -20,7 +20,7 @@ Le linter Supabase détecte **60 warnings** :
 
 ### P0-01 / SEC-ENV-1 : URL Supabase et clé anon hardcodées dans le client
 
-**État** : `PRODUCTION_ES256_CURRENT — RUNTIME_VALIDATED` (2026-08-01)
+**État** : `CLOSED — PRODUCTION_LEGACY_HS256_REVOKED_RUNTIME_VALIDATED` (2026-08-01)
 
 **Contexte** : `src/integrations/supabase/client.ts` contenait jusqu'au 2026-05-05 l'URL Supabase et la clé anon en dur. La clé JWT `anon` est publique côté frontend, mais elle reste couplée au secret JWT historique et n'est plus le format recommandé pour un nouveau déploiement.
 
@@ -136,22 +136,33 @@ données, `/upload` est resté en `Production en lecture seule` et Daily v2 a
 confirmé `Verrou serveur : lecture seule imposée`. Aucune mutation métier,
 modification Git, Lovable ou Supabase n'a été effectuée pendant la validation.
 
-**État cryptographique résiduel** : `anon` et `service_role` restent refusées
-comme clés dans l'en-tête `apikey`. Legacy HS256 reste volontairement acceptée
-comme clé de signature précédente. Après le délai minimal de 1 h 15, la borne
-conservatrice retenue est `2026-08-01T12:00:00Z`, mais toute révocation demeure
-un lot d'environnement séparé avec préflight, GO production et validation
-runtime dédiés. Les clés legacy staging restent actives après le rollback de
-correction de cible.
+**Révocation production Legacy HS256 (2026-08-01)** : PASS. L'éligibilité a été
+recontrôlée à `2026-08-01T12:13:40Z`, après la borne conservatrice
+`2026-08-01T12:00:00Z`, sur le projet exact `leakcdbbawzysfqyqsnr`. Les access
+tokens restaient configurés à 3 600 secondes, les clés API legacy étaient
+toujours désactivées et l'Edge Function `mcp` n'utilisait toujours pas la
+vérification par secret legacy. Sous GO production nominatif, Legacy HS256 est
+passée de clé précédente à clé révoquée ; ECC P-256 / ES256 est restée courante
+et aucune clé n'a été supprimée. À `2026-08-01T12:18:45Z`, le JWKS public
+n'exposait qu'une clé `EC` / `ES256` / `sig` avec `kid`, et les clés API legacy
+restaient désactivées. Le Dashboard authentifié a continué à charger sans erreur
+JWT, `Invalid API key` ni erreur d'autorisation. Aucune mutation métier n'a été
+effectuée.
+
+**État cryptographique final** : `anon` et `service_role` restent refusées comme
+clés dans l'en-tête `apikey` ; Legacy HS256 n'est plus acceptée comme clé de
+signature en production et ES256 reste courante. Les clés legacy staging restent
+actives après le rollback de correction de cible et sont hors périmètre de cette
+révocation.
 
 **Rollback fail-closed** : ne pas revenir à la publishable `web` invalide et ne
 pas réintroduire de JWT legacy dans le build. La réactivation production des
 clés legacy reste techniquement disponible dans le Dashboard, mais n'est
 autorisée qu'en réponse à un client hors inventaire effectivement cassé et sous
 GO CTO explicite. Corriger ensuite en avant vers une publishable ou une secret
-moderne. Tant que Legacy HS256 n'est pas révoquée, un rollback de signature
-consiste à la remettre courante sous GO production distinct ; aucune restauration
-DB n'est nécessaire.
+moderne. Le rollback de signature reste borné : déplacer la clé HS256 révoquée
+vers standby, puis effectuer une rotation contrôlée sous GO production distinct.
+La clé n'a pas été supprimée et aucune restauration DB n'est nécessaire.
 
 **Liens** :
 - https://supabase.com/dashboard/project/leakcdbbawzysfqyqsnr/settings/api-keys

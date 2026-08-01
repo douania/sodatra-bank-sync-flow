@@ -442,11 +442,11 @@ Aucune ouverture de Lot 4. DEF-10, DEF-14 inchangées. 125 lignes `UNKNOWN` hist
 
 ## SEC-ENV-1 — Supabase env vars + hygiène configuration
 
-**Statut : `PRODUCTION_ES256_CURRENT — RUNTIME_VALIDATED` (2026-08-01)**
+**Statut : `CLOSED — PRODUCTION_LEGACY_HS256_REVOKED_RUNTIME_VALIDATED` (2026-08-01)**
 **État final** : les clés legacy d'API production sont désactivées ; la clé de
-signature courante est désormais ECC P-256 / ES256. La clé Legacy HS256 reste
-acceptée comme clé précédente et n'a pas été révoquée. Staging a été restauré
-après correction de cible et n'est pas concerné par cette rotation production.
+signature courante est ECC P-256 / ES256 et la clé Legacy HS256 précédente est
+révoquée, sans suppression définitive. Staging a été restauré après correction
+de cible et n'est pas concerné par cette rotation production.
 
 **Objectif historique** : externaliser l'URL Supabase et la clé anon hardcodées
 dans `src/integrations/supabase/client.ts` vers des variables d'environnement
@@ -615,16 +615,30 @@ vers une clé moderne. Aucune restauration DB n'est nécessaire.
 - aucune importation, promotion, supersede, administration ou mutation métier ;
   aucune modification Git, Lovable ou Supabase pendant la validation.
 
-**Portée résiduelle et révocation** : les clés legacy `anon` / `service_role`
-restent refusées comme clés API. La Legacy HS256 reste volontairement acceptée
-comme clé de signature précédente. Avec des access tokens de 3 600 secondes, le
-délai de sécurité de 1 h 15 après rotation, la borne conservatrice retenue est
-`2026-08-01T12:00:00Z`. Son expiration ne vaut pas autorisation : toute
-révocation exige un préflight et un GO production distincts, puis une validation
-runtime dédiée. Les clés legacy staging restent actives après rollback.
+**Révocation production Legacy HS256 (2026-08-01)** — PASS :
+- éligibilité recontrôlée en lecture seule à `2026-08-01T12:13:40Z`, après la
+  borne conservatrice `2026-08-01T12:00:00Z` ; access tokens toujours configurés
+  à 3 600 secondes, clés API legacy toujours désactivées et vérification par
+  secret legacy de l'Edge Function `mcp` toujours désactivée ;
+- cible exacte `leakcdbbawzysfqyqsnr` confirmée avant l'action ; ECC P-256 /
+  ES256 était courante et Legacy HS256 était l'unique clé précédente ;
+- sous GO production nominatif, Legacy HS256 a été révoquée puis confirmée dans
+  `Revoked keys`. ECC P-256 / ES256 est restée courante ; aucune clé n'a été
+  supprimée et aucune autre configuration Auth n'a été modifiée ;
+- post-contrôle à `2026-08-01T12:18:45Z` : JWKS public limité à une clé `EC` /
+  `ES256` / `sig` avec `kid`, clés API legacy toujours désactivées ;
+- le Dashboard authentifié a continué à charger sans redirection, erreur JWT,
+  `Invalid API key` ni erreur d'autorisation ; aucune mutation métier ;
+- le chemin de récupération `Move to standby key` reste disponible sur la clé
+  révoquée. Toute remise en standby puis rotation exige un GO production séparé.
 
-**Suite** : review/merge de ce record, puis préflight séparé de révocation de la
-clé de signature JWT historique.
+**Portée résiduelle** : production n'accepte plus Legacy HS256 comme clé de
+signature et conserve ES256 comme clé courante. Les clés legacy staging restent
+actives après le rollback de correction de cible et sont hors périmètre de cette
+révocation.
+
+**Suite** : review/merge de ce record, puis clôture du lot SEC-ENV-1. Aucun autre
+changement de clé production n'est requis par ce lot.
 
 ---
 
