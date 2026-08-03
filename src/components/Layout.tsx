@@ -29,12 +29,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
+import { currentCollectionsRuntimeTargetVerdict } from '@/features/collections-remittances/collectionsRuntimeTarget';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { canAccessPage } = useDailyV2Access();
+  const collectionsLocalEnabled = currentCollectionsRuntimeTargetVerdict('read').allowed;
 
   const showNavigation = location.pathname !== '/auth' && user;
 
@@ -48,9 +50,12 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Daily v2', href: '/daily-statements', icon: CalendarDays },
+    { name: 'Collections', href: '/collections-remittances', icon: GitMerge },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
-  ].filter((item) => item.href !== '/daily-statements' || canAccessPage);
+  ]
+    .filter((item) => item.href !== '/daily-statements' || canAccessPage)
+    .filter((item) => item.href !== '/collections-remittances' || collectionsLocalEnabled);
 
   return (
     <div className="min-h-screen bg-gray-50">

@@ -12,6 +12,7 @@ import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import FileUpload from "./pages/FileUpload";
 import Reconciliation from "./pages/Reconciliation";
+import CollectionsRemittances from "./pages/CollectionsRemittances";
 import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import DailyStatementV2 from "./pages/DailyStatementV2";
 import QualityControl from "./pages/QualityControl";
@@ -84,6 +85,7 @@ const App = () => (
               <Route path="/upload" element={<ProtectedRoute><FileUpload /></ProtectedRoute>} />
               <Route path="/upload-bulk" element={<ProtectedRoute><Navigate to="/upload" replace /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
+              <Route path="/collections-remittances" element={<ProtectedRoute><CollectionsRemittances /></ProtectedRoute>} />
               <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
               <Route path="/daily-statements" element={<ProtectedRoute><DailyV2Route /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
