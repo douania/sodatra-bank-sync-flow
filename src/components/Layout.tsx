@@ -53,11 +53,9 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Collections', href: '/collections-remittances', icon: GitMerge },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
-  ].filter((item) => {
-    if (item.href === '/daily-statements') return canAccessPage;
-    if (item.href === '/collections-remittances') return collectionsLocalEnabled;
-    return true;
-  });
+  ]
+    .filter((item) => item.href !== '/daily-statements' || canAccessPage)
+    .filter((item) => item.href !== '/collections-remittances' || collectionsLocalEnabled);
 
   return (
     <div className="min-h-screen bg-gray-50">
