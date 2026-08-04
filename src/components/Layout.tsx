@@ -14,7 +14,8 @@ import {
   FileText,
   TrendingUp,
   LogOut,
-  CalendarDays
+  CalendarDays,
+  Landmark
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -29,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
+import { currentCollectionsCoreRuntimeVerdict } from '@/features/collections-core/collectionsCoreRuntimeTarget';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
@@ -48,9 +50,16 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Daily v2', href: '/daily-statements', icon: CalendarDays },
+    { name: 'Collections', href: '/collections-remittances', icon: Landmark },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
-  ].filter((item) => item.href !== '/daily-statements' || canAccessPage);
+  ]
+    .filter((item) => item.href !== '/daily-statements' || canAccessPage)
+    .filter(
+      (item) =>
+        item.href !== '/collections-remittances' ||
+        currentCollectionsCoreRuntimeVerdict().allowed,
+    );
 
   return (
     <div className="min-h-screen bg-gray-50">

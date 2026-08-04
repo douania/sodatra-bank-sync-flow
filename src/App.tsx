@@ -15,9 +15,11 @@ import Reconciliation from "./pages/Reconciliation";
 import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import DailyStatementV2 from "./pages/DailyStatementV2";
 import QualityControl from "./pages/QualityControl";
+import CollectionsCore from "./pages/CollectionsCore";
 import NotFound from "./pages/NotFound";
 import { useDailyV2Access } from "./features/daily-v2/dailyV2Access";
 import type { DailyV2AccessState } from "./features/daily-v2/dailyV2AccessState";
+import { currentCollectionsCoreRuntimeVerdict } from "./features/collections-core/collectionsCoreRuntimeTarget";
 
 const queryClient = new QueryClient();
 
@@ -68,6 +70,19 @@ const DailyV2Route = () => {
   return <DailyStatementV2 />;
 };
 
+const CollectionsCoreRoute = () => {
+  const verdict = currentCollectionsCoreRuntimeVerdict();
+  if ('reason' in verdict) {
+    return (
+      <div role="alert" className="mx-auto max-w-xl rounded-lg border bg-card p-6 shadow-sm">
+        <h1 className="text-lg font-semibold">Collections Core non disponible</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{verdict.reason}</p>
+      </div>
+    );
+  }
+  return <CollectionsCore />;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -84,6 +99,7 @@ const App = () => (
               <Route path="/upload" element={<ProtectedRoute><FileUpload /></ProtectedRoute>} />
               <Route path="/upload-bulk" element={<ProtectedRoute><Navigate to="/upload" replace /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
+              <Route path="/collections-remittances" element={<ProtectedRoute><CollectionsCoreRoute /></ProtectedRoute>} />
               <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
               <Route path="/daily-statements" element={<ProtectedRoute><DailyV2Route /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />

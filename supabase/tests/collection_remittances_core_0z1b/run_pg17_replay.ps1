@@ -38,8 +38,10 @@ try {
   Invoke-ReplaySqlFile 'supabase/migrations/20260803000000_collection_remittances_core_0z1b.sql'
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/05_service_role_execute_pre_fix.sql'
   Invoke-ReplaySqlFile 'supabase/migrations/20260804000000_collection_remittances_core_service_role_execute_fix.sql'
+  Invoke-ReplaySqlFile 'supabase/migrations/20260805000000_collection_remittances_core_atomic_entry.sql'
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/10_structure_security.sql'
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/20_core_scenarios.sql'
+  Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/15_atomic_entry.sql'
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/25_counter_review_regressions.sql'
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/30_concurrency_setup.sql'
 

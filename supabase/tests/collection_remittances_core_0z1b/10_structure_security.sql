@@ -61,7 +61,7 @@ SELECT poc_test.assert(
   'PUBLIC and anon must have no Core table/view grants');
 
 WITH expected(name) AS (VALUES
- ('create_collection_remittance_v1'),('add_collection_remittance_item_v1'),
+ ('create_collection_entry_v1'),('create_collection_remittance_v1'),('add_collection_remittance_item_v1'),
  ('validate_collection_remittance_v1'),('request_collection_remittance_withdrawal_v1'),
  ('confirm_collection_remittance_withdrawal_v1'),('resubmit_collection_remittance_item_v1'),
  ('import_collection_receipts_v1'),('allocate_collection_invoice_v1'),
@@ -70,8 +70,9 @@ WITH expected(name) AS (VALUES
  ('cancel_collection_remittance_v1'),('resolve_collection_duplicate_v1'),
  ('grant_collection_capability_v1'))
 SELECT poc_test.assert(
-  (SELECT count(*)=15 FROM expected e WHERE to_regprocedure(
+  (SELECT count(*)=16 FROM expected e WHERE to_regprocedure(
     CASE e.name
+      WHEN 'create_collection_entry_v1' THEN 'public.create_collection_entry_v1(text,jsonb,jsonb,jsonb,jsonb)'
       WHEN 'create_collection_remittance_v1' THEN 'public.create_collection_remittance_v1(text,jsonb,jsonb)'
       WHEN 'add_collection_remittance_item_v1' THEN 'public.add_collection_remittance_item_v1(text,uuid,uuid,jsonb)'
       WHEN 'validate_collection_remittance_v1' THEN 'public.validate_collection_remittance_v1(text,uuid,text)'
@@ -87,7 +88,7 @@ SELECT poc_test.assert(
       WHEN 'cancel_collection_remittance_v1' THEN 'public.cancel_collection_remittance_v1(text,uuid,text,text,text)'
       WHEN 'resolve_collection_duplicate_v1' THEN 'public.resolve_collection_duplicate_v1(text,uuid,text,uuid,text)'
       ELSE 'public.grant_collection_capability_v1(text,uuid,text,boolean,text)' END) IS NOT NULL),
-  'all fifteen write commands must exist');
+  'all sixteen write commands must exist');
 
 SELECT poc_test.assert(to_regprocedure('public.export_collection_register_v1()') IS NOT NULL,
   'read-only export RPC must exist');
@@ -110,12 +111,13 @@ SELECT poc_test.assert(
   'PUBLIC and anon must not execute Core functions');
 
 SELECT poc_test.assert(
-  (SELECT count(*)=16 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  (SELECT count(*)=17 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
    WHERE n.nspname='public' AND has_function_privilege('authenticated',p.oid,'EXECUTE')
      AND (p.proname LIKE '%collection%_v1' OR p.proname='export_collection_register_v1')),
-  'authenticated must execute exactly fifteen commands plus the export');
+  'authenticated must execute exactly sixteen commands plus the export');
 
 WITH write_commands(signature) AS (VALUES
+ ('public.create_collection_entry_v1(text,jsonb,jsonb,jsonb,jsonb)'::regprocedure),
  ('public.create_collection_remittance_v1(text,jsonb,jsonb)'::regprocedure),
  ('public.add_collection_remittance_item_v1(text,uuid,uuid,jsonb)'::regprocedure),
  ('public.validate_collection_remittance_v1(text,uuid,text)'::regprocedure),
