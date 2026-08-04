@@ -115,6 +115,38 @@ SELECT poc_test.assert(
      AND (p.proname LIKE '%collection%_v1' OR p.proname='export_collection_register_v1')),
   'authenticated must execute exactly fifteen commands plus the export');
 
+WITH write_commands(signature) AS (VALUES
+ ('public.create_collection_remittance_v1(text,jsonb,jsonb)'::regprocedure),
+ ('public.add_collection_remittance_item_v1(text,uuid,uuid,jsonb)'::regprocedure),
+ ('public.validate_collection_remittance_v1(text,uuid,text)'::regprocedure),
+ ('public.request_collection_remittance_withdrawal_v1(text,uuid,text)'::regprocedure),
+ ('public.confirm_collection_remittance_withdrawal_v1(text,uuid,text,text,text)'::regprocedure),
+ ('public.resubmit_collection_remittance_item_v1(text,uuid,uuid,date,text,text)'::regprocedure),
+ ('public.import_collection_receipts_v1(text,text,jsonb)'::regprocedure),
+ ('public.allocate_collection_invoice_v1(text,uuid,text,numeric,text,text)'::regprocedure),
+ ('public.propose_collection_match_v1(text,text,uuid,jsonb)'::regprocedure),
+ ('public.confirm_collection_match_v1(text,uuid,text,text)'::regprocedure),
+ ('public.rebind_collection_superseded_evidence_v1(text,uuid,uuid,text)'::regprocedure),
+ ('public.correct_collection_capture_v1(text,text,uuid,jsonb,text)'::regprocedure),
+ ('public.cancel_collection_remittance_v1(text,uuid,text,text,text)'::regprocedure),
+ ('public.resolve_collection_duplicate_v1(text,uuid,text,uuid,text)'::regprocedure),
+ ('public.grant_collection_capability_v1(text,uuid,text,boolean,text)'::regprocedure)
+)
+SELECT poc_test.assert(
+  NOT EXISTS (
+    SELECT 1 FROM write_commands
+    WHERE has_function_privilege('service_role',signature,'EXECUTE')
+  ),
+  'service_role must not execute any Core write command');
+
+SELECT poc_test.assert(
+  has_function_privilege(
+    'service_role',
+    'public.collection_current_actor_has_capability(text)'::regprocedure,
+    'EXECUTE'
+  ),
+  'service_role must retain only the deliberate capability read helper');
+
 SET request.jwt.claim.sub='00000000-0000-0000-0000-000000000002';
 SET ROLE authenticated;
 DO $$

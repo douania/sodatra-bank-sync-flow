@@ -11,11 +11,14 @@ powershell -ExecutionPolicy Bypass -File supabase/tests/collection_remittances_c
 ```
 
 The runner creates one unexposed `postgres:17-alpine` container, applies the minimal
-Supabase/Daily v2 shape, the candidate migration and all assertions, exercises a real
-two-session reservation race, then destroys the container in `finally`.
+Supabase/Daily v2 shape, reproduces the staging `service_role` default privilege,
+applies the Core migration followed by its additive privilege correction and all
+assertions, exercises a real two-session reservation race, then destroys the
+container in `finally`.
 
 Expected final markers:
 
+- `SERVICE_ROLE_EXPOSURE_REPRODUCED`
 - `STRUCTURE_SECURITY_PASS`
 - `CORE_SCENARIOS_PASS`
 - `COUNTER_REVIEW_REGRESSIONS_PASS`
