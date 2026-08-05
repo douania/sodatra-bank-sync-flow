@@ -30,13 +30,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
-import { currentCollectionsCoreRuntimeVerdict } from '@/features/collections-core/collectionsCoreRuntimeTarget';
+import { useCollectionsCorePilotGate } from '@/features/collections-core/CollectionsCorePilotGate';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { canAccessPage } = useDailyV2Access();
+  const { gate: collectionsCoreGate } = useCollectionsCorePilotGate();
 
   const showNavigation = location.pathname !== '/auth' && user;
 
@@ -58,7 +59,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     .filter(
       (item) =>
         item.href !== '/collections-remittances' ||
-        currentCollectionsCoreRuntimeVerdict().allowed,
+        collectionsCoreGate.status === 'allowed',
     );
 
   return (

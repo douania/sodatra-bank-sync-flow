@@ -19,7 +19,10 @@ import CollectionsCore from "./pages/CollectionsCore";
 import NotFound from "./pages/NotFound";
 import { useDailyV2Access } from "./features/daily-v2/dailyV2Access";
 import type { DailyV2AccessState } from "./features/daily-v2/dailyV2AccessState";
-import { currentCollectionsCoreRuntimeVerdict } from "./features/collections-core/collectionsCoreRuntimeTarget";
+import {
+  CollectionsCorePilotGateProvider,
+  useCollectionsCorePilotGate,
+} from "./features/collections-core/CollectionsCorePilotGate";
 
 const queryClient = new QueryClient();
 
@@ -71,12 +74,15 @@ const DailyV2Route = () => {
 };
 
 const CollectionsCoreRoute = () => {
-  const verdict = currentCollectionsCoreRuntimeVerdict();
-  if ('reason' in verdict) {
+  const { gate } = useCollectionsCorePilotGate();
+  if (gate.status === 'checking') {
+    return <div className="py-12 text-center text-sm text-muted-foreground">Vérification du pilote Collections…</div>;
+  }
+  if (gate.status === 'blocked') {
     return (
       <div role="alert" className="mx-auto max-w-xl rounded-lg border bg-card p-6 shadow-sm">
         <h1 className="text-lg font-semibold">Collections Core non disponible</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{verdict.reason}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{gate.reason}</p>
       </div>
     );
   }
@@ -90,8 +96,9 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <Layout>
-            <Routes>
+          <CollectionsCorePilotGateProvider>
+            <Layout>
+              <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/reset-password" element={<ResetPassword />} />
@@ -104,8 +111,9 @@ const App = () => (
               <Route path="/daily-statements" element={<ProtectedRoute><DailyV2Route /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Layout>
+              </Routes>
+            </Layout>
+          </CollectionsCorePilotGateProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
