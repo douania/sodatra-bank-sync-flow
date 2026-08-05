@@ -10,9 +10,12 @@ test('la route Core est additive et ne remplace pas le rapprochement historique'
   assert.match(app, /path="\/reconciliation"/);
 });
 
-test('la navigation Core reste cachée hors cible locale autorisée', async () => {
+test('la navigation Core reste cachée tant que la garde partagée ne l’autorise pas', async () => {
   const layout = await read('../../components/Layout.tsx');
-  assert.match(layout, /currentCollectionsCoreRuntimeVerdict\(\)\.allowed/);
+  const app = await read('../../App.tsx');
+  assert.match(layout, /useCollectionsCorePilotGate/);
+  assert.match(layout, /collectionsCoreGate\.status === 'allowed'/);
+  assert.match(app, /CollectionsCorePilotGateProvider/);
 });
 
 test('la saisie utilise une seule RPC atomique', async () => {
@@ -50,4 +53,43 @@ test('le parcours simplifié ne rattache pas les débits de frais séparés', as
 test('aucun paiement ni écriture comptable n’est présenté comme exécuté', async () => {
   const page = await read('../../pages/CollectionsCore.tsx');
   assert.match(page, /sans exécuter de paiement ni passer d’écriture comptable/);
+});
+
+test('bloque toutes les fonctions de phase B avant leur accès réseau en staging', async () => {
+  const service = await read('./collectionsCoreService.ts');
+  const page = await read('../../pages/CollectionsCore.tsx');
+  assert.equal((service.match(/assertReady\('phase_b'\)/g) ?? []).length, 4);
+  assert.match(service, /listActiveCreditLines[\s\S]*?assertReady\('phase_b'\)[\s\S]*?daily_statement_lines_canonical/);
+  assert.match(page, /Phase A uniquement[\s\S]*Daily v2 reste NOT_RUN/);
+});
+
+test('le panneau staging expose seulement préparer et fermer pour G', async () => {
+  const page = await read('../../pages/CollectionsCore.tsx');
+  assert.match(page, /actor==='G'&&<PilotAdministrationPanel/);
+  assert.match(page, /Préparer le pilote/);
+  assert.match(page, /Fermer le pilote/);
+});
+
+test('le bandeau staging porte les trois avertissements métier obligatoires', async () => {
+  const page = await read('../../pages/CollectionsCore.tsx');
+  assert.match(
+    page,
+    /PILOTE STAGING — données synthétiques uniquement — aucun paiement ni écriture comptable/,
+  );
+});
+
+test('le compte de dépôt synthétique est vérifié avant la RPC de saisie', async () => {
+  const service = await read('./collectionsCoreService.ts');
+  const createStart = service.indexOf('export async function createCollectionEntry');
+  const accountPreflight = service.indexOf('const activeAccounts = await listCollectionAccounts()', createStart);
+  const createRpc = service.indexOf("rpc('create_collection_entry_v1'", createStart);
+  assert.ok(createStart >= 0 && accountPreflight > createStart && createRpc > accountPreflight);
+  assert.match(service, /PILOT_DEPOSIT_ACCOUNT_REJECTED/);
+});
+
+test('la fermeture vérifie A/B avant de révoquer G en dernier', async () => {
+  const service = await read('./collectionsCoreService.ts');
+  const postControl = service.indexOf('const businessPostControl');
+  const revokeGrantor = service.indexOf('REVOKE:G:MANAGE_ACCESS');
+  assert.ok(postControl > 0 && revokeGrantor > postControl);
 });

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertCircle, CheckCircle2, Landmark, Link2, ListChecks, PlusCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Landmark, Link2, ListChecks, PlusCircle, ShieldCheck } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,13 +16,18 @@ import {
   decideCollectionMatch,
   exportCollectionRegister,
   getCollectionCapabilities,
+  inspectCollectionsCorePilotAdministration,
   listActiveCreditLines,
   listCollectionAccounts,
   listPendingMatchProposals,
   listRemittanceWorkItems,
   proposeCollectionMatch,
+  prepareCollectionsCoreStagingPilot,
+  closeCollectionsCoreStagingPilot,
   validateCollectionRemittance,
 } from '@/features/collections-core/collectionsCoreService';
+import { useCollectionsCorePilotGate } from '@/features/collections-core/CollectionsCorePilotGate';
+import type { CollectionsCorePilotDataset } from '@/features/collections-core/collectionsCorePilotAccess';
 import type {
   CollectionCapability,
   CollectionEntryInput,
@@ -68,21 +73,23 @@ function Empty({ children }: { children: string }) {
   return <p className="py-8 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
-function EntryPanel({ allowed }: { allowed: boolean }) {
+function EntryPanel({ allowed, pilotDataset }: { allowed: boolean; pilotDataset?: CollectionsCorePilotDataset }) {
   const queryClient = useQueryClient();
   const accounts = useQuery({ queryKey: ['collections-core', 'accounts'], queryFn: listCollectionAccounts, enabled: allowed });
-  const [form, setForm] = useState<CollectionEntryInput>({
+  const [form, setForm] = useState<CollectionEntryInput>(pilotDataset?.entry ?? {
     clientName: '', method: 'CHECK', amount: 0, currency: 'XOF', clientBank: '',
     depositAccountId: '', depositDate: '', declaredCreditDate: '', instrumentReference: '',
     maturityDate: '', invoiceReference: '', slipReference: '', businessNature: 'STANDARD', note: '',
   });
-  const [workflowKey, setWorkflowKey] = useState(readEntryWorkflowKey);
+  const [workflowKey, setWorkflowKey] = useState(
+    pilotDataset?.entryCommandKey ?? readEntryWorkflowKey,
+  );
   const submit = useMutation({
     mutationFn: createCollectionEntry,
     onSuccess: async () => {
       toast.success('Remise enregistrée en brouillon.');
-      setWorkflowKey(rotateEntryWorkflowKey());
-      setForm((current) => ({ ...current, clientName: '', amount: 0, clientBank: '', instrumentReference: '', maturityDate: '', invoiceReference: '', slipReference: '', note: '' }));
+      if (!pilotDataset) setWorkflowKey(rotateEntryWorkflowKey());
+      if (!pilotDataset) setForm((current) => ({ ...current, clientName: '', amount: 0, clientBank: '', instrumentReference: '', maturityDate: '', invoiceReference: '', slipReference: '', note: '' }));
       await queryClient.invalidateQueries({ queryKey: ['collections-core'] });
     },
     onError: (error) => toast.error(`${errorMessage(error)} Aucun brouillon incomplet n’a été conservé.`),
@@ -93,6 +100,13 @@ function EntryPanel({ allowed }: { allowed: boolean }) {
 
   if (!allowed) return <Empty>Votre compte ne peut pas saisir de remise.</Empty>;
   if (accounts.isError) return <Alert variant="destructive"><AlertCircle className="h-4 w-4"/><AlertDescription>{errorMessage(accounts.error)}</AlertDescription></Alert>;
+  if (pilotDataset && accounts.isPending) return <Empty>Vérification du compte de dépôt synthétique…</Empty>;
+  if (
+    pilotDataset &&
+    (!chosenAccount || chosenAccount.currency !== pilotDataset.entry.currency)
+  ) {
+    return <Alert variant="destructive"><AlertCircle className="h-4 w-4"/><AlertDescription>Le compte de dépôt synthétique est absent, inactif ou dans une autre devise. Le pilote est arrêté avant saisie.</AlertDescription></Alert>;
+  }
   return (
     <Card>
       <CardHeader>
@@ -100,20 +114,21 @@ function EntryPanel({ allowed }: { allowed: boolean }) {
         <CardDescription>Cette saisie remplace le nouveau remplissage manuel du fichier Collection Report.</CardDescription>
       </CardHeader>
       <CardContent>
+        {pilotDataset && <Alert className="mb-4 md:col-span-3"><ShieldCheck className="h-4 w-4"/><AlertDescription>Jeu synthétique scellé : les champs sont en lecture seule.</AlertDescription></Alert>}
         <form className="grid gap-4 md:grid-cols-3" onSubmit={(event) => { event.preventDefault(); submit.mutate({ input: form, workflowKey }); }}>
-          <div><Label htmlFor="deposit-date">Date de remise</Label><Input id="deposit-date" className={fieldClass} type="date" required value={form.depositDate} onChange={(e) => set('depositDate', e.target.value)} /></div>
-          <div><Label htmlFor="method">Mode</Label><select id="method" className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" value={form.method} onChange={(e) => set('method', e.target.value as ReceiptMethod)}><option value="CHECK">Chèque</option><option value="EFFECT">Effet</option><option value="TRANSFER">Virement</option><option value="CASH">Espèces</option></select></div>
-          <div><Label htmlFor="amount">Montant</Label><Input id="amount" className={fieldClass} type="number" min="0.01" step="0.01" required value={form.amount || ''} onChange={(e) => set('amount', Number(e.target.value))} /></div>
-          <div><Label htmlFor="client">Client SODATRA</Label><Input id="client" className={fieldClass} required value={form.clientName} onChange={(e) => set('clientName', e.target.value)} /></div>
-          <div><Label htmlFor="client-bank">Banque du client</Label><Input id="client-bank" className={fieldClass} value={form.clientBank} onChange={(e) => set('clientBank', e.target.value)} /></div>
-          <div><Label htmlFor="deposit-account">Banque de dépôt SODATRA</Label><select id="deposit-account" className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" required value={form.depositAccountId} onChange={(e) => { const id=e.target.value; const account=accounts.data?.find((entry)=>entry.id===id); setForm((current)=>({...current,depositAccountId:id,currency:account?.currency ?? current.currency})); }}><option value="">Choisir…</option>{accounts.data?.map((account)=><option key={account.id} value={account.id}>{account.bank} — {account.safeAlias} ({account.currency})</option>)}</select></div>
-          {(form.method === 'CHECK' || form.method === 'EFFECT') && <div><Label htmlFor="instrument">{form.method === 'CHECK' ? 'N° du chèque' : 'Référence effet (facultative)'}</Label><Input id="instrument" className={fieldClass} required={form.method === 'CHECK'} value={form.instrumentReference} onChange={(e) => set('instrumentReference', e.target.value)} /></div>}
-          {form.method === 'EFFECT' && <div><Label htmlFor="maturity">Échéance de l’effet</Label><Input id="maturity" className={fieldClass} type="date" required value={form.maturityDate} onChange={(e) => set('maturityDate', e.target.value)} /></div>}
-          <div><Label htmlFor="invoice">Facture n° (facultatif)</Label><Input id="invoice" className={fieldClass} value={form.invoiceReference} onChange={(e) => set('invoiceReference', e.target.value)} /></div>
-          <div><Label htmlFor="slip">Bordereau / référence</Label><Input id="slip" className={fieldClass} value={form.slipReference} onChange={(e) => set('slipReference', e.target.value)} /></div>
-          <div><Label htmlFor="declared-date">Date de crédit déclarée</Label><Input id="declared-date" className={fieldClass} type="date" value={form.declaredCreditDate} onChange={(e) => set('declaredCreditDate', e.target.value)} /></div>
-          <div><Label htmlFor="nature">Nature</Label><select id="nature" className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" value={form.businessNature} onChange={(e) => set('businessNature', e.target.value as 'STANDARD'|'PROROGATION')}><option value="STANDARD">Standard</option><option value="PROROGATION">Prorogation</option></select></div>
-          <div className="md:col-span-3"><Label htmlFor="note">Note</Label><Textarea id="note" className={fieldClass} value={form.note} onChange={(e) => set('note', e.target.value)} /></div>
+          <div><Label htmlFor="deposit-date">Date de remise</Label><Input id="deposit-date" disabled={Boolean(pilotDataset)} className={fieldClass} type="date" required value={form.depositDate} onChange={(e) => set('depositDate', e.target.value)} /></div>
+          <div><Label htmlFor="method">Mode</Label><select id="method" disabled={Boolean(pilotDataset)} className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" value={form.method} onChange={(e) => set('method', e.target.value as ReceiptMethod)}><option value="CHECK">Chèque</option><option value="EFFECT">Effet</option><option value="TRANSFER">Virement</option><option value="CASH">Espèces</option></select></div>
+          <div><Label htmlFor="amount">Montant</Label><Input id="amount" disabled={Boolean(pilotDataset)} className={fieldClass} type="number" min="0.01" step="0.01" required value={form.amount || ''} onChange={(e) => set('amount', Number(e.target.value))} /></div>
+          <div><Label htmlFor="client">Client SODATRA</Label><Input id="client" disabled={Boolean(pilotDataset)} className={fieldClass} required value={form.clientName} onChange={(e) => set('clientName', e.target.value)} /></div>
+          <div><Label htmlFor="client-bank">Banque du client</Label><Input id="client-bank" disabled={Boolean(pilotDataset)} className={fieldClass} value={form.clientBank} onChange={(e) => set('clientBank', e.target.value)} /></div>
+          <div><Label htmlFor="deposit-account">Banque de dépôt SODATRA</Label><select id="deposit-account" disabled={Boolean(pilotDataset)} className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" required value={form.depositAccountId} onChange={(e) => { const id=e.target.value; const account=accounts.data?.find((entry)=>entry.id===id); setForm((current)=>({...current,depositAccountId:id,currency:account?.currency ?? current.currency})); }}><option value="">Choisir…</option>{accounts.data?.map((account)=><option key={account.id} value={account.id}>{account.bank} — {account.safeAlias} ({account.currency})</option>)}</select></div>
+          {(form.method === 'CHECK' || form.method === 'EFFECT') && <div><Label htmlFor="instrument">{form.method === 'CHECK' ? 'N° du chèque' : 'Référence effet (facultative)'}</Label><Input id="instrument" disabled={Boolean(pilotDataset)} className={fieldClass} required={form.method === 'CHECK'} value={form.instrumentReference} onChange={(e) => set('instrumentReference', e.target.value)} /></div>}
+          {form.method === 'EFFECT' && <div><Label htmlFor="maturity">Échéance de l’effet</Label><Input id="maturity" disabled={Boolean(pilotDataset)} className={fieldClass} type="date" required value={form.maturityDate} onChange={(e) => set('maturityDate', e.target.value)} /></div>}
+          <div><Label htmlFor="invoice">Facture n° (facultatif)</Label><Input id="invoice" disabled={Boolean(pilotDataset)} className={fieldClass} value={form.invoiceReference} onChange={(e) => set('invoiceReference', e.target.value)} /></div>
+          <div><Label htmlFor="slip">Bordereau / référence</Label><Input id="slip" disabled={Boolean(pilotDataset)} className={fieldClass} value={form.slipReference} onChange={(e) => set('slipReference', e.target.value)} /></div>
+          <div><Label htmlFor="declared-date">Date de crédit déclarée</Label><Input id="declared-date" disabled={Boolean(pilotDataset)} className={fieldClass} type="date" value={form.declaredCreditDate} onChange={(e) => set('declaredCreditDate', e.target.value)} /></div>
+          <div><Label htmlFor="nature">Nature</Label><select id="nature" disabled={Boolean(pilotDataset)} className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" value={form.businessNature} onChange={(e) => set('businessNature', e.target.value as 'STANDARD'|'PROROGATION')}><option value="STANDARD">Standard</option><option value="PROROGATION">Prorogation</option></select></div>
+          <div className="md:col-span-3"><Label htmlFor="note">Note</Label><Textarea id="note" disabled={Boolean(pilotDataset)} className={fieldClass} value={form.note} onChange={(e) => set('note', e.target.value)} /></div>
           <div className="md:col-span-3 flex items-center justify-between"><span className="text-xs text-muted-foreground">Devise : {chosenAccount?.currency ?? form.currency}. Une autre personne devra valider.</span><Button disabled={submit.isPending || accounts.isPending} type="submit">{submit.isPending ? 'Enregistrement…' : 'Enregistrer le brouillon'}</Button></div>
         </form>
       </CardContent>
@@ -121,7 +136,7 @@ function EntryPanel({ allowed }: { allowed: boolean }) {
   );
 }
 
-function ValidationPanel({ allowed }: { allowed: boolean }) {
+function ValidationPanel({ allowed, pilotDataset }: { allowed: boolean; pilotDataset?: CollectionsCorePilotDataset }) {
   const queryClient = useQueryClient();
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const drafts = useQuery({ queryKey: ['collections-core', 'drafts'], queryFn: () => listRemittanceWorkItems(['DRAFT']), enabled: allowed });
@@ -134,7 +149,15 @@ function ValidationPanel({ allowed }: { allowed: boolean }) {
   if (drafts.isPending) return <Empty>Chargement des brouillons…</Empty>;
   if (drafts.isError) return <Alert variant="destructive"><AlertCircle className="h-4 w-4"/><AlertDescription>{errorMessage(drafts.error)}</AlertDescription></Alert>;
   if (!drafts.data?.length) return <Empty>Aucune remise à valider.</Empty>;
-  return <div className="space-y-3">{drafts.data.map((item)=><Card key={item.itemId}><CardContent className="grid gap-3 pt-5 md:grid-cols-[1fr_1fr_auto] md:items-end"><div><p className="font-medium">{item.clientName} — {money.format(item.amount)} {item.currency}</p><p className="text-sm text-muted-foreground">{item.depositDate} · {item.method} {item.instrumentReference ?? ''} · saisie {item.remittanceCreatedBy.slice(0,8)}</p></div><div><Label htmlFor={`reason-${item.itemId}`}>Motif de validation</Label><Input id={`reason-${item.itemId}`} className={fieldClass} value={reasons[item.remittanceId] ?? ''} onChange={(e)=>setReasons((current)=>({...current,[item.remittanceId]:e.target.value}))} /></div><Button disabled={mutation.isPending || !(reasons[item.remittanceId]?.trim())} onClick={()=>mutation.mutate({id:item.remittanceId,reason:reasons[item.remittanceId]})}>Valider</Button></CardContent></Card>)}</div>;
+  return <div className="space-y-3">{drafts.data.map((item)=>{const reason=pilotDataset?.validationReason ?? reasons[item.remittanceId] ?? '';return <Card key={item.itemId}><CardContent className="grid gap-3 pt-5 md:grid-cols-[1fr_1fr_auto] md:items-end"><div><p className="font-medium">{item.clientName} — {money.format(item.amount)} {item.currency}</p><p className="text-sm text-muted-foreground">{item.depositDate} · {item.method} {item.instrumentReference ?? ''} · saisie {item.remittanceCreatedBy.slice(0,8)}</p></div><div><Label htmlFor={`reason-${item.itemId}`}>Motif de validation</Label><Input id={`reason-${item.itemId}`} className={fieldClass} readOnly={Boolean(pilotDataset)} value={reason} onChange={(e)=>setReasons((current)=>({...current,[item.remittanceId]:e.target.value}))} /></div><Button disabled={mutation.isPending || !reason.trim()} onClick={()=>mutation.mutate({id:item.remittanceId,reason})}>Valider</Button></CardContent></Card>})}</div>;
+}
+
+function PilotAdministrationPanel() {
+  const queryClient = useQueryClient();
+  const state = useQuery({ queryKey: ['collections-core', 'pilot-administration'], queryFn: inspectCollectionsCorePilotAdministration });
+  const prepare = useMutation({ mutationFn: prepareCollectionsCoreStagingPilot, onSuccess: async()=>{toast.success('Pilote préparé.');await queryClient.invalidateQueries({queryKey:['collections-core']});}, onError:(error)=>toast.error(errorMessage(error)) });
+  const close = useMutation({ mutationFn: closeCollectionsCoreStagingPilot, onSuccess: async()=>{toast.success('Pilote fermé et habilitations temporaires révoquées.');await queryClient.invalidateQueries({queryKey:['collections-core']});}, onError:(error)=>toast.error(errorMessage(error)) });
+  return <Card><CardHeader><CardTitle>Administration bornée du pilote</CardTitle><CardDescription>G ne peut effectuer aucune action métier. La fermeture contrôle A/B avant de révoquer MANAGE_ACCESS en dernier.</CardDescription></CardHeader><CardContent className="space-y-4"><div className="grid gap-2 text-sm md:grid-cols-3"><p>A : {(state.data?.operatorActiveCapabilities ?? []).join(', ') || 'aucune'}</p><p>B : {(state.data?.controllerActiveCapabilities ?? []).join(', ') || 'aucune'}</p><p>G MANAGE_ACCESS : {state.data?.grantorManageAccessActive ? 'temporaire actif' : 'inactif'}</p></div>{state.isError&&<Alert variant="destructive"><AlertCircle className="h-4 w-4"/><AlertDescription>{errorMessage(state.error)}</AlertDescription></Alert>}<div className="flex gap-3"><Button disabled={prepare.isPending||close.isPending} onClick={()=>prepare.mutate()}>Préparer le pilote</Button><Button variant="destructive" disabled={prepare.isPending||close.isPending} onClick={()=>close.mutate()}>Fermer le pilote</Button></div></CardContent></Card>;
 }
 
 function MatchingPanel({ canPropose, canConfirm }: { canPropose: boolean; canConfirm: boolean }) {
@@ -166,10 +189,15 @@ function RegisterPanel({ allowed }: { allowed: boolean }) {
 }
 
 export default function CollectionsCore() {
+  const { gate, actor } = useCollectionsCorePilotGate();
   const capabilities=useQuery({queryKey:['collections-core','capabilities'],queryFn:getCollectionCapabilities,staleTime:60_000});
   if(capabilities.isPending)return <Empty>Vérification des habilitations Collections…</Empty>;
   if(capabilities.isError)return <Alert variant="destructive"><AlertCircle className="h-4 w-4"/><AlertDescription>{errorMessage(capabilities.error)}</AlertDescription></Alert>;
   const has=(capability:CollectionCapability)=>capabilities.data?.[capability]===true;
+  if(gate.status==='allowed'&&gate.environment==='staging'){
+    const dataset=gate.pilotManifest.dataset;
+    return <div className="space-y-6"><Alert><ShieldCheck className="h-4 w-4"/><AlertDescription><strong>PILOTE STAGING — données synthétiques uniquement — aucun paiement ni écriture comptable.</strong></AlertDescription></Alert><div><Badge>STAGING — PILOTE 0Z1B</Badge><h1 className="mt-3 flex items-center gap-2 text-3xl font-bold"><Landmark className="h-7 w-7"/>Collections et remises</h1><p className="mt-2 text-muted-foreground">Campagne {gate.pilotManifest.campaignId} · acteur {actor}</p></div><Alert><ShieldCheck className="h-4 w-4"/><AlertDescription>Phase A uniquement. Le rapprochement Daily v2 reste NOT_RUN et toute lecture ou mutation de phase B est bloquée avant réseau.</AlertDescription></Alert>{actor==='G'&&<PilotAdministrationPanel/>}{actor==='A'&&<EntryPanel allowed={has('ENTRY')} pilotDataset={dataset}/>} {actor==='B'&&<div className="space-y-6"><ValidationPanel allowed={has('VALIDATE_REMITTANCE')} pilotDataset={dataset}/><RegisterPanel allowed={has('AUDIT')}/></div>}</div>;
+  }
   if(!Object.values(capabilities.data??{}).some(Boolean))return <Alert><AlertCircle className="h-4 w-4"/><AlertDescription>Aucune habilitation Collections ne vous est attribuée.</AlertDescription></Alert>;
   return <div className="space-y-6"><div><h1 className="flex items-center gap-2 text-3xl font-bold"><Landmark className="h-7 w-7"/>Collections et remises</h1><p className="mt-2 text-muted-foreground">Préparer, contrôler et justifier les encaissements — sans exécuter de paiement ni passer d’écriture comptable.</p></div><Alert><CheckCircle2 className="h-4 w-4"/><AlertDescription>La banque de dépôt est une contrainte de rapprochement : un crédit dans une autre banque ne peut pas confirmer la remise.</AlertDescription></Alert><Tabs defaultValue={has('ENTRY')?'entry':has('VALIDATE_REMITTANCE')?'validation':has('PROPOSE_MATCH')||has('CONFIRM_MATCH')?'matching':'register'}><TabsList className="grid w-full grid-cols-4"><TabsTrigger value="entry">Saisir</TabsTrigger><TabsTrigger value="validation">Valider</TabsTrigger><TabsTrigger value="matching">Rapprocher</TabsTrigger><TabsTrigger value="register">Registre</TabsTrigger></TabsList><TabsContent value="entry" className="mt-4"><EntryPanel allowed={has('ENTRY')}/></TabsContent><TabsContent value="validation" className="mt-4"><ValidationPanel allowed={has('VALIDATE_REMITTANCE')}/></TabsContent><TabsContent value="matching" className="mt-4"><MatchingPanel canPropose={has('PROPOSE_MATCH')} canConfirm={has('CONFIRM_MATCH')}/></TabsContent><TabsContent value="register" className="mt-4"><RegisterPanel allowed={has('AUDIT')}/></TabsContent></Tabs></div>;
 }
