@@ -52,22 +52,39 @@ export interface RemittanceWorkItem {
 
 export interface CreditLine {
   id: string;
+  canonicalUnitId: string;
+  dailyLineHash: string;
   accountingDate: string;
+  valueDate: string | null;
   description: string;
   amount: number;
+  unallocatedAmount: number;
   currency: string;
   accountId: string;
+  sourceAttemptId: string;
+  sourceRawTextHash: string;
+  referenceSignal: string;
+  reasonCodes: string[];
 }
 
 export interface MatchProposal {
   id: string;
   createdAt: string;
   proposedBy: string;
-  creditDailyLineId: string;
+  remittanceItemId: string;
+  clientName: string;
+  depositAccountId: string;
+  accountAlias: string;
+  nominalAmount: number;
   creditAmount: number;
   feeAmount: number;
   evidenceBasis: string;
   reason: string;
+  accountingDate: string;
+  description: string;
+  referenceSignal: string;
+  reasonCodes: string[];
+  evidenceAvailable: boolean;
 }
 
 export interface RegisterRow {

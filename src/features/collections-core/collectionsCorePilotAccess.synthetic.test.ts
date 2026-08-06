@@ -48,6 +48,26 @@ function stagingVerdict(overrides: Record<string, string | undefined> = {}): Col
   };
 }
 
+function phaseBVerdict(): CollectionsCoreRuntimeVerdict {
+  const base = stagingVerdict();
+  if ('reason' in base || base.environment !== 'staging') throw new Error('staging verdict expected');
+  const dataset = JSON.parse(Buffer.from(base.pilotRaw.datasetBase64, 'base64').toString('utf8'));
+  dataset.phaseB = {
+    remittanceItemId: '44444444-4444-4444-8444-444444444441',
+    dailyLineId: '44444444-4444-4444-8444-444444444442',
+    canonicalUnitId: '44444444-4444-4444-8444-444444444443',
+    dailyLineHash: 'a'.repeat(64), accountRegistryId: '44444444-4444-4444-8444-444444444444',
+    accountingDate: '2026-08-05', creditAmount: 1000, currency: 'XOF',
+    sourceAttemptId: '44444444-4444-4444-8444-444444444445', sourceRawTextHash: 'b'.repeat(64),
+    dateFrom: '2026-08-05', dateTo: '2026-09-04', evidenceBasis: 'EXACT_CREDIT', settledGrossAmount: 1000,
+    proposalReason: `${CAMPAIGN}:PROPOSAL_REASON`, proposalCommandKey: `${CAMPAIGN}:PROPOSE_MATCH`,
+    confirmationReason: `${CAMPAIGN}:CONFIRMATION_REASON`, confirmationCommandKey: `${CAMPAIGN}:CONFIRM_MATCH`,
+    expiresAt: '2099-08-05T23:59:59Z',
+  };
+  const bytes = Buffer.from(JSON.stringify(dataset), 'utf8');
+  return { ...base, pilotRaw: { ...base.pilotRaw, datasetBase64: bytes.toString('base64'), datasetSha256: createHash('sha256').update(bytes).digest('hex') } };
+}
+
 test('valide le manifeste, son hash brut et le dataset fermé', async () => {
   const gate = await evaluateCollectionsCorePilotGate(stagingVerdict());
   assert.equal(gate.status, 'allowed');
@@ -85,8 +105,28 @@ test('lie strictement chaque action à G, A ou B et bloque toujours la phase B',
   assert.equal(isCollectionsCorePilotActionAllowed(manifest, B, 'validation'), true);
   assert.equal(isCollectionsCorePilotActionAllowed(manifest, B, 'audit'), true);
   for (const userId of [G, A, B]) {
-    assert.equal(isCollectionsCorePilotActionAllowed(manifest, userId, 'phase_b'), false);
+    assert.equal(isCollectionsCorePilotActionAllowed(manifest, userId, 'phase_b_propose'), false);
+    assert.equal(isCollectionsCorePilotActionAllowed(manifest, userId, 'phase_b_review'), false);
   }
+});
+
+test('ouvre seulement la tranche Phase B scellée et produit les scopes serveur exacts', async () => {
+  const gate = await evaluateCollectionsCorePilotGate(phaseBVerdict());
+  if (gate.status !== 'allowed' || gate.environment !== 'staging') assert.fail('phase B manifest expected');
+  const manifest = gate.pilotManifest;
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, A, 'phase_b_propose'), true);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, A, 'phase_b_review'), false);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, B, 'phase_b_review'), true);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, B, 'phase_b_propose'), false);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, G, 'phase_b_propose'), false);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, G, 'phase_b_review'), false);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, A, 'entry'), false);
+  assert.equal(isCollectionsCorePilotActionAllowed(manifest, B, 'validation'), false);
+  const specs = collectionsCorePilotCapabilitySpecs(manifest);
+  assert.deepEqual(specs.map((row) => row.capability), ['PROPOSE_MATCH', 'CONFIRM_MATCH', 'AUDIT']);
+  assert.deepEqual(specs[0].scope, specs[1].scope);
+  assert.deepEqual(specs[0].scope?.daily_line_ids, [manifest.dataset.phaseB?.dailyLineId]);
+  assert.deepEqual(specs[0].scope?.daily_line_hashes, [manifest.dataset.phaseB?.dailyLineHash]);
 });
 
 test('exige l’égalité exacte des commandes métier du pilote', async () => {
