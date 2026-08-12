@@ -124,24 +124,44 @@ Chaque lot se termine par un rapport court :
 
 ## 7bis. Normalisation native Lovable
 
-L'utilisation du connecteur Supabase par Lovable peut réécrire automatiquement
-`.env` et créer une nouvelle version interne Lovable. Cet effet est attendu,
-non bloquant, compatible avec un GO read-only, ne nécessite ni GO d'écriture ni
-restauration, uniquement si toutes les conditions suivantes sont réunies :
+L'utilisation du connecteur Supabase ou du mode plan par Lovable peut créer une
+nouvelle version interne Lovable et produire automatiquement les artefacts
+suivants :
 
-- le diff est limité à `VITE_SUPABASE_URL`,
+- normalisation de `.env`, limitée à `VITE_SUPABASE_URL`,
   `VITE_SUPABASE_PUBLISHABLE_KEY` et `VITE_SUPABASE_PROJECT_ID` ;
-- la cible est exclusivement le staging autorisé `gbbsqcscryygqlmqncyv` ;
+- création ou mise à jour de `.lovable/plan.md` avec le plan ou le rapport de
+  l'audit demandé ;
+- régénération de `src/integrations/supabase/types.ts` depuis les seules
+  métadonnées de schéma exposées par le connecteur Supabase.
+
+Ces effets sont attendus, non bloquants, compatibles avec un GO read-only et ne
+nécessitent ni GO d'écriture ni rollback systématique, uniquement si toutes les
+conditions suivantes sont réunies :
+
+- le projet Lovable est un projet staging isolé et la cible est exactement
+  `gbbsqcscryygqlmqncyv` ;
 - seule une clé publique frontend est utilisée ;
-- aucun autre fichier, secret, dépôt GitHub ou donnée Supabase n'est modifié.
+- le diff de `types.ts` ne contient que des types de schéma générés (tables,
+  vues, fonctions, enums ou relations), sans valeur métier, credential ni
+  logique applicative ;
+- les changements restent dans la version interne Lovable : aucun sync, commit,
+  push ou PR GitHub n'est produit par le GO read-only ;
+- aucune publication, aucun déploiement, aucune mutation DB et aucune lecture
+  de donnée métier ne sont effectués ;
+- aucun autre fichier ou secret n'est modifié, et le commit Lovable ainsi que le
+  diff exact des artefacts attendus sont consignés dans le rapport.
 
 Tout prompt Lovable read-only intègre cette exception sans nouvelle autorisation
 du CTO. Le verdict applicable est
 `PASS_WITH_EXPECTED_LOVABLE_NORMALIZATION`, pas `BLOCKED_SIDE_EFFECT`.
 
-STOP si la production est référencée, si une clé privilégiée apparaît, si un
-autre fichier est modifié, si une mutation DB est effectuée, ou si le diff exact
-ne peut pas être vérifié.
+Un rollback de ces seuls artefacts n'est réalisé que sur demande explicite du
+CTO ou si leur contenu dépasse cette liste blanche. STOP si la production est
+référencée, si une clé privilégiée apparaît, si un autre fichier est modifié,
+si un changement atteint GitHub, si une publication ou une mutation DB est
+effectuée, si une donnée métier est lue, ou si le diff exact ne peut pas être
+vérifié.
 
 ## 8. Références canoniques
 
