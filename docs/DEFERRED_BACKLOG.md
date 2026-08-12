@@ -95,12 +95,12 @@
 
 ### DEF-10 : Transactionnalisation saveBankReport
 
-**Statut au 2026-08-12** : `RESERVES_FIXED_LOCAL / RE_REVIEW_PENDING` dans
+**Statut au 2026-08-12** : `INDEPENDENT_REVIEW_PASS / PR_CYCLE_ACTIVE` dans
 OPS-CORE-2. Les deux écritures ont été remplacées par des RPC atomiques et
 idempotentes ; le replay PostgreSQL 17 valide rollback, sécurité, rejeu et
-concurrence. La première contre-review a rendu `PASS_WITH_RESERVES` ; les
-réserves sont corrigées localement. La dette ne sera marquée `CLOSED` qu'après
-relecture indépendante, PR puis validations d'environnement explicitement
+concurrence. Après un premier `PASS_WITH_RESERVES`, la contre-review ciblée du
+HEAD correctif `c837468b` rend `PASS`, sans nouveau finding. La dette ne sera
+marquée `CLOSED` qu'après PR puis validations d'environnement explicitement
 autorisées.
 
 **Problème** : L'enregistrement d'un rapport bancaire insère dans plusieurs tables (`bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`) sans transaction. Si une insertion échoue, les données sont partiellement sauvegardées.

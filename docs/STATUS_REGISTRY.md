@@ -17,7 +17,7 @@
 
 ## OPS-CORE-2 — Persistance financière atomique
 
-**Statut : `IN_PROGRESS — RESERVES_FIXED_LOCAL / RE_REVIEW_PENDING` (2026-08-12)**
+**Statut : `IN_PROGRESS — INDEPENDENT_REVIEW_PASS / PR_CYCLE_ACTIVE` (2026-08-12)**
 
 `saveBankReport` et `saveFundPosition` utilisent désormais chacun une RPC
 PostgreSQL unique. Les écritures parent/enfants et le registre privé
@@ -36,10 +36,12 @@ lot. Build Vite PASS, nouveaux fichiers ESLint propres et ratchet global à 209 
 warnings (baseline CI : 212 / 11). Le replay PostgreSQL 17 jetable est PASS :
 grants/RLS, rollback tardif des deux agrégats, rejeu idempotent, mismatch de
 payload et deux appels concurrents convergeant sur un seul résultat. Le
-conteneur a été supprimé après le test. La contre-review indépendante du HEAD
-`5036262e` rend `PASS_WITH_RESERVES`. Les réserves sont corrigées localement :
-rejet TS des fractions, tests fund négatifs/fractionnaires, baseline typecheck
-exacte (20 = 20) et suivi DEF-16. Une vérification finale du nouveau HEAD reste requise.
+conteneur a été supprimé après le test. La contre-review indépendante ciblée du
+HEAD `c837468b` rend `PASS`, sans nouveau finding : F3, F4, F5 et F6' sont
+confirmées `FIXED`. Elle reproduit 19 = 19 diagnostics TypeScript dans son
+environnement, cohérent avec la mesure locale 20 = 20 : dans les deux cas, zéro
+nouvelle erreur est imputable au lot. L'ouverture d'une draft PR est autorisée ;
+merge, migration et environnement restent interdits sans leurs GO dédiés.
 
 Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 

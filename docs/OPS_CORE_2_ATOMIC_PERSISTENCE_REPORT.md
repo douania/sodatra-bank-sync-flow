@@ -23,7 +23,7 @@
 - `git status` initial : worktree isolé propre.
 - `origin/main` : `a4270079b57541c87d2b14b6f483881da71a734f`.
 - Divergence : non au démarrage.
-- Stop condition initiale levée le 2026-08-12 : Docker Desktop/WSL 2 opérationnels et replay PostgreSQL 17 PASS. La contre-review indépendante du HEAD `5036262e` a ensuite rendu `PASS_WITH_RESERVES` ; les réserves sont corrigées localement et attendent une relecture ciblée.
+- Stop condition initiale levée le 2026-08-12 : Docker Desktop/WSL 2 opérationnels et replay PostgreSQL 17 PASS. La contre-review indépendante du HEAD `5036262e` a rendu `PASS_WITH_RESERVES`, puis la relecture ciblée du HEAD correctif `c837468b` a rendu `PASS`, sans nouveau finding.
 
 ## 4. Périmètre
 
@@ -38,8 +38,8 @@ atomiques. Une clé UUID est créée avant le mécanisme de retry et enregistré
 dans un ledger privé, ce qui empêche la duplication après une réponse réseau
 perdue. Les payloads sont validés et bornés avant écriture ; les RPC sont
 fail-closed pour tout rôle autre qu'admin/manager. Le code applicatif et le
-replay PostgreSQL 17 sont verts ; le lot attend la relecture indépendante des
-correctifs apportés aux réserves.
+replay PostgreSQL 17 sont verts ; la contre-review indépendante finale confirme
+la correction de toutes les réserves et autorise l'ouverture d'une draft PR.
 
 ## 6. Diagnostic
 
@@ -93,26 +93,26 @@ correctifs apportés aux réserves.
 ## 11. Diff summary
 
 - Fichiers modifiés/ajoutés : 15.
-- Lignes ajoutées : 1 421.
+- Lignes ajoutées : 1 423.
 - Lignes supprimées : 297.
 - Churn principal : suppression des sept écritures séquentielles au profit de deux RPC ; l'essentiel des ajouts correspond à la migration, aux tests de rollback/sécurité et au rapport de lot.
 
 ## 12. Risques résiduels
 
 - Une suite périphérique reste non exécutable sous le runtime local Node 24 ; l'échec identique sur le HEAD de base confirme l'absence de régression OPS-CORE-2, mais la CI Node 20 devra le rejouer.
-- La contre-review indépendante du HEAD `5036262e` a rendu `PASS_WITH_RESERVES`. Ses réserves F3–F6' sont traitées dans le correctif suivant : DEF-16 documente la fermeture future des écritures directes ; les fractions sont refusées côté TS ; la baseline typecheck est rectifiée ; les contrôles fund négatifs/fractionnaires sont ajoutés.
+- La contre-review ciblée du HEAD `c837468b` rend `PASS`, sans nouveau finding, et confirme F3–F6' `FIXED`. Elle mesure 19 = 19 diagnostics TypeScript dans son environnement, tandis que le poste CTO mesure 20 = 20 ; cette variabilité non canonique ne change pas la preuve item par item de zéro nouvelle erreur.
 - Migration non appliquée : le frontend modifié ne doit pas être déployé avant la migration dans le même release train.
-- La contre-review complète doit être relancée sur la branche publiée avant toute draft PR ou décision d'intégration.
+- DEF-16 reste `OPEN / P2` jusqu'à sa migration de fermeture dédiée et son propre GO DB/sécurité.
 
 ## 13. Recommandation Claude Code
 
-`PASS_WITH_RESERVES` confirmé par la contre-review indépendante : validations
-applicatives et replay PostgreSQL réussis, y compris la concurrence. Les
-réserves ont reçu un correctif local ; leur relecture et la CI Node 20 restent
-requises avant décision d'intégration.
+`PASS` confirmé par la contre-review indépendante ciblée : validations
+applicatives, sécurité, build, ratchets et replay SQL réussis, sans nouveau
+finding. Une draft PR peut être ouverte ; la CI Node 20 reste requise avant
+toute décision d'intégration.
 
 ## 14. Actions demandées au CTO
 
-- Relancer une vérification indépendante ciblée des réserves sur le nouveau HEAD publié.
-- Ouvrir une draft PR uniquement après retour exploitable de cette contre-review.
-- Ne donner aucun GO staging/DB/déploiement avant ces validations.
+- Ouvrir une draft PR et laisser exécuter la CI Node 20.
+- Soumettre tout merge à un verdict CTO et au GO nominatif correspondant.
+- Ne donner aucun GO staging/DB/déploiement avant les validations dédiées.
