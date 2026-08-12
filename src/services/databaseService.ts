@@ -1,80 +1,18 @@
 import { supabase } from '@/integrations/supabase/client';
 import { BankReport, CollectionReport, FundPosition, ClientReconciliation } from '@/types/banking';
 import type { DuplicateReport, DuplicateGroup, DuplicateRemovalResult } from '@/types/banking';
+import {
+  buildBankReportAtomicPayloads,
+  buildFundPositionInsertPayloads,
+  createFinancialWriteCommandKey,
+} from './financialAtomicPersistence';
 
-// ⭐ HOTFIX-FUND-POSITION-SIGN-0A — montants Fund Position (colonnes bigint).
-// Le signe est TOUJOURS préservé : un solde négatif (découvert, net_balance…)
-// reste négatif. Arrondi = troncature vers zéro (Math.trunc), jamais Math.abs.
-// Valeur non finie ou hors ±Number.MAX_SAFE_INTEGER : refus contrôlé (throw),
-// jamais d'insertion silencieuse à 0. Fonction pure et sans dépendance,
-// exportée pour être testable sous Node sans le client Supabase Vite-only.
-export function sanitizeFundPositionAmount(value: number, fieldLabel: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(
-      `Fund Position: montant invalide pour "${fieldLabel}" (${String(value)}) — insertion refusée.`
-    );
-  }
-  const truncated = Math.trunc(value);
-  if (truncated > Number.MAX_SAFE_INTEGER || truncated < -Number.MAX_SAFE_INTEGER) {
-    throw new Error(
-      `Fund Position: montant hors bornes sûres pour "${fieldLabel}" (${String(value)}) — insertion refusée.`
-    );
-  }
-  // -0 replié sur 0 pour une forme canonique unique.
-  return truncated === 0 ? 0 : truncated;
-}
-
-// Construit les payloads d'insertion Fund Position AVANT toute écriture : un
-// montant invalide refuse tout le lot avant le premier INSERT (aucune écriture
-// partielle). deposit_for_day / payment_for_day ne deviennent null que si la
-// source est réellement absente (undefined/null) — un 0 réel reste 0.
-export function buildFundPositionInsertPayloads(fundPosition: FundPosition) {
-  const fundPositionRow = {
-    report_date: fundPosition.reportDate,
-    total_fund_available: sanitizeFundPositionAmount(
-      fundPosition.totalFundAvailable,
-      'total_fund_available'
-    ),
-    collections_not_deposited: sanitizeFundPositionAmount(
-      fundPosition.collectionsNotDeposited,
-      'collections_not_deposited'
-    ),
-    grand_total: sanitizeFundPositionAmount(fundPosition.grandTotal, 'grand_total'),
-    deposit_for_day:
-      fundPosition.depositForDay != null
-        ? sanitizeFundPositionAmount(fundPosition.depositForDay, 'deposit_for_day')
-        : null,
-    payment_for_day:
-      fundPosition.paymentForDay != null
-        ? sanitizeFundPositionAmount(fundPosition.paymentForDay, 'payment_for_day')
-        : null
-  };
-
-  const detailRows = (fundPosition.details ?? []).map((detail, index) => ({
-    bank_name: detail.bankName,
-    balance: sanitizeFundPositionAmount(detail.balance, `details[${index}].balance`),
-    fund_applied: sanitizeFundPositionAmount(detail.fundApplied, `details[${index}].fund_applied`),
-    net_balance: sanitizeFundPositionAmount(detail.netBalance, `details[${index}].net_balance`),
-    non_validated_deposit: sanitizeFundPositionAmount(
-      detail.nonValidatedDeposit,
-      `details[${index}].non_validated_deposit`
-    ),
-    grand_balance: sanitizeFundPositionAmount(detail.grandBalance, `details[${index}].grand_balance`)
-  }));
-
-  const holdRows = (fundPosition.holdCollections ?? []).map((hold, index) => ({
-    hold_date: hold.holdDate,
-    cheque_number: hold.chequeNumber,
-    client_bank: hold.clientBank,
-    client_name: hold.clientName,
-    facture_reference: hold.factureReference,
-    amount: sanitizeFundPositionAmount(hold.amount, `holdCollections[${index}].amount`),
-    deposit_date: hold.depositDate,
-    days_remaining: hold.daysRemaining
-  }));
-
-  return { fundPositionRow, detailRows, holdRows };
-}
+export {
+  buildBankReportAtomicPayloads,
+  buildFundPositionInsertPayloads,
+  sanitizeBankReportAmount,
+  sanitizeFundPositionAmount,
+} from './financialAtomicPersistence';
 
 export class DatabaseService {
   
@@ -581,105 +519,27 @@ export class DatabaseService {
   }
 
   async saveBankReport(report: BankReport): Promise<{ success: boolean; error?: string }> {
-    // ⭐ SAUVEGARDE AVEC RETRY
     const { SupabaseRetryService } = await import('./supabaseClientService');
-    
-    try {
-      const { data: reportData, error: reportError } = await SupabaseRetryService.executeWithRetry(
-        async () => {
-          const { data, error } = await supabase
-            .from('bank_reports')
-            .insert({
-              bank_name: report.bank,
-              report_date: report.date,
-              opening_balance: report.openingBalance,
-              closing_balance: report.closingBalance
-            })
-            .select('id')
-            .single();
 
+    try {
+      const { reportRow, facilityRows, depositRows, impayeRows } = buildBankReportAtomicPayloads(report);
+      const commandKey = createFinancialWriteCommandKey();
+
+      await SupabaseRetryService.executeWithRetry(
+        async () => {
+          const { error } = await supabase.rpc('save_bank_report_atomic_v1', {
+            p_command_key: commandKey,
+            p_report: reportRow,
+            p_facilities: facilityRows,
+            p_deposits: depositRows,
+            p_impayes: impayeRows,
+          });
           if (error) throw error;
-          return { data, error };
+          return true;
         },
         { maxRetries: 3 },
-        `Sauvegarde rapport ${report.bank}`
+        `Sauvegarde atomique rapport ${report.bank}`,
       );
-      
-      if (reportError) throw reportError;
-      
-      const reportId = reportData.id;
-      
-      // Sauvegarder les facilités bancaires
-      if (report.bankFacilities && report.bankFacilities.length > 0) {
-        const facilitiesData = report.bankFacilities.map(facility => ({
-          bank_report_id: reportId,
-          facility_type: facility.facilityType,
-          limit_amount: facility.limitAmount,
-          used_amount: facility.usedAmount,
-          available_amount: facility.availableAmount
-        }));
-        
-        await SupabaseRetryService.executeWithRetry(
-          async () => {
-            const { error } = await supabase
-              .from('bank_facilities')
-              .insert(facilitiesData);
-            
-            if (error) throw error;
-          },
-          { maxRetries: 3 },
-          `Sauvegarde facilités ${report.bank}`
-        );
-      }
-      
-      // Sauvegarder les dépôts non crédités
-      if (report.depositsNotCleared && report.depositsNotCleared.length > 0) {
-        const depositsData = report.depositsNotCleared.map(deposit => ({
-          bank_report_id: reportId,
-          date_depot: deposit.dateDepot,
-          date_valeur: deposit.dateValeur,
-          type_reglement: deposit.typeReglement,
-          client_code: deposit.clientCode,
-          reference: deposit.reference,
-          montant: deposit.montant
-        }));
-        
-        await SupabaseRetryService.executeWithRetry(
-          async () => {
-            const { error } = await supabase
-              .from('deposits_not_cleared')
-              .insert(depositsData);
-            
-            if (error) throw error;
-          },
-          { maxRetries: 3 },
-          `Sauvegarde dépôts ${report.bank}`
-        );
-      }
-      
-      // Sauvegarder les impayés
-      if (report.impayes && report.impayes.length > 0) {
-        const impayesData = report.impayes.map(impaye => ({
-          bank_report_id: reportId,
-          date_echeance: impaye.dateEcheance,
-          date_retour: impaye.dateRetour,
-          client_code: impaye.clientCode,
-          description: impaye.description,
-          montant: impaye.montant
-        }));
-        
-        await SupabaseRetryService.executeWithRetry(
-          async () => {
-            const { error } = await supabase
-              .from('impayes')
-              .insert(impayesData);
-            
-            if (error) throw error;
-          },
-          { maxRetries: 3 },
-          `Sauvegarde impayés ${report.bank}`
-        );
-      }
 
       return { success: true };
     } catch (error) {
@@ -688,102 +548,28 @@ export class DatabaseService {
     }
   }
 
-  // ⭐ CORRECTION FUND POSITION - Valider et tronquer vers zéro avant insertion
   async saveFundPosition(fundPosition: FundPosition): Promise<{ success: boolean; error?: string }> {
-    // ⭐ SAUVEGARDE FUND POSITION AVEC RETRY, VALIDATION ET TRONCATURE VERS ZÉRO (SIGNE PRÉSERVÉ)
     const { SupabaseRetryService } = await import('./supabaseClientService');
-    
+
     try {
-      console.log('💾 === SAUVEGARDE FUND POSITION DÉTAILLÉE ===');
-      console.log('📊 Valeurs reçues:', {
-        totalFundAvailable: fundPosition.totalFundAvailable,
-        collectionsNotDeposited: fundPosition.collectionsNotDeposited,
-        grandTotal: fundPosition.grandTotal,
-        depositForDay: fundPosition.depositForDay,
-        paymentForDay: fundPosition.paymentForDay,
-        details: fundPosition.details?.length || 0,
-        holdCollections: fundPosition.holdCollections?.length || 0
-      });
-      
-      // ⭐ HOTFIX-FUND-POSITION-SIGN-0A : tous les montants (principal, détails,
-      // holds) sont validés et tronqués — signe préservé — AVANT la première
-      // insertion : un montant invalide refuse tout le lot, aucune écriture
-      // partielle et aucune conversion silencieuse à 0.
       const { fundPositionRow, detailRows, holdRows } = buildFundPositionInsertPayloads(fundPosition);
+      const commandKey = createFinancialWriteCommandKey();
 
-      console.log('🔢 Valeurs sécurisées pour insertion:', fundPositionRow);
-      
-      const { data: fundPositionData, error: fundPositionError } = await SupabaseRetryService.executeWithRetry(
+      await SupabaseRetryService.executeWithRetry(
         async () => {
-          const { data, error } = await supabase
-            .from('fund_position')
-            .insert(fundPositionRow)
-            .select('id')
-            .single();
-
+          const { error } = await supabase.rpc('save_fund_position_atomic_v1', {
+            p_command_key: commandKey,
+            p_position: fundPositionRow,
+            p_details: detailRows,
+            p_holds: holdRows,
+          });
           if (error) throw error;
-          return { data, error };
+          return true;
         },
         { maxRetries: 3 },
-        'Sauvegarde Fund Position'
+        'Sauvegarde atomique Fund Position',
       );
-      
-      if (fundPositionError) {
-        throw fundPositionError;
-      }
-      
-      const fundPositionId = fundPositionData.id;
-      console.log(`✅ Fund Position principale sauvegardée avec ID: ${fundPositionId}`);
-      
-      // Sauvegarder les détails par banque si disponibles
-      if (detailRows.length > 0) {
-        console.log(`💾 Sauvegarde de ${detailRows.length} détails bancaires...`);
 
-        const detailsToInsert = detailRows.map(row => ({
-          fund_position_id: fundPositionId,
-          ...row
-        }));
-        
-        await SupabaseRetryService.executeWithRetry(
-          async () => {
-            const { error } = await supabase
-              .from('fund_position_detail')
-              .insert(detailsToInsert);
-            
-            if (error) throw error;
-          },
-          { maxRetries: 3 },
-          'Sauvegarde détails Fund Position'
-        );
-        
-        console.log('✅ Détails bancaires sauvegardés');
-      }
-      
-      // Sauvegarder les collections en attente (HOLD) si disponibles
-      if (holdRows.length > 0) {
-        console.log(`💾 Sauvegarde de ${holdRows.length} collections en attente...`);
-
-        const holdsToInsert = holdRows.map(row => ({
-          fund_position_id: fundPositionId,
-          ...row
-        }));
-        
-        await SupabaseRetryService.executeWithRetry(
-          async () => {
-            const { error } = await supabase
-              .from('fund_position_hold')
-              .insert(holdsToInsert);
-            
-            if (error) throw error;
-          },
-          { maxRetries: 3 },
-          'Sauvegarde collections HOLD'
-        );
-        
-        console.log('✅ Collections en attente sauvegardées');
-      }
-
-      console.log('✅ Fund Position complète sauvegardée avec succès');
       return { success: true };
     } catch (error) {
       console.error('❌ Erreur critique sauvegarde Fund Position:', error);

@@ -117,6 +117,7 @@ jobs:
           npm run test:auth-signin
           npm run test:bdk-pdf
           npm run test:upload-guard
+          npm run test:financial-atomic
 
       - name: Build
         run: npm run build

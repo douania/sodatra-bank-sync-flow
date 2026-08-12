@@ -9,44 +9,22 @@
  * Toutes les valeurs ci-dessous sont synthétiques. Aucune donnée bancaire
  * réelle, aucun appel réseau, aucun Supabase live.
  *
- * Note runner : le client Supabase généré (`@/integrations/supabase/client`)
- * est Vite-only (import.meta.env) et crashe sous Node. Il est court-circuité
- * ici par un stub inerte via un hook de résolution auto-contenu (data: URL,
- * aucun fichier externe). Le stub jette au moindre accès : ce test ne peut
- * physiquement pas toucher Supabase.
+ * Le mapping financier est isolé du client Supabase : ce test ne peut
+ * physiquement effectuer aucun appel réseau.
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { register } from 'node:module';
 import type { FundPosition } from '@/types/banking';
+import {
+  buildFundPositionInsertPayloads,
+  sanitizeFundPositionAmount,
+} from './financialAtomicPersistence';
 
-const SUPABASE_CLIENT_SPECIFIER = '@/integrations/supabase/client';
-
-const supabaseStubModuleUrl =
-  'data:text/javascript,' +
-  encodeURIComponent(
-    'export const supabase = new Proxy({}, {' +
-      ' get() { throw new Error("synthetic test: supabase client must never be used"); }' +
-      ' });'
-  );
-
-const resolverHooksUrl =
-  'data:text/javascript,' +
-  encodeURIComponent(
-    `export function resolve(specifier, context, nextResolve) {
-      if (specifier === ${JSON.stringify(SUPABASE_CLIENT_SPECIFIER)}) {
-        return { shortCircuit: true, url: ${JSON.stringify(supabaseStubModuleUrl)} };
-      }
-      return nextResolve(specifier, context);
-    }`
-  );
-
-register(resolverHooksUrl);
-
-// Import dynamique APRÈS l'enregistrement du hook : c'est lui qui permet de
-// charger databaseService.ts sous Node sans le client Vite-only.
-const databaseServiceModule = import('./databaseService');
+const databaseServiceModule = Promise.resolve({
+  buildFundPositionInsertPayloads,
+  sanitizeFundPositionAmount,
+});
 
 function syntheticFundPosition(overrides: Partial<FundPosition> = {}): FundPosition {
   return {
@@ -214,7 +192,7 @@ test('holds : montant négatif préservé, métadonnées transmises telles quell
   assert.equal(holdRows.length, 1);
   assert.equal(holdRows[0].amount, -42);
   assert.equal(holdRows[0].cheque_number, 'CHQ-SYNTH-1');
-  assert.equal(holdRows[0].deposit_date, undefined);
+  assert.equal(holdRows[0].deposit_date, null);
 });
 
 test('un montant invalide dans les détails refuse tout le payload avant insertion', async () => {

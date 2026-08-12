@@ -15,6 +15,32 @@
 
 ---
 
+## OPS-CORE-2 — Persistance financière atomique
+
+**Statut : `IN_PROGRESS — LOCAL_IMPLEMENTED / VALIDATION_BLOCKED` (2026-08-11)**
+
+`saveBankReport` et `saveFundPosition` utilisent désormais chacun une RPC
+PostgreSQL unique. Les écritures parent/enfants et le registre privé
+d'idempotence sont transactionnels ; une même clé rejouée avec le même payload
+retourne le même identifiant, tandis qu'un payload différent est refusé.
+
+La migration locale ferme les RPC à `PUBLIC`, `anon` et `service_role`, limite
+l'exécution à `authenticated`, puis contrôle dans la fonction le rôle métier
+`admin` ou `manager`. Le registre d'idempotence est sous RLS sans policy et sans
+grant client. Aucun SQL n'a été exécuté sur Supabase live.
+
+Validation locale : 20/20 tests synthétiques PASS, `tsc --noEmit` PASS, build
+Vite PASS, nouveaux fichiers ESLint propres et ratchet global à 209 erreurs / 11
+warnings (baseline CI : 212 / 11). Le replay PostgreSQL 17 jetable est fourni,
+mais son exécution est bloquée sur ce poste faute de Docker. Une première
+contre-review indépendante distante a rendu `BLOCKED`, car les changements
+n'étaient alors présents que dans l'index local Windows. La branche doit être
+publiée puis soumise à nouveau au reviewer.
+
+Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
+
+---
+
 ## SEC-05 — GraphQL et grants anon fail-closed
 
 **Statut : CLOSED — PRODUCTION_VALIDATED (2026-07-31)**

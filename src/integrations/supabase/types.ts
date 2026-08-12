@@ -1591,6 +1591,36 @@ export type Database = {
           },
         ]
       }
+      financial_write_commands: {
+        Row: {
+          actor_id: string
+          command_key: string
+          completed_at: string | null
+          created_at: string
+          operation: string
+          payload_hash: string
+          result_id: string | null
+        }
+        Insert: {
+          actor_id: string
+          command_key: string
+          completed_at?: string | null
+          created_at?: string
+          operation: string
+          payload_hash: string
+          result_id?: string | null
+        }
+        Update: {
+          actor_id?: string
+          command_key?: string
+          completed_at?: string | null
+          created_at?: string
+          operation?: string
+          payload_hash?: string
+          result_id?: string | null
+        }
+        Relationships: []
+      }
       impayes: {
         Row: {
           bank_report_id: string | null
@@ -1894,6 +1924,25 @@ export type Database = {
       resolve_structured_bank_statement_conflict_keep_existing: {
         Args: { p_attempt_id: string; p_reason: string }
         Returns: Json
+      }
+      save_bank_report_atomic_v1: {
+        Args: {
+          p_command_key: string
+          p_deposits: Json
+          p_facilities: Json
+          p_impayes: Json
+          p_report: Json
+        }
+        Returns: string
+      }
+      save_fund_position_atomic_v1: {
+        Args: {
+          p_command_key: string
+          p_details: Json
+          p_holds: Json
+          p_position: Json
+        }
+        Returns: string
       }
       revoke_daily_statement_backfill_grant: {
         Args: { p_backfill_grant_id: string; p_reason: string }
