@@ -17,7 +17,7 @@
 
 ## OPS-CORE-2 — Persistance financière atomique
 
-**Statut : `IN_PROGRESS — LOCAL_IMPLEMENTED / VALIDATION_BLOCKED` (2026-08-11)**
+**Statut : `IN_PROGRESS — LOCAL_VALIDATED / INDEPENDENT_REVIEW_PENDING` (2026-08-12)**
 
 `saveBankReport` et `saveFundPosition` utilisent désormais chacun une RPC
 PostgreSQL unique. Les écritures parent/enfants et le registre privé
@@ -31,11 +31,12 @@ grant client. Aucun SQL n'a été exécuté sur Supabase live.
 
 Validation locale : 20/20 tests synthétiques PASS, `tsc --noEmit` PASS, build
 Vite PASS, nouveaux fichiers ESLint propres et ratchet global à 209 erreurs / 11
-warnings (baseline CI : 212 / 11). Le replay PostgreSQL 17 jetable est fourni,
-mais son exécution est bloquée sur ce poste faute de Docker. Une première
-contre-review indépendante distante a rendu `BLOCKED`, car les changements
-n'étaient alors présents que dans l'index local Windows. La branche doit être
-publiée puis soumise à nouveau au reviewer.
+warnings (baseline CI : 212 / 11). Le replay PostgreSQL 17 jetable est PASS :
+grants/RLS, rollback tardif des deux agrégats, rejeu idempotent, mismatch de
+payload et deux appels concurrents convergeant sur un seul résultat. Le
+conteneur a été supprimé après le test. Une première contre-review indépendante
+distante avait rendu `BLOCKED` faute de branche publiée ; elle doit maintenant
+être relancée sur la branche distante.
 
 Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 

@@ -23,7 +23,7 @@
 - `git status` initial : worktree isolé propre.
 - `origin/main` : `a4270079b57541c87d2b14b6f483881da71a734f`.
 - Divergence : non au démarrage.
-- Stop condition : validation PostgreSQL runtime impossible sans Docker. La première contre-review distante a été bloquée parce que la branche et son diff local n'étaient pas encore publiés.
+- Stop condition initiale levée le 2026-08-12 : Docker Desktop/WSL 2 opérationnels et replay PostgreSQL 17 PASS. La première contre-review distante reste à relancer, car elle avait été bloquée avant publication de la branche.
 
 ## 4. Périmètre
 
@@ -79,7 +79,7 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 | `vite build` | PASS | Build production ; warnings de chunking préexistants |
 | 7 suites CI voisines (CSV, Excel, Daily v2, auth, BDK) | PASS | 395/395 |
 | `uploadRuntimeGuard.synthetic.test.ts` sous Node 24 | FAIL préexistant | 11/12 ; même erreur `import.meta.env` reproduite sur le HEAD de base ; CI sous Node 20 |
-| `run_pg17_replay.ps1` | BLOCKED | Docker absent ; aucun SQL exécuté |
+| `run_pg17_replay.ps1` | PASS | PostgreSQL 17 jetable : sécurité, rollbacks tardifs, idempotence séquentielle et concurrence deux sessions ; conteneur supprimé |
 
 ## 10. Résultats
 
@@ -87,19 +87,17 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 - Les clés inattendues, formes JSON invalides et tableaux de plus de 1000 enfants sont refusés côté DB.
 - Les RPC exigent un utilisateur authentifié possédant `admin` ou `manager`.
 - `PUBLIC`, `anon` et `service_role` n'ont aucun droit d'exécution ; le ledger n'a aucun grant client et aucune policy RLS.
-- Les scénarios de rollback réel et de concurrence restent à confirmer par le replay PostgreSQL fourni.
+- Les scénarios de rollback réel et de concurrence sur deux sessions sont confirmés par le replay PostgreSQL 17 fourni.
 
 ## 11. Diff summary
 
 - Fichiers modifiés/ajoutés : 15.
-- Lignes ajoutées : 1 263.
+- Lignes ajoutées : 1 350.
 - Lignes supprimées : 287.
 - Churn principal : suppression des sept écritures séquentielles au profit de deux RPC ; l'essentiel des ajouts correspond à la migration, aux tests de rollback/sécurité et au rapport de lot.
 
 ## 12. Risques résiduels
 
-- Syntaxe et comportement transactionnel de la migration non exécutés sur PostgreSQL local faute de Docker.
-- Pas de test de concurrence réellement exécuté sur deux sessions.
 - Une suite périphérique reste non exécutable sous le runtime local Node 24 ; l'échec identique sur le HEAD de base confirme l'absence de régression OPS-CORE-2, mais la CI Node 20 devra le rejouer.
 - La première tentative de contre-review indépendante a rendu `BLOCKED_REMOTE_DIFF_UNAVAILABLE` sans finding sur le code, car le reviewer distant ne disposait que de `origin/main`.
 - Migration non appliquée : le frontend modifié ne doit pas être déployé avant la migration dans le même release train.
@@ -107,13 +105,12 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 
 ## 13. Recommandation Claude Code
 
-`BLOCKED` pour verdict final : implémentation locale et validations applicatives
-réussies, mais les deux gates DB obligatoires (replay PostgreSQL et
-contre-review indépendante) ne sont pas satisfaites.
+`PASS_WITH_RESERVES` au niveau implémentation locale : validations applicatives
+et replay PostgreSQL 17 réussis, y compris la concurrence. Le verdict
+d'intégration reste suspendu à la contre-review indépendante et à la CI Node 20.
 
 ## 14. Actions demandées au CTO
 
-- Exécuter le runner sur une machine Docker PostgreSQL 17.
 - Relancer la contre-review indépendante sur la branche distante publiée.
 - Ouvrir une draft PR uniquement après retour exploitable de cette contre-review.
 - Ne donner aucun GO staging/DB/déploiement avant ces validations.

@@ -95,11 +95,11 @@
 
 ### DEF-10 : Transactionnalisation saveBankReport
 
-**Statut au 2026-08-11** : `LOCAL_IMPLEMENTED / VALIDATION_BLOCKED` dans
-OPS-CORE-2. Les deux écritures ont été remplacées localement par des RPC
-atomiques et idempotentes. La dette ne sera marquée `CLOSED` qu'après replay
-PostgreSQL 17, contre-review indépendante, commit/PR puis validations
-d'environnement explicitement autorisées.
+**Statut au 2026-08-12** : `LOCAL_VALIDATED / INDEPENDENT_REVIEW_PENDING` dans
+OPS-CORE-2. Les deux écritures ont été remplacées par des RPC atomiques et
+idempotentes ; le replay PostgreSQL 17 valide rollback, sécurité, rejeu et
+concurrence. La dette ne sera marquée `CLOSED` qu'après contre-review
+indépendante, PR puis validations d'environnement explicitement autorisées.
 
 **Problème** : L'enregistrement d'un rapport bancaire insère dans plusieurs tables (`bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`) sans transaction. Si une insertion échoue, les données sont partiellement sauvegardées.
 **Risque** : Données incohérentes en base.

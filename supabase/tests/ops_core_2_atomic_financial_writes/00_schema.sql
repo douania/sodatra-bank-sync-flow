@@ -3,6 +3,7 @@
 CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
 CREATE ROLE service_role NOLOGIN;
+CREATE ROLE ops_test_manager LOGIN IN ROLE authenticated;
 CREATE SCHEMA auth;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 
@@ -106,6 +107,7 @@ CREATE TABLE public.fund_position_hold (
 );
 
 CREATE SCHEMA test;
+CREATE EXTENSION dblink;
 CREATE FUNCTION test.assert(p_condition boolean, p_message text) RETURNS void
 LANGUAGE plpgsql AS $$ BEGIN IF NOT COALESCE(p_condition,false) THEN RAISE EXCEPTION 'ASSERT_FAILED: %',p_message; END IF; END $$;
 GRANT USAGE ON SCHEMA test TO authenticated;
