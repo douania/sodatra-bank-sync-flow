@@ -3,6 +3,10 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
+import {
+  getProductionLogHygiene,
+  productionLogHygieneAssetPlugin,
+} from "./src/config/productionLogHygiene";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -18,10 +22,12 @@ export default defineConfig(({ mode }) => ({
     // sous Windows un artefact Supabase cassé (import "npm:C:\..."). Désactivé sur
     // Windows local ; la sandbox Linux de Lovable reste la source de cet artefact.
     process.platform !== "win32" && mcpPlugin(),
+    productionLogHygieneAssetPlugin(mode),
   ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  esbuild: getProductionLogHygiene(mode),
 }));

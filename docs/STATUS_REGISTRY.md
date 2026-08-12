@@ -15,6 +15,19 @@
 
 ---
 
+## OPS-CORE-3 — Hygiène des logs frontend de production
+
+**Statut : `LOCAL_IMPLEMENTED` (2026-08-12)**
+
+Le build Vite de production retire désormais toutes les invocations
+`console.*` et les instructions `debugger`, tandis que le développement conserve
+ses diagnostics. Un contrat post-build inspecte le JavaScript réellement généré
+et bloque la CI si une invocation console réapparaît. Aucun runtime métier,
+accès Supabase, SQL, migration, Auth/RLS ou environnement n'est modifié.
+Rapport : `docs/OPS_CORE_3_PRODUCTION_LOG_HYGIENE_REPORT.md`.
+
+---
+
 ## OPS-CORE-2 — Persistance financière atomique
 
 **Statut : `IN_PROGRESS — INDEPENDENT_REVIEW_PASS / PR_CYCLE_ACTIVE` (2026-08-12)**

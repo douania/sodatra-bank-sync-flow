@@ -121,3 +121,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Production log hygiene contract
+        run: npx tsx --test src/config/productionLogHygiene.synthetic.test.ts
