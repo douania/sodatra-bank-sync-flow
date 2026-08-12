@@ -147,7 +147,8 @@ Ne pas modifier sans justification CTO explicite :
 
 Ouverts / différés :
 - DEF-05 : pipelines import divergents ;
-- DEF-10 : OPS-CORE-2 validé localement sur PostgreSQL 17, contre-review indépendante en attente ;
+- DEF-10 : OPS-CORE-2 validé localement sur PostgreSQL 17, réserves de la première contre-review corrigées, relecture ciblée en attente ;
+- DEF-16 : fermer les écritures directes sur les sept tables financières après adoption environnementale des RPC ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
 - DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
 - tests automatisés ;

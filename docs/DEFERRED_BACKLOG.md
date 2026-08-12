@@ -95,16 +95,38 @@
 
 ### DEF-10 : Transactionnalisation saveBankReport
 
-**Statut au 2026-08-12** : `LOCAL_VALIDATED / INDEPENDENT_REVIEW_PENDING` dans
+**Statut au 2026-08-12** : `RESERVES_FIXED_LOCAL / RE_REVIEW_PENDING` dans
 OPS-CORE-2. Les deux écritures ont été remplacées par des RPC atomiques et
 idempotentes ; le replay PostgreSQL 17 valide rollback, sécurité, rejeu et
-concurrence. La dette ne sera marquée `CLOSED` qu'après contre-review
-indépendante, PR puis validations d'environnement explicitement autorisées.
+concurrence. La première contre-review a rendu `PASS_WITH_RESERVES` ; les
+réserves sont corrigées localement. La dette ne sera marquée `CLOSED` qu'après
+relecture indépendante, PR puis validations d'environnement explicitement
+autorisées.
 
 **Problème** : L'enregistrement d'un rapport bancaire insère dans plusieurs tables (`bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`) sans transaction. Si une insertion échoue, les données sont partiellement sauvegardées.
 **Risque** : Données incohérentes en base.
 **Précisions Lot 3A** : confirmé pour `databaseService.saveBankReport` (4 inserts séquentiels : `bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`) et `saveFundPosition` (3 tables liées). `safeValue()` L. 640 utilise aussi `Math.floor(Math.abs(...))` qui supprime le signe.
 **Lot probable** : Lot 5 (refonte via RPC Supabase `SECURITY DEFINER`). **Hors scope Lot 3B** — ne pas traiter par micro-patch chirurgical.
+
+### DEF-16 : Fermer les écritures financières directes après adoption des RPC
+
+**Statut** : `OPEN / P2` — suivi créé après la contre-review indépendante
+OPS-CORE-2 du 2026-08-12.
+
+**Problème** : les policies historiques de la migration `20260430150428` autorisent
+encore les rôles métier admin/manager à écrire directement dans les sept tables
+`bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`,
+`fund_position`, `fund_position_detail` et `fund_position_hold`. L'application
+OPS-CORE-2 passe par les RPC atomiques, mais un autre client authentifié pourrait
+encore contourner ce chemin et effectuer des écritures partielles.
+
+**Action différée** : après validation staging/production des deux RPC et audit
+de tous leurs consommateurs, retirer les policies/grants d'écriture directe par
+une migration additive dédiée. Conserver les lectures nécessaires et prouver
+qu'aucun runtime autorisé n'utilise encore les écritures table par table.
+
+**Contrainte** : ne pas fermer ces policies dans OPS-CORE-2 ; cette suppression
+nécessite son propre GO DB/sécurité et des validations d'environnement.
 
 ### DEF-11 : Tests automatisés
 

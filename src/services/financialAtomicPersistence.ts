@@ -10,13 +10,17 @@ function sanitizeIntegerAmount(value: number, context: string, fieldLabel: strin
       `${context}: montant invalide pour "${fieldLabel}" (${String(value)}) — insertion refusée.`,
     );
   }
-  const truncated = Math.trunc(value);
-  if (truncated > Number.MAX_SAFE_INTEGER || truncated < -Number.MAX_SAFE_INTEGER) {
+  if (!Number.isInteger(value)) {
+    throw new Error(
+      `${context}: montant décimal non autorisé pour "${fieldLabel}" (${String(value)}) — insertion refusée.`,
+    );
+  }
+  if (!Number.isSafeInteger(value)) {
     throw new Error(
       `${context}: montant hors bornes sûres pour "${fieldLabel}" (${String(value)}) — insertion refusée.`,
     );
   }
-  return truncated === 0 ? 0 : truncated;
+  return value === 0 ? 0 : value;
 }
 
 export function sanitizeFundPositionAmount(value: number, fieldLabel: string): number {

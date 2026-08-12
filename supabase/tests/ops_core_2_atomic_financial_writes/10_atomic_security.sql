@@ -17,6 +17,14 @@ SELECT test.assert(
   'authenticated must execute fund RPC'
 );
 SELECT test.assert(
+  NOT has_function_privilege('anon','public.save_fund_position_atomic_v1(uuid,jsonb,jsonb,jsonb)','EXECUTE'),
+  'anon must not execute fund RPC through PUBLIC'
+);
+SELECT test.assert(
+  NOT has_function_privilege('service_role','public.save_fund_position_atomic_v1(uuid,jsonb,jsonb,jsonb)','EXECUTE'),
+  'service_role must not execute fund RPC'
+);
+SELECT test.assert(
   (SELECT relrowsecurity FROM pg_class WHERE oid='public.financial_write_commands'::regclass),
   'command ledger must have RLS enabled'
 );
@@ -54,6 +62,19 @@ DO $$ BEGIN
     RAISE EXCEPTION 'TEST_FAILED: fractional bigint payload unexpectedly succeeded';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM <> 'BANK_REPORT_VALUES_INVALID' THEN RAISE; END IF;
+  END;
+END $$;
+
+DO $$ BEGIN
+  BEGIN
+    PERFORM public.save_fund_position_atomic_v1(
+      '20000000-0000-4000-8000-000000000010',
+      '{"report_date":"2026-08-11","total_fund_available":100,"collections_not_deposited":10,"grand_total":110.5,"deposit_for_day":null,"payment_for_day":null}',
+      '[]','[]'
+    );
+    RAISE EXCEPTION 'TEST_FAILED: fractional fund bigint payload unexpectedly succeeded';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM <> 'FUND_POSITION_VALUES_INVALID' THEN RAISE; END IF;
   END;
 END $$;
 

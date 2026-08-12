@@ -17,7 +17,7 @@
 
 ## OPS-CORE-2 — Persistance financière atomique
 
-**Statut : `IN_PROGRESS — LOCAL_VALIDATED / INDEPENDENT_REVIEW_PENDING` (2026-08-12)**
+**Statut : `IN_PROGRESS — RESERVES_FIXED_LOCAL / RE_REVIEW_PENDING` (2026-08-12)**
 
 `saveBankReport` et `saveFundPosition` utilisent désormais chacun une RPC
 PostgreSQL unique. Les écritures parent/enfants et le registre privé
@@ -29,14 +29,17 @@ l'exécution à `authenticated`, puis contrôle dans la fonction le rôle métie
 `admin` ou `manager`. Le registre d'idempotence est sous RLS sans policy et sans
 grant client. Aucun SQL n'a été exécuté sur Supabase live.
 
-Validation locale : 20/20 tests synthétiques PASS, `tsc --noEmit` PASS, build
-Vite PASS, nouveaux fichiers ESLint propres et ratchet global à 209 erreurs / 11
+Validation locale : 20/20 tests synthétiques PASS ; le typecheck canonique
+`tsc -p tsconfig.app.json --noEmit` conserve exactement les 20 erreurs de
+`origin/main` dans le même environnement local, soit zéro erreur imputable au
+lot. Build Vite PASS, nouveaux fichiers ESLint propres et ratchet global à 209 erreurs / 11
 warnings (baseline CI : 212 / 11). Le replay PostgreSQL 17 jetable est PASS :
 grants/RLS, rollback tardif des deux agrégats, rejeu idempotent, mismatch de
 payload et deux appels concurrents convergeant sur un seul résultat. Le
-conteneur a été supprimé après le test. Une première contre-review indépendante
-distante avait rendu `BLOCKED` faute de branche publiée ; elle doit maintenant
-être relancée sur la branche distante.
+conteneur a été supprimé après le test. La contre-review indépendante du HEAD
+`5036262e` rend `PASS_WITH_RESERVES`. Les réserves sont corrigées localement :
+rejet TS des fractions, tests fund négatifs/fractionnaires, baseline typecheck
+exacte (20 = 20) et suivi DEF-16. Une vérification finale du nouveau HEAD reste requise.
 
 Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 

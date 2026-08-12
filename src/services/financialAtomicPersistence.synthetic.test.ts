@@ -56,8 +56,9 @@ test('construit le payload bancaire complet sans identifiants enfants fabriqués
   assert.equal('bank_report_id' in payload.facilityRows[0], false);
 });
 
-test('refuse tout montant bancaire non fini ou hors entier sûr avant RPC', () => {
+test('refuse tout montant bancaire non fini, fractionnaire ou hors entier sûr avant RPC', () => {
   assert.throws(() => sanitizeBankReportAmount(Number.NaN, 'opening_balance'), /invalide/);
+  assert.throws(() => sanitizeBankReportAmount(10.5, 'opening_balance'), /décimal non autorisé/);
   assert.throws(
     () => sanitizeBankReportAmount(Number.MAX_SAFE_INTEGER + 1, 'closing_balance'),
     /hors bornes sûres/,

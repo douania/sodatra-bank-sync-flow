@@ -23,7 +23,7 @@
 - `git status` initial : worktree isolé propre.
 - `origin/main` : `a4270079b57541c87d2b14b6f483881da71a734f`.
 - Divergence : non au démarrage.
-- Stop condition initiale levée le 2026-08-12 : Docker Desktop/WSL 2 opérationnels et replay PostgreSQL 17 PASS. La première contre-review distante reste à relancer, car elle avait été bloquée avant publication de la branche.
+- Stop condition initiale levée le 2026-08-12 : Docker Desktop/WSL 2 opérationnels et replay PostgreSQL 17 PASS. La contre-review indépendante du HEAD `5036262e` a ensuite rendu `PASS_WITH_RESERVES` ; les réserves sont corrigées localement et attendent une relecture ciblée.
 
 ## 4. Périmètre
 
@@ -37,8 +37,9 @@ Les deux sauvegardes multi-tables séquentielles sont remplacées par deux RPC
 atomiques. Une clé UUID est créée avant le mécanisme de retry et enregistrée
 dans un ledger privé, ce qui empêche la duplication après une réponse réseau
 perdue. Les payloads sont validés et bornés avant écriture ; les RPC sont
-fail-closed pour tout rôle autre qu'admin/manager. Le code applicatif est vert,
-mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
+fail-closed pour tout rôle autre qu'admin/manager. Le code applicatif et le
+replay PostgreSQL 17 sont verts ; le lot attend la relecture indépendante des
+correctifs apportés aux réserves.
 
 ## 6. Diagnostic
 
@@ -63,7 +64,7 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 
 - Secret ajouté : non.
 - Données bancaires réelles utilisées : non ; fixtures synthétiques uniquement.
-- SQL exécuté : non.
+- SQL exécuté : oui, uniquement dans un conteneur PostgreSQL 17 local jetable ; aucun environnement partagé touché.
 - Supabase live : non.
 - Migration : fichier ajouté localement, non appliqué.
 - Auth/RLS touché : nouvelle table sous RLS et nouveaux grants/fonctions seulement ; aucune policy ni objet historique modifié.
@@ -73,7 +74,7 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 | Commande | Résultat | Notes |
 |---|---:|---|
 | `tsx --test src/services/databaseService.synthetic.test.ts src/services/financialAtomicPersistence.synthetic.test.ts` | PASS | 20/20 |
-| `tsc --noEmit --pretty false` | PASS | 0 erreur |
+| `tsc -p tsconfig.app.json --noEmit --pretty false` | PASS ratchet | 20 erreurs sur la branche = 20 sur `origin/main` dans le même environnement local ; 0 nouvelle erreur imputable au lot |
 | ESLint nouveaux fichiers | PASS | 0 erreur, 0 warning |
 | ESLint global JSON + ratchet CI | PASS | 209 erreurs, 11 warnings, total 220 ; baseline 212/11/223 |
 | `vite build` | PASS | Build production ; warnings de chunking préexistants |
@@ -83,7 +84,7 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 
 ## 10. Résultats
 
-- Les payloads non finis/hors entier sûr sont refusés avant RPC.
+- Les payloads non finis, fractionnaires ou hors entier sûr sont refusés avant RPC.
 - Les clés inattendues, formes JSON invalides et tableaux de plus de 1000 enfants sont refusés côté DB.
 - Les RPC exigent un utilisateur authentifié possédant `admin` ou `manager`.
 - `PUBLIC`, `anon` et `service_role` n'ont aucun droit d'exécution ; le ledger n'a aucun grant client et aucune policy RLS.
@@ -92,25 +93,26 @@ mais le lot ne peut pas recevoir PASS avant replay PostgreSQL et contre-review.
 ## 11. Diff summary
 
 - Fichiers modifiés/ajoutés : 15.
-- Lignes ajoutées : 1 350.
-- Lignes supprimées : 287.
+- Lignes ajoutées : 1 421.
+- Lignes supprimées : 297.
 - Churn principal : suppression des sept écritures séquentielles au profit de deux RPC ; l'essentiel des ajouts correspond à la migration, aux tests de rollback/sécurité et au rapport de lot.
 
 ## 12. Risques résiduels
 
 - Une suite périphérique reste non exécutable sous le runtime local Node 24 ; l'échec identique sur le HEAD de base confirme l'absence de régression OPS-CORE-2, mais la CI Node 20 devra le rejouer.
-- La première tentative de contre-review indépendante a rendu `BLOCKED_REMOTE_DIFF_UNAVAILABLE` sans finding sur le code, car le reviewer distant ne disposait que de `origin/main`.
+- La contre-review indépendante du HEAD `5036262e` a rendu `PASS_WITH_RESERVES`. Ses réserves F3–F6' sont traitées dans le correctif suivant : DEF-16 documente la fermeture future des écritures directes ; les fractions sont refusées côté TS ; la baseline typecheck est rectifiée ; les contrôles fund négatifs/fractionnaires sont ajoutés.
 - Migration non appliquée : le frontend modifié ne doit pas être déployé avant la migration dans le même release train.
 - La contre-review complète doit être relancée sur la branche publiée avant toute draft PR ou décision d'intégration.
 
 ## 13. Recommandation Claude Code
 
-`PASS_WITH_RESERVES` au niveau implémentation locale : validations applicatives
-et replay PostgreSQL 17 réussis, y compris la concurrence. Le verdict
-d'intégration reste suspendu à la contre-review indépendante et à la CI Node 20.
+`PASS_WITH_RESERVES` confirmé par la contre-review indépendante : validations
+applicatives et replay PostgreSQL réussis, y compris la concurrence. Les
+réserves ont reçu un correctif local ; leur relecture et la CI Node 20 restent
+requises avant décision d'intégration.
 
 ## 14. Actions demandées au CTO
 
-- Relancer la contre-review indépendante sur la branche distante publiée.
+- Relancer une vérification indépendante ciblée des réserves sur le nouveau HEAD publié.
 - Ouvrir une draft PR uniquement après retour exploitable de cette contre-review.
 - Ne donner aucun GO staging/DB/déploiement avant ces validations.

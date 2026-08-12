@@ -37,7 +37,7 @@ function syntheticFundPosition(overrides: Partial<FundPosition> = {}): FundPosit
 }
 
 // ---------------------------------------------------------------------------
-// sanitizeFundPositionAmount — signe, troncature, bornes, refus contrôlés
+// sanitizeFundPositionAmount — signe, entiers stricts, bornes, refus contrôlés
 // ---------------------------------------------------------------------------
 
 test('un montant négatif garde son signe et ne devient jamais positif', async () => {
@@ -48,13 +48,15 @@ test('un montant négatif garde son signe et ne devient jamais positif', async (
   assert.notEqual(sanitizeFundPositionAmount(-12345, 'balance'), 12345);
 });
 
-test('décimales : troncature vers zéro, signe préservé des deux côtés', async () => {
+test('décimales : refus contrôlé sans troncature silencieuse', async () => {
   const { sanitizeFundPositionAmount } = await databaseServiceModule;
 
-  assert.equal(sanitizeFundPositionAmount(12345.67, 'amount'), 12345);
-  assert.equal(sanitizeFundPositionAmount(-12345.67, 'amount'), -12345);
-  assert.equal(sanitizeFundPositionAmount(0.99, 'amount'), 0);
-  assert.equal(sanitizeFundPositionAmount(-0.99, 'amount'), 0);
+  for (const invalid of [12345.67, -12345.67, 0.99, -0.99]) {
+    assert.throws(
+      () => sanitizeFundPositionAmount(invalid, 'amount'),
+      /montant décimal non autorisé pour "amount".*insertion refusée/,
+    );
+  }
 });
 
 test('zéro et zéro négatif se replient sur la forme canonique 0', async () => {
@@ -62,7 +64,6 @@ test('zéro et zéro négatif se replient sur la forme canonique 0', async () =>
 
   assert.equal(Object.is(sanitizeFundPositionAmount(0, 'amount'), 0), true);
   assert.equal(Object.is(sanitizeFundPositionAmount(-0, 'amount'), 0), true);
-  assert.equal(Object.is(sanitizeFundPositionAmount(-0.5, 'amount'), -0), false);
 });
 
 test('NaN / Infinity / -Infinity : refus contrôlé, jamais 0 silencieux', async () => {
@@ -146,7 +147,7 @@ test('champs nullable : null uniquement si la source est absente, un 0 réel res
   assert.equal(present.fundPositionRow.payment_for_day, -700);
 });
 
-test('détails par banque : net_balance négatif préservé, décimales tronquées', async () => {
+test('détails par banque : montants entiers négatifs préservés', async () => {
   const { buildFundPositionInsertPayloads } = await databaseServiceModule;
 
   const { detailRows } = buildFundPositionInsertPayloads(
@@ -154,11 +155,11 @@ test('détails par banque : net_balance négatif préservé, décimales tronqué
       details: [
         {
           bankName: 'SYNTH BANK',
-          balance: -5000.75,
+          balance: -5000,
           fundApplied: 100,
           netBalance: -5100,
           nonValidatedDeposit: 0,
-          grandBalance: -5100.99
+          grandBalance: -5100
         }
       ]
     })

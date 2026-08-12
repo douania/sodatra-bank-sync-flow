@@ -26,7 +26,13 @@ try {
   docker run --name $containerName -e POSTGRES_HOST_AUTH_METHOD=trust -d postgres:17-alpine | Out-Null
   for ($i=0; $i -lt 40; $i++) {
     docker exec $containerName pg_isready -U postgres *> $null
-    if ($LASTEXITCODE -eq 0) { break }
+    if ($LASTEXITCODE -eq 0) {
+      # The official image briefly exposes the temporary init server before
+      # restarting PostgreSQL. Confirm readiness after that restart window.
+      Start-Sleep -Seconds 2
+      docker exec $containerName pg_isready -U postgres *> $null
+      if ($LASTEXITCODE -eq 0) { break }
+    }
     Start-Sleep -Milliseconds 250
   }
   if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL 17 did not become ready' }
