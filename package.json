@@ -18,6 +18,7 @@
     "test:collections-core": "tsx --test src/features/collections-core/*.synthetic.test.ts",
     "test:auth-signin": "tsx --test src/pages/authSignInValidation.synthetic.test.ts",
     "test:upload-guard": "tsx --test src/services/uploadRuntimeGuard.synthetic.test.ts",
+    "test:financial-atomic": "tsx --test src/services/databaseService.synthetic.test.ts src/services/financialAtomicPersistence.synthetic.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
