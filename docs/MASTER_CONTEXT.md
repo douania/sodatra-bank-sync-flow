@@ -145,10 +145,10 @@ Ne pas modifier sans justification CTO explicite :
 
 ## Backlog prioritaire
 
-Ouverts / différés :
+Ouverts / suivis :
 - DEF-05 : pipelines import divergents ;
-- DEF-10 : OPS-CORE-2 validé localement sur PostgreSQL 17 et contre-review indépendante `PASS`, cycle de draft PR actif ;
-- DEF-16 : fermer les écritures directes sur les sept tables financières après adoption environnementale des RPC ;
+- DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
+- DEF-16 : OPS-CORE-4 implémenté localement le 2026-08-13, validation environnementale encore interdite sans GO dédié ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
 - DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
 - tests automatisés ;

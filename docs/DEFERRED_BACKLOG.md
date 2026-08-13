@@ -95,13 +95,10 @@
 
 ### DEF-10 : Transactionnalisation saveBankReport
 
-**Statut au 2026-08-12** : `INDEPENDENT_REVIEW_PASS / PR_CYCLE_ACTIVE` dans
-OPS-CORE-2. Les deux écritures ont été remplacées par des RPC atomiques et
-idempotentes ; le replay PostgreSQL 17 valide rollback, sécurité, rejeu et
-concurrence. Après un premier `PASS_WITH_RESERVES`, la contre-review ciblée du
-HEAD correctif `c837468b` rend `PASS`, sans nouveau finding. La dette ne sera
-marquée `CLOSED` qu'après PR puis validations d'environnement explicitement
-autorisées.
+**Statut au 2026-08-12** : `CLOSED — PRODUCTION_VALIDATED` dans OPS-CORE-2.
+Les deux écritures ont été remplacées par des RPC atomiques et idempotentes ;
+le replay PostgreSQL 17 puis les validations staging et production ont confirmé
+rollback, sécurité, rejeu, concurrence et fonctionnement runtime.
 
 **Problème** : L'enregistrement d'un rapport bancaire insère dans plusieurs tables (`bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`) sans transaction. Si une insertion échoue, les données sont partiellement sauvegardées.
 **Risque** : Données incohérentes en base.
@@ -110,8 +107,9 @@ autorisées.
 
 ### DEF-16 : Fermer les écritures financières directes après adoption des RPC
 
-**Statut** : `OPEN / P2` — suivi créé après la contre-review indépendante
-OPS-CORE-2 du 2026-08-12.
+**Statut au 2026-08-13** : `LOCAL_IMPLEMENTED — ENVIRONMENT_NOT_APPLIED` dans
+OPS-CORE-4. La migration additive, les contrats statiques et le replay
+PostgreSQL 17 sont prêts ; staging et production restent inchangés.
 
 **Problème** : les policies historiques de la migration `20260430150428` autorisent
 encore les rôles métier admin/manager à écrire directement dans les sept tables
@@ -120,13 +118,13 @@ encore les rôles métier admin/manager à écrire directement dans les sept tab
 OPS-CORE-2 passe par les RPC atomiques, mais un autre client authentifié pourrait
 encore contourner ce chemin et effectuer des écritures partielles.
 
-**Action différée** : après validation staging/production des deux RPC et audit
-de tous leurs consommateurs, retirer les policies/grants d'écriture directe par
-une migration additive dédiée. Conserver les lectures nécessaires et prouver
-qu'aucun runtime autorisé n'utilise encore les écritures table par table.
+**Action réalisée localement** : l'audit ne détecte aucun consommateur actif qui
+écrive directement dans ces tables. La migration OPS-CORE-4 retire les
+policies/grants d'écriture de `authenticated`, conserve les lectures et les deux
+RPC, et prouve la conservation des données sur PostgreSQL 17 jetable.
 
-**Contrainte** : ne pas fermer ces policies dans OPS-CORE-2 ; cette suppression
-nécessite son propre GO DB/sécurité et des validations d'environnement.
+**Contrainte restante** : la dette ne sera `CLOSED` qu'après revue indépendante,
+merge et validations staging/production explicitement autorisées.
 
 ### DEF-11 : Tests automatisés
 

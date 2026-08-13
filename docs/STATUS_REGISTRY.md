@@ -15,9 +15,24 @@
 
 ---
 
+## OPS-CORE-4 — Verrouillage du chemin d'écriture financier
+
+**Statut : `LOCAL_IMPLEMENTED — DRAFT_PR_ACTIVE` (2026-08-13)**
+
+Une migration additive retire à `authenticated` toutes les policies et tous les
+privilèges d'écriture directe sur les sept tables financières, tout en
+préservant leur lecture et l'exécution des deux RPC atomiques OPS-CORE-2.
+L'audit des consommateurs ne détecte aucun contournement sous `src/`. Les
+contrats OPS-CORE-2/4 passent à 22/22 et le replay PostgreSQL 17 valide
+l'idempotence de la migration, la conservation des données, le refus des
+écritures directes et le fonctionnement des deux RPC. Aucun environnement n'a
+été modifié. Rapport : `docs/OPS_CORE_4_FINANCIAL_WRITE_PATH_LOCKDOWN_REPORT.md`.
+
+---
+
 ## OPS-CORE-3 — Hygiène des logs frontend de production
 
-**Statut : `LOCAL_IMPLEMENTED` (2026-08-12)**
+**Statut : `CLOSED — PRODUCTION_VALIDATED` (2026-08-13)**
 
 Le build Vite de production retire désormais toutes les invocations
 `console.*` et les instructions `debugger`, tandis que le développement conserve
@@ -30,7 +45,7 @@ Rapport : `docs/OPS_CORE_3_PRODUCTION_LOG_HYGIENE_REPORT.md`.
 
 ## OPS-CORE-2 — Persistance financière atomique
 
-**Statut : `IN_PROGRESS — INDEPENDENT_REVIEW_PASS / PR_CYCLE_ACTIVE` (2026-08-12)**
+**Statut : `CLOSED — PRODUCTION_VALIDATED` (2026-08-12)**
 
 `saveBankReport` et `saveFundPosition` utilisent désormais chacun une RPC
 PostgreSQL unique. Les écritures parent/enfants et le registre privé
@@ -53,8 +68,10 @@ conteneur a été supprimé après le test. La contre-review indépendante cibl�
 HEAD `c837468b` rend `PASS`, sans nouveau finding : F3, F4, F5 et F6' sont
 confirmées `FIXED`. Elle reproduit 19 = 19 diagnostics TypeScript dans son
 environnement, cohérent avec la mesure locale 20 = 20 : dans les deux cas, zéro
-nouvelle erreur est imputable au lot. L'ouverture d'une draft PR est autorisée ;
-merge, migration et environnement restent interdits sans leurs GO dédiés.
+nouvelle erreur est imputable au lot. Les migrations, le runtime et les smokes
+authentifiés ont ensuite été validés sur staging puis production avec leurs GO
+dédiés. DEF-10 est clos ; la fermeture des écritures directes résiduelles est
+traitée séparément dans OPS-CORE-4.
 
 Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 

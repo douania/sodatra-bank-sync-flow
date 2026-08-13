@@ -118,6 +118,7 @@ jobs:
           npm run test:bdk-pdf
           npm run test:upload-guard
           npm run test:financial-atomic
+          npm run test:financial-write-lockdown
 
       - name: Build
         run: npm run build
