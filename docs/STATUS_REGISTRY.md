@@ -17,7 +17,7 @@
 
 ## OPS-CORE-4 — Verrouillage du chemin d'écriture financier
 
-**Statut : `LOCAL_IMPLEMENTED — DRAFT_PR_ACTIVE` (2026-08-13)**
+**Statut : `CLOSED — PRODUCTION_VALIDATED` (2026-08-13)**
 
 Une migration additive retire à `authenticated` toutes les policies et tous les
 privilèges d'écriture directe sur les sept tables financières, tout en
@@ -25,8 +25,34 @@ préservant leur lecture et l'exécution des deux RPC atomiques OPS-CORE-2.
 L'audit des consommateurs ne détecte aucun contournement sous `src/`. Les
 contrats OPS-CORE-2/4 passent à 22/22 et le replay PostgreSQL 17 valide
 l'idempotence de la migration, la conservation des données, le refus des
-écritures directes et le fonctionnement des deux RPC. Aucun environnement n'a
-été modifié. Rapport : `docs/OPS_CORE_4_FINANCIAL_WRITE_PATH_LOCKDOWN_REPORT.md`.
+écritures directes et le fonctionnement des deux RPC.
+
+La migration `20260813000000_ops_core_4_financial_write_path_lockdown.sql` a
+ensuite été appliquée sur le staging `gbbsqcscryygqlmqncyv`, puis sur la
+production canonique `leakcdbbawzysfqyqsnr`, sous leurs GO nominatifs. Dans les
+deux environnements, les policies et privilèges d'écriture directe de
+`authenticated` sont à zéro, les sept lectures sont conservées, la RLS reste
+active et les deux RPC atomiques restent exécutables. Les privilèges
+`service_role` sont inchangés.
+
+Le préflight production a constaté 37 migrations, OPS-CORE-2 présente et
+OPS-CORE-4 absente. L'application transactionnelle migration + ledger a produit
+`OPS_CORE_4_PRODUCTION_APPLY_OK`, puis le post-contrôle a confirmé 38 migrations
+et `20260813000000` comme dernière version. Les 268 lignes `bank_reports`, les
+26 lignes `fund_position` et les empreintes des sept tables sont restées
+strictement inchangées.
+
+Les validations `authenticated` avec rollback ont réussi sur staging et
+production. Elles prouvent le refus d'une écriture directe, la création des
+deux graphes parent/enfants par les RPC, le rejeu idempotent avec le même
+identifiant et l'alimentation transactionnelle du ledger. Après rollback :
+zéro ligne et zéro commande synthétique résiduelle. Marqueurs production :
+`OPS_CORE_4_PRODUCTION_AUTHENTICATED_E2E_ROLLBACK_OK` et
+`OPS_CORE_4_PRODUCTION_AUTHENTICATED_E2E_FINAL_STATE_OK`.
+
+DEF-16 est clos. Aucun déploiement frontend supplémentaire n'est requis : le
+runtime OPS-CORE-2 utilisait déjà exclusivement ces RPC. Rapport :
+`docs/OPS_CORE_4_FINANCIAL_WRITE_PATH_LOCKDOWN_REPORT.md`.
 
 ---
 
