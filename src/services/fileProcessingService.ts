@@ -19,6 +19,8 @@ import {
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from './uploadRuntimeGuard';
 import {
+  detectImportDocument,
+  detectImportDocumentFromText,
   getImportDocumentCompatibilityIssue,
   type ImportDocumentKind,
 } from './importPreflightService';
@@ -367,15 +369,9 @@ export class FileProcessingService {
     };
     
     for (const file of files) {
-      const internalBookDetection = await detectInternalBookRuntimeFile(file);
-      if (internalBookDetection.isInternalBook) {
-        categorized.internalBooks.push(file);
-        continue;
-      }
-
       const fileType = await this.detectFileTypeDetailed(file);
       const compatibilityIssue = getImportDocumentCompatibilityIssue(
-        fileType as ImportDocumentKind,
+        fileType,
         file.name,
       );
 
@@ -390,23 +386,38 @@ export class FileProcessingService {
           break;
         case 'FUND_POSITION':
           if (categorized.fundPosition) {
-            categorized.blockedFiles.push(
-              { file: categorized.fundPosition, reason: 'Plusieurs Fund Position dans le même lot.' },
-              { file, reason: 'Plusieurs Fund Position dans le même lot.' },
-            );
+            if (!categorized.blockedFiles.some(entry => entry.file === categorized.fundPosition)) {
+              categorized.blockedFiles.push({
+                file: categorized.fundPosition,
+                reason: 'Plusieurs Fund Position dans le même lot.',
+              });
+            }
+            categorized.blockedFiles.push({
+              file,
+              reason: 'Plusieurs Fund Position dans le même lot.',
+            });
           } else {
             categorized.fundPosition = file;
           }
           break;
         case 'CLIENT_RECONCILIATION':
           if (categorized.clientReconciliation) {
-            categorized.blockedFiles.push(
-              { file: categorized.clientReconciliation, reason: 'Plusieurs Client Reconciliation dans le même lot.' },
-              { file, reason: 'Plusieurs Client Reconciliation dans le même lot.' },
-            );
+            if (!categorized.blockedFiles.some(entry => entry.file === categorized.clientReconciliation)) {
+              categorized.blockedFiles.push({
+                file: categorized.clientReconciliation,
+                reason: 'Plusieurs Client Reconciliation dans le même lot.',
+              });
+            }
+            categorized.blockedFiles.push({
+              file,
+              reason: 'Plusieurs Client Reconciliation dans le même lot.',
+            });
           } else {
             categorized.clientReconciliation = file;
           }
+          break;
+        case 'INTERNAL_BOOK':
+          categorized.internalBooks.push(file);
           break;
         case 'BANK_REPORT':
           categorized.bankReports.push(file);
@@ -424,61 +435,30 @@ export class FileProcessingService {
   }
   
   // ⭐ NOUVELLE MÉTHODE : Détection détaillée du type de fichier
-  private async detectFileTypeDetailed(file: File): Promise<string> {
+  private async detectFileTypeDetailed(file: File): Promise<ImportDocumentKind> {
+    const nameDetection = detectImportDocument(file.name);
+
+    if (nameDetection.kind !== 'UNKNOWN' || nameDetection.label.startsWith('BRIDGE')) {
+      return nameDetection.kind;
+    }
+
+    const internalBookDetection = await detectInternalBookRuntimeFile(file);
+    if (internalBookDetection.isInternalBook) {
+      return 'INTERNAL_BOOK';
+    }
+
     const filename = file.name.toUpperCase();
-    
-    // Détection basée sur le nom du fichier
-    if (filename.includes('COLLECTION') || filename.includes('COLLECT')) {
-      return 'COLLECTION_REPORT';
-    }
-    
-    if (filename.includes('FUND') && filename.includes('POSITION') || 
-        filename.includes('FP') || filename.includes('FUND_POSITION')) {
-      return 'FUND_POSITION';
-    }
-    
-    if (filename.includes('CLIENT') && filename.includes('RECON')) {
-      return 'CLIENT_RECONCILIATION';
-    }
-    
-    const bankKeywords = {
-      'BDK': ['BDK', 'BANQUE DE DAKAR'],
-      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
-      'BICIS': ['BICIS', 'BIC'],
-      'ORA': ['ORA', 'ORABANK'],
-      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
-      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
-    };
-    
-    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-      if (keywords.some(keyword => filename.includes(keyword))) {
-        return 'BANK_REPORT';
-      }
-    }
-    
-    // Si le nom de fichier ne suffit pas, essayer d'analyser le contenu pour Excel
+
+    // Si le nom ne suffit pas, conserver le repli historique d'analyse Excel,
+    // mais réutiliser la même classification stricte que le précontrôle UI.
     if (filename.endsWith('.XLSX') || filename.endsWith('.XLS')) {
       try {
         const buffer = await file.arrayBuffer();
         const textContent = await this.extractTextFromExcel(buffer);
-        
-        // Rechercher des mots-clés dans le contenu
-        if (textContent.includes('COLLECTION') || textContent.includes('CLIENT CODE')) {
-          return 'COLLECTION_REPORT';
-        }
-        
-        if (textContent.includes('FUND POSITION') || textContent.includes('BOOK BALANCE')) {
-          return 'FUND_POSITION';
-        }
-        
-        if (textContent.includes('CLIENT RECONCILIATION')) {
-          return 'CLIENT_RECONCILIATION';
-        }
-        
-        for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-          if (keywords.some(keyword => textContent.includes(keyword))) {
-            return 'BANK_REPORT';
-          }
+
+        const contentDetection = detectImportDocumentFromText(textContent);
+        if (contentDetection.kind !== 'UNKNOWN') {
+          return contentDetection.kind;
         }
       } catch (error) {
         console.warn('⚠️ Erreur analyse contenu Excel:', error);

@@ -227,6 +227,45 @@ test('processFiles exécuté sous cible non autorisée : refus structuré avant 
   // précède timeout et heartbeat dans le source.
 });
 
+test('le service aval partage la classification stricte du précontrôle', {
+  skip: nodeMajorVersion >= 24 ? 'Harness Supabase/Vite exécuté en CI Node 20.' : false,
+}, async () => {
+  const { fileProcessingService } = await import('./fileProcessingService');
+  const service = fileProcessingService as unknown as {
+    detectFileTypeDetailed(file: File): Promise<string>;
+    categorizeFiles(files: File[]): Promise<{
+      blockedFiles: Array<{ file: File; reason: string }>;
+    }>;
+  };
+  const syntheticFile = (name: string, lastModified = 1) => (
+    new File(['synthetic'], name, { lastModified })
+  );
+
+  assert.equal(
+    await service.detectFileTypeDetailed(syntheticFile('Releve BDK FP2026.pdf')),
+    'BANK_REPORT',
+  );
+  assert.equal(
+    await service.detectFileTypeDetailed(syntheticFile('Relevé Société Générale.pdf')),
+    'BANK_REPORT',
+  );
+  assert.equal(await service.detectFileTypeDetailed(syntheticFile('CORPORATE.pdf')), 'UNKNOWN');
+  assert.equal(await service.detectFileTypeDetailed(syntheticFile('RUBICON.pdf')), 'UNKNOWN');
+  assert.equal(await service.detectFileTypeDetailed(syntheticFile('MSG.pdf')), 'UNKNOWN');
+  assert.equal(
+    await service.detectFileTypeDetailed(syntheticFile('synthetic-BDK-internal-book.xlsx')),
+    'INTERNAL_BOOK',
+  );
+
+  const singletonConflict = await service.categorizeFiles([
+    syntheticFile('Fund Position matin.xlsx', 1),
+    syntheticFile('Fund Position soir.xlsx', 2),
+    syntheticFile('Fund Position clôture.xlsx', 3),
+  ]);
+  assert.equal(singletonConflict.blockedFiles.length, 3);
+  assert.equal(new Set(singletonConflict.blockedFiles.map(entry => entry.file)).size, 3);
+});
+
 // --- Contrat : le guard réutilise la politique canonique, sans doublon -------
 
 test('le guard réutilise la politique canonique Daily v2 sans dupliquer les refs projet', () => {

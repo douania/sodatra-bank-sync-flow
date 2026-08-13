@@ -26,13 +26,29 @@ un conflit entre plusieurs documents à cardinalité unique.
 - Client Reconciliation est affiché comme non opérationnel et bloqué au lieu
   de simuler un import alors que le moteur réel n'est pas connecté ;
 - tout document inconnu est bloqué avant traitement ;
-- une copie exacte supplémentaire est signalée et bloque le lot ;
+- un doublon probable partageant le même nom, la même taille et la même date
+  de modification est signalé et bloque le lot ;
 - plusieurs Fund Position ou plusieurs Client Reconciliation bloquent le lot :
   aucun choix silencieux du fichier le plus récent ;
 - chaque fichier affiche son type, son statut et ses motifs de blocage ;
 - le bouton de traitement reste désactivé tant que le lot n'est pas intégralement prêt ;
-- le service aval applique aussi le refus fail-closed si l'interface est contournée ;
+- le service aval réutilise la classification normalisée du précontrôle et
+  applique aussi le refus fail-closed si l'interface est contournée ;
 - les gardes staging/production existantes restent inchangées.
+
+## Correction post contre-review indépendante
+
+La contre-review indépendante du HEAD initial `dd71bdf` a rendu
+`PASS_WITH_RESERVATIONS` avec un correctif obligatoire : la classification par
+nom du service aval utilisait encore des sous-chaînes plus permissives que le
+précontrôle UI. Le correctif aligne les deux surfaces sur
+`detectImportDocument`, conserve le repli d'analyse de contenu pour les fichiers
+Excel au nom non concluant et route explicitement `INTERNAL_BOOK`.
+
+Les réserves mineures associées sont également traitées : le message de doublon
+décrit désormais l'heuristique réellement utilisée, les erreurs de cardinalité
+ne dupliquent plus le premier fichier à partir du troisième singleton et un test
+comportemental du service couvre les cas de divergence signalés.
 
 ## Fichiers du lot
 
@@ -55,8 +71,9 @@ un conflit entre plusieurs documents à cardinalité unique.
   212 erreurs et 223 problèmes totaux ;
 - typecheck comparatif : 20 diagnostics sur `origin/main`, 20 sur le lot et
   zéro nouveau diagnostic après normalisation des numéros de ligne ;
-- les 12 suites applicatives de la matrice CI passent : 466 tests recensés,
-  465 exécutés avec succès sous Node 24 et un harness upload réservé à Node 20 ;
+- les 12 suites applicatives de la matrice CI passent localement : 467 tests
+  recensés, 465 exécutés avec succès sous Node 24 et deux contrôles
+  comportementaux upload réservés au runtime CI ;
 - build Vite production : vert, worker PDF émis ;
 - contrat OPS-CORE-3 post-build : 4/4 tests verts, aucun appel direct
   `console.*` ni `debugger` dans le JavaScript de production.

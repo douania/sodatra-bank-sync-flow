@@ -108,10 +108,11 @@ Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 **Statut : `LOCAL_VALIDATED — PR_CANDIDATE` (2026-08-13)**
 
 Le parcours `/upload` dispose désormais d'un précontrôle fail-closed avant
-tout traitement : formats non supportés, fichiers vides, copies exactes,
+tout traitement : formats non supportés, fichiers vides, doublons probables,
 documents non identifiés et conflits Fund Position/Client Reconciliation sont
-visibles et bloquent le lot. Le service aval ne transforme plus silencieusement
-un document inconnu en rapport bancaire. Couverture synthétique et gate CI :
+visibles et bloquent le lot. Le service aval partage la même classification
+normalisée que l'UI et ne transforme plus silencieusement un document inconnu
+en rapport bancaire. Couverture synthétique et gate CI :
 `test:import-preflight`. Rapport : `docs/OPS_CORE_1_OPERATIONAL_IMPORT_REPORT.md`.
 
 ---

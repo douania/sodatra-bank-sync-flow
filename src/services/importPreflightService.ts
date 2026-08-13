@@ -53,15 +53,18 @@ const BANK_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
   { label: 'BIS', patterns: [/\bBIS\b/, /BANQUE\s+ISLAMIQUE/] },
 ];
 
-function normalizeFileStem(fileName: string): string {
-  return fileName
-    .replace(/\.[^.]+$/, '')
+function normalizeDocumentText(value: string): string {
+  return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeFileStem(fileName: string): string {
+  return normalizeDocumentText(fileName.replace(/\.[^.]+$/, ''));
 }
 
 function getExtension(fileName: string): string {
@@ -112,12 +115,10 @@ function getFingerprint(file: ImportFileDescriptor): string {
   return `${file.name.toLowerCase()}|${file.size}|${file.lastModified}`;
 }
 
-export function detectImportDocument(fileName: string): {
+function detectNormalizedImportDocument(normalized: string): {
   kind: ImportDocumentKind;
   label: string;
 } {
-  const normalized = normalizeFileStem(fileName);
-
   if (/\bCOLLECTIONS?\b/.test(normalized) || /\bCOLLECT\b/.test(normalized)) {
     return { kind: 'COLLECTION_REPORT', label: 'Collection Report' };
   }
@@ -145,6 +146,30 @@ export function detectImportDocument(fileName: string): {
   }
 
   return { kind: 'UNKNOWN', label: 'Document non identifié' };
+}
+
+export function detectImportDocument(fileName: string): {
+  kind: ImportDocumentKind;
+  label: string;
+} {
+  return detectNormalizedImportDocument(normalizeFileStem(fileName));
+}
+
+export function detectImportDocumentFromText(text: string): {
+  kind: ImportDocumentKind;
+  label: string;
+} {
+  const normalized = normalizeDocumentText(text);
+
+  if (/\bCLIENT\s+CODE\b/.test(normalized)) {
+    return { kind: 'COLLECTION_REPORT', label: 'Collection Report' };
+  }
+
+  if (/\bBOOK\s+BALANCE\b/.test(normalized)) {
+    return { kind: 'FUND_POSITION', label: 'Fund Position' };
+  }
+
+  return detectNormalizedImportDocument(normalized);
 }
 
 export function buildImportPreflight<TFile extends ImportFileDescriptor>(
@@ -203,7 +228,7 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
     if ((fingerprints.get(fingerprint) ?? 0) > 1 && seenFingerprints.has(fingerprint)) {
       issues.push({
         code: 'DUPLICATE_FILE',
-        message: 'Copie exacte déjà présente dans ce lot.',
+        message: 'Doublon probable : même nom, même taille et même date de modification.',
       });
     }
     seenFingerprints.add(fingerprint);
