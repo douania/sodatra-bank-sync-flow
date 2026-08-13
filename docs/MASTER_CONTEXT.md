@@ -148,7 +148,7 @@ Ne pas modifier sans justification CTO explicite :
 Ouverts / suivis :
 - DEF-05 : pipelines import divergents ;
 - DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
-- DEF-16 : OPS-CORE-4 implémenté localement le 2026-08-13, validation environnementale encore interdite sans GO dédié ;
+- DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
 - DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
 - tests automatisés ;

@@ -107,9 +107,9 @@ rollback, sécurité, rejeu, concurrence et fonctionnement runtime.
 
 ### DEF-16 : Fermer les écritures financières directes après adoption des RPC
 
-**Statut au 2026-08-13** : `LOCAL_IMPLEMENTED — ENVIRONMENT_NOT_APPLIED` dans
-OPS-CORE-4. La migration additive, les contrats statiques et le replay
-PostgreSQL 17 sont prêts ; staging et production restent inchangés.
+**Statut au 2026-08-13** : `CLOSED — PRODUCTION_VALIDATED` dans OPS-CORE-4.
+La migration additive est appliquée sur staging puis production ; les
+validations authentifiées avec rollback sont vertes sur les deux environnements.
 
 **Problème** : les policies historiques de la migration `20260430150428` autorisent
 encore les rôles métier admin/manager à écrire directement dans les sept tables
@@ -118,13 +118,18 @@ encore les rôles métier admin/manager à écrire directement dans les sept tab
 OPS-CORE-2 passe par les RPC atomiques, mais un autre client authentifié pourrait
 encore contourner ce chemin et effectuer des écritures partielles.
 
-**Action réalisée localement** : l'audit ne détecte aucun consommateur actif qui
-écrive directement dans ces tables. La migration OPS-CORE-4 retire les
-policies/grants d'écriture de `authenticated`, conserve les lectures et les deux
-RPC, et prouve la conservation des données sur PostgreSQL 17 jetable.
+**Action réalisée** : l'audit ne détecte aucun consommateur actif qui écrive
+directement dans ces tables. La migration OPS-CORE-4 retire les policies/grants
+d'écriture de `authenticated`, conserve les lectures, la RLS, les privilèges
+`service_role` et les deux RPC. La revue indépendante, le merge, les applications
+staging/production et les scénarios authentifiés avec rollback ont tous été
+validés. En production, les 268 `bank_reports`, les 26 `fund_position` et les
+empreintes des sept tables sont restés inchangés ; aucune donnée ni commande
+synthétique ne subsiste après le test.
 
-**Contrainte restante** : la dette ne sera `CLOSED` qu'après revue indépendante,
-merge et validations staging/production explicitement autorisées.
+**État final** : zéro policy et zéro privilège d'écriture directe pour
+`authenticated` sur les sept tables ; sept lectures conservées ; les deux RPC
+atomiques constituent le chemin d'écriture exclusif. DEF-16 est `CLOSED`.
 
 ### DEF-11 : Tests automatisés
 
