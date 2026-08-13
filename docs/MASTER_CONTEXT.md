@@ -73,7 +73,7 @@ Pas d'API bancaire directe.
 | Module | Route | Statut |
 |---|---|---|
 | Dashboard principal | `/dashboard` | Actif, dépend de la qualité des imports et RLS |
-| Upload simple | `/upload` | Actif, pipeline legacy encore séparé |
+| Upload simple | `/upload` | Actif, pipeline legacy encore séparé ; précontrôle fail-closed OPS-CORE-1 avant tout traitement |
 | Upload bulk | `/upload-bulk` | Actif, pipeline enhanced |
 | Document Understanding | `/document-understanding` | Actif, notamment BDK/PDF |
 | Quality Control | `/quality-control` | Actif |

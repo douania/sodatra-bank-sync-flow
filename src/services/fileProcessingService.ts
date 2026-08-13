@@ -18,6 +18,12 @@ import {
   currentUploadMutationVerdict,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from './uploadRuntimeGuard';
+import {
+  detectImportDocument,
+  detectImportDocumentFromText,
+  getImportDocumentCompatibilityIssue,
+  type ImportDocumentKind,
+} from './importPreflightService';
 export type { ProcessingResult } from '@/types/processing';
 
 export class FileProcessingService {
@@ -71,8 +77,24 @@ export class FileProcessingService {
         collectionReports: categorizedFiles.collectionReports.length,
         bankReports: categorizedFiles.bankReports.length,
         fundPosition: categorizedFiles.fundPosition ? 'Oui' : 'Non',
-        clientReconciliation: categorizedFiles.clientReconciliation ? 'Oui' : 'Non'
+        clientReconciliation: categorizedFiles.clientReconciliation ? 'Oui' : 'Non',
+        blockedFiles: categorizedFiles.blockedFiles.length,
       });
+
+      if (categorizedFiles.blockedFiles.length > 0) {
+        results.errors.push(...categorizedFiles.blockedFiles.map(
+          ({ file, reason }) => `${file.name}: ${reason}`,
+        ));
+        progressService.errorStep(
+          'file_detection',
+          'Détection des fichiers',
+          'Lot bloqué avant traitement',
+          `${categorizedFiles.blockedFiles.length} fichier(s) ambigu(s) ou non supporté(s)`,
+        );
+        HeartbeatService.stop();
+        clearTimeout(processingTimeout);
+        return results;
+      }
 
       // ⭐ DÉTECTER LE TYPE DE TRAITEMENT
       const hasCollectionReport = categorizedFiles.collectionReports.length > 0;
@@ -335,48 +357,76 @@ export class FileProcessingService {
     bankReports: File[];
     fundPosition: File | null;
     clientReconciliation: File | null;
+    blockedFiles: Array<{ file: File; reason: string }>;
   }> {
     const categorized = {
       internalBooks: [] as File[],
       collectionReports: [] as File[],
       bankReports: [] as File[],
       fundPosition: null as File | null,
-      clientReconciliation: null as File | null
+      clientReconciliation: null as File | null,
+      blockedFiles: [] as Array<{ file: File; reason: string }>,
     };
     
     for (const file of files) {
-      const internalBookDetection = await detectInternalBookRuntimeFile(file);
-      if (internalBookDetection.isInternalBook) {
-        categorized.internalBooks.push(file);
+      const fileType = await this.detectFileTypeDetailed(file);
+      const compatibilityIssue = getImportDocumentCompatibilityIssue(
+        fileType,
+        file.name,
+      );
+
+      if (compatibilityIssue) {
+        categorized.blockedFiles.push({ file, reason: compatibilityIssue.message });
         continue;
       }
-
-      const fileType = await this.detectFileTypeDetailed(file);
       
       switch (fileType) {
         case 'COLLECTION_REPORT':
           categorized.collectionReports.push(file);
           break;
         case 'FUND_POSITION':
-          // Prendre le plus récent si plusieurs fichiers Fund Position
-          if (!categorized.fundPosition || 
-              file.lastModified > categorized.fundPosition.lastModified) {
+          if (categorized.fundPosition) {
+            if (!categorized.blockedFiles.some(entry => entry.file === categorized.fundPosition)) {
+              categorized.blockedFiles.push({
+                file: categorized.fundPosition,
+                reason: 'Plusieurs Fund Position dans le même lot.',
+              });
+            }
+            categorized.blockedFiles.push({
+              file,
+              reason: 'Plusieurs Fund Position dans le même lot.',
+            });
+          } else {
             categorized.fundPosition = file;
           }
           break;
         case 'CLIENT_RECONCILIATION':
-          // Prendre le plus récent si plusieurs fichiers Client Reconciliation
-          if (!categorized.clientReconciliation || 
-              file.lastModified > categorized.clientReconciliation.lastModified) {
+          if (categorized.clientReconciliation) {
+            if (!categorized.blockedFiles.some(entry => entry.file === categorized.clientReconciliation)) {
+              categorized.blockedFiles.push({
+                file: categorized.clientReconciliation,
+                reason: 'Plusieurs Client Reconciliation dans le même lot.',
+              });
+            }
+            categorized.blockedFiles.push({
+              file,
+              reason: 'Plusieurs Client Reconciliation dans le même lot.',
+            });
+          } else {
             categorized.clientReconciliation = file;
           }
+          break;
+        case 'INTERNAL_BOOK':
+          categorized.internalBooks.push(file);
           break;
         case 'BANK_REPORT':
           categorized.bankReports.push(file);
           break;
         default:
-          // Pour les fichiers non identifiés, essayer de les traiter comme des relevés bancaires
-          categorized.bankReports.push(file);
+          categorized.blockedFiles.push({
+            file,
+            reason: 'Document non identifié ; aucun traitement bancaire automatique ne sera tenté.',
+          });
           break;
       }
     }
@@ -385,61 +435,30 @@ export class FileProcessingService {
   }
   
   // ⭐ NOUVELLE MÉTHODE : Détection détaillée du type de fichier
-  private async detectFileTypeDetailed(file: File): Promise<string> {
+  private async detectFileTypeDetailed(file: File): Promise<ImportDocumentKind> {
+    const nameDetection = detectImportDocument(file.name);
+
+    if (nameDetection.kind !== 'UNKNOWN' || nameDetection.label.startsWith('BRIDGE')) {
+      return nameDetection.kind;
+    }
+
+    const internalBookDetection = await detectInternalBookRuntimeFile(file);
+    if (internalBookDetection.isInternalBook) {
+      return 'INTERNAL_BOOK';
+    }
+
     const filename = file.name.toUpperCase();
-    
-    // Détection basée sur le nom du fichier
-    if (filename.includes('COLLECTION') || filename.includes('COLLECT')) {
-      return 'COLLECTION_REPORT';
-    }
-    
-    if (filename.includes('FUND') && filename.includes('POSITION') || 
-        filename.includes('FP') || filename.includes('FUND_POSITION')) {
-      return 'FUND_POSITION';
-    }
-    
-    if (filename.includes('CLIENT') && filename.includes('RECON')) {
-      return 'CLIENT_RECONCILIATION';
-    }
-    
-    const bankKeywords = {
-      'BDK': ['BDK', 'BANQUE DE DAKAR'],
-      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
-      'BICIS': ['BICIS', 'BIC'],
-      'ORA': ['ORA', 'ORABANK'],
-      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
-      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
-    };
-    
-    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-      if (keywords.some(keyword => filename.includes(keyword))) {
-        return 'BANK_REPORT';
-      }
-    }
-    
-    // Si le nom de fichier ne suffit pas, essayer d'analyser le contenu pour Excel
+
+    // Si le nom ne suffit pas, conserver le repli historique d'analyse Excel,
+    // mais réutiliser la même classification stricte que le précontrôle UI.
     if (filename.endsWith('.XLSX') || filename.endsWith('.XLS')) {
       try {
         const buffer = await file.arrayBuffer();
         const textContent = await this.extractTextFromExcel(buffer);
-        
-        // Rechercher des mots-clés dans le contenu
-        if (textContent.includes('COLLECTION') || textContent.includes('CLIENT CODE')) {
-          return 'COLLECTION_REPORT';
-        }
-        
-        if (textContent.includes('FUND POSITION') || textContent.includes('BOOK BALANCE')) {
-          return 'FUND_POSITION';
-        }
-        
-        if (textContent.includes('CLIENT RECONCILIATION')) {
-          return 'CLIENT_RECONCILIATION';
-        }
-        
-        for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-          if (keywords.some(keyword => textContent.includes(keyword))) {
-            return 'BANK_REPORT';
-          }
+
+        const contentDetection = detectImportDocumentFromText(textContent);
+        if (contentDetection.kind !== 'UNKNOWN') {
+          return contentDetection.kind;
         }
       } catch (error) {
         console.warn('⚠️ Erreur analyse contenu Excel:', error);

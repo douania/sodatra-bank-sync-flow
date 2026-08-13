@@ -51,8 +51,7 @@ const resolverHooksUrl =
 
 register(resolverHooksUrl);
 
-// Import dynamique APRÈS l'enregistrement du hook (chaîne legacy complète).
-const processingModulePromise = import('./fileProcessingService');
+const nodeMajorVersion = Number(process.versions.node.split('.')[0]);
 
 const MUTATION_CAPABILITIES: readonly UploadMutationCapability[] = ['deposit', 'promote'];
 
@@ -206,8 +205,15 @@ test('promotion avec garde par défaut hors cible autorisée : rejet avant tout 
 
 // --- Comportement réel : processFiles([]) refuse avant tout traitement -------
 
-test('processFiles exécuté sous cible non autorisée : refus structuré avant tout traitement', async () => {
-  const { fileProcessingService } = await processingModulePromise;
+test('processFiles exécuté sous cible non autorisée : refus structuré avant tout traitement', {
+  // Le hook register() intercepte l'alias Vite sous Node 20 (runtime CI). Sous
+  // Node 24 + tsx, l'alias est résolu avant le hook et le client généré Vite
+  // crashe avant le test. Le contrat source qui impose la garde avant timeout,
+  // heartbeat et traitement reste vérifié plus bas sur toutes les versions.
+  skip: nodeMajorVersion >= 24 ? 'Harness Supabase/Vite exécuté en CI Node 20.' : false,
+}, async () => {
+  // Import dynamique APRÈS l'enregistrement du hook (chaîne legacy complète).
+  const { fileProcessingService } = await import('./fileProcessingService');
 
   const result = await fileProcessingService.processFiles([]);
 
@@ -219,6 +225,45 @@ test('processFiles exécuté sous cible non autorisée : refus structuré avant 
   // Preuve d'absence de traitement : le stub Supabase piégé jette au moindre
   // accès et n'a pas jeté ; le contrat ci-dessous fige en plus que la garde
   // précède timeout et heartbeat dans le source.
+});
+
+test('le service aval partage la classification stricte du précontrôle', {
+  skip: nodeMajorVersion >= 24 ? 'Harness Supabase/Vite exécuté en CI Node 20.' : false,
+}, async () => {
+  const { fileProcessingService } = await import('./fileProcessingService');
+  const service = fileProcessingService as unknown as {
+    detectFileTypeDetailed(file: File): Promise<string>;
+    categorizeFiles(files: File[]): Promise<{
+      blockedFiles: Array<{ file: File; reason: string }>;
+    }>;
+  };
+  const syntheticFile = (name: string, lastModified = 1) => (
+    new File(['synthetic'], name, { lastModified })
+  );
+
+  assert.equal(
+    await service.detectFileTypeDetailed(syntheticFile('Releve BDK FP2026.pdf')),
+    'BANK_REPORT',
+  );
+  assert.equal(
+    await service.detectFileTypeDetailed(syntheticFile('Relevé Société Générale.pdf')),
+    'BANK_REPORT',
+  );
+  assert.equal(await service.detectFileTypeDetailed(syntheticFile('CORPORATE.pdf')), 'UNKNOWN');
+  assert.equal(await service.detectFileTypeDetailed(syntheticFile('RUBICON.pdf')), 'UNKNOWN');
+  assert.equal(await service.detectFileTypeDetailed(syntheticFile('MSG.pdf')), 'UNKNOWN');
+  assert.equal(
+    await service.detectFileTypeDetailed(syntheticFile('synthetic-BDK-internal-book.xlsx')),
+    'INTERNAL_BOOK',
+  );
+
+  const singletonConflict = await service.categorizeFiles([
+    syntheticFile('Fund Position matin.xlsx', 1),
+    syntheticFile('Fund Position soir.xlsx', 2),
+    syntheticFile('Fund Position clôture.xlsx', 3),
+  ]);
+  assert.equal(singletonConflict.blockedFiles.length, 3);
+  assert.equal(new Set(singletonConflict.blockedFiles.map(entry => entry.file)).size, 3);
 });
 
 // --- Contrat : le guard réutilise la politique canonique, sans doublon -------

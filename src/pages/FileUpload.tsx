@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,10 +26,10 @@ import {
   isUploadMutationAllowed,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from '@/services/uploadRuntimeGuard';
+import { buildImportPreflight } from '@/services/importPreflightService';
 
 const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [fileTypes, setFileTypes] = useState<{ [key: string]: string }>({});
   const [processing, setProcessing] = useState(false);
   const [processingResults, setProcessingResults] = useState<ProcessingResult | null>(null);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
@@ -46,6 +46,10 @@ const FileUpload = () => {
   // = deposit ; promotion Collection = promote.
   const canProcessFiles = isUploadMutationAllowed('deposit');
   const canPromoteCollections = isUploadMutationAllowed('promote');
+  const importPreflight = useMemo(
+    () => buildImportPreflight(selectedFiles),
+    [selectedFiles],
+  );
 
   // ⭐ PACK-C.1 : toute modification de la liste des fichiers invalide la review,
   // la promotion et les résultats précédents — sinon l'UI afficherait un staging
@@ -65,17 +69,6 @@ const FileUpload = () => {
     // Ajouter les nouveaux fichiers à la liste existante
     setSelectedFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
     
-    // Détecter automatiquement le type de chaque fichier
-    const newFileTypes: { [key: string]: string } = {};
-    
-    acceptedFiles.forEach(file => {
-      const detectedType = detectFileType(file);
-      newFileTypes[file.name] = detectedType;
-      console.log(`🔍 Fichier détecté: ${file.name} => ${detectedType}`);
-    });
-    
-    setFileTypes(prev => ({ ...prev, ...newFileTypes }));
-
     // Gérer les fichiers rejetés
     if (rejectedFiles.length > 0) {
       setRejectedFiles(rejectedFiles);
@@ -101,62 +94,15 @@ const FileUpload = () => {
     multiple: true
   });
   
-  const removeFile = (fileName: string) => {
+  const removeFile = (fileToRemove: File) => {
     // ⭐ PACK-C.1 : fichier retiré → l'état de review/promotion est périmé.
     resetImportStateAfterFileChange();
 
-    setSelectedFiles(prevFiles => prevFiles.filter(file => file.name !== fileName));
-
-    // Supprimer également le type de fichier
-    setFileTypes(prev => {
-      const newTypes = { ...prev };
-      delete newTypes[fileName];
-      return newTypes;
-    });
+    setSelectedFiles(prevFiles => prevFiles.filter(file => file !== fileToRemove));
   };
   
   const clearRejectedFiles = () => {
     setRejectedFiles([]);
-  };
-
-  const detectFileType = (file: File): string => {
-    const filename = file.name.toUpperCase();
-    
-    // Détecter les rapports de collection
-    if (filename.includes('COLLECTION') || filename.includes('COLLECT')) {
-      return 'Collection Report';
-    }
-    
-    // Détecter les rapports de position de fonds
-    if (filename.includes('FUND') || filename.includes('POSITION') || 
-        filename.includes('FP') || filename.includes('FUND_POSITION')) {
-      return 'Fund Position';
-    }
-    
-    // Détecter les rapports de réconciliation client
-    if (filename.includes('CLIENT') && filename.includes('RECON')) {
-      return 'Client Reconciliation';
-    }
-    
-    const bankKeywords = {
-      'BDK': ['BDK', 'BANQUE DE DAKAR'],
-      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
-      'BICIS': ['BICIS', 'BIC'],
-      'ORA': ['ORA', 'ORABANK'],
-      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
-      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
-    };
-    
-    // Détecter les rapports bancaires
-    
-    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-      if (keywords.some(keyword => filename.includes(keyword))) {
-        return bankCode;
-      }
-    }
-    
-    // Si aucun type spécifique n'est détecté
-    return 'Autre Document';
   };
 
   const handleSubmit = async () => {
@@ -167,6 +113,15 @@ const FileUpload = () => {
         variant: "destructive",
         title: "Production en lecture seule",
         description: UPLOAD_READ_ONLY_TARGET_MESSAGE,
+      });
+      return;
+    }
+
+    if (!importPreflight.canProcess) {
+      toast({
+        variant: "destructive",
+        title: "Lot d'import bloqué",
+        description: `${importPreflight.blockedCount} fichier(s) doivent être corrigés ou retirés avant tout traitement.`,
       });
       return;
     }
@@ -404,7 +359,7 @@ const FileUpload = () => {
         <div className="flex justify-center my-8 sticky bottom-4">
           <Button 
             onClick={handleSubmit} 
-            disabled={processing || selectedFiles.length === 0}
+            disabled={processing || !importPreflight.canProcess}
             size="lg"
             className="px-8 py-6 bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-lg"
           >
@@ -414,7 +369,10 @@ const FileUpload = () => {
               </>
             ) : (
               <>
-                Analyser / Traiter {selectedFiles.length} fichier(s) <ArrowRight className="ml-2 h-5 w-5" />
+                {importPreflight.canProcess
+                  ? `Analyser / Traiter ${selectedFiles.length} fichier(s)`
+                  : `Corriger ${importPreflight.blockedCount} fichier(s) bloqué(s)`}
+                <ArrowRight className="ml-2 h-5 w-5" />
               </>
             )}
           </Button>
@@ -483,31 +441,56 @@ const FileUpload = () => {
         <Card className="mb-8">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
-              <CheckCircle className="h-5 w-5 text-green-500" />
-              <span>{selectedFiles.length} Fichier(s) Prêt(s) pour Traitement</span>
+              {importPreflight.canProcess ? (
+                <CheckCircle className="h-5 w-5 text-green-500" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 text-red-500" />
+              )}
+              <span>
+                Précontrôle : {importPreflight.readyCount} prêt(s), {importPreflight.blockedCount} bloqué(s)
+              </span>
             </CardTitle>
+            <CardDescription>
+              Aucun traitement ni aucune écriture ne démarre tant qu'un fichier est vide,
+              dupliqué, ambigu ou non supporté.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {selectedFiles.map((file, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+              {importPreflight.entries.map((entry, index) => (
+                <div
+                  key={`${entry.file.name}-${entry.file.size}-${entry.file.lastModified}-${index}`}
+                  className={`flex items-center justify-between p-3 border rounded-lg ${
+                    entry.status === 'BLOCKED'
+                      ? 'border-red-300 bg-red-50'
+                      : 'border-green-200 hover:bg-gray-50'
+                  }`}
+                >
                   <div className="flex items-center space-x-3">
-                    {getFileTypeIcon(fileTypes[file.name] || 'Autre')}
+                    {getFileTypeIcon(entry.documentLabel)}
                     <div>
-                      <div className="font-medium truncate max-w-md">{file.name}</div>
+                      <div className="font-medium truncate max-w-md">{entry.file.name}</div>
                       <div className="text-sm text-gray-500">
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                        {(entry.file.size / 1024 / 1024).toFixed(2)} MB
                       </div>
+                      {entry.issues.map(issue => (
+                        <div key={issue.code} className="text-sm text-red-700 mt-1">
+                          {issue.message}
+                        </div>
+                      ))}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Badge className={`${getFileTypeColor(fileTypes[file.name] || 'Autre')} px-3 py-1`}>
-                      {fileTypes[file.name] || 'Autre Document'}
+                    <Badge className={`${getFileTypeColor(entry.documentLabel)} px-3 py-1`}>
+                      {entry.documentLabel}
+                    </Badge>
+                    <Badge variant={entry.status === 'READY' ? 'secondary' : 'destructive'}>
+                      {entry.status === 'READY' ? 'Prêt' : 'Bloqué'}
                     </Badge>
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      onClick={() => removeFile(file.name)}
+                      onClick={() => removeFile(entry.file)}
                       className="text-red-500 hover:text-red-700 hover:bg-red-50"
                     >
                       <X className="h-4 w-4" />
