@@ -105,7 +105,7 @@ Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 
 ## OPS-CORE-1 — Précontrôle opérationnel des imports
 
-**Statut : `LOCAL_VALIDATED — PR_CANDIDATE` (2026-08-13)**
+**Statut : `CLOSED — PRODUCTION_VALIDATED` (2026-08-13)**
 
 Le parcours `/upload` dispose désormais d'un précontrôle fail-closed avant
 tout traitement : formats non supportés, fichiers vides, doublons probables,
@@ -114,6 +114,25 @@ visibles et bloquent le lot. Le service aval partage la même classification
 normalisée que l'UI et ne transforme plus silencieusement un document inconnu
 en rapport bancaire. Couverture synthétique et gate CI :
 `test:import-preflight`. Rapport : `docs/OPS_CORE_1_OPERATIONAL_IMPORT_REPORT.md`.
+
+La PR #128 est fusionnée dans `main` au commit `dadbbf650`. Le staging Lovable
+`8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, ciblant exclusivement
+`gbbsqcscryygqlmqncyv`, a validé les refus BRIDGE, Client Reconciliation,
+format incompatible, document inconnu, doublon et conflit Fund Position, ainsi
+que l'état prêt d'un Collection Report XLSX. Aucun traitement ni aucune mutation
+métier n'a été déclenché.
+
+Le runtime a ensuite été publié sur le projet Lovable production exact
+`e52d9fce-f1b4-46f8-900c-c559a6eb2115`, déploiement
+`ee3a7c51-32c4-419d-80cd-baf32339cb10`, bundle `index-B95fw9H2.js`. Les smokes
+anonyme et authentifié confirment la cible `leakcdbbawzysfqyqsnr`, l'absence de
+mutation et le maintien du garde `Production en lecture seule` : aucun
+sélecteur de fichier ni bouton de traitement n'est exposé en production.
+
+OPS-CORE-1 est clos sans migration, SQL, changement Auth/RLS ni donnée bancaire
+réelle. La validation fonctionnelle d'import reste portée par staging, car la
+production interdit volontairement toute sélection et tout traitement de
+fichier.
 
 ---
 

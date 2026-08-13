@@ -73,7 +73,7 @@ Pas d'API bancaire directe.
 | Module | Route | Statut |
 |---|---|---|
 | Dashboard principal | `/dashboard` | Actif, dépend de la qualité des imports et RLS |
-| Upload simple | `/upload` | Actif, pipeline legacy encore séparé ; précontrôle fail-closed OPS-CORE-1 avant tout traitement |
+| Upload simple | `/upload` | Actif sur cible autorisée, pipeline legacy encore séparé ; précontrôle fail-closed OPS-CORE-1 validé staging et publié en production, où l'import reste désactivé |
 | Upload bulk | `/upload-bulk` | Actif, pipeline enhanced |
 | Document Understanding | `/document-understanding` | Actif, notamment BDK/PDF |
 | Quality Control | `/quality-control` | Actif |
@@ -147,6 +147,7 @@ Ne pas modifier sans justification CTO explicite :
 
 Ouverts / suivis :
 - DEF-05 : pipelines import divergents ;
+- OPS-CORE-1 : `CLOSED`, précontrôle d'import validé staging et publié en production le 2026-08-13 ;
 - DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
