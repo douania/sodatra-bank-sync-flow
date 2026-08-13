@@ -51,8 +51,7 @@ const resolverHooksUrl =
 
 register(resolverHooksUrl);
 
-// Import dynamique APRÈS l'enregistrement du hook (chaîne legacy complète).
-const processingModulePromise = import('./fileProcessingService');
+const nodeMajorVersion = Number(process.versions.node.split('.')[0]);
 
 const MUTATION_CAPABILITIES: readonly UploadMutationCapability[] = ['deposit', 'promote'];
 
@@ -206,8 +205,15 @@ test('promotion avec garde par défaut hors cible autorisée : rejet avant tout 
 
 // --- Comportement réel : processFiles([]) refuse avant tout traitement -------
 
-test('processFiles exécuté sous cible non autorisée : refus structuré avant tout traitement', async () => {
-  const { fileProcessingService } = await processingModulePromise;
+test('processFiles exécuté sous cible non autorisée : refus structuré avant tout traitement', {
+  // Le hook register() intercepte l'alias Vite sous Node 20 (runtime CI). Sous
+  // Node 24 + tsx, l'alias est résolu avant le hook et le client généré Vite
+  // crashe avant le test. Le contrat source qui impose la garde avant timeout,
+  // heartbeat et traitement reste vérifié plus bas sur toutes les versions.
+  skip: nodeMajorVersion >= 24 ? 'Harness Supabase/Vite exécuté en CI Node 20.' : false,
+}, async () => {
+  // Import dynamique APRÈS l'enregistrement du hook (chaîne legacy complète).
+  const { fileProcessingService } = await import('./fileProcessingService');
 
   const result = await fileProcessingService.processFiles([]);
 

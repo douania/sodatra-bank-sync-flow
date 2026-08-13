@@ -18,6 +18,10 @@ import {
   currentUploadMutationVerdict,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from './uploadRuntimeGuard';
+import {
+  getImportDocumentCompatibilityIssue,
+  type ImportDocumentKind,
+} from './importPreflightService';
 export type { ProcessingResult } from '@/types/processing';
 
 export class FileProcessingService {
@@ -71,8 +75,24 @@ export class FileProcessingService {
         collectionReports: categorizedFiles.collectionReports.length,
         bankReports: categorizedFiles.bankReports.length,
         fundPosition: categorizedFiles.fundPosition ? 'Oui' : 'Non',
-        clientReconciliation: categorizedFiles.clientReconciliation ? 'Oui' : 'Non'
+        clientReconciliation: categorizedFiles.clientReconciliation ? 'Oui' : 'Non',
+        blockedFiles: categorizedFiles.blockedFiles.length,
       });
+
+      if (categorizedFiles.blockedFiles.length > 0) {
+        results.errors.push(...categorizedFiles.blockedFiles.map(
+          ({ file, reason }) => `${file.name}: ${reason}`,
+        ));
+        progressService.errorStep(
+          'file_detection',
+          'Détection des fichiers',
+          'Lot bloqué avant traitement',
+          `${categorizedFiles.blockedFiles.length} fichier(s) ambigu(s) ou non supporté(s)`,
+        );
+        HeartbeatService.stop();
+        clearTimeout(processingTimeout);
+        return results;
+      }
 
       // ⭐ DÉTECTER LE TYPE DE TRAITEMENT
       const hasCollectionReport = categorizedFiles.collectionReports.length > 0;
@@ -335,13 +355,15 @@ export class FileProcessingService {
     bankReports: File[];
     fundPosition: File | null;
     clientReconciliation: File | null;
+    blockedFiles: Array<{ file: File; reason: string }>;
   }> {
     const categorized = {
       internalBooks: [] as File[],
       collectionReports: [] as File[],
       bankReports: [] as File[],
       fundPosition: null as File | null,
-      clientReconciliation: null as File | null
+      clientReconciliation: null as File | null,
+      blockedFiles: [] as Array<{ file: File; reason: string }>,
     };
     
     for (const file of files) {
@@ -352,22 +374,37 @@ export class FileProcessingService {
       }
 
       const fileType = await this.detectFileTypeDetailed(file);
+      const compatibilityIssue = getImportDocumentCompatibilityIssue(
+        fileType as ImportDocumentKind,
+        file.name,
+      );
+
+      if (compatibilityIssue) {
+        categorized.blockedFiles.push({ file, reason: compatibilityIssue.message });
+        continue;
+      }
       
       switch (fileType) {
         case 'COLLECTION_REPORT':
           categorized.collectionReports.push(file);
           break;
         case 'FUND_POSITION':
-          // Prendre le plus récent si plusieurs fichiers Fund Position
-          if (!categorized.fundPosition || 
-              file.lastModified > categorized.fundPosition.lastModified) {
+          if (categorized.fundPosition) {
+            categorized.blockedFiles.push(
+              { file: categorized.fundPosition, reason: 'Plusieurs Fund Position dans le même lot.' },
+              { file, reason: 'Plusieurs Fund Position dans le même lot.' },
+            );
+          } else {
             categorized.fundPosition = file;
           }
           break;
         case 'CLIENT_RECONCILIATION':
-          // Prendre le plus récent si plusieurs fichiers Client Reconciliation
-          if (!categorized.clientReconciliation || 
-              file.lastModified > categorized.clientReconciliation.lastModified) {
+          if (categorized.clientReconciliation) {
+            categorized.blockedFiles.push(
+              { file: categorized.clientReconciliation, reason: 'Plusieurs Client Reconciliation dans le même lot.' },
+              { file, reason: 'Plusieurs Client Reconciliation dans le même lot.' },
+            );
+          } else {
             categorized.clientReconciliation = file;
           }
           break;
@@ -375,8 +412,10 @@ export class FileProcessingService {
           categorized.bankReports.push(file);
           break;
         default:
-          // Pour les fichiers non identifiés, essayer de les traiter comme des relevés bancaires
-          categorized.bankReports.push(file);
+          categorized.blockedFiles.push({
+            file,
+            reason: 'Document non identifié ; aucun traitement bancaire automatique ne sera tenté.',
+          });
           break;
       }
     }

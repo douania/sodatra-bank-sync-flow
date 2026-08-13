@@ -103,6 +103,19 @@ Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 
 ---
 
+## OPS-CORE-1 — Précontrôle opérationnel des imports
+
+**Statut : `LOCAL_VALIDATED — PR_CANDIDATE` (2026-08-13)**
+
+Le parcours `/upload` dispose désormais d'un précontrôle fail-closed avant
+tout traitement : formats non supportés, fichiers vides, copies exactes,
+documents non identifiés et conflits Fund Position/Client Reconciliation sont
+visibles et bloquent le lot. Le service aval ne transforme plus silencieusement
+un document inconnu en rapport bancaire. Couverture synthétique et gate CI :
+`test:import-preflight`. Rapport : `docs/OPS_CORE_1_OPERATIONAL_IMPORT_REPORT.md`.
+
+---
+
 ## SEC-05 — GraphQL et grants anon fail-closed
 
 **Statut : CLOSED — PRODUCTION_VALIDATED (2026-07-31)**
