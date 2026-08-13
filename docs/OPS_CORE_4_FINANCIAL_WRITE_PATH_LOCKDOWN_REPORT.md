@@ -38,17 +38,24 @@ d'écriture directe sur ces sept tables.
 - lectures `authenticated` conservées : **PASS** ;
 - écritures directes `authenticated` refusées : **PASS** ;
 - deux RPC atomiques toujours exécutables : **PASS** ;
+- deux RPC appelées sous un rôle membre de `authenticated` : **PASS** ;
 - rollback transactionnel synthétique : **PASS** ;
 - build Vite de production : **PASS** ;
 - ESLint : **209 erreurs / 11 warnings**, baseline canonique inchangée ;
 - TypeScript : **20 diagnostics**, baseline canonique inchangée ;
 - `git diff --check` : **PASS**.
 
-Les scripts CI ont aussi été exécutés séparément, comme sous GitHub Actions.
+Le contrat `test:financial-write-lockdown` est branché dans GitHub Actions. Les
+scripts CI ont aussi été exécutés séparément, comme sous GitHub Actions.
 Tous passent localement sauf `test:upload-guard` (11/12) : sous ce runner
 Windows/TSX, l'import existant de `src/integrations/supabase/client.ts` reçoit un
 `import.meta.env` absent. Ce test et ce module ne sont pas modifiés par le lot ;
 le contrôle Linux distant reste l'autorité pour ce diagnostic d'environnement.
+
+La contre-review indépendante initiale a rendu `PASS_WITH_RESERVES`, sans P0 ni
+P1. Ses deux P2 — appels RPC de replay exécutés comme superutilisateur et contrat
+absent de la CI — ont été corrigés dans la draft PR avant toute validation
+d'environnement.
 
 ## Sécurité et retour arrière
 

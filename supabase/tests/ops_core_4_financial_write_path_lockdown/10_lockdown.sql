@@ -108,6 +108,8 @@ SELECT set_config(
   false
 );
 
+SET ROLE ops_test_manager;
+
 SELECT public.save_bank_report_atomic_v1(
   '00000000-0000-4000-8000-000000000401',
   '{"bank_name":"RPC-ONLY","report_date":"2026-08-13","opening_balance":1,"closing_balance":2}',
@@ -140,6 +142,8 @@ SELECT test.assert(
   ),
   'the SECURITY DEFINER fund-position RPC must still persist atomically'
 );
+
+RESET ROLE;
 
 BEGIN;
   INSERT INTO public.bank_reports(

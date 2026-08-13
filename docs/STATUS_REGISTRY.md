@@ -17,7 +17,7 @@
 
 ## OPS-CORE-4 — Verrouillage du chemin d'écriture financier
 
-**Statut : `LOCAL_IMPLEMENTED — DRAFT_PR_PENDING` (2026-08-13)**
+**Statut : `LOCAL_IMPLEMENTED — DRAFT_PR_ACTIVE` (2026-08-13)**
 
 Une migration additive retire à `authenticated` toutes les policies et tous les
 privilèges d'écriture directe sur les sept tables financières, tout en
