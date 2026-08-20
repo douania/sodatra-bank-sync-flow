@@ -29,8 +29,8 @@ flowchart LR
   end
 
   subgraph PIPE[Pipeline de traitement]
-    DET[Détection type de fichier<br/>fileProcessingService<br/>enhancedFileProcessingService]
-    EXT[Extraction<br/>excelProcessingService<br/>bankReportProcessingService<br/>bankReportSectionExtractor<br/>advancedExtractionService<br/>enhancedBDKExtractionService<br/>positionalExtractionService + pdfjs]
+    DET[Détection type de fichier<br/>importPreflightService<br/>documentDetectionService read-only]
+    EXT[Extraction<br/>fileProcessingService unique<br/>excelProcessingService<br/>bankReportProcessingService<br/>bankReportSectionExtractor<br/>enhancedBDKExtractionService<br/>positionalExtractionService + pdfjs]
     MAP[Mapping<br/>excelMappingService<br/>regex EFFET vs CHEQUE]
     SYNC[Synchronisation intelligente<br/>intelligentSyncService<br/>contrainte unique_excel_traceability]
     DB[Persistance<br/>databaseService → Supabase]
@@ -61,9 +61,9 @@ flowchart LR
 ```
 
 **Tables Supabase concernées** : `bank_reports`, `bank_facilities`, `deposits_not_cleared`, `impayes`, `collection_report`, `fund_position`, `fund_position_detail`, `fund_position_hold`, `client_reconciliation`.
-**Services TypeScript impliqués** : `fileProcessingService`, `enhancedFileProcessingService`, `excelProcessingService`, `excelMappingService`, `bankReportProcessingService`, `bankReportSectionExtractor`, `advancedExtractionService`, `enhancedBDKExtractionService`, `positionalExtractionService`, `intelligentSyncService`, `databaseService`.
+**Services TypeScript impliqués** : `fileProcessingService`, `importPreflightService`, `documentDetectionService` (analyse read-only), `excelProcessingService`, `excelMappingService`, `bankReportProcessingService`, `bankReportSectionExtractor`, `enhancedBDKExtractionService`, `positionalExtractionService`, `intelligentSyncService`, `databaseService`.
 **Fonctionnel aujourd'hui** : import Excel `COLLECTION REPORT` complet et idempotent (648 lignes vérifiées, traçabilité `excel_filename` + `excel_source_row` + `unique_excel_traceability`), extraction BDK forcée en 7 colonnes positionnelles, sync intelligente avec distinction INSERT / UPDATE idempotent / enrichissement.
-**Annoncé mais non implémenté** : la branche `bdk_analysis` de `enhancedFileProcessingService.processOrganizedFiles` n'est pas câblée bout en bout vers Supabase ; les parsers ATB / BICIS / ORA / SGS / BIS ne disposent pas de la même couverture positionnelle que BDK ; `FUND POSITION` et `CLIENT RECONCILIATION` côté Excel n'ont pas encore de pipeline d'import idempotent équivalent à `COLLECTION REPORT`.
+**Limites opérationnelles** : les rapports ATB / BICIS / ORA / SGS / BIS et `FUND POSITION` restent des pilotes staging faute de preuve fichier bout en bout dédiée ; `CLIENT RECONCILIATION` est bloqué car son moteur d'import réel n'est pas connecté. Le chemin BDK PDF, Collection Report et Internal Book sont candidats à une future validation production, sans activation implicite.
 
 ---
 
@@ -145,7 +145,7 @@ mindmap
       Traçabilité Excel vers DB ligne par ligne
 ```
 
-**Pages UI cibles** : `ConsolidatedDashboard`, `BankingDashboard`, `BankingReports`, `Reconciliation`, `Alerts`, `QualityControl`, `FileUpload`, `FileUploadBulk`.
+**Pages UI cibles** : `Reconciliation`, `QualityControl`, `FileUpload`, `DocumentUnderstanding` et `DailyStatementV2`. `/upload-bulk` est un alias de compatibilité vers `/upload`.
 **Services TypeScript impliqués** : `dashboardMetricsService`, `crossBankAnalysisService`, `qualityControlEngine`, `intelligentSyncService`, `specializedMatchingService`.
 **Fonctionnel aujourd'hui** : Upload + sync Excel `COLLECTION REPORT` opérationnels avec compteurs UX (Ajoutées réellement / Mises à jour idempotentes / Enrichies / Ignorées) ; affichage consolidé partiel sur `ConsolidatedDashboard` ; traçabilité Excel→DB intégrale via `excel_filename`, `excel_source_row`, `unique_excel_traceability`.
 **Annoncé mais non implémenté** : `BankingDashboard` et `BankingReports` reposent encore sur des données mockées (`mockData` ligne 59 de `BankingDashboard.tsx`) ; les alertes d'effets à échéance ne sont pas générées automatiquement ; la consolidation cross-bank par client (vue 360°) n'est pas finalisée côté UI.

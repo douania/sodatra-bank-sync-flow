@@ -103,6 +103,34 @@ Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 
 ---
 
+## OPERATIONAL-IMPORT-PRODUCTION-READINESS
+
+**Statut : `IMPLEMENTED_LOCAL — REVIEW_REQUIRED` (2026-08-20)**
+
+Le pipeline global d'import est consolidé sur `/upload` +
+`fileProcessingService`. L'alias `/upload-bulk` redirige vers `/upload`; sa page
+orpheline et `enhancedFileProcessingService` sont supprimés. La détection encore
+utilisée par `Document Understanding` est isolée dans
+`documentDetectionService`, sans service de persistance.
+
+Une matrice versionnée distingue `PRODUCTION_CANDIDATE`, `STAGING_PILOT` et
+`BLOCKED`. Sur une future cible production ouverte, le précontrôle refuse les
+pilotes. L'UI d'import combine capacité de cible et rôles applicatifs : seuls
+`admin`/`manager` passent, et attente/erreur de rôles ferment l'accès. Cela ne
+remplace jamais Auth/RLS/grants serveur. La production reste explicitement en
+lecture seule ; aucun environnement live, SQL, migration ou changement RLS n'a
+été réalisé.
+
+La gate `test:import-preflight` inclut désormais les preuves synthétiques
+readiness, détection documentaire, Collection Report et Internal Book. La
+preuve BDK PDF reste portée par `test:bdk-pdf`. Rapport :
+`docs/OPERATIONAL_IMPORT_PRODUCTION_READINESS_REPORT.md`.
+
+DEF-05 passe à `RESOLVED_IN_REVIEW`; fermeture définitive après contre-review
+indépendante et merge.
+
+---
+
 ## OPS-CORE-1 — Précontrôle opérationnel des imports
 
 **Statut : `CLOSED — PRODUCTION_VALIDATED` (2026-08-13)**

@@ -125,6 +125,6 @@ test('la page upload applique le précontrôle avant toute mutation', () => {
 
   assert.match(pageSource, /if \(!importPreflight\.canProcess\)[\s\S]*Lot d'import bloqué/);
   assert.match(pageSource, /disabled=\{processing \|\| !importPreflight\.canProcess\}/);
-  assert.match(pageSource, /buildImportPreflight\(selectedFiles\)/);
+  assert.match(pageSource, /buildImportPreflight\(selectedFiles, \{ deploymentTarget \}\)/);
   assert.doesNotMatch(pageSource, /return 'Autre Document'/);
 });

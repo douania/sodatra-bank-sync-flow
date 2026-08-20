@@ -287,19 +287,24 @@ test('le guard réutilise la politique canonique Daily v2 sans dupliquer les ref
 
 test('la page /upload déclare une capacité par famille d\'actions et reste fail-closed', () => {
   // Sélection/traitement = deposit ; promotion = promote.
-  assert.match(page, /const canProcessFiles = isUploadMutationAllowed\('deposit'\);/);
-  assert.match(page, /const canPromoteCollections = isUploadMutationAllowed\('promote'\);/);
+  assert.match(page, /const targetAllowsDeposit = isUploadMutationAllowed\('deposit'\);/);
+  assert.match(page, /const targetAllowsPromotion = isUploadMutationAllowed\('promote'\);/);
+  assert.match(page, /const importAccess = evaluateOperationalImportAccess\(\{/);
+  assert.match(page, /const canProcessFiles = importAccess\.allowed;/);
+  assert.match(page, /const canPromoteCollections = importAccess\.allowed && targetAllowsPromotion;/);
+  assert.match(
+    page,
+    /function isBlockedOperationalImportAccess\([\s\S]*?Extract<OperationalImportAccessVerdict, \{ allowed: false \}>[\s\S]*?return verdict\.allowed === false;/,
+  );
 
   // Dropzone jamais active sans la capacité deposit.
   assert.match(page, /disabled: !canProcessFiles,/);
 
   // Retour anticipé lecture seule AVANT toute interface active, avec bandeau
   // explicite ; la dropzone n'est rendue que dans la branche autorisée.
-  assert.match(
-    page,
-    /if \(!canProcessFiles\) \{\s*return \([\s\S]*?Production en lecture seule[\s\S]*?\);\s*\}\s*return \(/,
-  );
-  const readOnlyReturn = page.indexOf('Production en lecture seule</AlertTitle>');
+  assert.match(page, /if \(!canProcessFiles\) \{\s*return \([\s\S]*?<AlertTitle>\{blockedCopy\.title\}<\/AlertTitle>/);
+  assert.match(page, /title: 'Production en lecture seule', description: UPLOAD_READ_ONLY_TARGET_MESSAGE/);
+  const readOnlyReturn = page.indexOf('<AlertTitle>{blockedCopy.title}</AlertTitle>');
   const activeDropzone = page.indexOf('{...getRootProps(');
   assert.ok(readOnlyReturn >= 0 && activeDropzone >= 0);
   assert.ok(readOnlyReturn < activeDropzone, 'read-only state must render before the dropzone');
@@ -308,11 +313,11 @@ test('la page /upload déclare une capacité par famille d\'actions et reste fai
   // était déclenché.
   assert.match(
     page,
-    /if \(!canProcessFiles\) \{\s*toast\(\{\s*variant: "destructive",\s*title: "Production en lecture seule",\s*description: UPLOAD_READ_ONLY_TARGET_MESSAGE,\s*\}\);\s*return;\s*\}/,
+    /if \(!canProcessFiles\) \{\s*toast\(\{\s*variant: "destructive",\s*title: blockedCopy\.title,\s*description: blockedCopy\.description,\s*\}\);\s*return;\s*\}/,
   );
   assert.match(
     page,
-    /if \(!canPromoteCollections\) \{\s*toast\(\{\s*variant: "destructive",\s*title: "Production en lecture seule",\s*description: UPLOAD_READ_ONLY_TARGET_MESSAGE,\s*\}\);\s*return;\s*\}/,
+    /if \(!canPromoteCollections\) \{\s*toast\(\{\s*variant: "destructive",\s*title: blockedCopy\.title,\s*description: blockedCopy\.description,\s*\}\);\s*return;\s*\}/,
   );
   assert.equal((page.match(/if \(!canProcessFiles\) \{/g) ?? []).length, 2);
   assert.equal((page.match(/if \(!canPromoteCollections\) \{/g) ?? []).length, 1);
@@ -325,6 +330,8 @@ test('staging : le pipeline d\'import de la page reste strictement inchangé', (
   assert.match(page, /await fileProcessingService\.processFiles\(otherFiles\)/);
   assert.match(page, /await promoteValidatedCollections\(reviewWithSelection\)/);
   assert.match(page, /const gate = assertPromotionAllowed\(reviewWithSelection\)/);
+  assert.match(page, /roles: rolesQuery\.data \?\? \[\]/);
+  assert.match(page, /enabled: Boolean\(user\?\.id\) && targetAllowsDeposit/);
 });
 
 // --- Contrat : services fail-closed avant tout travail -----------------------

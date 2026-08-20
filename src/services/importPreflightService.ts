@@ -1,3 +1,9 @@
+import {
+  qualifyOperationalImportDocument,
+  type OperationalImportDeploymentTarget,
+  type OperationalImportQualification,
+} from './operationalImportReadiness';
+
 export type ImportDocumentKind =
   | 'COLLECTION_REPORT'
   | 'FUND_POSITION'
@@ -23,7 +29,9 @@ export interface ImportPreflightIssue {
     | 'FEATURE_NOT_OPERATIONAL'
     | 'UNIDENTIFIED_DOCUMENT'
     | 'DUPLICATE_FILE'
-    | 'MULTIPLE_SINGLETON_DOCUMENTS';
+    | 'MULTIPLE_SINGLETON_DOCUMENTS'
+    | 'NOT_PRODUCTION_QUALIFIED'
+    | 'TARGET_NOT_AUTHORIZED';
   message: string;
 }
 
@@ -31,6 +39,7 @@ export interface ImportPreflightEntry<TFile extends ImportFileDescriptor = Impor
   file: TFile;
   documentKind: ImportDocumentKind;
   documentLabel: string;
+  qualification: OperationalImportQualification;
   status: ImportPreflightStatus;
   issues: ImportPreflightIssue[];
 }
@@ -40,6 +49,11 @@ export interface ImportPreflightResult<TFile extends ImportFileDescriptor = Impo
   readyCount: number;
   blockedCount: number;
   canProcess: boolean;
+  deploymentTarget: OperationalImportDeploymentTarget;
+}
+
+export interface ImportPreflightOptions {
+  deploymentTarget?: OperationalImportDeploymentTarget;
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['xlsx', 'xls', 'csv', 'pdf']);
@@ -174,7 +188,9 @@ export function detectImportDocumentFromText(text: string): {
 
 export function buildImportPreflight<TFile extends ImportFileDescriptor>(
   files: readonly TFile[],
+  options: ImportPreflightOptions = {},
 ): ImportPreflightResult<TFile> {
+  const deploymentTarget = options.deploymentTarget ?? 'staging';
   const fingerprints = new Map<string, number>();
   const singletonCounts = new Map<ImportDocumentKind, number>();
 
@@ -194,6 +210,11 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
     const issues: ImportPreflightIssue[] = [];
     const extension = getExtension(file.name);
     const fingerprint = getFingerprint(file);
+    const qualification = qualifyOperationalImportDocument(
+      detection.kind,
+      file.name,
+      detection.label,
+    );
 
     if (file.size <= 0) {
       issues.push({ code: 'EMPTY_FILE', message: 'Le fichier est vide.' });
@@ -225,6 +246,25 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
       });
     }
 
+    if (
+      deploymentTarget === 'production'
+      && detection.kind !== 'UNKNOWN'
+      && detection.kind !== 'CLIENT_RECONCILIATION'
+      && !qualification.productionEligible
+    ) {
+      issues.push({
+        code: 'NOT_PRODUCTION_QUALIFIED',
+        message: `${detection.label} reste limité au pilote staging : ${qualification.reason}`,
+      });
+    }
+
+    if (deploymentTarget === 'unknown') {
+      issues.push({
+        code: 'TARGET_NOT_AUTHORIZED',
+        message: 'La cible de déploiement n’est pas reconnue ; import bloqué par défaut.',
+      });
+    }
+
     if ((fingerprints.get(fingerprint) ?? 0) > 1 && seenFingerprints.has(fingerprint)) {
       issues.push({
         code: 'DUPLICATE_FILE',
@@ -247,6 +287,7 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
       file,
       documentKind: detection.kind,
       documentLabel: detection.label,
+      qualification: qualification.qualification,
       status: issues.length === 0 ? 'READY' : 'BLOCKED',
       issues,
     };
@@ -260,5 +301,6 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
     readyCount,
     blockedCount,
     canProcess: entries.length > 0 && blockedCount === 0,
+    deploymentTarget,
   };
 }
