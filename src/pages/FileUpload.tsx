@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +28,80 @@ import {
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from '@/services/uploadRuntimeGuard';
 import { buildImportPreflight } from '@/services/importPreflightService';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  evaluateOperationalImportAccess,
+  type OperationalImportAccessVerdict,
+  type OperationalImportRole,
+} from '@/services/operationalImportAccess';
+import { getCurrentUserOperationalImportRoles } from '@/services/operationalImportRoleService';
+import {
+  currentOperationalImportDeploymentTarget,
+  OPERATIONAL_IMPORT_FORMAT_READINESS,
+} from '@/services/operationalImportReadiness';
+
+function qualificationLabel(qualification: string): string {
+  if (qualification === 'PRODUCTION_CANDIDATE') return 'Candidat production';
+  if (qualification === 'STAGING_PILOT') return 'Pilote staging';
+  return 'Bloqué';
+}
+
+const OperationalImportReadinessCard = () => (
+  <Card className="mb-8">
+    <CardHeader>
+      <CardTitle>Disponibilité réelle des imports</CardTitle>
+      <CardDescription>
+        La qualification décrit les preuves versionnées. Elle n'active jamais la production à elle seule.
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      <div className="grid gap-3 md:grid-cols-2">
+        {OPERATIONAL_IMPORT_FORMAT_READINESS.map(entry => (
+          <div key={entry.id} className="rounded-lg border p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-medium">{entry.label}</div>
+                <div className="text-xs text-muted-foreground">
+                  {entry.formats.join(' · ')} — {entry.route}
+                </div>
+              </div>
+              <Badge variant={entry.qualification === 'BLOCKED' ? 'destructive' : 'secondary'}>
+                {qualificationLabel(entry.qualification)}
+              </Badge>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">{entry.evidence}</p>
+            {entry.limitation && (
+              <p className="mt-1 text-sm text-amber-700">{entry.limitation}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </CardContent>
+  </Card>
+);
+
+function blockedImportCopy(verdict: OperationalImportAccessVerdict): {
+  title: string;
+  description: string;
+} {
+  if (verdict.allowed) return { title: '', description: '' };
+  if (verdict.reason === 'target_read_only') {
+    return { title: 'Production en lecture seule', description: UPLOAD_READ_ONLY_TARGET_MESSAGE };
+  }
+  if (verdict.reason === 'roles_pending') {
+    return { title: 'Vérification des autorisations', description: 'Chargement des rôles applicatifs…' };
+  }
+  if (verdict.reason === 'role_lookup_failed') {
+    return {
+      title: 'Autorisations indisponibles',
+      description: 'La lecture des rôles a échoué ; import bloqué par défaut.',
+    };
+  }
+  return {
+    title: 'Accès opérateur requis',
+    description: 'L’import et la promotion sont réservés aux rôles admin et manager.',
+  };
+}
 
 const FileUpload = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -39,16 +114,33 @@ const FileUpload = () => {
   const [promoting, setPromoting] = useState(false);
   const [promotionResult, setPromotionResult] = useState<ProcessingResult | null>(null);
   const { toast } = useToast();
+  const { user } = useAuth();
   // ⭐ 0Z_AM : garde d'interface production read-only — réutilise la politique
   // canonique cible × capacité (production : read uniquement, fail-closed).
   // Jamais une barrière de sécurité : Auth, rôles, RLS et grants restent serveur.
   // Chaque famille d'actions déclare sa capacité exacte : sélection/traitement
   // = deposit ; promotion Collection = promote.
-  const canProcessFiles = isUploadMutationAllowed('deposit');
-  const canPromoteCollections = isUploadMutationAllowed('promote');
+  const targetAllowsDeposit = isUploadMutationAllowed('deposit');
+  const targetAllowsPromotion = isUploadMutationAllowed('promote');
+  const rolesQuery = useQuery<OperationalImportRole[]>({
+    queryKey: ['operational-import', 'roles', user?.id],
+    queryFn: getCurrentUserOperationalImportRoles,
+    enabled: Boolean(user?.id) && targetAllowsDeposit,
+    staleTime: 5 * 60 * 1000,
+  });
+  const importAccess = evaluateOperationalImportAccess({
+    targetAllowsMutation: targetAllowsDeposit,
+    roles: rolesQuery.data ?? [],
+    rolesPending: rolesQuery.isPending,
+    rolesError: rolesQuery.isError,
+  });
+  const canProcessFiles = importAccess.allowed;
+  const canPromoteCollections = importAccess.allowed && targetAllowsPromotion;
+  const blockedCopy = blockedImportCopy(importAccess);
+  const deploymentTarget = currentOperationalImportDeploymentTarget();
   const importPreflight = useMemo(
-    () => buildImportPreflight(selectedFiles),
-    [selectedFiles],
+    () => buildImportPreflight(selectedFiles, { deploymentTarget }),
+    [deploymentTarget, selectedFiles],
   );
 
   // ⭐ PACK-C.1 : toute modification de la liste des fichiers invalide la review,
@@ -111,8 +203,8 @@ const FileUpload = () => {
     if (!canProcessFiles) {
       toast({
         variant: "destructive",
-        title: "Production en lecture seule",
-        description: UPLOAD_READ_ONLY_TARGET_MESSAGE,
+        title: blockedCopy.title,
+        description: blockedCopy.description,
       });
       return;
     }
@@ -200,8 +292,8 @@ const FileUpload = () => {
     if (!canPromoteCollections) {
       toast({
         variant: "destructive",
-        title: "Production en lecture seule",
-        description: UPLOAD_READ_ONLY_TARGET_MESSAGE,
+        title: blockedCopy.title,
+        description: blockedCopy.description,
       });
       return;
     }
@@ -310,12 +402,15 @@ const FileUpload = () => {
         </div>
         <Alert>
           <ShieldCheck className="h-4 w-4" />
-          <AlertTitle>Production en lecture seule</AlertTitle>
+          <AlertTitle>{blockedCopy.title}</AlertTitle>
           <AlertDescription>
-            {UPLOAD_READ_ONLY_TARGET_MESSAGE} Consultation des données uniquement ;
-            toute mutation exige un GO CTO distinct sur une cible autorisée.
+            {blockedCopy.description} Toute mutation exige aussi les contrôles serveur
+            Auth, rôles, RLS et grants ; une qualification ne vaut pas activation.
           </AlertDescription>
         </Alert>
+        <div className="mt-8">
+          <OperationalImportReadinessCard />
+        </div>
       </div>
     );
   }
@@ -333,6 +428,8 @@ const FileUpload = () => {
           Importation Intelligente
         </Badge>
       </div>
+
+      <OperationalImportReadinessCard />
       
       {/* Zone de dépôt principale */}
       <Card className="mb-8">
@@ -486,6 +583,9 @@ const FileUpload = () => {
                     </Badge>
                     <Badge variant={entry.status === 'READY' ? 'secondary' : 'destructive'}>
                       {entry.status === 'READY' ? 'Prêt' : 'Bloqué'}
+                    </Badge>
+                    <Badge variant="outline">
+                      {qualificationLabel(entry.qualification)}
                     </Badge>
                     <Button 
                       variant="ghost" 

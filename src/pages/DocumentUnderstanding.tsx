@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { FileSpreadsheet, FileText, Upload, Building2, Brain, FileSearch, Database, Code, AlertCircle, Eye } from 'lucide-react';
-import { enhancedFileProcessingService } from '@/services/enhancedFileProcessingService';
+import { documentDetectionService } from '@/services/documentDetectionService';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { bankReportProcessingService } from '@/services/bankReportProcessingService';
 import { bdkExtractionService, BDKParsedData } from '@/services/bdkExtractionService';
@@ -137,7 +137,7 @@ const DocumentUnderstanding = () => {
       }
 
       // 1. Detect file type
-      const detection = await enhancedFileProcessingService.detectFileType(selectedFile);
+      const detection = await documentDetectionService.detectFileType(selectedFile);
       setFileType(detection.detectedType);
       setConfidence(detection.confidence);
       setBankType(detection.bankType || null);

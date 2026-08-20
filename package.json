@@ -20,7 +20,7 @@
     "test:upload-guard": "tsx --test src/services/uploadRuntimeGuard.synthetic.test.ts",
     "test:financial-atomic": "tsx --test src/services/databaseService.synthetic.test.ts src/services/financialAtomicPersistence.synthetic.test.ts",
     "test:financial-write-lockdown": "tsx --test src/services/financialWritePathLockdown.synthetic.test.ts",
-    "test:import-preflight": "tsx --test src/services/importPreflightService.synthetic.test.ts",
+    "test:import-preflight": "tsx --test src/services/importPreflightService.synthetic.test.ts src/services/operationalImportReadiness.synthetic.test.ts src/services/documentDetectionService.synthetic.test.ts src/services/collectionImportReviewService.synthetic.test.ts src/services/collectionImportPromotionService.synthetic.test.ts src/services/internalBookRuntimeProcessingService.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
