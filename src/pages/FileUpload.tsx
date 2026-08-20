@@ -84,7 +84,7 @@ function blockedImportCopy(verdict: OperationalImportAccessVerdict): {
   title: string;
   description: string;
 } {
-  if (verdict.allowed) return { title: '', description: '' };
+  if (!isBlockedOperationalImportAccess(verdict)) return { title: '', description: '' };
   if (verdict.reason === 'target_read_only') {
     return { title: 'Production en lecture seule', description: UPLOAD_READ_ONLY_TARGET_MESSAGE };
   }
@@ -101,6 +101,12 @@ function blockedImportCopy(verdict: OperationalImportAccessVerdict): {
     title: 'Accès opérateur requis',
     description: 'L’import et la promotion sont réservés aux rôles admin et manager.',
   };
+}
+
+function isBlockedOperationalImportAccess(
+  verdict: OperationalImportAccessVerdict,
+): verdict is Extract<OperationalImportAccessVerdict, { allowed: false }> {
+  return verdict.allowed === false;
 }
 
 const FileUpload = () => {

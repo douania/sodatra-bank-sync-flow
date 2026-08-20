@@ -292,6 +292,10 @@ test('la page /upload déclare une capacité par famille d\'actions et reste fai
   assert.match(page, /const importAccess = evaluateOperationalImportAccess\(\{/);
   assert.match(page, /const canProcessFiles = importAccess\.allowed;/);
   assert.match(page, /const canPromoteCollections = importAccess\.allowed && targetAllowsPromotion;/);
+  assert.match(
+    page,
+    /function isBlockedOperationalImportAccess\([\s\S]*?Extract<OperationalImportAccessVerdict, \{ allowed: false \}>[\s\S]*?return verdict\.allowed === false;/,
+  );
 
   // Dropzone jamais active sans la capacité deposit.
   assert.match(page, /disabled: !canProcessFiles,/);

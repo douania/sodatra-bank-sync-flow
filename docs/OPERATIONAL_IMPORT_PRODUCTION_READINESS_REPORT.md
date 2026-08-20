@@ -73,7 +73,11 @@ Validation locale du delta :
 - gate Operational Import : **49/49** tests verts ;
 - matrice CI applicative : **506 tests**, **504 pass**, **0 fail**, **2 skip**
   réservés au harness Node 20 de la CI ;
-- TypeScript `--noEmit` : vert ;
+- TypeScript applicatif comparatif après correction : **20 diagnostics sur
+  `origin/main`, 19 sur le lot et zéro nouveau diagnostic imputable** dans le
+  runtime local actuel. La contre-review indépendante obtenait 19 sur la base
+  avec son runtime Node 22 ; le critère stable est la comparaison normalisée,
+  désormais sans aucun diagnostic nouveau ;
 - ESLint ciblé sur les nouveaux fichiers et `FileUpload` : zéro problème ;
 - ratchet ESLint global : **207 erreurs + 11 warnings = 218**, sous les plafonds
   CI (212 erreurs, 223 total) ;
