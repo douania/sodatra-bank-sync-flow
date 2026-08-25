@@ -131,14 +131,16 @@ PDF ambiguës,
 Fund Position et le contrat read-only. Aucun SQL, migration, schéma, Auth/RLS,
 environnement live, dépendance ou lockfile n'est modifié.
 
-Validations locales : nouveau contrat **38/38 PASS**,
-`test:bdk-pdf` **27/27 PASS**, `test:import-preflight` **50/50 PASS**,
-matrice CI **545 tests / 543 pass / 0 fail / 2 skip**, TypeScript comparatif
-**0 diagnostic baseline / 0 branche**, ESLint comparatif **207 erreurs + 11
-warnings baseline / 182 + 11 branche**, build Vite **PASS**, hygiène production
-**4/4 PASS** et `git diff --check` **PASS**. La revalidation Claude finale rend
-`PASS_WITH_RESERVES / READY` pour commit et draft PR uniquement, sans P0/P1.
-Les P2 corrigeables ont ensuite été traités localement et couverts par tests.
+Validations locales : nouveau contrat **41/41 PASS**,
+`test:bdk-pdf` **27/27 PASS**, `test:import-preflight` **51/51 PASS**,
+matrice CI applicative **549 tests / 547 pass / 0 fail / 2 skip**, TypeScript
+comparatif **18 diagnostics baseline / 16 branche, 0 nouveau**, ESLint
+comparatif **207 erreurs + 11 warnings baseline / 180 + 11 branche**, build
+Vite **PASS**, hygiène production **4/4 PASS** et `git diff --check` **PASS**.
+La revalidation indépendante finale du SHA `a21b693` rend
+`PASS_WITH_RESERVES / MERGE_READY`, sans P0/P1/P2 ouvert. Les réserves restent
+la qualification sur fichiers réels anonymisés, la limite amont pdf.js et
+l'atomicité inter-documents du batch.
 
 Réserve explicite : le parser BDK spécialisé lit la fixture synthétique de
 forme réaliste, mais le chemin générique `/upload` la refuse parce que ses

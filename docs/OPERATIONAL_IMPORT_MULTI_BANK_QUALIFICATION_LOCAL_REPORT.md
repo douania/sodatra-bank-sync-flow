@@ -2,7 +2,7 @@
 
 ## Statut
 
-`FIXED_LOCAL — INDEPENDENT_REVALIDATION_PENDING` — 2026-08-25.
+`IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES` — 2026-08-25.
 
 Ce lot qualifie localement le comportement fail-closed du parcours
 opérationnel. Il ne publie rien, ne promeut aucune banque et ne touche ni à
@@ -113,8 +113,8 @@ identifié deux P1 et trois P2. Le correctif `GO_FIX` :
 - remplace la promesse UI « BDK complet » par le statut pilote staging ;
 - supprime la confiance statique `95`, faute de mesure calculée.
 
-La revalidation indépendante de ce correctif reste obligatoire avant tout
-verdict de merge.
+La revalidation indépendante a été poursuivie sur chaque delta versionné avant
+le verdict final.
 
 Une première revalidation du commit `2ec9a61` a encore trouvé un P1 mixte :
 une section contenant une ligne valide suivie d'une ligne OCR invalide pouvait
@@ -131,7 +131,12 @@ entre le type de dépôt `REGUL IMPAYE` et l'en-tête de section `IMPAYE`. La
 détection des sections exige désormais que leur marqueur commence la ligne,
 pour l'entrée de section, les frontières et le contrôle final. Le scénario
 nominal et sa variante OCR mixte sont couverts explicitement. Le verdict final
-reste en attente d'une nouvelle lecture indépendante du delta versionné.
+du SHA `a21b693` ne trouve aucun P0, P1 ou P2 ouvert et rend
+`PASS_WITH_RESERVES / MERGE_READY`. Les réserves portent uniquement sur la
+qualification par fichiers réels anonymisés, la limite amont pdf.js et
+l'atomicité inter-documents déjà documentée. Claude Code n'a pas pu exécuter
+cette dernière session à cause de son quota local ; le reviewer indépendant
+déjà affecté au lot a réalisé la revalidation read-only.
 
 ## Limites assumées
 
