@@ -208,7 +208,7 @@ class BankReportSectionExtractor {
         [config.patterns.impayesSection, bankReport.impayes.length, 'impayés'],
       ] as const;
       for (const [sectionPattern, count, label] of sectionChecks) {
-        if (sectionPattern.test(textContent) && count === 0) {
+        if (this.hasDeclaredSection(textContent, sectionPattern) && count === 0) {
           errors.push(`Section ${label} déclarée mais sans ligne exploitable.`);
         }
       }
@@ -235,7 +235,7 @@ class BankReportSectionExtractor {
     let inDepositsSection = false;
 
     for (const line of lines) {
-      if (config.patterns.depositsSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.depositsSection)) {
         inDepositsSection = true;
         continue;
       }
@@ -268,7 +268,7 @@ class BankReportSectionExtractor {
     let inChecksSection = false;
 
     for (const line of lines) {
-      if (config.patterns.checksSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.checksSection)) {
         inChecksSection = true;
         continue;
       }
@@ -299,7 +299,7 @@ class BankReportSectionExtractor {
     let inFacilitiesSection = false;
 
     for (const line of lines) {
-      if (config.patterns.facilitiesSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.facilitiesSection)) {
         inFacilitiesSection = true;
         continue;
       }
@@ -362,7 +362,7 @@ class BankReportSectionExtractor {
         }
       }
 
-      if (config.patterns.impayesSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.impayesSection)) {
         inImpayesSection = true;
       }
     }
@@ -395,9 +395,23 @@ class BankReportSectionExtractor {
       config.patterns.impayesSection,
     ].filter(pattern => pattern !== currentSection);
 
-    return otherSections.some(pattern => pattern.test(line))
+    return otherSections.some(pattern => this.matchesSectionHeading(line, pattern))
       || /^(?:TOTAL|SOUS-TOTAL)\b/i.test(line.trim())
       || /^[A-Z\s]+:\s*$/i.test(line.trim());
+  }
+
+  private matchesSectionHeading(line: string, pattern: RegExp): boolean {
+    const headingCandidate = line
+      .trim()
+      .replace(/^(?:ADD|LESS|PLUS|MOINS)\s*:\s*/i, '');
+    const match = headingCandidate.match(pattern);
+    return Boolean(match && match.index === 0);
+  }
+
+  private hasDeclaredSection(textContent: string, pattern: RegExp): boolean {
+    return textContent
+      .split(/\r?\n/)
+      .some(line => this.matchesSectionHeading(line, pattern));
   }
 
   private parseDate(value: string | undefined): string {

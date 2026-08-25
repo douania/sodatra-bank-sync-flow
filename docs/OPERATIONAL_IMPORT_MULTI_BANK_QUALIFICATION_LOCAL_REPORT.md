@@ -78,10 +78,10 @@ La nouvelle commande `test:multi-bank-reports`, bloquante dans la CI, couvre :
 
 Résultats locaux après réconciliation des findings :
 
-- `test:multi-bank-reports` : **40/40 PASS** ;
+- `test:multi-bank-reports` : **41/41 PASS** ;
 - `test:bdk-pdf` : **27/27 PASS** ;
 - `test:import-preflight` : **51/51 PASS** ;
-- matrice CI applicative : **548 tests / 546 pass / 0 fail / 2 skip** ;
+- matrice CI applicative : **549 tests / 547 pass / 0 fail / 2 skip** ;
 - TypeScript comparatif : **18 diagnostics sur `origin/main`, 16 sur le lot,
   0 nouveau par rapport au SHA revu `4cf39eb`** ;
 - ESLint comparatif : **207 erreurs + 11 warnings sur `origin/main`, 180 + 11
@@ -125,6 +125,13 @@ section explicite. Les tests couvrent à la fois « ligne invalide seule » et
 Deux derniers libellés UI promettant une extraction BDK complète ont également
 été remplacés par le statut exact de pilote staging. Une nouvelle revalidation
 du delta versionné reste requise.
+
+La revalidation du commit `3bea883` a identifié un chevauchement supplémentaire
+entre le type de dépôt `REGUL IMPAYE` et l'en-tête de section `IMPAYE`. La
+détection des sections exige désormais que leur marqueur commence la ligne,
+pour l'entrée de section, les frontières et le contrôle final. Le scénario
+nominal et sa variante OCR mixte sont couverts explicitement. Le verdict final
+reste en attente d'une nouvelle lecture indépendante du delta versionné.
 
 ## Limites assumées
 

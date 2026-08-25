@@ -120,7 +120,7 @@ test('les lignes de section refusent un montant OCR suffixé au lieu de persiste
     [
       'DEPOSIT NOT YET CLEARED',
       '05/08/2026 123 REGLEMENT FACTURE CLIENT 100',
-      '05/08/2026 124 REGLEMENT FACTURE CLIENT 12O000',
+      '05/08/2026 124 REGUL IMPAYE CLIENT 12O000',
     ],
     [
       'CHECK Not yet cleared',
@@ -142,6 +142,18 @@ test('les lignes de section refusent un montant OCR suffixé au lieu de persiste
       assert.equal(result.success, false, lines.join(' — '));
     }
   }
+});
+
+test('BDK: REGUL IMPAYE dans un dépôt ne déclare pas silencieusement la section impayés', async () => {
+  const result = await bankReportSectionExtractor.extractBankReportSections([
+    nominalFixtures.BDK,
+    'DEPOSIT NOT YET CLEARED',
+    '05/08/2026 123 REGUL IMPAYE CLIENT 100',
+  ].join('\n'), 'BDK');
+
+  assert.equal(result.success, true, result.errors?.join(' '));
+  assert.equal(result.data?.depositsNotCleared.length, 1);
+  assert.equal(result.data?.impayes.length, 0);
 });
 
 test('ATB: une section dépôts exploitable utilise le dernier groupe comme montant', async () => {
