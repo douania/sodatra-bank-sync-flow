@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import { BankReport } from '@/types/banking';
 import { analyzeBDKBankStatementText } from './bdkBankStatementDiagnosticService';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
+import { corroborateBankIdentity } from './bankIdentity';
+import { reconstructPdfTextLines } from './pdfTextLineReconstruction';
 
 export interface BankReportProcessingResult {
   success: boolean;
@@ -22,17 +24,6 @@ class BankReportProcessingService {
       const buffer = await file.arrayBuffer();
       let textContent = '';
       let bankType = '';
-
-      // Détecter le type de banque depuis le nom de fichier
-      bankType = this.detectBankTypeFromFilename(file.name);
-      if (!bankType) {
-        return {
-          success: false,
-          errors: ['Type de banque non détecté dans le nom de fichier']
-        };
-      }
-
-      console.log(`🏦 Type de banque détecté: ${bankType}`);
 
       const isPdfFile = file.name.toLowerCase().endsWith('.pdf');
 
@@ -54,6 +45,17 @@ class BankReportProcessingService {
           errors: ['Contenu textuel insuffisant extrait du fichier']
         };
       }
+
+      const identity = corroborateBankIdentity(file.name, textContent);
+      if (!identity.corroborated || !identity.bank) {
+        return {
+          success: false,
+          errors: [identity.error ?? 'Identité bancaire non corroborée.'],
+        };
+      }
+      bankType = identity.bank;
+
+      console.log(`🏦 Type de banque corroboré: ${bankType}`);
 
       if (isPdfFile && bankType === 'BDK') {
         const diagnosticResult = analyzeBDKBankStatementText(textContent);
@@ -98,27 +100,6 @@ class BankReportProcessingService {
     }
   }
 
-  private detectBankTypeFromFilename(filename: string): string {
-    const bankKeywords = {
-      'BDK': ['BDK', 'BANQUE DE DAKAR'],
-      'ATB': ['ATB', 'ARAB TUNISIAN', 'ATLANTIQUE'],
-      'BICIS': ['BICIS', 'BIC'],
-      'ORA': ['ORA', 'ORABANK'],
-      'SGBS': ['SGBS', 'SOCIETE GENERALE', 'SG'],
-      'BIS': ['BIS', 'BANQUE ISLAMIQUE']
-    };
-    
-    const upperFilename = filename.toUpperCase();
-    
-    for (const [bankCode, keywords] of Object.entries(bankKeywords)) {
-      if (keywords.some(keyword => upperFilename.includes(keyword))) {
-        return bankCode;
-      }
-    }
-    
-    return '';
-  }
-
   private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {
     try {
       const workbook = XLSX.read(buffer, { type: 'array' });
@@ -130,7 +111,7 @@ class BankReportProcessingService {
         
         for (const row of sheetData) {
           if (Array.isArray(row)) {
-            allText += row.join(' ') + '\n';
+            allText += row.join('\t') + '\n';
           }
         }
       }
@@ -160,9 +141,7 @@ class BankReportProcessingService {
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: { str?: string }) => item.str ?? '')
-          .join(' ');
+        const pageText = reconstructPdfTextLines(textContent.items);
         fullText += pageText + '\n';
       }
       
@@ -170,9 +149,7 @@ class BankReportProcessingService {
       return fullText;
     } catch (error) {
       console.error('❌ Erreur extraction PDF:', error);
-      // Fallback: return empty string but log the error
-      console.warn('⚠️ PDF extraction failed, returning empty content');
-      return '';
+      throw new Error(`Extraction PDF refusée: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
     }
   }
 

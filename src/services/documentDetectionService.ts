@@ -7,15 +7,7 @@ import {
   type ImportDocumentKind,
 } from './importPreflightService';
 import { detectInternalBookRuntimeFile } from './internalBookRuntimeProcessingService';
-
-const BANK_PATTERNS: ReadonlyArray<{ code: string; patterns: RegExp[] }> = [
-  { code: 'BDK', patterns: [/\bBDK\b/, /BANQUE DE DAKAR/] },
-  { code: 'ATB', patterns: [/\bATB\b/, /ATLANTIQUE/, /ARAB TUNISIAN/] },
-  { code: 'BICIS', patterns: [/\bBICIS\b/] },
-  { code: 'ORA', patterns: [/\bORA\b/, /\bORABANK\b/] },
-  { code: 'SGBS', patterns: [/\bSGBS\b/, /\bSGS\b/, /SOCIETE GENERALE/] },
-  { code: 'BIS', patterns: [/\bBIS\b/, /BANQUE ISLAMIQUE/] },
-];
+import { detectBankFromContent } from './bankIdentity';
 
 function normalize(value: string): string {
   return value
@@ -28,8 +20,7 @@ function normalize(value: string): string {
 }
 
 function detectBankCode(value: string): string | undefined {
-  const normalized = normalize(value);
-  return BANK_PATTERNS.find(bank => bank.patterns.some(pattern => pattern.test(normalized)))?.code;
+  return detectBankFromContent(value) ?? undefined;
 }
 
 function mapDocumentKind(

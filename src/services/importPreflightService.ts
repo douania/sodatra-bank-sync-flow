@@ -3,6 +3,7 @@ import {
   type OperationalImportDeploymentTarget,
   type OperationalImportQualification,
 } from './operationalImportReadiness';
+import { detectBankFromContent, detectBankFromFileName } from './bankIdentity';
 
 export type ImportDocumentKind =
   | 'COLLECTION_REPORT'
@@ -57,15 +58,6 @@ export interface ImportPreflightOptions {
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['xlsx', 'xls', 'csv', 'pdf']);
-
-const BANK_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
-  { label: 'BDK', patterns: [/\bBDK\b/, /BANQUE\s+DE\s+DAKAR/] },
-  { label: 'ATB', patterns: [/\bATB\b/, /ARAB\s+TUNISIAN/, /BANQUE\s+ATLANTIQUE/] },
-  { label: 'BICIS', patterns: [/\bBICIS\b/] },
-  { label: 'ORA', patterns: [/\bORA\b/, /\bORABANK\b/] },
-  { label: 'SGBS', patterns: [/\bSGBS\b/, /\bSGS\b/, /SOCIETE\s+GENERALE/] },
-  { label: 'BIS', patterns: [/\bBIS\b/, /BANQUE\s+ISLAMIQUE/] },
-];
 
 function normalizeDocumentText(value: string): string {
   return value
@@ -129,7 +121,7 @@ function getFingerprint(file: ImportFileDescriptor): string {
   return `${file.name.toLowerCase()}|${file.size}|${file.lastModified}`;
 }
 
-function detectNormalizedImportDocument(normalized: string): {
+function detectNormalizedDocumentFamily(normalized: string): {
   kind: ImportDocumentKind;
   label: string;
 } {
@@ -153,10 +145,19 @@ function detectNormalizedImportDocument(normalized: string): {
     return { kind: 'UNKNOWN', label: 'BRIDGE — utiliser Relevés quotidiens' };
   }
 
-  for (const bank of BANK_PATTERNS) {
-    if (bank.patterns.some(pattern => pattern.test(normalized))) {
-      return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank.label}` };
-    }
+  return { kind: 'UNKNOWN', label: 'Document non identifié' };
+}
+
+function detectNormalizedImportDocument(normalized: string): {
+  kind: ImportDocumentKind;
+  label: string;
+} {
+  const family = detectNormalizedDocumentFamily(normalized);
+  if (family.kind !== 'UNKNOWN' || family.label.startsWith('BRIDGE')) return family;
+
+  const bank = detectBankFromFileName(normalized);
+  if (bank) {
+    return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank}` };
   }
 
   return { kind: 'UNKNOWN', label: 'Document non identifié' };
@@ -183,7 +184,15 @@ export function detectImportDocumentFromText(text: string): {
     return { kind: 'FUND_POSITION', label: 'Fund Position' };
   }
 
-  return detectNormalizedImportDocument(normalized);
+  const family = detectNormalizedDocumentFamily(normalized);
+  if (family.kind !== 'UNKNOWN' || family.label.startsWith('BRIDGE')) return family;
+
+  const bank = detectBankFromContent(normalized);
+  if (bank) {
+    return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank}` };
+  }
+
+  return family;
 }
 
 export function buildImportPreflight<TFile extends ImportFileDescriptor>(

@@ -54,8 +54,9 @@ export const OPERATIONAL_IMPORT_FORMAT_READINESS: readonly OperationalImportRead
     label: 'Rapport bancaire BDK',
     route: '/upload',
     formats: ['PDF'],
-    qualification: 'PRODUCTION_CANDIDATE',
-    evidence: 'Extraction BDK PDF, contrôles mathématiques et persistance atomique couverts.',
+    qualification: 'STAGING_PILOT',
+    evidence: 'Contrat générique local fail-closed couvert synthétiquement ; les formes non comprises sont refusées.',
+    limitation: 'La fixture BDK réaliste du dépôt reste refusée sur /upload ; qualification sur fichiers réels anonymisés requise.',
   },
   {
     id: 'other-bank-reports',
@@ -63,8 +64,8 @@ export const OPERATIONAL_IMPORT_FORMAT_READINESS: readonly OperationalImportRead
     route: '/upload',
     formats: ['PDF', 'XLSX', 'XLS'],
     qualification: 'STAGING_PILOT',
-    evidence: 'Détection et pipeline legacy présents.',
-    limitation: 'Pas encore de preuve synthétique bout en bout banque par banque.',
+    evidence: 'Identité bancaire corroborée et extraction locale fail-closed couvertes synthétiquement banque par banque.',
+    limitation: 'Qualification sur fichiers réels anonymisés encore requise avant toute promotion.',
   },
   {
     id: 'fund-position',
@@ -72,8 +73,8 @@ export const OPERATIONAL_IMPORT_FORMAT_READINESS: readonly OperationalImportRead
     route: '/upload',
     formats: ['PDF', 'XLSX', 'XLS'],
     qualification: 'STAGING_PILOT',
-    evidence: 'Extraction et écriture atomique présentes.',
-    limitation: 'Qualification fichier complète et cas réels anonymisés encore requis.',
+    evidence: 'Date, grand total explicite, détail bancaire et montants sont contrôlés en fail-closed.',
+    limitation: 'Qualification sur fichiers réels anonymisés encore requise avant toute promotion.',
   },
   {
     id: 'client-reconciliation',
@@ -94,10 +95,6 @@ export const OPERATIONAL_IMPORT_FORMAT_READINESS: readonly OperationalImportRead
     limitation: 'Voie séparée de /upload ; production encore read-only.',
   },
 ] as const;
-
-function extensionOf(fileName: string): string {
-  return fileName.toLowerCase().match(/\.([^.]+)$/)?.[1] ?? '';
-}
 
 export function qualifyOperationalImportDocument(
   kind: ImportDocumentKind,
@@ -128,20 +125,12 @@ export function qualifyOperationalImportDocument(
     };
   }
 
-  if (kind === 'BANK_REPORT' && documentLabel === 'Rapport bancaire BDK' && extensionOf(fileName) === 'pdf') {
-    return {
-      qualification: 'PRODUCTION_CANDIDATE',
-      productionEligible: true,
-      reason: 'Le chemin BDK PDF dispose d’une preuve synthétique dédiée.',
-    };
-  }
-
   return {
     qualification: 'STAGING_PILOT',
     productionEligible: false,
     reason: kind === 'FUND_POSITION'
       ? 'Fund Position reste un pilote staging jusqu’à qualification fichier complète.'
-      : 'Cette variante bancaire reste un pilote staging sans preuve bout en bout dédiée.',
+      : 'Les rapports bancaires restent des pilotes staging jusqu’à qualification sur fichiers réels anonymisés.',
   };
 }
 

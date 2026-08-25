@@ -121,6 +121,7 @@ jobs:
           npm run test:financial-atomic
           npm run test:financial-write-lockdown
           npm run test:import-preflight
+          npm run test:multi-bank-reports
 
       - name: Build
         run: npm run build

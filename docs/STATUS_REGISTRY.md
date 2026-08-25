@@ -103,6 +103,58 @@ Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 
 ---
 
+## OPERATIONAL-IMPORT-MULTI-BANK-QUALIFICATION-LOCAL
+
+**Statut : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES` (2026-08-25)**
+
+Le parcours `/upload` dispose désormais d'une taxonomie bancaire unique pour
+BDK, ATB, BICIS, ORA, SGBS et BIS. Le runtime exige la corroboration exacte de
+la banque entre le nom du fichier et son contenu et refuse les PDF dont les
+coordonnées ne permettent pas une reconstruction financière non ambiguë.
+Chaque rapport accepté porte une date calendaire corroborée, un solde
+d'ouverture daté et un solde de clôture entiers sûrs ; une section déclarée
+mais non parsée bloque le rapport.
+
+Fund Position est également fail-closed : date extraite valide, `GRAND TOTAL`
+explicitement présent (zéro autorisé), détail bancaire exploitable et montants
+entiers sûrs dans six colonnes explicitement délimitées. Un document refusé
+n'est pas persisté ; les écritures d'autres documents valides déjà réalisées
+dans le même batch ne sont toutefois pas atomiquement annulées.
+`Document Understanding` est strictement read-only : le composant ne dépend
+plus du service de sauvegarde et `saveReport` refuse avant tout accès Supabase.
+
+Aucune banque n'est promue. BDK, ATB, BICIS, ORA, SGBS, BIS et Fund Position
+restent `STAGING_PILOT` jusqu'à qualification sur fichiers réels anonymisés.
+Client Reconciliation reste `BLOCKED`. La gate CI
+`test:multi-bank-reports` couvre les six banques, dates/montants, frontières
+PDF ambiguës,
+Fund Position et le contrat read-only. Aucun SQL, migration, schéma, Auth/RLS,
+environnement live, dépendance ou lockfile n'est modifié.
+
+Validations locales : nouveau contrat **38/38 PASS**,
+`test:bdk-pdf` **27/27 PASS**, `test:import-preflight` **50/50 PASS**,
+matrice CI **545 tests / 543 pass / 0 fail / 2 skip**, TypeScript comparatif
+**0 diagnostic baseline / 0 branche**, ESLint comparatif **207 erreurs + 11
+warnings baseline / 182 + 11 branche**, build Vite **PASS**, hygiène production
+**4/4 PASS** et `git diff --check` **PASS**. La revalidation Claude finale rend
+`PASS_WITH_RESERVES / READY` pour commit et draft PR uniquement, sans P0/P1.
+Les P2 corrigeables ont ensuite été traités localement et couverts par tests.
+
+Réserve explicite : le parser BDK spécialisé lit la fixture synthétique de
+forme réaliste, mais le chemin générique `/upload` la refuse parce que ses
+sections ne satisfont pas toutes le contrat générique. Ce refus sûr n'est pas
+une qualification opérationnelle. La compatibilité sur fichiers réels
+anonymisés reste à démontrer en staging sous GO distinct.
+
+Réserve bibliothèque : pdf.js peut agréger deux zones numériques proches dans
+un seul token avant de fournir le texte et les coordonnées. L'application ne
+peut alors plus distinguer une colonne d'un séparateur de milliers. Cette
+limite amont justifie le maintien de toutes les banques en `STAGING_PILOT`.
+
+Rapport : `docs/OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_LOCAL_REPORT.md`.
+
+---
+
 ## OPERATIONAL-IMPORT-PRODUCTION-READINESS
 
 **Statut : `IMPLEMENTED_LOCAL — REVIEW_REQUIRED` (2026-08-20)**
@@ -126,8 +178,9 @@ readiness, détection documentaire, Collection Report et Internal Book. La
 preuve BDK PDF reste portée par `test:bdk-pdf`. Rapport :
 `docs/OPERATIONAL_IMPORT_PRODUCTION_READINESS_REPORT.md`.
 
-DEF-05 passe à `RESOLVED_IN_REVIEW`; fermeture définitive après contre-review
-indépendante et merge.
+DEF-05 est clos depuis le merge de la PR #130. La matrice bancaire historique
+de ce lot est remplacée par la décision plus conservatrice du lot
+`OPERATIONAL-IMPORT-MULTI-BANK-QUALIFICATION-LOCAL` : BDK reste pilote staging.
 
 ---
 

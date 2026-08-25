@@ -49,7 +49,7 @@ test('la lecture de rôles frontend ne contient aucune capacité privilégiée',
   assert.doesNotMatch(roleService, /service_role|sb_secret|rpc\(/i);
 });
 
-test('seuls les parcours disposant de preuves dédiées sont candidats production', () => {
+test('seuls Collection Report et Internal Book sont candidats production', () => {
   assert.equal(
     qualifyOperationalImportDocument('COLLECTION_REPORT', 'Collection Report.xlsx', 'Collection Report').productionEligible,
     true,
@@ -60,11 +60,11 @@ test('seuls les parcours disposant de preuves dédiées sont candidats productio
   );
   assert.equal(
     qualifyOperationalImportDocument('BANK_REPORT', 'Releve BDK.pdf', 'Rapport bancaire BDK').productionEligible,
-    true,
+    false,
   );
 
   for (const qualification of [
-    qualifyOperationalImportDocument('BANK_REPORT', 'Releve BDK.xlsx', 'Rapport bancaire BDK'),
+    qualifyOperationalImportDocument('BANK_REPORT', 'Releve BDK.pdf', 'Rapport bancaire BDK'),
     qualifyOperationalImportDocument('BANK_REPORT', 'Releve ORA.pdf', 'Rapport bancaire ORA'),
     qualifyOperationalImportDocument('FUND_POSITION', 'Fund Position.xlsx', 'Fund Position'),
   ]) {
@@ -77,16 +77,16 @@ test('seuls les parcours disposant de preuves dédiées sont candidats productio
   );
 });
 
-test('le précontrôle production accepte les candidats et bloque les pilotes', () => {
+test('le précontrôle production accepte les candidats et bloque tous les rapports bancaires pilotes', () => {
   const qualified = buildImportPreflight([
     file('Collection Report.xlsx'),
     file('synthetic-BDK-internal-book.xlsx'),
-    file('Releve BDK.pdf'),
   ], { deploymentTarget: 'production' });
   assert.equal(qualified.canProcess, true);
 
   const pilot = buildImportPreflight([
     file('Fund Position.xlsx'),
+    file('Releve BDK.pdf'),
     file('Releve ORA.pdf'),
   ], { deploymentTarget: 'production' });
   assert.equal(pilot.canProcess, false);

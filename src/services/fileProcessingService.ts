@@ -1,10 +1,7 @@
-import { extractBankReport, extractFundPosition, extractClientReconciliation } from './extractionService';
 import { excelProcessingService } from './excelProcessingService';
 import { databaseService } from './databaseService';
 import { intelligentSyncService } from './intelligentSyncService';
-import { qualityControlEngine } from './qualityControlEngine';
 import { SupabaseRetryService } from './supabaseClientService';
-import { supabase } from '@/integrations/supabase/client';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 import { progressService } from './progressService';
 import type { ExcelImportDiagnostics, ProcessingResult } from '@/types/processing';
@@ -18,6 +15,7 @@ import {
   currentUploadMutationVerdict,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from './uploadRuntimeGuard';
+import { reconstructPdfTextLines } from './pdfTextLineReconstruction';
 import {
   detectImportDocument,
   detectImportDocumentFromText,
@@ -262,7 +260,7 @@ export class FileProcessingService {
         progressService.startStep('bank_analysis', 'Rapports Bancaires', 'Traitement des relevés bancaires');
         
         console.log('🏦 === DÉBUT TRAITEMENT RELEVÉS BANCAIRES ===');
-        const bankReports = await this.processBankReports(categorizedFiles.bankReports);
+        const bankReports = await this.processBankReports(categorizedFiles.bankReports, results.errors!);
         
         if (bankReports.length > 0) {
           results.data!.bankReports = bankReports;
@@ -288,7 +286,11 @@ export class FileProcessingService {
         progressService.startStep('fund_position', 'Fund Position', 'Calcul de la position des fonds');
         
         console.log('💰 Extraction Fund Position...');
-        const fundPosition = await this.processFundPosition(categorizedFiles.fundPosition!, results.data!.collectionReports);
+        const fundPosition = await this.processFundPosition(
+          categorizedFiles.fundPosition!,
+          results.data!.collectionReports,
+          results.errors!,
+        );
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
           const saveResult = await databaseService.saveFundPosition(fundPosition);
@@ -297,7 +299,12 @@ export class FileProcessingService {
           }
         }
         
-        progressService.completeStep('fund_position', 'Fund Position', 'Position calculée');
+        if (fundPosition) {
+          progressService.completeStep('fund_position', 'Fund Position', 'Position calculée');
+        } else {
+          progressService.errorStep('fund_position', 'Fund Position', 'Extraction refusée',
+            'Le document ne satisfait pas le contrat Fund Position fail-closed.');
+        }
       }
 
       // 4. ⭐ TRAITEMENT CONDITIONNEL CLIENT RECONCILIATION
@@ -470,7 +477,7 @@ export class FileProcessingService {
   }
 
   // ⭐ NOUVELLE MÉTHODE : Traitement des rapports bancaires
-  private async processBankReports(bankReportFiles: File[]): Promise<BankReport[]> {
+  private async processBankReports(bankReportFiles: File[], errors: string[]): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     const { bankReportProcessingService } = await import('./bankReportProcessingService');
     
@@ -495,9 +502,11 @@ export class FileProcessingService {
           reports.push(processingResult.data);
         } else {
           console.error(`❌ Échec traitement ${file.name}:`, processingResult.errors);
+          errors.push(`Échec extraction ${file.name}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
         }
       } catch (error) {
         console.error(`❌ Erreur traitement ${file.name}:`, error);
+        errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
       }
     }
     
@@ -506,7 +515,11 @@ export class FileProcessingService {
   }
 
   // ⭐ TRAITEMENT FUND POSITION
-  private async processFundPosition(file: File, currentCollections?: CollectionReport[]): Promise<FundPosition | null> {
+  private async processFundPosition(
+    file: File,
+    currentCollections: CollectionReport[] | undefined,
+    errors: string[],
+  ): Promise<FundPosition | null> {
     try {
       console.log('💰 === TRAITEMENT DÉTAILLÉ FUND POSITION ===');
       
@@ -521,11 +534,13 @@ export class FileProcessingService {
         textContent = await this.extractTextFromExcel(buffer);
       } else {
         console.warn('⚠️ Format de fichier non supporté pour Fund Position');
+        errors.push(`Échec extraction ${file.name}: format Fund Position non supporté.`);
         return null;
       }
       
       if (!textContent || textContent.length < 100) {
         console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Fund Position');
+        errors.push(`Échec extraction ${file.name}: contenu Fund Position insuffisant.`);
         return null;
       }
       
@@ -537,6 +552,7 @@ export class FileProcessingService {
 
       if (!extractionResult.success || !extractionResult.data) {
         console.error('❌ Échec de l\'extraction du Fund Position:', extractionResult.errors);
+        errors.push(`Échec extraction ${file.name}: ${(extractionResult.errors ?? ['contrat invalide']).join(' ')}`);
         return null;
       }
       
@@ -554,6 +570,7 @@ export class FileProcessingService {
       
     } catch (error) {
       console.error('❌ Erreur calcul Fund Position:', error);
+      errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
       return null;
     }
   }
@@ -701,9 +718,7 @@ export class FileProcessingService {
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: { str?: string }) => item.str ?? '')
-          .join(' ');
+        const pageText = reconstructPdfTextLines(textContent.items);
         fullText += pageText + '\n';
       }
       
@@ -711,9 +726,7 @@ export class FileProcessingService {
       return fullText;
     } catch (error) {
       console.error('❌ Erreur extraction PDF:', error);
-      // Fallback: return empty string but log the error
-      console.warn('⚠️ PDF extraction failed, returning empty content');
-      return '';
+      throw new Error(`Extraction PDF refusée: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
     }
   }
   
@@ -729,7 +742,7 @@ export class FileProcessingService {
         
         for (const row of sheetData) {
           if (Array.isArray(row)) {
-            allText += row.join(' ') + '\n';
+            allText += row.join('\t') + '\n';
           }
         }
       }

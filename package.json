@@ -21,6 +21,7 @@
     "test:financial-atomic": "tsx --test src/services/databaseService.synthetic.test.ts src/services/financialAtomicPersistence.synthetic.test.ts",
     "test:financial-write-lockdown": "tsx --test src/services/financialWritePathLockdown.synthetic.test.ts",
     "test:import-preflight": "tsx --test src/services/importPreflightService.synthetic.test.ts src/services/operationalImportReadiness.synthetic.test.ts src/services/documentDetectionService.synthetic.test.ts src/services/collectionImportReviewService.synthetic.test.ts src/services/collectionImportPromotionService.synthetic.test.ts src/services/internalBookRuntimeProcessingService.test.ts",
+    "test:multi-bank-reports": "tsx --test src/services/bankIdentity.synthetic.test.ts src/services/bankReportExtractionContract.synthetic.test.ts src/services/pdfTextLineReconstruction.synthetic.test.ts src/services/multiBankReportExtraction.synthetic.test.ts src/services/fundPositionExtraction.synthetic.test.ts src/services/bdkUniversalReadOnlyContract.synthetic.test.ts src/services/universalBankParserReadOnly.synthetic.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
