@@ -37,6 +37,19 @@ test('Fund Position refuse un montant décimal non nul dans un détail bancaire'
   assert.equal(result.success, false);
 });
 
+test('Fund Position refuse les cellules de total OCR invalides sans accepter leur préfixe numérique', () => {
+  for (const invalid of [
+    nominal.replace('TOTAL FUND AVAILABLE 100', 'TOTAL FUND AVAILABLE 12O000'),
+    nominal.replace('GRAND TOTAL 0', 'GRAND TOTAL 12O000'),
+    `${nominal}\nCOLLECTIONS NOT DEPOSITED 12O000`,
+    `${nominal}\nDEPOSIT FOR THE DAY 12O000`,
+    `${nominal}\nPAYMENT FOR THE DAY 12O000`,
+  ]) {
+    const result = extractFundPosition(invalid);
+    assert.equal(result.success, false, invalid);
+  }
+});
+
 test('Fund Position refuse une ligne financière dont les colonnes sont séparées par des espaces ambigus', () => {
   const result = extractFundPosition(nominal.replace('BDK\t100\t0\t100\t0\t100', 'BDK 100 0 100 0 100'));
   assert.equal(result.success, false);
@@ -62,6 +75,9 @@ test('Fund Position valide strictement dates et montants de la section HOLD', ()
     validHold.replace('05/08/2026 CHQ1', '31/02/2026 CHQ1'),
     validHold.replace('06/08/2026', '06/08/2026,'),
     validHold.replace('FACT1 100', 'FACT1 100,50'),
+    validHold.replace('Total: 100', 'Total: 1O0'),
+    validHold.replace('\nTotal: 100', ''),
+    validHold.replace('05/08/2026 CHQ1', 'DATE_ABSENTE CHQ1'),
   ]) {
     assert.equal(extractFundPosition(invalid).success, false);
   }

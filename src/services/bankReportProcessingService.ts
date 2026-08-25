@@ -87,8 +87,7 @@ class BankReportProcessingService {
         success: true,
         data: extractionResult.data,
         sourceFile: file.name,
-        bankType: bankType,
-        confidence: 95 // Confiance élevée avec le nouveau système
+        bankType: bankType
       };
       
     } catch (error) {

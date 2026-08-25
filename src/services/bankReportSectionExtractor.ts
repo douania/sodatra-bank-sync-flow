@@ -32,8 +32,8 @@ class BankReportSectionExtractor {
       bankName: 'BDK',
       patterns: {
         reportDate: /(?:\bBDK\b|BANQUE\s+DE\s+DAKAR)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
-        openingBalance: /OPENING\s+BALANCE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
-        closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
+        openingBalance: /OPENING\s+BALANCE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOSIT\s+NOT\s+YET\s+CLEARED/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(REGUL\s+IMPAYE|REGLEMENT\s+FACTURE|TR\s+No\/FACT\.No)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
@@ -48,8 +48,8 @@ class BankReportSectionExtractor {
       bankName: 'ATB',
       patterns: {
         reportDate: /(?:\bATB\b|ARAB\s+TUNISIAN\s+BANK|BANQUE\s+ATLANTIQUE)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
-        openingBalance: /SOLDE\s+OUVERTURE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
-        closingBalance: /SOLDE\s+CLOTURE\s+COMPTABLE\s*:[ \t]*([+-]?\d[\d \u00a0\u202f,.]*)/i,
+        openingBalance: /SOLDE\s+OUVERTURE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /SOLDE\s+CLOTURE\s+COMPTABLE\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOTS\s+NON\s+CREDITES/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHEQUES\s+EMIS\s+NON\s+DEBITES/i,
@@ -64,8 +64,8 @@ class BankReportSectionExtractor {
       bankName: 'BICIS',
       patterns: {
         reportDate: /\bBICIS\b[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
-        openingBalance: /SOLDE\s+INITIAL\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
-        closingBalance: /SOLDE\s+FINAL\s+COMPTABLE\s*:[ \t]*([+-]?\d[\d \u00a0\u202f,.]*)/i,
+        openingBalance: /SOLDE\s+INITIAL\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /SOLDE\s+FINAL\s+COMPTABLE\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOTS\s+EN\s+ATTENTE/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHEQUES\s+EN\s+CIRCULATION/i,
@@ -80,8 +80,8 @@ class BankReportSectionExtractor {
       bankName: 'ORA',
       patterns: {
         reportDate: /(?:\bORA\b|\bORABANK\b|\bORA\s+BANK\b)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
-        openingBalance: /BALANCE\s+OPENING\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
-        closingBalance: /BALANCE\s+CLOSING\s+BOOK\s*:[ \t]*([+-]?\d[\d \u00a0\u202f,.]*)/i,
+        openingBalance: /BALANCE\s+OPENING\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /BALANCE\s+CLOSING\s+BOOK\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOSITS\s+NOT\s+CLEARED/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECKS\s+NOT\s+CLEARED/i,
@@ -96,8 +96,8 @@ class BankReportSectionExtractor {
       bankName: 'SGBS',
       patterns: {
         reportDate: /(?:\bSGBS\b|\bSGS\b|SOCIETE\s+GENERALE)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
-        openingBalance: /SOLDE\s+OUVERTURE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
-        closingBalance: /SOLDE\s+FERMETURE\s+LIVRE\s*:[ \t]*([+-]?\d[\d \u00a0\u202f,.]*)/i,
+        openingBalance: /SOLDE\s+OUVERTURE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /SOLDE\s+FERMETURE\s+LIVRE\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOTS\s+NON\s+CREDITES/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHEQUES\s+NON\s+DEBITES/i,
@@ -112,8 +112,8 @@ class BankReportSectionExtractor {
       bankName: 'BIS',
       patterns: {
         reportDate: /(?:\bBIS\b|BANQUE\s+ISLAMIQUE(?:\s+DU\s+SENEGAL)?)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
-        openingBalance: /OPENING\s+BALANCE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([+-]?\d[\d \u00a0\u202f,.]*)/i,
-        closingBalance: /CLOSING\s+BALANCE\s+BOOK\s*:[ \t]*([+-]?\d[\d \u00a0\u202f,.]*)/i,
+        openingBalance: /OPENING\s+BALANCE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /CLOSING\s+BALANCE\s+BOOK\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOSITS\s+NOT\s+CLEARED/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECKS\s+NOT\s+CLEARED/i,
@@ -241,7 +241,7 @@ class BankReportSectionExtractor {
       }
 
       if (inDepositsSection && line.trim()) {
-        const match = line.match(config.patterns.depositLine);
+        const match = this.matchCompleteLine(line, config.patterns.depositLine);
         if (match) {
           const hasExplicitPaymentType = match.length === 6;
           deposits.push({
@@ -272,7 +272,7 @@ class BankReportSectionExtractor {
       }
 
       if (inChecksSection && line.trim()) {
-        const match = line.match(config.patterns.checkLine);
+        const match = this.matchCompleteLine(line, config.patterns.checkLine);
         if (match) {
           checks.push({
             dateEmission: this.parseDate(match[1]),
@@ -301,7 +301,7 @@ class BankReportSectionExtractor {
       }
 
       if (inFacilitiesSection && line.trim()) {
-        const match = line.match(config.patterns.facilityLine);
+        const match = this.matchCompleteLine(line, config.patterns.facilityLine);
         if (match && match[1] && !match[1].match(/CLIENT|TOTAL|LIMIT/i)) {
           const limitAmount = this.parseAmount(match[2]);
           const usedAmount = this.parseAmount(match[3]);
@@ -331,7 +331,7 @@ class BankReportSectionExtractor {
 
     for (const line of lines) {
       if (inImpayesSection && line.trim()) {
-        const match = line.match(config.patterns.impayeLine);
+        const match = this.matchCompleteLine(line, config.patterns.impayeLine);
         if (match) {
           // Extraire le code client et la description (nom du client)
           const clientCode = match[3]?.trim() || 'UNKNOWN';
@@ -366,6 +366,13 @@ class BankReportSectionExtractor {
     const parsed = parseFinancialInteger(value);
     if (parsed === null) throw new Error(`Montant invalide: ${value ?? 'absent'}`);
     return parsed;
+  }
+
+  private matchCompleteLine(line: string, pattern: RegExp): RegExpMatchArray | null {
+    const trimmedLine = line.trim();
+    const match = trimmedLine.match(pattern);
+    if (!match || match.index !== 0 || match[0].length !== trimmedLine.length) return null;
+    return match;
   }
 
   private parseDate(value: string | undefined): string {

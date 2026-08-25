@@ -8,6 +8,11 @@ test('Document Understanding analyse localement sans importer ni appeler la pers
   assert.match(component, /validateBdkUniversalReadOnlyResult\(content, bdkData\)/);
   assert.match(component, /Analyse locale en lecture seule/);
   assert.match(component, /aucune donnée n’est sauvegardée/);
+  assert.match(component, /Pilotes staging/);
+  assert.doesNotMatch(component, /BDK \(complet\)/);
+
+  const processingService = readFileSync('src/services/bankReportProcessingService.ts', 'utf8');
+  assert.doesNotMatch(processingService, /confidence:\s*95/);
 });
 
 test('la défense en profondeur refuse saveReport avant tout accès Supabase', () => {

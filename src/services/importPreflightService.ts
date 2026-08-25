@@ -125,25 +125,38 @@ function detectNormalizedDocumentFamily(normalized: string): {
   kind: ImportDocumentKind;
   label: string;
 } {
-  if (/\bCOLLECTIONS?\b/.test(normalized) || /\bCOLLECT\b/.test(normalized)) {
-    return { kind: 'COLLECTION_REPORT', label: 'Collection Report' };
+  const candidates: Array<{ kind: ImportDocumentKind; label: string }> = [];
+  if (
+    /\bCOLLECTIONS?\b/.test(normalized)
+    || /\bCOLLECT\b/.test(normalized)
+    || /\bCLIENT\s+CODE\b/.test(normalized)
+  ) {
+    candidates.push({ kind: 'COLLECTION_REPORT', label: 'Collection Report' });
   }
-
-  if (/\bFUND\s+POSITION\b/.test(normalized) || /\bFP\b/.test(normalized)) {
-    return { kind: 'FUND_POSITION', label: 'Fund Position' };
+  if (
+    /\bFUND\s+POSITION\b/.test(normalized)
+    || /\bFP\b/.test(normalized)
+    || /\bBOOK\s+BALANCE\b/.test(normalized)
+  ) {
+    candidates.push({ kind: 'FUND_POSITION', label: 'Fund Position' });
   }
-
   if (/\bCLIENT\b/.test(normalized) && /\bRECON(?:CILIATION)?\b/.test(normalized)) {
-    return { kind: 'CLIENT_RECONCILIATION', label: 'Client Reconciliation' };
+    candidates.push({ kind: 'CLIENT_RECONCILIATION', label: 'Client Reconciliation' });
   }
-
   if (/\bINTERNAL\s+BOOK\b/.test(normalized)) {
-    return { kind: 'INTERNAL_BOOK', label: 'Internal Book' };
+    candidates.push({ kind: 'INTERNAL_BOOK', label: 'Internal Book' });
   }
 
-  if (/\bBRIDGE\b/.test(normalized)) {
+  const containsBridge = /\bBRIDGE\b/.test(normalized);
+  if (containsBridge && candidates.length === 0) {
     return { kind: 'UNKNOWN', label: 'BRIDGE — utiliser Relevés quotidiens' };
   }
+
+  if (containsBridge || candidates.length > 1) {
+    return { kind: 'UNKNOWN', label: 'Document ambigu — plusieurs familles détectées' };
+  }
+
+  if (candidates.length === 1) return candidates[0];
 
   return { kind: 'UNKNOWN', label: 'Document non identifié' };
 }
@@ -153,7 +166,7 @@ function detectNormalizedImportDocument(normalized: string): {
   label: string;
 } {
   const family = detectNormalizedDocumentFamily(normalized);
-  if (family.kind !== 'UNKNOWN' || family.label.startsWith('BRIDGE')) return family;
+  if (family.kind !== 'UNKNOWN' || family.label !== 'Document non identifié') return family;
 
   const bank = detectBankFromFileName(normalized);
   if (bank) {
@@ -176,16 +189,8 @@ export function detectImportDocumentFromText(text: string): {
 } {
   const normalized = normalizeDocumentText(text);
 
-  if (/\bCLIENT\s+CODE\b/.test(normalized)) {
-    return { kind: 'COLLECTION_REPORT', label: 'Collection Report' };
-  }
-
-  if (/\bBOOK\s+BALANCE\b/.test(normalized)) {
-    return { kind: 'FUND_POSITION', label: 'Fund Position' };
-  }
-
   const family = detectNormalizedDocumentFamily(normalized);
-  if (family.kind !== 'UNKNOWN' || family.label.startsWith('BRIDGE')) return family;
+  if (family.kind !== 'UNKNOWN' || family.label !== 'Document non identifié') return family;
 
   const bank = detectBankFromContent(normalized);
   if (bank) {

@@ -40,6 +40,18 @@ test('le repli de contenu réutilise la classification stricte sans sous-chaîne
   assert.equal(detectImportDocumentFromText('CORPORATE RUBICON MSG').kind, 'UNKNOWN');
 });
 
+test('bloque toute ambiguïté entre familles au lieu de choisir selon l’ordre des règles', () => {
+  for (const detection of [
+    detectImportDocument('Collection Bridge 2026.xlsx'),
+    detectImportDocument('Collection Client Recon 2026.xlsx'),
+    detectImportDocumentFromText('COLLECTION CLIENT CODE\nBRIDGE RELEVE\nBDK'),
+    detectImportDocumentFromText('COLLECTION REPORT\nCLIENT RECONCILIATION\nBDK'),
+  ]) {
+    assert.equal(detection.kind, 'UNKNOWN');
+    assert.match(detection.label, /ambigu/i);
+  }
+});
+
 test('autorise un lot entièrement identifié et supporté', () => {
   const result = buildImportPreflight([
     file('Collection Report.xlsx'),

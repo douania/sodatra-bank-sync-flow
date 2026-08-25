@@ -300,13 +300,13 @@ export function extractFundPosition(pdfText: string): ExtractionResult {
     const reportDate = parseDocumentDate(reportDateMatch?.[1]);
 
     // Extraction des totaux principaux
-    const totalFundMatch = pdfText.match(/TOTAL[ \t]+FUND[ \t]+AVAILABLE[ \t:]*([+-]?\d[\d \u00a0\u202f,.]*)/i);
-    const collectionsMatch = pdfText.match(/COLLECTIONS[ \t]+NOT[ \t]+DEPOSITED[ \t:]*([+-]?\d[\d \u00a0\u202f,.]*)/i);
-    const grandTotalMatch = pdfText.match(/GRAND[ \t]+TOTAL[ \t:]*([+-]?\d[\d \u00a0\u202f,.]*)/i);
+    const totalFundMatch = pdfText.match(/TOTAL[ \t]+FUND[ \t]+AVAILABLE[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+    const collectionsMatch = pdfText.match(/COLLECTIONS[ \t]+NOT[ \t]+DEPOSITED[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+    const grandTotalMatch = pdfText.match(/GRAND[ \t]+TOTAL[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
     
     // Extraction des dépôts et paiements du jour
-    const depositForDayMatch = pdfText.match(/DEPOSIT[ \t]+FOR[ \t]+THE[ \t]+DAY[ \t:]*([+-]?\d[\d \u00a0\u202f,.]*)/i);
-    const paymentForDayMatch = pdfText.match(/PAYMENT[ \t]+FOR[ \t]+THE[ \t]+DAY[ \t:]*([+-]?\d[\d \u00a0\u202f,.]*)/i);
+    const depositForDayMatch = pdfText.match(/DEPOSIT[ \t]+FOR[ \t]+THE[ \t]+DAY[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+    const paymentForDayMatch = pdfText.match(/PAYMENT[ \t]+FOR[ \t]+THE[ \t]+DAY[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
 
     const totalFundAvailable = totalFundMatch ? parseFinancialInteger(totalFundMatch[1]) : 0;
     const collectionsNotDeposited = collectionsMatch ? parseFinancialInteger(collectionsMatch[1]) : 0;
@@ -439,11 +439,19 @@ function extractHoldCollections(pdfText: string): {
   const errors: string[] = [];
   
   try {
-    // Rechercher la section "HOLD"
-    const holdSection = pdfText.match(/HOLD[\s\S]*?Total[ \t]*:?[ \t]*([+-]?\d[\d \t\u00a0\u202f,.]*)/i);
-    
-    if (!holdSection) {
+    const hasHoldMarker = /\bHOLD\b/i.test(pdfText);
+    if (!hasHoldMarker) {
       console.warn('⚠️ Section "HOLD" non trouvée');
+      return { holdCollections, errors };
+    }
+
+    // Une section annoncée doit avoir une frontière Total explicite. La valeur
+    // complète est transmise au parseur strict pour interdire les préfixes OCR.
+    const holdSection = pdfText.match(
+      /\bHOLD\b[\s\S]*?\bTotal\b[ \t]*:?[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+    );
+    if (!holdSection) {
+      errors.push('Section HOLD déclarée mais total absent ou inexploitable.');
       return { holdCollections, errors };
     }
 
@@ -457,12 +465,12 @@ function extractHoldCollections(pdfText: string): {
     // Identifier les lignes contenant des données de collection (ignorer les en-têtes et totaux)
     const collectionLines = lines.filter(line => {
       const trimmedLine = line.trim();
-      // Exclure les lignes d'en-tête et de total
-      return trimmedLine && 
-             !trimmedLine.includes('HOLD') && 
-             !trimmedLine.includes('DATE') &&
-             !trimmedLine.includes('Total') &&
-             /\d{2}\/\d{2}\/\d{4}/.test(trimmedLine); // Contient une date au format DD/MM/YYYY
+      const isHeader = /^DATE(?:\s|\t|$)/i.test(trimmedLine)
+        && /BANQUE|CLIENT|MONTANT|CHEQUE|FACTURE/i.test(trimmedLine);
+      return Boolean(trimmedLine)
+        && !/^HOLD\b/i.test(trimmedLine)
+        && !/^TOTAL\b/i.test(trimmedLine)
+        && !isHeader;
     });
     
     console.log(`📊 ${collectionLines.length} lignes de collections en attente trouvées`);
@@ -471,7 +479,9 @@ function extractHoldCollections(pdfText: string): {
     for (const line of collectionLines) {
       // Extraire les données avec une regex adaptée au format
       // Format attendu: DATE | n°chèque/Ech | BANQUE Client | Client | facture | Montant | DATE DEPOT/Nbre Jrs
-      const collectionMatch = line.match(/(\d{2}\/\d{2}\/\d{4})\s+(\S+)\s+(\S+)\s+([^\|]+?)\s+(\S+)\s+([\d\s,\.]+)\s+(\S+)/);
+      const collectionMatch = line.trim().match(
+        /^(\d{2}\/\d{2}\/\d{4})\s+(\S+)\s+(\S+)\s+([^|]+?)\s+(\S+)\s+([+-]?\d[\d \u00a0\u202f,.]*)\s+(\S+)$/,
+      );
       
       if (!collectionMatch) {
         errors.push(`Ligne HOLD non exploitable: ${line.trim()}`);

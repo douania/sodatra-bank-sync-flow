@@ -308,7 +308,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
           </CardTitle>
           <CardDescription>
             Glissez vos rapports PDF bancaires ou cliquez pour les sélectionner.
-            Support: BDK (complet), SGS, BICIS, ATB, ORA, BIS.
+            Pilotes staging : BDK, SGBS, BICIS, ATB, ORA et BIS. Compatibilité à qualifier sur fichiers anonymisés.
           </CardDescription>
         </CardHeader>
         <CardContent>

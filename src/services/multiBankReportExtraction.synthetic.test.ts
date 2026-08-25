@@ -52,6 +52,14 @@ test('le contrat bancaire refuse les soldes absents ou invalides et les sections
     `${nominalFixtures.BDK}\nDEPOSIT NOT YET CLEARED\n31/02/2026 123 REGLEMENT FACTURE CLIENT 100`,
     'BDK',
   )).success, false);
+  assert.equal((await bankReportSectionExtractor.extractBankReportSections(
+    nominalFixtures.BDK.replace('1 000 000', '12O000'),
+    'BDK',
+  )).success, false);
+  assert.equal((await bankReportSectionExtractor.extractBankReportSections(
+    nominalFixtures.BDK.replace('900 000', '9O0000'),
+    'BDK',
+  )).success, false);
 });
 
 test('un solde ne peut pas absorber le début chiffré de la ligne suivante', async () => {
@@ -105,6 +113,21 @@ test('BDK: un rapport avec sections exploitables est accepté', async () => {
   assert.equal(result.data?.checksNotCleared?.length, 1);
   assert.equal(result.data?.bankFacilities.length, 1);
   assert.equal(result.data?.impayes.length, 1);
+});
+
+test('les lignes de section refusent un montant OCR suffixé au lieu de persister son préfixe', async () => {
+  for (const section of [
+    ['DEPOSIT NOT YET CLEARED', '05/08/2026 123 REGLEMENT FACTURE CLIENT 12O000'],
+    ['CHECK Not yet cleared', '05/08/2026 456 BENEFICIAIRE 12O000'],
+    ['BANK FACILITY', 'SPN 1000 400 6O0'],
+    ['IMPAYE', '05/08/2026 05/08/2026 IMPAYE CL001 CLIENT 2O'],
+  ]) {
+    const result = await bankReportSectionExtractor.extractBankReportSections(
+      [nominalFixtures.BDK, ...section].join('\n'),
+      'BDK',
+    );
+    assert.equal(result.success, false, section.join(' — '));
+  }
 });
 
 test('ATB: une section dépôts exploitable utilise le dernier groupe comme montant', async () => {

@@ -2,7 +2,7 @@
 
 ## Statut
 
-`IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES` — 2026-08-25.
+`FIXED_LOCAL — INDEPENDENT_REVALIDATION_PENDING` — 2026-08-25.
 
 Ce lot qualifie localement le comportement fail-closed du parcours
 opérationnel. Il ne publie rien, ne promeut aucune banque et ne touche ni à
@@ -31,7 +31,9 @@ Pour BDK, ATB, BICIS, ORA, SGBS et BIS :
 5. les soldes d'ouverture daté et de clôture sont explicitement présents ;
 6. tout montant extrait est un entier FCFA sûr ;
 7. une section déclarée sans ligne exploitable invalide le rapport ;
-8. un document refusé n'est jamais persisté ; les écritures déjà réalisées
+8. une cellule ou ligne financière contenant un suffixe OCR invalide est
+   refusée intégralement, sans accepter son préfixe numérique ;
+9. un document refusé n'est jamais persisté ; les écritures déjà réalisées
    pour un autre document valide du même batch ne sont pas atomiquement annulées.
 
 La reconstruction PDF groupe les tokens positionnés par coordonnées. Un flux
@@ -52,6 +54,8 @@ Un Fund Position est accepté uniquement si :
 - au moins un détail bancaire est exploitable ;
 - tous les montants du détail sont des entiers sûrs.
 - les six colonnes du détail bancaire sont explicitement délimitées.
+- toute section `HOLD` annoncée possède un total explicite et chaque ligne
+  non vide, hors en-tête reconnu, doit être exploitable.
 
 Il n'existe plus de repli sur la date du jour, de `GRAND TOTAL` absent converti
 en zéro, ni de succès avec tableau de détails vide.
@@ -74,14 +78,15 @@ La nouvelle commande `test:multi-bank-reports`, bloquante dans la CI, couvre :
 
 Résultats locaux après réconciliation des findings :
 
-- `test:multi-bank-reports` : **38/38 PASS** ;
+- `test:multi-bank-reports` : **40/40 PASS** ;
 - `test:bdk-pdf` : **27/27 PASS** ;
-- `test:import-preflight` : **50/50 PASS** ;
-- matrice CI : **545 tests / 543 pass / 0 fail / 2 skip** ;
-- TypeScript comparatif : **0 diagnostic sur `origin/main`, 0 sur le lot** ;
-- ESLint comparatif : **207 erreurs + 11 warnings sur `origin/main`, 182 + 11
-  sur le lot**, ratchet CI vert ;
-- ESLint ciblé nouveaux contrats/chemins : **PASS** ;
+- `test:import-preflight` : **51/51 PASS** ;
+- matrice CI applicative : **548 tests / 546 pass / 0 fail / 2 skip** ;
+- TypeScript comparatif : **18 diagnostics sur `origin/main`, 16 sur le lot,
+  0 nouveau par rapport au SHA revu `4cf39eb`** ;
+- ESLint comparatif : **207 erreurs + 11 warnings sur `origin/main`, 180 + 11
+  sur le lot** ; le correctif réduit le SHA revu de 182 à 180 erreurs, sans
+  nouveau finding ESLint ; ratchet CI vert ;
 - build Vite production : **PASS** ;
 - hygiène du bundle : **4/4 PASS** ;
 - `git diff --check` : **PASS**.
@@ -95,6 +100,21 @@ Position non délimitées. La revalidation indépendante finale rend
 Ses P2 corrigeables ont ensuite été réconciliés : index montant des dépôts
 multi-banques, impayé à date unique, motif de refus PDF propagé et anciens
 points d'entrée permissifs explicitement désactivés.
+
+La contre-review read-only de la draft PR #131 au SHA `4cf39eb` a ensuite
+identifié deux P1 et trois P2. Le correctif `GO_FIX` :
+
+- capture la cellule financière complète pour les soldes et totaux, et exige
+  une correspondance de ligne complète dans les sections bancaires ;
+- invalide une section `HOLD` annoncée sans total et contrôle chaque ligne,
+  même lorsqu'elle ne commence pas par une date reconnue ;
+- bloque les contenus qui portent plusieurs marqueurs de familles, y compris
+  les combinaisons avec `BRIDGE` ;
+- remplace la promesse UI « BDK complet » par le statut pilote staging ;
+- supprime la confiance statique `95`, faute de mesure calculée.
+
+La revalidation indépendante de ce correctif reste obligatoire avant tout
+verdict de merge.
 
 ## Limites assumées
 
