@@ -116,6 +116,16 @@ identifié deux P1 et trois P2. Le correctif `GO_FIX` :
 La revalidation indépendante de ce correctif reste obligatoire avant tout
 verdict de merge.
 
+Une première revalidation du commit `2ec9a61` a encore trouvé un P1 mixte :
+une section contenant une ligne valide suivie d'une ligne OCR invalide pouvait
+conserver la première et ignorer la seconde. Les extracteurs de sections
+refusent désormais toute ligne non exploitable qui n'est pas une frontière de
+section explicite. Les tests couvrent à la fois « ligne invalide seule » et
+« ligne valide + ligne invalide » pour dépôts, chèques, facilités et impayés.
+Deux derniers libellés UI promettant une extraction BDK complète ont également
+été remplacés par le statut exact de pilote staging. Une nouvelle revalidation
+du delta versionné reste requise.
+
 ## Limites assumées
 
 - les fixtures synthétiques prouvent le contrat logiciel, pas la compatibilité

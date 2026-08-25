@@ -10,9 +10,14 @@ test('Document Understanding analyse localement sans importer ni appeler la pers
   assert.match(component, /aucune donnée n’est sauvegardée/);
   assert.match(component, /Pilotes staging/);
   assert.doesNotMatch(component, /BDK \(complet\)/);
+  assert.doesNotMatch(component, /extraction complète/i);
 
   const processingService = readFileSync('src/services/bankReportProcessingService.ts', 'utf8');
   assert.doesNotMatch(processingService, /confidence:\s*95/);
+
+  const documentUnderstanding = readFileSync('src/pages/DocumentUnderstanding.tsx', 'utf8');
+  assert.doesNotMatch(documentUnderstanding, /extraction complète/i);
+  assert.match(documentUnderstanding, /pilote[\s\S]*fichiers anonymisés/i);
 });
 
 test('la défense en profondeur refuse saveReport avant tout accès Supabase', () => {

@@ -117,16 +117,30 @@ test('BDK: un rapport avec sections exploitables est accepté', async () => {
 
 test('les lignes de section refusent un montant OCR suffixé au lieu de persister son préfixe', async () => {
   for (const section of [
-    ['DEPOSIT NOT YET CLEARED', '05/08/2026 123 REGLEMENT FACTURE CLIENT 12O000'],
-    ['CHECK Not yet cleared', '05/08/2026 456 BENEFICIAIRE 12O000'],
-    ['BANK FACILITY', 'SPN 1000 400 6O0'],
-    ['IMPAYE', '05/08/2026 05/08/2026 IMPAYE CL001 CLIENT 2O'],
+    [
+      'DEPOSIT NOT YET CLEARED',
+      '05/08/2026 123 REGLEMENT FACTURE CLIENT 100',
+      '05/08/2026 124 REGLEMENT FACTURE CLIENT 12O000',
+    ],
+    [
+      'CHECK Not yet cleared',
+      '05/08/2026 456 BENEFICIAIRE 50',
+      '05/08/2026 457 BENEFICIAIRE 12O000',
+    ],
+    ['BANK FACILITY', 'SPN 1000 400 600', 'AUTRE 1000 400 6O0'],
+    [
+      'IMPAYE',
+      '05/08/2026 05/08/2026 IMPAYE CL001 CLIENT 25',
+      '05/08/2026 05/08/2026 IMPAYE CL002 CLIENT 2O',
+    ],
   ]) {
-    const result = await bankReportSectionExtractor.extractBankReportSections(
-      [nominalFixtures.BDK, ...section].join('\n'),
-      'BDK',
-    );
-    assert.equal(result.success, false, section.join(' — '));
+    for (const lines of [section.slice(0, 1).concat(section[2]), section]) {
+      const result = await bankReportSectionExtractor.extractBankReportSections(
+        [nominalFixtures.BDK, ...lines].join('\n'),
+        'BDK',
+      );
+      assert.equal(result.success, false, lines.join(' — '));
+    }
   }
 });
 

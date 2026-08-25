@@ -251,8 +251,10 @@ class BankReportSectionExtractor {
             typeReglement: hasExplicitPaymentType ? match[3] : 'DEPOT',
             montant: this.parseAmount(match[match.length - 1])
           });
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+        } else if (this.isSectionBoundary(line, config.patterns.depositsSection, config)) {
           inDepositsSection = false;
+        } else {
+          throw new Error(`Ligne de dépôts non crédités non exploitable: ${line.trim()}`);
         }
       }
     }
@@ -280,8 +282,10 @@ class BankReportSectionExtractor {
             beneficiaire: match[3] || '',
             montant: this.parseAmount(match[4])
           });
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+        } else if (this.isSectionBoundary(line, config.patterns.checksSection, config)) {
           inChecksSection = false;
+        } else {
+          throw new Error(`Ligne de chèques non débités non exploitable: ${line.trim()}`);
         }
       }
     }
@@ -313,8 +317,10 @@ class BankReportSectionExtractor {
             usedAmount,
             availableAmount
           });
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+        } else if (this.isSectionBoundary(line, config.patterns.facilitiesSection, config)) {
           inFacilitiesSection = false;
+        } else {
+          throw new Error(`Ligne de facilités bancaires non exploitable: ${line.trim()}`);
         }
       }
     }
@@ -349,8 +355,10 @@ class BankReportSectionExtractor {
             montant: this.parseAmount(match[match.length - 1])
           });
           continue;
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+        } else if (this.isSectionBoundary(line, config.patterns.impayesSection, config)) {
           inImpayesSection = false;
+        } else {
+          throw new Error(`Ligne d’impayés non exploitable: ${line.trim()}`);
         }
       }
 
@@ -373,6 +381,23 @@ class BankReportSectionExtractor {
     const match = trimmedLine.match(pattern);
     if (!match || match.index !== 0 || match[0].length !== trimmedLine.length) return null;
     return match;
+  }
+
+  private isSectionBoundary(
+    line: string,
+    currentSection: RegExp,
+    config: BankSectionConfig,
+  ): boolean {
+    const otherSections = [
+      config.patterns.depositsSection,
+      config.patterns.checksSection,
+      config.patterns.facilitiesSection,
+      config.patterns.impayesSection,
+    ].filter(pattern => pattern !== currentSection);
+
+    return otherSections.some(pattern => pattern.test(line))
+      || /^(?:TOTAL|SOUS-TOTAL)\b/i.test(line.trim())
+      || /^[A-Z\s]+:\s*$/i.test(line.trim());
   }
 
   private parseDate(value: string | undefined): string {

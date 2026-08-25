@@ -429,7 +429,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       <Alert>
         <AlertCircle className="h-4 w-4" />
         <AlertDescription>
-          <strong>Banques supportées:</strong> BDK (extraction complète avec validation), SGS, BICIS, ATB, ORA, BIS (en développement).
+          <strong>Pilotes staging :</strong> BDK, SGBS, BICIS, ATB, ORA et BIS. Compatibilité à qualifier sur fichiers anonymisés.
           Analyse locale en lecture seule : aucune donnée n’est sauvegardée.
         </AlertDescription>
       </Alert>
