@@ -50,7 +50,14 @@
 **Lot probable** : Lot 4 (fusion `fileProcessingService` / `enhancedFileProcessingService`, suppression services PDF orphelins)
 **Statut : `CLOSED` — Operational Import Production Readiness, PR #130 mergée (2026-08-20)**. `/upload-bulk` redirige vers l'unique parcours `/upload`; la page orpheline `FileUploadBulk.tsx` et le moteur redondant `enhancedFileProcessingService.ts` sont supprimés. La seule capacité encore consommée par `Document Understanding` a été extraite dans `documentDetectionService.ts`, strictement read-only. `fileProcessingService` reste l'unique moteur global d'import.
 
-**Qualification multi-banques locale (2026-08-25)** : la coexistence des extracteurs spécialisés reste une dette distincte, mais le chemin actif `/upload` est désormais borné par une identité bancaire canonique, des contrats fail-closed et une gate CI banque par banque. BDK/ATB/BICIS/ORA/SGBS/BIS et Fund Position restent `STAGING_PILOT`; qualification sur fichiers réels anonymisés différée avant toute promotion.
+**Qualification multi-banques (clôture runtime 2026-08-26)** : le chemin actif
+`/upload` est borné par une identité bancaire canonique, des contrats
+fail-closed et une gate CI banque par banque. Le runtime correspondant est
+publié et validé en production avec la garde `Production en lecture seule` ;
+aucun import ni aucune promotion n'y est possible. La coexistence des
+extracteurs spécialisés reste une dette distincte. BDK/ATB/BICIS/ORA/SGBS/BIS
+et Fund Position restent `STAGING_PILOT` ; leur qualification sur fichiers
+réels anonymisés demeure différée avant toute promotion.
 
 ---
 
