@@ -1,4 +1,6 @@
-import { BankReport, ExtractionResult, DepositNotCleared, BankFacility, Impaye } from '@/types/banking';
+import { BankReport, ExtractionResult, DepositNotCleared, BankFacility, Impaye, FundPositionDetail, FundPositionHold } from '@/types/banking';
+import { parseDocumentDate, parseFinancialInteger } from './bankReportExtractionContract';
+import { validateFundPositionExtraction } from './fundPositionExtractionContract';
 
 // Patterns améliorés et plus robustes
 export const VALIDATED_PATTERNS = {
@@ -279,78 +281,64 @@ function extractImpayes(text: string): Impaye[] {
 
 // Fonction d'extraction universelle améliorée
 export function extractBankReport(pdfText: string, bankName: string): ExtractionResult {
-  try {
-    console.log(`🏦 === EXTRACTION ${bankName} ===`);
-    console.log(`📄 Taille du texte: ${pdfText.length} caractères`);
-    console.log(`📄 Aperçu du contenu: ${pdfText.substring(0, 200)}...`);
-    
-    const report: BankReport = {
-      bank: bankName,
-      date: extractDate(pdfText),
-      openingBalance: extractOpeningBalance(pdfText),
-      closingBalance: extractClosingBalance(pdfText),
-      depositsNotCleared: extractDepositsNotCleared(pdfText),
-      bankFacilities: extractBankFacilities(pdfText),
-      impayes: extractImpayes(pdfText)
-    };
-    
-    console.log(`🏦 === RÉSUMÉ ${bankName} ===`);
-    console.log(`📅 Date: ${report.date}`);
-    console.log(`💰 Solde ouverture: ${report.openingBalance.toLocaleString()}`);
-    console.log(`💰 Solde clôture: ${report.closingBalance.toLocaleString()}`);
-    console.log(`📄 Dépôts: ${report.depositsNotCleared.length}`);
-    console.log(`💳 Facilités: ${report.bankFacilities.length}`);
-    console.log(`❌ Impayés: ${report.impayes.length}`);
-    
-    // Vérifier si on a au moins les soldes
-    if (report.openingBalance === 0 && report.closingBalance === 0) {
-      console.warn(`⚠️ ${bankName}: Aucun solde trouvé, extraction peut-être incomplète`);
-      
-      // Essayer d'extraire au moins quelques montants du texte
-      const allNumbers = pdfText.match(/[\d\s,\.]{6,}/g);
-      if (allNumbers && allNumbers.length >= 2) {
-        report.openingBalance = cleanAmount(allNumbers[0]);
-        report.closingBalance = cleanAmount(allNumbers[1]);
-        console.log(`🔧 Fallback: soldes estimés - ouverture: ${report.openingBalance}, clôture: ${report.closingBalance}`);
-      }
-    }
-    
-    return {
-      success: true,
-      data: report
-    };
-  } catch (error) {
-    console.error(`❌ Erreur extraction ${bankName}:`, error);
-    return {
-      success: false,
-      errors: [error instanceof Error ? error.message : 'Erreur inconnue']
-    };
-  }
+  void pdfText;
+  void bankName;
+  return {
+    success: false,
+    errors: ['Ce point d’entrée legacy permissif est désactivé ; utiliser bankReportSectionExtractor.'],
+  };
 }
 
 // Extraction spécialisée pour Fund Position
 export function extractFundPosition(pdfText: string): ExtractionResult {
   try {
     console.log('💰 Extraction détaillée du Fund Position...');
-    
+
+    const reportDateMatch = pdfText.match(
+      /(?:FUND\s+POSITION|BOOK\s+BALANCE|REPORT\s+DATE)[^\r\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4}|\d{4}-\d{2}-\d{2})/i,
+    );
+    const reportDate = parseDocumentDate(reportDateMatch?.[1]);
+
     // Extraction des totaux principaux
-    const totalFundMatch = pdfText.match(/TOTAL\s+FUND\s+AVAILABLE.*?([\d\s,\.]+)/i);
-    const collectionsMatch = pdfText.match(/COLLECTIONS\s+NOT\s+DEPOSITED.*?([\d\s,\.]+)/i);
-    const grandTotalMatch = pdfText.match(/GRAND\s+TOTAL.*?([\d\s,\.]+)/i);
+    const totalFundMatch = pdfText.match(/TOTAL[ \t]+FUND[ \t]+AVAILABLE[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+    const collectionsMatch = pdfText.match(/COLLECTIONS[ \t]+NOT[ \t]+DEPOSITED[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+    const grandTotalMatch = pdfText.match(/GRAND[ \t]+TOTAL[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
     
     // Extraction des dépôts et paiements du jour
-    const depositForDayMatch = pdfText.match(/DEPOSIT\s+FOR\s+THE\s+DAY.*?([\d\s,\.]+)/i);
-    const paymentForDayMatch = pdfText.match(/PAYMENT\s+FOR\s+THE\s+DAY.*?([\d\s,\.]+)/i);
-    
+    const depositForDayMatch = pdfText.match(/DEPOSIT[ \t]+FOR[ \t]+THE[ \t]+DAY[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+    const paymentForDayMatch = pdfText.match(/PAYMENT[ \t]+FOR[ \t]+THE[ \t]+DAY[ \t:]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i);
+
+    const totalFundAvailable = totalFundMatch ? parseFinancialInteger(totalFundMatch[1]) : 0;
+    const collectionsNotDeposited = collectionsMatch ? parseFinancialInteger(collectionsMatch[1]) : 0;
+    const grandTotal = grandTotalMatch ? parseFinancialInteger(grandTotalMatch[1]) : null;
+    const depositForDay = depositForDayMatch ? parseFinancialInteger(depositForDayMatch[1]) : 0;
+    const paymentForDay = paymentForDayMatch ? parseFinancialInteger(paymentForDayMatch[1]) : 0;
+    const detailsResult = extractFundPositionDetails(pdfText);
+    const holdResult = extractHoldCollections(pdfText);
+    const details = detailsResult.details;
+    const errors = validateFundPositionExtraction({
+      reportDate,
+      grandTotalFound: Boolean(grandTotalMatch),
+      grandTotal,
+      details,
+    });
+    errors.push(...detailsResult.errors, ...holdResult.errors);
+
+    if (totalFundMatch && totalFundAvailable === null) errors.push('Total fonds disponibles invalide.');
+    if (collectionsMatch && collectionsNotDeposited === null) errors.push('Collections non déposées invalides.');
+    if (depositForDayMatch && depositForDay === null) errors.push('Dépôt du jour invalide.');
+    if (paymentForDayMatch && paymentForDay === null) errors.push('Paiement du jour invalide.');
+    if (errors.length > 0) return { success: false, errors };
+
     const fundPosition = {
-      reportDate: extractDate(pdfText),
-      totalFundAvailable: totalFundMatch ? cleanAmount(totalFundMatch[1]) : 0,
-      collectionsNotDeposited: collectionsMatch ? cleanAmount(collectionsMatch[1]) : 0,
-      grandTotal: grandTotalMatch ? cleanAmount(grandTotalMatch[1]) : 0,
-      depositForDay: depositForDayMatch ? cleanAmount(depositForDayMatch[1]) : 0,
-      paymentForDay: paymentForDayMatch ? cleanAmount(paymentForDayMatch[1]) : 0,
-      details: extractFundPositionDetails(pdfText),
-      holdCollections: extractHoldCollections(pdfText)
+      reportDate: reportDate!,
+      totalFundAvailable: totalFundAvailable ?? 0,
+      collectionsNotDeposited: collectionsNotDeposited ?? 0,
+      grandTotal: grandTotal!,
+      depositForDay: depositForDay ?? 0,
+      paymentForDay: paymentForDay ?? 0,
+      details,
+      holdCollections: holdResult.holdCollections,
     };
     
     console.log('💰 Fund Position extraite avec succès:', {
@@ -375,8 +363,12 @@ export function extractFundPosition(pdfText: string): ExtractionResult {
 }
 
 // Nouvelle fonction pour extraire les détails par banque
-function extractFundPositionDetails(pdfText: string): any[] {
-  const details: any[] = [];
+function extractFundPositionDetails(pdfText: string): {
+  details: FundPositionDetail[];
+  errors: string[];
+} {
+  const details: FundPositionDetail[] = [];
+  const errors: string[] = [];
   
   try {
     // Rechercher la section "Book balance"
@@ -384,7 +376,7 @@ function extractFundPositionDetails(pdfText: string): any[] {
     
     if (!bookBalanceSection) {
       console.warn('⚠️ Section "Book balance" non trouvée');
-      return details;
+      return { details, errors };
     }
     
     // Extraire les lignes de la section
@@ -405,42 +397,66 @@ function extractFundPositionDetails(pdfText: string): any[] {
     
     // Traiter chaque ligne de banque
     for (const line of bankLines) {
-      // Extraire les données avec une regex adaptée au format
-      const bankDataMatch = line.match(/([A-Za-z0-9\s\-]+?)\s+([\d\s,\.]+)\s+([\d\s,\.]+)\s+([\d\s,\.]+)\s+([\d\s,\.]+)\s+([\d\s,\.]+)/);
-      
-      if (bankDataMatch) {
-        const [_, bankName, balance, fundApplied, netBalance, nonValidatedDeposit, grandBalance] = bankDataMatch;
-        
-        details.push({
-          bankName: bankName.trim(),
-          balance: cleanAmount(balance),
-          fundApplied: cleanAmount(fundApplied),
-          netBalance: cleanAmount(netBalance),
-          nonValidatedDeposit: cleanAmount(nonValidatedDeposit),
-          grandBalance: cleanAmount(grandBalance)
-        });
+      const columns = line.split('\t').map(value => value.trim()).filter(Boolean);
+      if (columns.length !== 6) {
+        errors.push(`Ligne Fund Position non exploitable: ${line.trim()}`);
+        continue;
       }
+
+      const [bankName, balance, fundApplied, netBalance, nonValidatedDeposit, grandBalance] = columns;
+      const amounts = [balance, fundApplied, netBalance, nonValidatedDeposit, grandBalance]
+        .map(value => parseFinancialInteger(value));
+      if (amounts.some(value => value === null)) {
+        errors.push(`Montant Fund Position invalide pour ${bankName.trim()}.`);
+        continue;
+      }
+
+      details.push({
+        bankName: bankName.trim(),
+        balance: amounts[0]!,
+        fundApplied: amounts[1]!,
+        netBalance: amounts[2]!,
+        nonValidatedDeposit: amounts[3]!,
+        grandBalance: amounts[4]!,
+      });
     }
     
     console.log(`✅ ${details.length} détails bancaires extraits`);
   } catch (error) {
     console.error('❌ Erreur extraction détails Fund Position:', error);
+    errors.push(error instanceof Error ? error.message : 'Erreur extraction détails Fund Position.');
   }
   
-  return details;
+  return { details, errors };
 }
 
 // Nouvelle fonction pour extraire les collections en attente (HOLD)
-function extractHoldCollections(pdfText: string): any[] {
-  const holdCollections: any[] = [];
+function extractHoldCollections(pdfText: string): {
+  holdCollections: FundPositionHold[];
+  errors: string[];
+} {
+  const holdCollections: FundPositionHold[] = [];
+  const errors: string[] = [];
   
   try {
-    // Rechercher la section "HOLD"
-    const holdSection = pdfText.match(/HOLD[\s\S]*?Total\s*:?\s*([\d\s,\.]+)/i);
-    
-    if (!holdSection) {
+    const hasHoldMarker = /\bHOLD\b/i.test(pdfText);
+    if (!hasHoldMarker) {
       console.warn('⚠️ Section "HOLD" non trouvée');
-      return holdCollections;
+      return { holdCollections, errors };
+    }
+
+    // Une section annoncée doit avoir une frontière Total explicite. La valeur
+    // complète est transmise au parseur strict pour interdire les préfixes OCR.
+    const holdSection = pdfText.match(
+      /\bHOLD\b[\s\S]*?\bTotal\b[ \t]*:?[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+    );
+    if (!holdSection) {
+      errors.push('Section HOLD déclarée mais total absent ou inexploitable.');
+      return { holdCollections, errors };
+    }
+
+    if (parseFinancialInteger(holdSection[1]) === null) {
+      errors.push('Total de la section HOLD invalide.');
     }
     
     // Extraire les lignes de la section
@@ -449,12 +465,12 @@ function extractHoldCollections(pdfText: string): any[] {
     // Identifier les lignes contenant des données de collection (ignorer les en-têtes et totaux)
     const collectionLines = lines.filter(line => {
       const trimmedLine = line.trim();
-      // Exclure les lignes d'en-tête et de total
-      return trimmedLine && 
-             !trimmedLine.includes('HOLD') && 
-             !trimmedLine.includes('DATE') &&
-             !trimmedLine.includes('Total') &&
-             /\d{2}\/\d{2}\/\d{4}/.test(trimmedLine); // Contient une date au format DD/MM/YYYY
+      const isHeader = /^DATE(?:\s|\t|$)/i.test(trimmedLine)
+        && /BANQUE|CLIENT|MONTANT|CHEQUE|FACTURE/i.test(trimmedLine);
+      return Boolean(trimmedLine)
+        && !/^HOLD\b/i.test(trimmedLine)
+        && !/^TOTAL\b/i.test(trimmedLine)
+        && !isHeader;
     });
     
     console.log(`📊 ${collectionLines.length} lignes de collections en attente trouvées`);
@@ -463,69 +479,61 @@ function extractHoldCollections(pdfText: string): any[] {
     for (const line of collectionLines) {
       // Extraire les données avec une regex adaptée au format
       // Format attendu: DATE | n°chèque/Ech | BANQUE Client | Client | facture | Montant | DATE DEPOT/Nbre Jrs
-      const collectionMatch = line.match(/(\d{2}\/\d{2}\/\d{4})\s+(\S+)\s+(\S+)\s+([^\|]+?)\s+(\S+)\s+([\d\s,\.]+)\s+(\S+)/);
+      const collectionMatch = line.trim().match(
+        /^(\d{2}\/\d{2}\/\d{4})\s+(\S+)\s+(\S+)\s+([^|]+?)\s+(\S+)\s+([+-]?\d[\d \u00a0\u202f,.]*)\s+(\S+)$/,
+      );
       
-      if (collectionMatch) {
-        const [_, holdDate, chequeNumber, clientBank, clientName, factureRef, amount, depositDateOrDays] = collectionMatch;
-        
-        // Déterminer si c'est une date de dépôt ou un nombre de jours
-        let depositDate = null;
-        let daysRemaining = null;
-        
-        if (depositDateOrDays.match(/\d{2}\/\d{2}\/\d{4}/)) {
-          depositDate = convertToISODate(depositDateOrDays);
-        } else if (!isNaN(parseInt(depositDateOrDays))) {
-          daysRemaining = parseInt(depositDateOrDays);
-        }
-        
-        holdCollections.push({
-          holdDate: convertToISODate(holdDate),
-          chequeNumber: chequeNumber.trim(),
-          clientBank: clientBank.trim(),
-          clientName: clientName.trim(),
-          factureReference: factureRef.trim(),
-          amount: cleanAmount(amount),
-          depositDate,
-          daysRemaining
-        });
+      if (!collectionMatch) {
+        errors.push(`Ligne HOLD non exploitable: ${line.trim()}`);
+        continue;
       }
+
+      const [_, holdDateRaw, chequeNumber, clientBank, clientName, factureRef, amountRaw, depositDateOrDays] = collectionMatch;
+      const holdDate = parseDocumentDate(holdDateRaw);
+      const amount = parseFinancialInteger(amountRaw);
+      let depositDate: string | undefined;
+      let daysRemaining: number | undefined;
+
+      if (/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(depositDateOrDays)) {
+        depositDate = parseDocumentDate(depositDateOrDays) ?? undefined;
+        if (!depositDate) errors.push(`Date de dépôt HOLD invalide: ${depositDateOrDays}.`);
+      } else if (/^\d+$/.test(depositDateOrDays)) {
+        const parsedDays = Number(depositDateOrDays);
+        if (Number.isSafeInteger(parsedDays)) daysRemaining = parsedDays;
+        else errors.push(`Nombre de jours HOLD invalide: ${depositDateOrDays}.`);
+      } else {
+        errors.push(`Date de dépôt ou nombre de jours HOLD invalide: ${depositDateOrDays}.`);
+      }
+
+      if (!holdDate) errors.push(`Date HOLD invalide: ${holdDateRaw}.`);
+      if (amount === null) errors.push(`Montant HOLD invalide pour ${chequeNumber}.`);
+      if (!holdDate || amount === null || (!depositDate && daysRemaining === undefined)) continue;
+
+      holdCollections.push({
+        holdDate,
+        chequeNumber: chequeNumber.trim(),
+        clientBank: clientBank.trim(),
+        clientName: clientName.trim(),
+        factureReference: factureRef.trim(),
+        amount,
+        depositDate,
+        daysRemaining,
+      });
     }
     
     console.log(`✅ ${holdCollections.length} collections en attente extraites`);
   } catch (error) {
     console.error('❌ Erreur extraction collections HOLD:', error);
+    errors.push(error instanceof Error ? error.message : 'Erreur extraction collections HOLD.');
   }
   
-  return holdCollections;
+  return { holdCollections, errors };
 }
 
 export function extractClientReconciliation(pdfText: string): ExtractionResult {
-  try {
-    const clients: any[] = [];
-    const clientPattern = /([A-Z0-9_]+)\s+([A-Z\s]+)\s+([\d\s]+)/g;
-    
-    const matches = pdfText.matchAll(clientPattern);
-    for (const match of matches) {
-      if (cleanAmount(match[3]) > 0) {
-        clients.push({
-          reportDate: extractDate(pdfText),
-          clientCode: match[1],
-          clientName: match[2].trim(),
-          impayesAmount: cleanAmount(match[3])
-        });
-      }
-    }
-    
-    console.log(`Client Reconciliation: ${clients.length} clients avec impayés`);
-    
-    return {
-      success: true,
-      data: clients as any
-    };
-  } catch (error) {
-    return {
-      success: false,
-      errors: [error instanceof Error ? error.message : 'Erreur extraction Client Reconciliation']
-    };
-  }
+  void pdfText;
+  return {
+    success: false,
+    errors: ['Client Reconciliation reste bloqué : aucun moteur d’extraction opérationnel.'],
+  };
 }

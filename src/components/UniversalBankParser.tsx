@@ -6,8 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { BankType, RapportBancaire } from "@/types/banking-universal";
-import { bankingUniversalService } from "@/services/bankingUniversalService";
 import { bdkExtractionService, BDKParsedData } from "@/services/bdkExtractionService";
+import { validateBdkUniversalReadOnlyResult } from "@/services/bdkUniversalReadOnlyContract";
+import { detectBankFromContent } from "@/services/bankIdentity";
+import { reconstructPdfTextLines } from "@/services/pdfTextLineReconstruction";
 import { useToast } from "@/hooks/use-toast";
 import BDKDetailedReport from './BDKDetailedReport';
 import PDFTextViewer from './PDFTextViewer';
@@ -40,22 +42,18 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
   const { toast } = useToast();
 
   const detectBank = useCallback((content: string): BankType | null => {
-    const upperContent = content.toUpperCase();
-    
-    if (upperContent.includes('BDK') || upperContent.includes('BANQUE DE KIGALI')) return 'BDK';
-    if (upperContent.includes('SGS') || upperContent.includes('SOCIÉTÉ GÉNÉRALE')) return 'SGS';
-    if (upperContent.includes('BICIS') || upperContent.includes('BANQUE INTERNATIONALE')) return 'BICIS';
-    if (upperContent.includes('ATB') || upperContent.includes('ATLANTIC BANK')) return 'ATB';
-    if (upperContent.includes('ORA') || upperContent.includes('ORABANK')) return 'ORA';
-    if (upperContent.includes('BIS') || upperContent.includes('BANQUE ISLAMIQUE')) return 'BIS';
-    
-    return null;
+    const bank = detectBankFromContent(content);
+    return bank === 'SGBS' ? 'SGS' : bank;
   }, []);
 
   const parseBDK = useCallback((content: string): { rapport: RapportBancaire; bdkData: BDKParsedData } => {
     console.log('🏦 Parsing BDK avec service avancé...');
     
     const bdkData = bdkExtractionService.extractBDKData(content);
+    const contractErrors = validateBdkUniversalReadOnlyResult(content, bdkData);
+    if (contractErrors.length > 0) {
+      throw new Error(`Rapport BDK non qualifié : ${contractErrors.join(' ')}`);
+    }
     
     const rapport: RapportBancaire = {
       banque: 'BDK',
@@ -140,37 +138,24 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       let bdkData: BDKParsedData | undefined;
 
       switch (bankDetected) {
-        case 'BDK':
+        case 'BDK': {
           const bdkResult = parseBDK(content);
           rapport = bdkResult.rapport;
           bdkData = bdkResult.bdkData;
           break;
+        }
         case 'SGS':
         case 'BICIS':
         case 'ATB':
         case 'ORA':
         case 'BIS':
-          const dateMatch = content.match(/(\d{2}\/\d{2}\/\d{4})/);
-          rapport = {
-            banque: bankDetected,
-            dateRapport: dateMatch?.[1] || new Date().toLocaleDateString('fr-FR'),
-            compte: 'N/A',
-            soldeOuverture: 0,
-            soldeCloture: 0,
-            depotsNonCredites: [],
-            chequesNonDebites: [],
-            autresDebits: [],
-            autresCredits: [],
-            facilitesBancaires: [],
-            impayes: [],
-            metadata: {
-              formatSource: 'PDF',
-              versionParser: '1.0.0',
-              dateExtraction: new Date().toISOString(),
-              checksum: Date.now().toString()
-            }
+          return {
+            success: false,
+            error: `Le parser ${bankDetected} n’est pas encore qualifié. Utilisez le pilote /upload après validation du format.`,
+            bankDetected,
+            rawText: content,
+            fileName,
           };
-          break;
         default:
           throw new Error(`Parser non implémenté pour ${bankDetected}`);
       }
@@ -222,32 +207,21 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
         const parseResult = parseContent(fileContent, file.name);
         
         if (parseResult.success && parseResult.rapport) {
-          const saveResult = await bankingUniversalService.saveReport(
-            parseResult.rapport,
-            { fileName: file.name, content: fileContent }
-          );
-          
-          if (saveResult.success) {
-            onParseComplete?.(parseResult.rapport);
-            
-            if (parseResult.bdkData) {
-              setCurrentBDKData(parseResult.bdkData);
-            }
-            
-            // Store raw text for the first successful file
-            if (!currentRawText && parseResult.rawText) {
-              setCurrentRawText(parseResult.rawText);
-              setCurrentFileName(file.name);
-            }
-            
-            toast({
-              title: "Rapport traité",
-              description: `${parseResult.bankDetected} - ${file.name} ${parseResult.bdkData?.validation.isValid ? '✅' : '⚠️'}`,
-            });
-          } else {
-            parseResult.error = saveResult.error;
-            parseResult.success = false;
+          onParseComplete?.(parseResult.rapport);
+
+          if (parseResult.bdkData) {
+            setCurrentBDKData(parseResult.bdkData);
           }
+
+          if (!currentRawText && parseResult.rawText) {
+            setCurrentRawText(parseResult.rawText);
+            setCurrentFileName(file.name);
+          }
+
+          toast({
+            title: "Rapport analysé localement",
+            description: `${parseResult.bankDetected} - ${file.name} ${parseResult.bdkData?.validation.isValid ? '✅' : '⚠️'}`,
+          });
         }
 
         results.push(parseResult);
@@ -262,7 +236,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       if (successCount > 0) {
         toast({
           title: "Traitement terminé",
-          description: `${successCount} fichier(s) traité(s) avec succès. ${errorCount} erreur(s).`,
+          description: `${successCount} fichier(s) analysé(s) localement. ${errorCount} erreur(s).`,
         });
       }
 
@@ -293,9 +267,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
+        const pageText = reconstructPdfTextLines(textContent.items);
         fullText += pageText + '\n';
       }
       
@@ -336,7 +308,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
           </CardTitle>
           <CardDescription>
             Glissez vos rapports PDF bancaires ou cliquez pour les sélectionner.
-            Support: BDK (complet), SGS, BICIS, ATB, ORA, BIS.
+            Pilotes staging : BDK, SGBS, BICIS, ATB, ORA et BIS. Compatibilité à qualifier sur fichiers anonymisés.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -413,7 +385,7 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
                       {result.success ? (
                         <div className="space-y-1">
                           <p className="font-medium">
-                            Rapport traité avec succès
+                            Rapport analysé avec succès
                             {result.bdkData && (
                               <span className="ml-2">
                                 {result.bdkData.validation.isValid ? '✅' : '⚠️'}
@@ -457,8 +429,8 @@ export const UniversalBankParser: React.FC<UniversalBankParserProps> = ({
       <Alert>
         <AlertCircle className="h-4 w-4" />
         <AlertDescription>
-          <strong>Banques supportées:</strong> BDK (extraction complète avec validation), SGS, BICIS, ATB, ORA, BIS (en développement).
-          Les données sont automatiquement sauvegardées et validées mathématiquement.
+          <strong>Pilotes staging :</strong> BDK, SGBS, BICIS, ATB, ORA et BIS. Compatibilité à qualifier sur fichiers anonymisés.
+          Analyse locale en lecture seule : aucune donnée n’est sauvegardée.
         </AlertDescription>
       </Alert>
     </div>

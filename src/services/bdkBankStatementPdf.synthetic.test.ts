@@ -98,28 +98,20 @@ test('BDK PDF synthetic baseline: specialized parser extracts core sections and 
   assert.equal(result.impayes.length, 1);
 });
 
-test('BDK PDF synthetic baseline: generic section extractor is characterized separately', async () => {
+test('BDK PDF synthetic baseline: generic section extractor fails closed on an unparsed declared section', async () => {
   const result = await bankReportSectionExtractor.extractBankReportSections(SYNTHETIC_BDK_PDF_TEXT, 'BDK');
 
-  assert.equal(result.success, true);
-  assert.ok(result.data);
-  assert.equal(result.data.bank, 'BDK');
-  assert.equal(result.data.openingBalance, 1_000_000);
-  assert.equal(result.data.closingBalance, 1_025_000);
-  assert.equal(Array.isArray(result.data.depositsNotCleared), true);
-  assert.equal(Array.isArray(result.data.checksNotCleared), true);
-  assert.equal(Array.isArray(result.data.bankFacilities), true);
-  assert.equal(Array.isArray(result.data.impayes), true);
+  assert.equal(result.success, false);
+  assert.equal(result.data, undefined);
+  assert.match((result.errors ?? []).join(' '), /dépôts non crédités/i);
 });
 
-test('BDK PDF synthetic baseline: bank report service keeps analysis reports on section extraction path', async () => {
+test('BDK PDF synthetic baseline: bank report service propagates the fail-closed section verdict', async () => {
   const result = await processSyntheticBDKPDF(SYNTHETIC_BDK_PDF_TEXT);
 
-  assert.equal(result.success, true);
-  assert.ok(result.data);
-  assert.equal(result.data.bank, 'BDK');
-  assert.equal(result.data.openingBalance, 1_000_000);
-  assert.equal(result.data.closingBalance, 1_025_000);
+  assert.equal(result.success, false);
+  assert.equal(result.data, undefined);
+  assert.match((result.errors ?? []).join(' '), /dépôts non crédités/i);
 });
 
 test('BDK account statement synthetic fixture: expected balances follow opening + credits - debits = closing', () => {
@@ -451,13 +443,8 @@ test('BDK account statement synthetic fixture: specialized parser documents curr
 test('BDK account statement synthetic fixture: generic section extractor documents current limitation', async () => {
   const result = await bankReportSectionExtractor.extractBankReportSections(ACCOUNT_STATEMENT_TEXT, 'BDK');
 
-  // Current limitation: account-statement sections do not match the generic BDK bank-report patterns yet.
-  assert.equal(result.success, true);
-  assert.ok(result.data);
-  assert.equal(result.data.openingBalance, 0);
-  assert.equal(result.data.closingBalance, 0);
-  assert.equal(result.data.depositsNotCleared.length, 0);
-  assert.equal(result.data.checksNotCleared.length, 0);
-  assert.equal(result.data.bankFacilities.length, 0);
-  assert.equal(result.data.impayes.length, 0);
+  // Unsupported account statements must fail closed instead of producing a false zero report.
+  assert.equal(result.success, false);
+  assert.equal(result.data, undefined);
+  assert.ok((result.errors ?? []).length > 0);
 });

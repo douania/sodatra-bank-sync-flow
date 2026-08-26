@@ -3,6 +3,7 @@ import {
   type OperationalImportDeploymentTarget,
   type OperationalImportQualification,
 } from './operationalImportReadiness';
+import { detectBankFromContent, detectBankFromFileName } from './bankIdentity';
 
 export type ImportDocumentKind =
   | 'COLLECTION_REPORT'
@@ -57,15 +58,6 @@ export interface ImportPreflightOptions {
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['xlsx', 'xls', 'csv', 'pdf']);
-
-const BANK_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
-  { label: 'BDK', patterns: [/\bBDK\b/, /BANQUE\s+DE\s+DAKAR/] },
-  { label: 'ATB', patterns: [/\bATB\b/, /ARAB\s+TUNISIAN/, /BANQUE\s+ATLANTIQUE/] },
-  { label: 'BICIS', patterns: [/\bBICIS\b/] },
-  { label: 'ORA', patterns: [/\bORA\b/, /\bORABANK\b/] },
-  { label: 'SGBS', patterns: [/\bSGBS\b/, /\bSGS\b/, /SOCIETE\s+GENERALE/] },
-  { label: 'BIS', patterns: [/\bBIS\b/, /BANQUE\s+ISLAMIQUE/] },
-];
 
 function normalizeDocumentText(value: string): string {
   return value
@@ -129,34 +121,56 @@ function getFingerprint(file: ImportFileDescriptor): string {
   return `${file.name.toLowerCase()}|${file.size}|${file.lastModified}`;
 }
 
+function detectNormalizedDocumentFamily(normalized: string): {
+  kind: ImportDocumentKind;
+  label: string;
+} {
+  const candidates: Array<{ kind: ImportDocumentKind; label: string }> = [];
+  if (
+    /\bCOLLECTIONS?\b/.test(normalized)
+    || /\bCOLLECT\b/.test(normalized)
+    || /\bCLIENT\s+CODE\b/.test(normalized)
+  ) {
+    candidates.push({ kind: 'COLLECTION_REPORT', label: 'Collection Report' });
+  }
+  if (
+    /\bFUND\s+POSITION\b/.test(normalized)
+    || /\bFP\b/.test(normalized)
+    || /\bBOOK\s+BALANCE\b/.test(normalized)
+  ) {
+    candidates.push({ kind: 'FUND_POSITION', label: 'Fund Position' });
+  }
+  if (/\bCLIENT\b/.test(normalized) && /\bRECON(?:CILIATION)?\b/.test(normalized)) {
+    candidates.push({ kind: 'CLIENT_RECONCILIATION', label: 'Client Reconciliation' });
+  }
+  if (/\bINTERNAL\s+BOOK\b/.test(normalized)) {
+    candidates.push({ kind: 'INTERNAL_BOOK', label: 'Internal Book' });
+  }
+
+  const containsBridge = /\bBRIDGE\b/.test(normalized);
+  if (containsBridge && candidates.length === 0) {
+    return { kind: 'UNKNOWN', label: 'BRIDGE — utiliser Relevés quotidiens' };
+  }
+
+  if (containsBridge || candidates.length > 1) {
+    return { kind: 'UNKNOWN', label: 'Document ambigu — plusieurs familles détectées' };
+  }
+
+  if (candidates.length === 1) return candidates[0];
+
+  return { kind: 'UNKNOWN', label: 'Document non identifié' };
+}
+
 function detectNormalizedImportDocument(normalized: string): {
   kind: ImportDocumentKind;
   label: string;
 } {
-  if (/\bCOLLECTIONS?\b/.test(normalized) || /\bCOLLECT\b/.test(normalized)) {
-    return { kind: 'COLLECTION_REPORT', label: 'Collection Report' };
-  }
+  const family = detectNormalizedDocumentFamily(normalized);
+  if (family.kind !== 'UNKNOWN' || family.label !== 'Document non identifié') return family;
 
-  if (/\bFUND\s+POSITION\b/.test(normalized) || /\bFP\b/.test(normalized)) {
-    return { kind: 'FUND_POSITION', label: 'Fund Position' };
-  }
-
-  if (/\bCLIENT\b/.test(normalized) && /\bRECON(?:CILIATION)?\b/.test(normalized)) {
-    return { kind: 'CLIENT_RECONCILIATION', label: 'Client Reconciliation' };
-  }
-
-  if (/\bINTERNAL\s+BOOK\b/.test(normalized)) {
-    return { kind: 'INTERNAL_BOOK', label: 'Internal Book' };
-  }
-
-  if (/\bBRIDGE\b/.test(normalized)) {
-    return { kind: 'UNKNOWN', label: 'BRIDGE — utiliser Relevés quotidiens' };
-  }
-
-  for (const bank of BANK_PATTERNS) {
-    if (bank.patterns.some(pattern => pattern.test(normalized))) {
-      return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank.label}` };
-    }
+  const bank = detectBankFromFileName(normalized);
+  if (bank) {
+    return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank}` };
   }
 
   return { kind: 'UNKNOWN', label: 'Document non identifié' };
@@ -175,15 +189,15 @@ export function detectImportDocumentFromText(text: string): {
 } {
   const normalized = normalizeDocumentText(text);
 
-  if (/\bCLIENT\s+CODE\b/.test(normalized)) {
-    return { kind: 'COLLECTION_REPORT', label: 'Collection Report' };
+  const family = detectNormalizedDocumentFamily(normalized);
+  if (family.kind !== 'UNKNOWN' || family.label !== 'Document non identifié') return family;
+
+  const bank = detectBankFromContent(normalized);
+  if (bank) {
+    return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank}` };
   }
 
-  if (/\bBOOK\s+BALANCE\b/.test(normalized)) {
-    return { kind: 'FUND_POSITION', label: 'Fund Position' };
-  }
-
-  return detectNormalizedImportDocument(normalized);
+  return family;
 }
 
 export function buildImportPreflight<TFile extends ImportFileDescriptor>(

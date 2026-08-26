@@ -3,6 +3,7 @@ import test from 'node:test';
 import * as XLSX from 'xlsx';
 
 import { detectDocumentType } from './documentDetectionService';
+import { detectImportDocumentFromText } from './importPreflightService';
 
 function namedFile(name: string): File {
   return new File(['synthetic'], name, { type: name.endsWith('.pdf') ? 'application/pdf' : '' });
@@ -46,4 +47,11 @@ test('un nom neutre peut être qualifié par un classeur synthétique, sans Supa
 
   assert.equal(detection.detectedType, 'collectionReport');
   assert.equal(detection.confidence, 'medium');
+});
+
+test('les familles documentaires priment sur une banque citée dans le contenu', () => {
+  assert.equal(detectImportDocumentFromText('RAPPORT COLLECTIONS JUILLET\nBDK').kind, 'COLLECTION_REPORT');
+  assert.equal(detectImportDocumentFromText('INTERNAL BOOK\nBDK').kind, 'INTERNAL_BOOK');
+  assert.equal(detectImportDocumentFromText('BRIDGE RELEVE\nORABANK').kind, 'UNKNOWN');
+  assert.equal(detectImportDocumentFromText('FUND POSITION 05/08/2026\nBDK 100').kind, 'FUND_POSITION');
 });

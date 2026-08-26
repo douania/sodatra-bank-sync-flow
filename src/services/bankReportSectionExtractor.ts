@@ -1,15 +1,18 @@
 
 import { BankReport, BankFacility, Impaye, DepositNotCleared, CheckNotCleared } from '@/types/banking';
+import { detectBankFromContent } from './bankIdentity';
+import { hasStructuredLines, parseDocumentDate, parseFinancialInteger } from './bankReportExtractionContract';
 
 export interface SectionExtractionResult {
   success: boolean;
-  data?: any;
+  data?: BankReport;
   errors?: string[];
 }
 
 export interface BankSectionConfig {
   bankName: string;
   patterns: {
+    reportDate: RegExp;
     openingBalance: RegExp;
     closingBalance: RegExp;
     depositsSection: RegExp;
@@ -28,8 +31,9 @@ class BankReportSectionExtractor {
     {
       bankName: 'BDK',
       patterns: {
-        openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)\s+([\d\s]+)/i,
+        reportDate: /(?:\bBDK\b|BANQUE\s+DE\s+DAKAR)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
+        openingBalance: /OPENING\s+BALANCE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /CLOSING\s+BALANCE\s+as\s+per\s+Book\s*:\s*C=\(A-B\)[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOSIT\s+NOT\s+YET\s+CLEARED/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(REGUL\s+IMPAYE|REGLEMENT\s+FACTURE|TR\s+No\/FACT\.No)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECK\s+Not\s+yet\s+cleared/i,
@@ -43,8 +47,9 @@ class BankReportSectionExtractor {
     {
       bankName: 'ATB',
       patterns: {
-        openingBalance: /SOLDE\s+OUVERTURE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /SOLDE\s+CLOTURE\s+COMPTABLE\s*:\s*([\d\s]+)/i,
+        reportDate: /(?:\bATB\b|ARAB\s+TUNISIAN\s+BANK|BANQUE\s+ATLANTIQUE)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
+        openingBalance: /SOLDE\s+OUVERTURE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /SOLDE\s+CLOTURE\s+COMPTABLE\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOTS\s+NON\s+CREDITES/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHEQUES\s+EMIS\s+NON\s+DEBITES/i,
@@ -58,8 +63,9 @@ class BankReportSectionExtractor {
     {
       bankName: 'BICIS',
       patterns: {
-        openingBalance: /SOLDE\s+INITIAL\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /SOLDE\s+FINAL\s+COMPTABLE\s*:\s*([\d\s]+)/i,
+        reportDate: /\bBICIS\b[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
+        openingBalance: /SOLDE\s+INITIAL\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /SOLDE\s+FINAL\s+COMPTABLE\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOTS\s+EN\s+ATTENTE/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHEQUES\s+EN\s+CIRCULATION/i,
@@ -73,8 +79,9 @@ class BankReportSectionExtractor {
     {
       bankName: 'ORA',
       patterns: {
-        openingBalance: /BALANCE\s+OPENING\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /BALANCE\s+CLOSING\s+BOOK\s*:\s*([\d\s]+)/i,
+        reportDate: /(?:\bORA\b|\bORABANK\b|\bORA\s+BANK\b)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
+        openingBalance: /BALANCE\s+OPENING\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /BALANCE\s+CLOSING\s+BOOK\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOSITS\s+NOT\s+CLEARED/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECKS\s+NOT\s+CLEARED/i,
@@ -88,8 +95,9 @@ class BankReportSectionExtractor {
     {
       bankName: 'SGBS',
       patterns: {
-        openingBalance: /SOLDE\s+OUVERTURE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /SOLDE\s+FERMETURE\s+LIVRE\s*:\s*([\d\s]+)/i,
+        reportDate: /(?:\bSGBS\b|\bSGS\b|SOCIETE\s+GENERALE)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
+        openingBalance: /SOLDE\s+OUVERTURE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /SOLDE\s+FERMETURE\s+LIVRE\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOTS\s+NON\s+CREDITES/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHEQUES\s+NON\s+DEBITES/i,
@@ -103,8 +111,9 @@ class BankReportSectionExtractor {
     {
       bankName: 'BIS',
       patterns: {
-        openingBalance: /OPENING\s+BALANCE\s+\d{2}\/\d{2}\/\d{4}\s+([\d\s]+)/i,
-        closingBalance: /CLOSING\s+BALANCE\s+BOOK\s*:\s*([\d\s]+)/i,
+        reportDate: /(?:\bBIS\b|BANQUE\s+ISLAMIQUE(?:\s+DU\s+SENEGAL)?)[^\n]{0,80}?(\d{2}[/-]\d{2}[/-]\d{4})/i,
+        openingBalance: /OPENING\s+BALANCE\s+(\d{2}[/-]\d{2}[/-]\d{4})[ \t]+([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
+        closingBalance: /CLOSING\s+BALANCE\s+BOOK\s*:[ \t]*([^\t\r\n]+?)(?=\t|\r?\n|$)/i,
         depositsSection: /DEPOSITS\s+NOT\s+CLEARED/i,
         depositLine: /(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*?)\s+([\d\s]+)/i,
         checksSection: /CHECKS\s+NOT\s+CLEARED/i,
@@ -129,29 +138,52 @@ class BankReportSectionExtractor {
     }
 
     try {
+      const errors: string[] = [];
+      if (!hasStructuredLines(textContent, 3)) {
+        return {
+          success: false,
+          errors: ['Structure de lignes insuffisante : le document PDF semble aplati.'],
+        };
+      }
+
+      const contentBank = detectBankFromContent(textContent);
+      if (contentBank !== bankName) {
+        return {
+          success: false,
+          errors: [`Identité bancaire non corroborée pour ${bankName}.`],
+        };
+      }
+
+      const reportDateMatch = textContent.match(config.patterns.reportDate);
+      const headerDate = parseDocumentDate(reportDateMatch?.[1]);
+
+      const openingMatch = textContent.match(config.patterns.openingBalance);
+      const closingMatch = textContent.match(config.patterns.closingBalance);
+      const openingDate = parseDocumentDate(openingMatch?.[1]);
+      const reportDate = openingDate ?? headerDate;
+      const openingBalance = openingMatch ? parseFinancialInteger(openingMatch[2]) : null;
+      const closingBalance = closingMatch ? parseFinancialInteger(closingMatch[1]) : null;
+
+      if (!reportDate) errors.push('Date de rapport absente ou invalide.');
+      if (openingMatch && !openingDate) errors.push('Date du solde d’ouverture invalide.');
+      if (openingDate && headerDate && openingDate !== headerDate) {
+        errors.push('Date de rapport incohérente avec la date du solde d’ouverture.');
+      }
+      if (!openingMatch) errors.push('Solde d’ouverture daté absent.');
+      if (!closingMatch) errors.push('Solde de clôture absent.');
+      if (openingMatch && openingBalance === null) errors.push('Solde d’ouverture invalide.');
+      if (closingMatch && closingBalance === null) errors.push('Solde de clôture invalide.');
+
       const bankReport: BankReport = {
         bank: bankName,
-        date: new Date().toISOString().split('T')[0],
-        openingBalance: 0,
-        closingBalance: 0,
+        date: reportDate ?? '',
+        openingBalance: openingBalance ?? 0,
+        closingBalance: closingBalance ?? 0,
         bankFacilities: [],
         depositsNotCleared: [],
         checksNotCleared: [],
         impayes: []
       };
-
-      // Extraction des soldes
-      const openingMatch = textContent.match(config.patterns.openingBalance);
-      if (openingMatch) {
-        bankReport.openingBalance = this.parseAmount(openingMatch[1]);
-        console.log(`📊 Solde ouverture: ${bankReport.openingBalance}`);
-      }
-
-      const closingMatch = textContent.match(config.patterns.closingBalance);
-      if (closingMatch) {
-        bankReport.closingBalance = this.parseAmount(closingMatch[1]);
-        console.log(`📊 Solde clôture: ${bankReport.closingBalance}`);
-      }
 
       // Extraction des dépôts non crédités
       bankReport.depositsNotCleared = this.extractDepositsNotCleared(textContent, config);
@@ -168,6 +200,20 @@ class BankReportSectionExtractor {
       // Extraction des impayés
       bankReport.impayes = this.extractImpayes(textContent, config);
       console.log(`❌ Impayés: ${bankReport.impayes.length}`);
+
+      const sectionChecks = [
+        [config.patterns.depositsSection, bankReport.depositsNotCleared.length, 'dépôts non crédités'],
+        [config.patterns.checksSection, bankReport.checksNotCleared?.length ?? 0, 'chèques non débités'],
+        [config.patterns.facilitiesSection, bankReport.bankFacilities.length, 'facilités bancaires'],
+        [config.patterns.impayesSection, bankReport.impayes.length, 'impayés'],
+      ] as const;
+      for (const [sectionPattern, count, label] of sectionChecks) {
+        if (this.hasDeclaredSection(textContent, sectionPattern) && count === 0) {
+          errors.push(`Section ${label} déclarée mais sans ligne exploitable.`);
+        }
+      }
+
+      if (errors.length > 0) return { success: false, errors };
 
       return {
         success: true,
@@ -189,23 +235,26 @@ class BankReportSectionExtractor {
     let inDepositsSection = false;
 
     for (const line of lines) {
-      if (config.patterns.depositsSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.depositsSection)) {
         inDepositsSection = true;
         continue;
       }
 
       if (inDepositsSection && line.trim()) {
-        const match = line.match(config.patterns.depositLine);
+        const match = this.matchCompleteLine(line, config.patterns.depositLine);
         if (match) {
+          const hasExplicitPaymentType = match.length === 6;
           deposits.push({
             dateDepot: this.parseDate(match[1]),
-            reference: match[3] || '',
-            clientCode: match[4] || '',
-            typeReglement: match[3] || 'DEPOT',
-            montant: this.parseAmount(match[5])
+            reference: match[2] || '',
+            clientCode: (hasExplicitPaymentType ? match[4] : match[3]) || '',
+            typeReglement: hasExplicitPaymentType ? match[3] : 'DEPOT',
+            montant: this.parseAmount(match[match.length - 1])
           });
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+        } else if (this.isSectionBoundary(line, config.patterns.depositsSection, config)) {
           inDepositsSection = false;
+        } else {
+          throw new Error(`Ligne de dépôts non crédités non exploitable: ${line.trim()}`);
         }
       }
     }
@@ -219,13 +268,13 @@ class BankReportSectionExtractor {
     let inChecksSection = false;
 
     for (const line of lines) {
-      if (config.patterns.checksSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.checksSection)) {
         inChecksSection = true;
         continue;
       }
 
       if (inChecksSection && line.trim()) {
-        const match = line.match(config.patterns.checkLine);
+        const match = this.matchCompleteLine(line, config.patterns.checkLine);
         if (match) {
           checks.push({
             dateEmission: this.parseDate(match[1]),
@@ -233,8 +282,10 @@ class BankReportSectionExtractor {
             beneficiaire: match[3] || '',
             montant: this.parseAmount(match[4])
           });
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+        } else if (this.isSectionBoundary(line, config.patterns.checksSection, config)) {
           inChecksSection = false;
+        } else {
+          throw new Error(`Ligne de chèques non débités non exploitable: ${line.trim()}`);
         }
       }
     }
@@ -248,28 +299,28 @@ class BankReportSectionExtractor {
     let inFacilitiesSection = false;
 
     for (const line of lines) {
-      if (config.patterns.facilitiesSection.test(line)) {
+      if (this.matchesSectionHeading(line, config.patterns.facilitiesSection)) {
         inFacilitiesSection = true;
         continue;
       }
 
       if (inFacilitiesSection && line.trim()) {
-        const match = line.match(config.patterns.facilityLine);
+        const match = this.matchCompleteLine(line, config.patterns.facilityLine);
         if (match && match[1] && !match[1].match(/CLIENT|TOTAL|LIMIT/i)) {
           const limitAmount = this.parseAmount(match[2]);
           const usedAmount = this.parseAmount(match[3]);
           const availableAmount = this.parseAmount(match[4]);
 
-          if (limitAmount > 0) {
-            facilities.push({
-              facilityType: match[1].trim(),
-              limitAmount,
-              usedAmount,
-              availableAmount
-            });
-          }
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+          facilities.push({
+            facilityType: match[1].trim(),
+            limitAmount,
+            usedAmount,
+            availableAmount
+          });
+        } else if (this.isSectionBoundary(line, config.patterns.facilitiesSection, config)) {
           inFacilitiesSection = false;
+        } else {
+          throw new Error(`Ligne de facilités bancaires non exploitable: ${line.trim()}`);
         }
       }
     }
@@ -285,13 +336,8 @@ class BankReportSectionExtractor {
     console.log('🔍 Recherche des impayés dans le texte...');
 
     for (const line of lines) {
-      if (config.patterns.impayesSection.test(line)) {
-        inImpayesSection = true;
-        continue;
-      }
-
       if (inImpayesSection && line.trim()) {
-        const match = line.match(config.patterns.impayeLine);
+        const match = this.matchCompleteLine(line, config.patterns.impayeLine);
         if (match) {
           // Extraire le code client et la description (nom du client)
           const clientCode = match[3]?.trim() || 'UNKNOWN';
@@ -299,43 +345,79 @@ class BankReportSectionExtractor {
           
           console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
           
+          const firstDate = this.parseDate(match[1]);
+          const secondDate = match[2] ? this.parseDate(match[2]) : undefined;
           impayes.push({
-            dateRetour: this.parseDate(match[1]),
-            dateEcheance: this.parseDate(match[2]),
+            dateRetour: secondDate ? firstDate : undefined,
+            dateEcheance: secondDate ?? firstDate,
             clientCode: clientCode,
             description: description,
-            montant: this.parseAmount(match[5])
+            montant: this.parseAmount(match[match.length - 1])
           });
-        } else if (line.match(/^[A-Z\s]+:/) || line.match(/TOTAL|SOUS-TOTAL/i)) {
+          continue;
+        } else if (this.isSectionBoundary(line, config.patterns.impayesSection, config)) {
           inImpayesSection = false;
+        } else {
+          throw new Error(`Ligne d’impayés non exploitable: ${line.trim()}`);
         }
+      }
+
+      if (this.matchesSectionHeading(line, config.patterns.impayesSection)) {
+        inImpayesSection = true;
       }
     }
 
     return impayes;
   }
 
-  private parseAmount(value: string): number {
-    if (!value) return 0;
-    return parseInt(value.replace(/\s/g, ''), 10) || 0;
+  private parseAmount(value: string | undefined): number {
+    const parsed = parseFinancialInteger(value);
+    if (parsed === null) throw new Error(`Montant invalide: ${value ?? 'absent'}`);
+    return parsed;
   }
 
-  private parseDate(value: string): string {
-    if (!value) return new Date().toISOString().split('T')[0];
-    
-    try {
-      const parts = value.split('/');
-      if (parts.length === 3) {
-        const day = parts[0].padStart(2, '0');
-        const month = parts[1].padStart(2, '0');
-        const year = parts[2];
-        return `${year}-${month}-${day}`;
-      }
-    } catch {
-      // Fallback à la date actuelle
-    }
-    
-    return new Date().toISOString().split('T')[0];
+  private matchCompleteLine(line: string, pattern: RegExp): RegExpMatchArray | null {
+    const trimmedLine = line.trim();
+    const match = trimmedLine.match(pattern);
+    if (!match || match.index !== 0 || match[0].length !== trimmedLine.length) return null;
+    return match;
+  }
+
+  private isSectionBoundary(
+    line: string,
+    currentSection: RegExp,
+    config: BankSectionConfig,
+  ): boolean {
+    const otherSections = [
+      config.patterns.depositsSection,
+      config.patterns.checksSection,
+      config.patterns.facilitiesSection,
+      config.patterns.impayesSection,
+    ].filter(pattern => pattern !== currentSection);
+
+    return otherSections.some(pattern => this.matchesSectionHeading(line, pattern))
+      || /^(?:TOTAL|SOUS-TOTAL)\b/i.test(line.trim())
+      || /^[A-Z\s]+:\s*$/i.test(line.trim());
+  }
+
+  private matchesSectionHeading(line: string, pattern: RegExp): boolean {
+    const headingCandidate = line
+      .trim()
+      .replace(/^(?:ADD|LESS|PLUS|MOINS)\s*:\s*/i, '');
+    const match = headingCandidate.match(pattern);
+    return Boolean(match && match.index === 0);
+  }
+
+  private hasDeclaredSection(textContent: string, pattern: RegExp): boolean {
+    return textContent
+      .split(/\r?\n/)
+      .some(line => this.matchesSectionHeading(line, pattern));
+  }
+
+  private parseDate(value: string | undefined): string {
+    const parsed = parseDocumentDate(value);
+    if (!parsed) throw new Error(`Date invalide: ${value ?? 'absente'}`);
+    return parsed;
   }
 }
 

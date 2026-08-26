@@ -17,49 +17,12 @@ export class BankingUniversalService {
    * Sauvegarde un rapport bancaire dans Supabase
    */
   async saveReport(rapport: RapportBancaire, rawData: any): Promise<{ success: boolean; error?: string }> {
-    try {
-      // Récupérer l'utilisateur connecté
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      // Convertir la date au format ISO si nécessaire
-      const reportDate = this.convertDateToISO(rapport.dateRapport);
-      
-      // Audit log (sans user_id si pas connecté)
-      await this.logAction('save_report', rapport.banque, reportDate, {
-        checksum: rapport.metadata.checksum
-      });
-
-      const { data, error } = await supabase
-        .from('universal_bank_reports')
-        .upsert({
-          bank_name: rapport.banque,
-          report_date: reportDate,
-          raw_data: rawData as any,
-          processed_data: rapport as any,
-          checksum: rapport.metadata.checksum,
-          parser_version: rapport.metadata.versionParser,
-          user_id: user?.id || null
-        }, {
-          onConflict: 'bank_name,report_date,checksum'
-        });
-
-      if (error) throw error;
-
-      return { success: true };
-    } catch (error) {
-      console.error('Erreur sauvegarde rapport:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
-      
-      // Messages d'erreur plus explicites
-      if (errorMessage.includes('42501')) {
-        return { success: false, error: 'Erreur de permissions. Veuillez vous connecter.' };
-      }
-      if (errorMessage.includes('22008')) {
-        return { success: false, error: 'Format de date invalide. Veuillez vérifier le format des dates.' };
-      }
-      
-      return { success: false, error: errorMessage };
-    }
+    void rapport;
+    void rawData;
+    return {
+      success: false,
+      error: 'Document Understanding est strictement en lecture seule ; aucune sauvegarde n’est autorisée.',
+    };
   }
 
   /**

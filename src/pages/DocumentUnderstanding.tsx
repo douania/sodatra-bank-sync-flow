@@ -812,9 +812,9 @@ const DocumentUnderstanding = () => {
             <div className="p-4 bg-blue-50 rounded-lg">
               <h3 className="font-semibold text-blue-800 mb-2">Rapports BDK (Nouveau)</h3>
               <p className="text-sm text-blue-700">
-                Le nouveau parser BDK effectue une extraction complète avec validation mathématique. Il capture tous les dépôts, 
-                chèques, facilités et impayés avec leurs détails, puis vérifie que la formule Ouverture + Dépôts - Chèques = Clôture 
-                est respectée. Les écarts sont automatiquement détectés et signalés.
+                Le parser BDK tente une extraction structurée avec validation mathématique. Lorsqu’une section est exploitable,
+                il contrôle la formule Ouverture + Dépôts - Chèques = Clôture et signale les écarts. Ce parcours reste un pilote
+                staging à qualifier sur fichiers anonymisés représentatifs.
               </p>
             </div>
             

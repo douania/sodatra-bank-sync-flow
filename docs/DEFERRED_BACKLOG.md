@@ -48,7 +48,9 @@
 **Précisions Lot 3A** : services PDF/BDK (extraction) confirmés **hors pipeline Excel**. Les pipelines Excel actifs sont `fileProcessingService` (FileUpload) et `enhancedFileProcessingService` (FileUploadBulk), redondants à ~90 %.
 **Risque** : Comportement imprévisible selon le chemin d'exécution.
 **Lot probable** : Lot 4 (fusion `fileProcessingService` / `enhancedFileProcessingService`, suppression services PDF orphelins)
-**Statut : `RESOLVED_IN_REVIEW` — Operational Import Production Readiness (2026-08-20)**. `/upload-bulk` redirige vers l'unique parcours `/upload`; la page orpheline `FileUploadBulk.tsx` et le moteur redondant `enhancedFileProcessingService.ts` sont supprimés. La seule capacité encore consommée par `Document Understanding` a été extraite dans `documentDetectionService.ts`, strictement read-only. `fileProcessingService` reste l'unique moteur global d'import. Clôture définitive après contre-review et merge de la PR du lot.
+**Statut : `CLOSED` — Operational Import Production Readiness, PR #130 mergée (2026-08-20)**. `/upload-bulk` redirige vers l'unique parcours `/upload`; la page orpheline `FileUploadBulk.tsx` et le moteur redondant `enhancedFileProcessingService.ts` sont supprimés. La seule capacité encore consommée par `Document Understanding` a été extraite dans `documentDetectionService.ts`, strictement read-only. `fileProcessingService` reste l'unique moteur global d'import.
+
+**Qualification multi-banques locale (2026-08-25)** : la coexistence des extracteurs spécialisés reste une dette distincte, mais le chemin actif `/upload` est désormais borné par une identité bancaire canonique, des contrats fail-closed et une gate CI banque par banque. BDK/ATB/BICIS/ORA/SGBS/BIS et Fund Position restent `STAGING_PILOT`; qualification sur fichiers réels anonymisés différée avant toute promotion.
 
 ---
 

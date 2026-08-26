@@ -73,9 +73,9 @@ Pas d'API bancaire directe.
 | Module | Route | Statut |
 |---|---|---|
 | Dashboard principal | `/dashboard` | Actif, dépend de la qualité des imports et RLS |
-| Import opérationnel | `/upload` | Pipeline global unique ; précontrôle, matrice de qualification et accès `admin/manager` préparés ; production toujours désactivée |
+| Import opérationnel | `/upload` | Pipeline global unique ; Collection Report/Internal Book candidats production ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
 | Alias upload bulk | `/upload-bulk` | Compatibilité : redirection vers `/upload`, aucun pipeline distinct |
-| Document Understanding | `/document-understanding` | Actif, notamment BDK/PDF ; détection read-only isolée du pipeline d'import |
+| Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
 | Quality Control | `/quality-control` | Actif |
 | Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
 | Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt daily ou backfill BIS admin sous grant, staging, promotion/supersede, canonical, audit et reporting ; accès par rôles ; cible verrouillée staging |
@@ -96,9 +96,18 @@ Les composants ou fichiers orphelins confirmés ont également été supprimés 
 Le pipeline global est unique : `/upload` utilise `FileUpload.tsx` et
 `fileProcessingService`. `/upload-bulk` redirige vers ce parcours. L'ancien
 `FileUploadBulk.tsx` et `enhancedFileProcessingService` ont été retirés dans le
-lot Operational Import Production Readiness ; **DEF-05 est résolu dans le
-delta local, sous réserve de merge**. `Document Understanding` utilise le
-détecteur read-only `documentDetectionService`, qui ne porte aucune écriture.
+lot Operational Import Production Readiness ; **DEF-05 est clos depuis le merge
+de la PR #130**. `Document Understanding` utilise le détecteur read-only
+`documentDetectionService` et sa défense en profondeur refuse explicitement
+`saveReport` avant tout accès Supabase.
+
+Les rapports `/upload` BDK, ATB, BICIS, ORA, SGBS et BIS utilisent une identité
+bancaire canonique corroborée entre nom et contenu. Leur extraction exige une
+structure de lignes, une date calendaire et au moins un solde explicite valide.
+Fund Position exige une date extraite, un grand total explicite (zéro autorisé)
+et au moins un détail bancaire exploitable. Ces familles restent
+`STAGING_PILOT` jusqu'à qualification sur fichiers réels anonymisés ; aucune
+preuve synthétique ne vaut promotion production.
 
 Le flux `/daily-statements` est séparé de ces deux pipelines :
 - seuls les relevés ONLINE correspondant à un profil structurel exact sont acceptés ;
@@ -139,7 +148,8 @@ Ne pas modifier sans justification CTO explicite :
 ## Backlog prioritaire
 
 Ouverts / suivis :
-- DEF-05 : `RESOLVED_IN_REVIEW`, pipeline global consolidé dans le lot Operational Import Production Readiness ;
+- DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
+- Operational Import multi-bank : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES`, contrats fail-closed et gate CI ajoutés sans promotion de banque ;
 - OPS-CORE-1 : `CLOSED`, précontrôle d'import validé staging et publié en production le 2026-08-13 ;
 - DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;
