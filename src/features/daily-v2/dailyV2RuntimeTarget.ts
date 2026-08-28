@@ -136,3 +136,28 @@ export function applyDailyV2RuntimeMutationLock(
     admin: targetCapabilities.admin && serverAllowsMutations,
   };
 }
+
+export interface DailyV2ImportPermissions {
+  canPrepareLocally: boolean;
+  canPersist: boolean;
+}
+
+/**
+ * Distingue la préparation purement locale de la persistance serveur.
+ *
+ * La préparation reste réservée aux rôles de dépôt et aux cibles dont la
+ * politique statique autorise le flux (staging aujourd'hui). Le verrou serveur
+ * ne peut ouvrir que la persistance : lorsqu'il est fermé ou indisponible, le
+ * parsing local reste disponible mais aucun appel RPC ne l'est.
+ */
+export function resolveDailyV2ImportPermissions(
+  hasDepositRole: boolean,
+  targetCapabilities: Record<DailyV2Capability, boolean>,
+  effectiveCapabilities: Record<DailyV2Capability, boolean>,
+): DailyV2ImportPermissions {
+  const canPrepareLocally = hasDepositRole && targetCapabilities.deposit;
+  return {
+    canPrepareLocally,
+    canPersist: canPrepareLocally && effectiveCapabilities.deposit,
+  };
+}
