@@ -186,6 +186,37 @@ Rapport : `docs/OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_LOCAL_REPORT.md`.
 
 ---
 
+## OPERATIONAL-IMPORT-MULTI-BANK-REAL-FILE-QUALIFICATION-STAGING-PREP
+
+**Statut : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED` (2026-08-28)**
+
+Un harness local sans persistance prépare la qualification des rapports BDK,
+ATB, BICIS, ORA, SGBS, BIS et Fund Position. Il exige une attestation
+d'anonymisation, lit un seul PDF/XLSX/XLS depuis un chemin absolu extérieur au
+dépôt, masque les logs des extracteurs et ne retourne qu'une preuve JSON
+agrégée sans valeur financière, identité, référence, texte ou chemin source.
+Le vrai nom du fichier sert uniquement à corroborer la banque en mémoire et
+n'est jamais restitué.
+
+Le harness refuse les chemins dans le dépôt, les formats/tailles interdits,
+l'identité bancaire non corroborée et tout échec du contrat fail-closed. La
+lecture est précédée par le contrôle du fichier régulier, de sa taille et de sa
+signature ; pages PDF, feuilles/lignes Excel, archive décompressée et texte
+extrait sont bornés. Il n'importe aucun client Supabase, n'effectue aucun accès
+réseau et n'appelle aucune persistance. Sa décision positive reste
+`LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` : elle ne vaut jamais promotion.
+
+Aucun fichier réel n'a été reçu ou traité et aucun staging n'a été accédé dans
+ce pack. Les sept familles restent `STAGING_PILOT`; Client Reconciliation reste
+`BLOCKED`. La campagne future exigera des fichiers fournis volontairement et
+anonymisés, une revue humaine, un préflight staging exact et des GO séparés pour
+toute lecture puis toute écriture/rollback.
+
+Runbook :
+`docs/OPERATIONAL_IMPORT_MULTI_BANK_REAL_FILE_QUALIFICATION_STAGING_PREP.md`.
+
+---
+
 ## OPERATIONAL-IMPORT-PRODUCTION-READINESS
 
 **Statut : `IMPLEMENTED_LOCAL — REVIEW_REQUIRED` (2026-08-20)**

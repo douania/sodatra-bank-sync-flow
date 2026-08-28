@@ -59,7 +59,9 @@ ne remplace jamais les contrôles serveur Auth, rôles, RLS et grants. La
 coexistence des extracteurs spécialisés reste une dette distincte.
 BDK/ATB/BICIS/ORA/SGBS/BIS et Fund Position restent `STAGING_PILOT` ; leur
 qualification sur fichiers réels anonymisés demeure différée avant toute
-promotion.
+promotion. Le harness local sans persistance et le runbook de collecte sont
+préparés (`REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`) ; cette préparation
+ne constitue aucune qualification réelle et ne change aucun statut.
 
 ---
 
