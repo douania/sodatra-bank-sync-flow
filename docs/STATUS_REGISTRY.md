@@ -105,7 +105,7 @@ Rapport : `docs/OPS_CORE_2_ATOMIC_PERSISTENCE_REPORT.md`.
 
 ## OPERATIONAL-IMPORT-MULTI-BANK-QUALIFICATION-LOCAL
 
-**Statut : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES` (2026-08-25)**
+**Statut : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY` (2026-08-26)**
 
 Le parcours `/upload` dispose désormais d'une taxonomie bancaire unique pour
 BDK, ATB, BICIS, ORA, SGBS et BIS. Le runtime exige la corroboration exacte de
@@ -141,6 +141,35 @@ La revalidation indépendante finale du SHA `a21b693` rend
 `PASS_WITH_RESERVES / MERGE_READY`, sans P0/P1/P2 ouvert. Les réserves restent
 la qualification sur fichiers réels anonymisés, la limite amont pdf.js et
 l'atomicité inter-documents du batch.
+
+La PR #131 a été fusionnée dans `main` au commit
+`08a792a9142b40929898edf4853b710d07da9d25` après succès du check CI
+`Lint and build`. Le staging Lovable exact
+`8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, ciblant exclusivement
+`gbbsqcscryygqlmqncyv`, a reçu le runtime et le build de production. Les E2E
+read-only ont confirmé le parcours `/upload`, l'alias `/upload-bulk`, la matrice
+de qualification et l'absence de traitement ou promotion.
+
+Le runtime a ensuite été publié sur le projet Lovable production exact
+`e52d9fce-f1b4-46f8-900c-c559a6eb2115`, déploiement
+`721a9a80-a067-4186-91f6-a6377afe7edc`, bundle `index-D258g98r.js`. Le bundle
+référence uniquement le projet Supabase production `leakcdbbawzysfqyqsnr`.
+Les smokes anonyme et authentifié confirment la protection des routes, le garde
+`Production en lecture seule`, l'absence de sélecteur de fichier ou d'action
+d'import, la redirection `/upload-bulk` vers `/upload` et aucune mutation métier
+observée pendant ces scénarios.
+L'unique appel Supabase du smoke authentifié est un `GET user_roles` en `200` ;
+aucun appel staging, échec réseau ou finding console n'est observé.
+
+La garde read-only est une barrière d'interface ; elle ne remplace jamais les
+contrôles serveur Auth, rôles, RLS et grants. Les smokes valident donc le
+comportement UI et le trafic observé, pas une impossibilité générale de mutation
+côté serveur.
+
+La clôture concerne le contrat logiciel et son runtime read-only. Elle ne
+promeut aucune banque : BDK, ATB, BICIS, ORA, SGBS, BIS et Fund Position restent
+`STAGING_PILOT`, Client Reconciliation reste `BLOCKED`, et la qualification sur
+fichiers réels anonymisés demeure un chantier distinct.
 
 Réserve explicite : le parser BDK spécialisé lit la fixture synthétique de
 forme réaliste, mais le chemin générique `/upload` la refuse parce que ses

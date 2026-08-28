@@ -149,7 +149,7 @@ Ne pas modifier sans justification CTO explicite :
 
 Ouverts / suivis :
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
-- Operational Import multi-bank : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES`, contrats fail-closed et gate CI ajoutés sans promotion de banque ;
+- Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
 - OPS-CORE-1 : `CLOSED`, précontrôle d'import validé staging et publié en production le 2026-08-13 ;
 - DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;

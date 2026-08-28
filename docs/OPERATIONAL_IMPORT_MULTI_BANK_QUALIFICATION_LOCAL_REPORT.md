@@ -2,12 +2,14 @@
 
 ## Statut
 
-`IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS_WITH_RESERVES` — 2026-08-25.
+`CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY` — 2026-08-26.
 
-Ce lot qualifie localement le comportement fail-closed du parcours
-opérationnel. Il ne publie rien, ne promeut aucune banque et ne touche ni à
-Supabase live, ni à Lovable, ni au SQL, aux migrations, au schéma, à Auth/RLS,
-aux dépendances ou au lockfile.
+La phase d'implémentation qualifie localement le comportement fail-closed du
+parcours opérationnel. Les phases environnementales, autorisées ensuite par
+des GO nominatifs distincts, ont synchronisé et validé le runtime sur staging,
+puis publié et validé le même code en production avec la garde de lecture seule.
+Aucune banque n'est promue et aucun SQL, migration, changement de schéma,
+Auth/RLS, dépendance ou lockfile n'est inclus.
 
 ## Décisions CTO appliquées
 
@@ -138,6 +140,97 @@ l'atomicité inter-documents déjà documentée. Claude Code n'a pas pu exécute
 cette dernière session à cause de son quota local ; le reviewer indépendant
 déjà affecté au lot a réalisé la revalidation read-only.
 
+## Merge et CI
+
+La PR #131, `feat(import): qualify multi-bank reports fail-closed`, a été
+fusionnée le 2026-08-26. Son head `fb6c24167ed3cf6355848c63cb68adc5c33fa9df`
+est intégré dans `main` par le commit
+`08a792a9142b40929898edf4853b710d07da9d25`. Le check GitHub Actions
+`Lint and build` est terminé avec la conclusion `SUCCESS`.
+
+## Validation staging
+
+Les phases staging ont été exécutées sur le projet Lovable exact
+`8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, relié au projet Supabase staging
+canonique `gbbsqcscryygqlmqncyv`, sous les GO nominatifs suivants :
+
+- `GO_VALIDATE_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION` :
+  préflight en lecture seule ;
+- `GO_APPLY_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_RUNTIME_SYNC` :
+  synchronisation du runtime ;
+- `GO_VALIDATE_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_RUNTIME_E2E_READ_ONLY` :
+  validation E2E en lecture seule ;
+- `GO_APPLY_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PRODUCTION_BUILD_PUBLISH` :
+  publication du build de production sur staging ;
+- `GO_VALIDATE_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PRODUCTION_RUNTIME_E2E_READ_ONLY` :
+  validation E2E du runtime de production en lecture seule.
+
+Ces contrôles ont confirmé le routage unique `/upload`, la redirection de
+`/upload-bulk`, l'affichage de la matrice de qualification et le maintien de
+BDK, ATB, BICIS, ORA, SGBS, BIS et Fund Position au statut `STAGING_PILOT`.
+Aucun fichier bancaire, traitement, promotion ou changement de qualification
+n'a été déclenché par ces validations.
+
+## Publication et validation production
+
+Les phases production ont été séparées par les GO nominatifs suivants :
+
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PREFLIGHT_READ_ONLY` ;
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PUBLISH_RUNTIME` ;
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_POST_PUBLISH_SMOKE_READ_ONLY` ;
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_AUTHENTICATED_SMOKE_READ_ONLY`.
+
+Le préflight a verrouillé les cibles exactes : projet Lovable
+`e52d9fce-f1b4-46f8-900c-c559a6eb2115`, URL
+`https://sodatra-bank-sync-flow.lovable.app` et projet Supabase canonique
+`leakcdbbawzysfqyqsnr`. Le runtime issu de `main` au commit `08a792a` a été
+publié sous le déploiement `721a9a80-a067-4186-91f6-a6377afe7edc`. Le bundle
+actif est `index-D258g98r.js`.
+
+Le contrôle statique post-publication confirme :
+
+- réponse HTTP `200` pour l'application et le bundle ;
+- quatre références à la cible Supabase production et aucune référence à la
+  cible staging ;
+- présence des libellés `Production en lecture seule` et `Pilote staging` ;
+- aucun appel direct `console.*`, aucun `debugger` et aucune source map exposée.
+
+Le smoke anonyme a vérifié `/dashboard`, `/upload`, `/upload-bulk` et
+`/document-understanding` : les quatre routes redirigent vers `/auth`, sans
+exposer d'écran d'import ni de contenu protégé. Aucun appel Supabase n'a été
+émis ; seuls les événements de télémétrie Lovable ont utilisé `POST`.
+
+Le smoke authentifié a ensuite confirmé :
+
+- `/upload` affiche `Production en lecture seule` et ne rend aucun sélecteur de
+  fichier ni bouton d'import, de traitement ou de promotion ;
+- `/upload-bulk` redirige vers `/upload` et conserve la même garde ;
+- BDK, ATB, BICIS, ORA, SGBS, BIS et Fund Position restent visibles comme
+  `Pilote staging` ; Client Reconciliation reste `Bloqué` ;
+- l'unique requête Supabase observée est un `GET /rest/v1/user_roles` en `200`
+  vers `leakcdbbawzysfqyqsnr` ;
+- aucun appel staging, aucune écriture Supabase ou métier, aucun échec réseau
+  et aucune erreur ou alerte console ne sont observés.
+
+## Sécurité et portée de la clôture
+
+La publication ne modifie ni la base, ni les migrations, ni le schéma, ni
+Auth/RLS, ni les grants. Aucun fichier bancaire réel ou synthétique n'a été
+chargé pendant les smokes production. L'interface production n'expose aucune
+capacité d'import ou de promotion, y compris pour les familles marquées
+`PRODUCTION_CANDIDATE`.
+
+La garde `Production en lecture seule` est une barrière d'interface, jamais une
+barrière de sécurité. La sécurité réelle reste assurée côté serveur par Auth,
+les rôles, RLS et les grants. Les smokes établissent l'absence de capacité UI et
+de mutation observée dans leurs scénarios ; ils ne prétendent pas démontrer une
+impossibilité générale de mutation côté serveur.
+
+Cette clôture valide le déploiement du contrat fail-closed et son comportement
+read-only en production. Elle ne constitue pas une qualification opérationnelle
+des formats bancaires, n'autorise aucune mutation et ne réduit aucune des
+limites ci-dessous.
+
 ## Limites assumées
 
 - les fixtures synthétiques prouvent le contrat logiciel, pas la compatibilité
@@ -158,9 +251,10 @@ déjà affecté au lot a réalisé la revalidation read-only.
 - aucun refactoring Daily v2 ni suppression des services spécialisés legacy
   n'est inclus.
 
-## Suite autorisable
+## Clôture et suite autorisable
 
-Après commit, draft PR, contre-review du delta versionné et merge sous GO
-distincts : qualification staging avec fichiers
-anonymisés couvrant chaque banque, sans élargissement automatique de la cible
-production. Toute promotion exigera un nouveau verdict CTO et un GO dédié.
+Le pack de code et de déploiement read-only est clos. La prochaine phase métier
+reste une qualification staging avec des fichiers réels anonymisés couvrant
+chaque banque et Fund Position, sous un nouveau pack et des GO environnementaux
+distincts. Elle n'élargira pas automatiquement la production. Toute promotion
+exigera un verdict CTO spécifique, une preuve banque par banque et un GO dédié.
