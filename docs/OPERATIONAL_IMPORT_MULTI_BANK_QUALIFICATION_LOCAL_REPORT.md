@@ -150,15 +150,20 @@ est intégré dans `main` par le commit
 
 ## Validation staging
 
-Les phases staging ont été exécutées sous leurs GO distincts sur le projet
-Lovable exact `8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, relié au projet Supabase
-staging canonique `gbbsqcscryygqlmqncyv` :
+Les phases staging ont été exécutées sur le projet Lovable exact
+`8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, relié au projet Supabase staging
+canonique `gbbsqcscryygqlmqncyv`, sous les GO nominatifs suivants :
 
-- préflight en lecture seule ;
-- synchronisation du runtime ;
-- validation E2E en lecture seule ;
-- publication du build de production sur staging ;
-- validation E2E du runtime de production en lecture seule.
+- `GO_VALIDATE_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION` :
+  préflight en lecture seule ;
+- `GO_APPLY_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_RUNTIME_SYNC` :
+  synchronisation du runtime ;
+- `GO_VALIDATE_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_RUNTIME_E2E_READ_ONLY` :
+  validation E2E en lecture seule ;
+- `GO_APPLY_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PRODUCTION_BUILD_PUBLISH` :
+  publication du build de production sur staging ;
+- `GO_VALIDATE_STAGING_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PRODUCTION_RUNTIME_E2E_READ_ONLY` :
+  validation E2E du runtime de production en lecture seule.
 
 Ces contrôles ont confirmé le routage unique `/upload`, la redirection de
 `/upload-bulk`, l'affichage de la matrice de qualification et le maintien de
@@ -168,7 +173,14 @@ n'a été déclenché par ces validations.
 
 ## Publication et validation production
 
-Le préflight production a verrouillé les cibles exactes : projet Lovable
+Les phases production ont été séparées par les GO nominatifs suivants :
+
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PREFLIGHT_READ_ONLY` ;
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_PUBLISH_RUNTIME` ;
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_POST_PUBLISH_SMOKE_READ_ONLY` ;
+- `GO_PRODUCTION_OPERATIONAL_IMPORT_MULTI_BANK_QUALIFICATION_AUTHENTICATED_SMOKE_READ_ONLY`.
+
+Le préflight a verrouillé les cibles exactes : projet Lovable
 `e52d9fce-f1b4-46f8-900c-c559a6eb2115`, URL
 `https://sodatra-bank-sync-flow.lovable.app` et projet Supabase canonique
 `leakcdbbawzysfqyqsnr`. Le runtime issu de `main` au commit `08a792a` a été
@@ -204,9 +216,15 @@ Le smoke authentifié a ensuite confirmé :
 
 La publication ne modifie ni la base, ni les migrations, ni le schéma, ni
 Auth/RLS, ni les grants. Aucun fichier bancaire réel ou synthétique n'a été
-chargé pendant les smokes production. La production demeure volontairement
-inapte à importer ou promouvoir un document, y compris les familles marquées
+chargé pendant les smokes production. L'interface production n'expose aucune
+capacité d'import ou de promotion, y compris pour les familles marquées
 `PRODUCTION_CANDIDATE`.
+
+La garde `Production en lecture seule` est une barrière d'interface, jamais une
+barrière de sécurité. La sécurité réelle reste assurée côté serveur par Auth,
+les rôles, RLS et les grants. Les smokes établissent l'absence de capacité UI et
+de mutation observée dans leurs scénarios ; ils ne prétendent pas démontrer une
+impossibilité générale de mutation côté serveur.
 
 Cette clôture valide le déploiement du contrat fail-closed et son comportement
 read-only en production. Elle ne constitue pas une qualification opérationnelle

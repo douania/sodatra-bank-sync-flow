@@ -156,9 +156,15 @@ Le runtime a ensuite été publié sur le projet Lovable production exact
 référence uniquement le projet Supabase production `leakcdbbawzysfqyqsnr`.
 Les smokes anonyme et authentifié confirment la protection des routes, le garde
 `Production en lecture seule`, l'absence de sélecteur de fichier ou d'action
-d'import, la redirection `/upload-bulk` vers `/upload` et zéro mutation métier.
+d'import, la redirection `/upload-bulk` vers `/upload` et aucune mutation métier
+observée pendant ces scénarios.
 L'unique appel Supabase du smoke authentifié est un `GET user_roles` en `200` ;
 aucun appel staging, échec réseau ou finding console n'est observé.
+
+La garde read-only est une barrière d'interface ; elle ne remplace jamais les
+contrôles serveur Auth, rôles, RLS et grants. Les smokes valident donc le
+comportement UI et le trafic observé, pas une impossibilité générale de mutation
+côté serveur.
 
 La clôture concerne le contrat logiciel et son runtime read-only. Elle ne
 promeut aucune banque : BDK, ATB, BICIS, ORA, SGBS, BIS et Fund Position restent

@@ -54,10 +54,12 @@
 `/upload` est borné par une identité bancaire canonique, des contrats
 fail-closed et une gate CI banque par banque. Le runtime correspondant est
 publié et validé en production avec la garde `Production en lecture seule` ;
-aucun import ni aucune promotion n'y est possible. La coexistence des
-extracteurs spécialisés reste une dette distincte. BDK/ATB/BICIS/ORA/SGBS/BIS
-et Fund Position restent `STAGING_PILOT` ; leur qualification sur fichiers
-réels anonymisés demeure différée avant toute promotion.
+l'interface n'y expose aucune capacité d'import ou de promotion. Cette garde UI
+ne remplace jamais les contrôles serveur Auth, rôles, RLS et grants. La
+coexistence des extracteurs spécialisés reste une dette distincte.
+BDK/ATB/BICIS/ORA/SGBS/BIS et Fund Position restent `STAGING_PILOT` ; leur
+qualification sur fichiers réels anonymisés demeure différée avant toute
+promotion.
 
 ---
 
