@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import {
+  isPathInsideRepository,
+  parseQualificationCliArguments,
+  QualificationCliError,
+} from '../../scripts/qualifyOperationalImportRealFile';
 import type { OperationalBankCode } from './bankIdentity';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
 import { extractBankReport, extractClientReconciliation } from './extractionService';
+import { qualifyOperationalImportRealFileText } from './operationalImportRealFileQualification';
 
 const nominalFixtures: Record<OperationalBankCode, string> = {
   BDK: 'BDK RAPPORT 05/08/2026\nOPENING BALANCE 05/08/2026 1 000 000\nCLOSING BALANCE as per Book: C=(A-B) 900 000',
@@ -181,3 +188,118 @@ test('les anciens points d’entrée permissifs restent explicitement désactiv�
   assert.equal(extractBankReport(nominalFixtures.BDK, 'BDK').success, false);
   assert.equal(extractClientReconciliation('CLIENT 100').success, false);
 });
+
+test('le harness réel rend une preuve bancaire agrégée sans données financières brutes', async () => {
+  const rawText = [
+    nominalFixtures.BDK,
+    'DEPOSIT NOT YET CLEARED',
+    '05/08/2026 123 REGLEMENT FACTURE CLIENT_SENSIBLE 777777',
+  ].join('\n');
+  const result = await qualifyOperationalImportRealFileText({
+    caseId: 'BDK-R1',
+    family: 'BDK',
+    format: 'PDF',
+    extractedText: rawText,
+    inputSha256: 'a'.repeat(64),
+    byteLength: 1234,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.decision, 'LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW');
+  assert.equal(result.evidence.depositCount, 1);
+  assert.equal(result.persistenceAttempted, false);
+  assert.equal(result.environmentAccessed, false);
+  assert.equal(result.promotionAuthorized, false);
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /CLIENT_SENSIBLE|777777|900 000|1 000 000/);
+});
+
+test('le harness réel refuse l’identité bancaire incohérente sans exposer le contenu', async () => {
+  const rawText = `${nominalFixtures.ATB}\nLIGNE CONFIDENTIELLE 888888`;
+  const result = await qualifyOperationalImportRealFileText({
+    caseId: 'BDK-R2',
+    family: 'BDK',
+    format: 'XLSX',
+    extractedText: rawText,
+    inputSha256: 'b'.repeat(64),
+    byteLength: 4321,
+  });
+
+  assert.equal(result.success, false);
+  assert.deepEqual(result.errorCodes, ['BANK_IDENTITY_UNCORROBORATED']);
+  assert.doesNotMatch(JSON.stringify(result), /CONFIDENTIELLE|888888|ATB RAPPORT/);
+});
+
+test('le harness réel résume Fund Position sans montant, banque de détail ou date brute', async () => {
+  const rawText = [
+    'FUND POSITION 29/02/2024',
+    'DOCUMENT DE QUALIFICATION SYNTHETIQUE ANONYMISE',
+    'Book balance',
+    'BDK\t100\t0\t100\t0\t100',
+    'TOTAL FUND AVAILABLE 100',
+    'GRAND TOTAL 0',
+  ].join('\n');
+  const result = await qualifyOperationalImportRealFileText({
+    caseId: 'FUND-R1',
+    family: 'FUND_POSITION',
+    format: 'XLS',
+    extractedText: rawText,
+    inputSha256: 'c'.repeat(64),
+    byteLength: 987,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.evidence.bankDetailCount, 1);
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /29\/02\/2024|BOOK BALANCE|TOTAL FUND|"BDK"/i);
+});
+
+test('le harness réel échoue fermé sur un contenu insuffisant', async () => {
+  const result = await qualifyOperationalImportRealFileText({
+    caseId: 'BIS-R1',
+    family: 'BIS',
+    format: 'PDF',
+    extractedText: 'BIS',
+    inputSha256: 'd'.repeat(64),
+    byteLength: 3,
+  });
+
+  assert.equal(result.success, false);
+  assert.deepEqual(result.errorCodes, ['CONTENT_TOO_SHORT']);
+  assert.equal(result.decision, 'FAIL_CLOSED');
+});
+
+test('la CLI exige l’attestation, un chemin absolu hors dépôt et reste sans écriture', () => {
+  assert.throws(
+    () => parseQualificationCliArguments([
+      '--family', 'BDK', '--case-id', 'BDK-R1', '--file', 'relative.pdf',
+    ]),
+    (error: unknown) => error instanceof QualificationCliError
+      && error.code === 'ANONYMIZATION_ATTESTATION_REQUIRED',
+  );
+  assert.throws(
+    () => parseQualificationCliArguments([
+      '--family', 'BDK', '--case-id', 'BDK-R1', '--file', 'relative.pdf', '--anonymized',
+    ]),
+    (error: unknown) => error instanceof QualificationCliError
+      && error.code === 'INPUT_PATH_MUST_BE_ABSOLUTE',
+  );
+  assert.equal(isPathInsideRepository(process.cwd(), process.cwd()), true);
+  assert.equal(isPathInsideRepository(resolveOutsideRepository(), process.cwd()), false);
+
+  const cliSource = readFileSync('scripts/qualifyOperationalImportRealFile.ts', 'utf8');
+  const qualificationSource = readFileSync(
+    'src/services/operationalImportRealFileQualification.ts',
+    'utf8',
+  );
+  assert.match(cliSource, /INPUT_PATH_MUST_BE_OUTSIDE_REPOSITORY/);
+  assert.match(cliSource, /ANONYMIZATION_ATTESTATION_REQUIRED/);
+  assert.doesNotMatch(
+    `${cliSource}\n${qualificationSource}`,
+    /\b(?:writeFile|appendFile|createWriteStream|fetch|supabase|databaseService|saveReport)\b/i,
+  );
+});
+
+function resolveOutsideRepository(): string {
+  return process.platform === 'win32' ? 'C:\\qualification-secure\\sample.pdf' : '/qualification-secure/sample.pdf';
+}
