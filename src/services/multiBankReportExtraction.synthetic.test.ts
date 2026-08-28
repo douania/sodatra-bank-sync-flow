@@ -317,7 +317,7 @@ test('la CLI exige l’attestation, un chemin absolu hors dépôt et reste sans 
   assert.match(cliSource, /canonicalRepositoryRoot/);
   assert.doesNotMatch(
     `${cliSource}\n${qualificationSource}`,
-    /\b(?:writeFile|appendFile|createWriteStream|fetch|supabase|databaseService|saveReport)\b/i,
+    /\b(?:writeFile\w*|appendFile\w*|createWriteStream|openSync|unlink\w*|rename\w*|mkdir\w*|rmSync|fetch|supabase|databaseService|saveReport)\b/i,
   );
 });
 
@@ -375,16 +375,47 @@ test('la CLI refuse réellement chemins internes, nœuds, tailles, signatures et
     assert.equal(validWorkbookResult.exitCode, 1);
     assert.deepEqual(validWorkbookResult.payload.errorCodes, ['CONTENT_TOO_SHORT']);
 
-    for (const result of [
-      directoryResult,
-      emptyResult,
-      oversizedResult,
-      disguisedPdfResult,
-      invalidArchiveResult,
-      validWorkbookResult,
-    ]) {
+    const truncatedWorkbookPath = join(temporaryRoot, 'BDK_TOO_MANY_ROWS.xlsx');
+    const truncatedWorkbook = XLSX.utils.book_new();
+    const rows = Array.from(
+      { length: 20_001 },
+      (_, index) => [index === 0 ? 'BDK' : `SYNTHETIC_ROW_${index}`],
+    );
+    XLSX.utils.book_append_sheet(
+      truncatedWorkbook,
+      XLSX.utils.aoa_to_sheet(rows),
+      'DATA',
+    );
+    writeFileSync(
+      truncatedWorkbookPath,
+      XLSX.write(truncatedWorkbook, { bookType: 'xlsx', type: 'buffer' }),
+    );
+    const truncatedWorkbookResult = await executeQualificationCli(
+      cliArguments(truncatedWorkbookPath, 'BDK-R10'),
+    );
+    assert.equal(truncatedWorkbookResult.exitCode, 2);
+    assert.equal(
+      truncatedWorkbookResult.payload.errorCode,
+      'DOCUMENT_RESOURCE_LIMIT_EXCEEDED',
+    );
+
+    const resultsWithSourceNames: Array<[
+      Awaited<ReturnType<typeof executeQualificationCli>>,
+      string,
+    ]> = [
+      [directoryResult, 'BDK_DIRECTORY.pdf'],
+      [emptyResult, 'BDK_EMPTY.pdf'],
+      [oversizedResult, 'BDK_OVERSIZED.pdf'],
+      [disguisedPdfResult, 'BDK_DISGUISED.pdf'],
+      [invalidArchiveResult, 'BDK_LIMIT.xlsx'],
+      [validWorkbookResult, 'BDK_SHORT.xlsx'],
+      [truncatedWorkbookResult, 'BDK_TOO_MANY_ROWS.xlsx'],
+    ];
+    for (const [result, sourceFileName] of resultsWithSourceNames) {
       assert.equal(result.payload.containsRawBankingData, false);
-      assert.doesNotMatch(JSON.stringify(result.payload), /sodatra-real-file-qualification/i);
+      const serialized = JSON.stringify(result.payload);
+      assert.doesNotMatch(serialized, /sodatra-real-file-qualification/i);
+      assert.equal(serialized.includes(sourceFileName), false);
     }
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });

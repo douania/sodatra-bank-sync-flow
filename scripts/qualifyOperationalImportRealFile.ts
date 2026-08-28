@@ -264,7 +264,7 @@ function extractExcelText(bytes: Uint8Array): string {
     type: 'array',
     raw: false,
     cellDates: false,
-    sheetRows: MAX_EXCEL_ROWS_PER_SHEET,
+    sheetRows: MAX_EXCEL_ROWS_PER_SHEET + 1,
   });
   if (workbook.SheetNames.length > MAX_WORKBOOK_SHEETS) {
     throw new QualificationCliError('DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
@@ -274,7 +274,10 @@ function extractExcelText(bytes: Uint8Array): string {
 
   for (const sheetName of workbook.SheetNames) {
     const worksheet = workbook.Sheets[sheetName];
-    const declaredRange = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
+    const fullReference = (
+      worksheet as XLSX.WorkSheet & { '!fullref'?: string }
+    )['!fullref'] ?? worksheet['!ref'];
+    const declaredRange = fullReference ? XLSX.utils.decode_range(fullReference) : null;
     if (declaredRange) {
       const declaredRows = declaredRange.e.r - declaredRange.s.r + 1;
       const declaredColumns = declaredRange.e.c - declaredRange.s.c + 1;
