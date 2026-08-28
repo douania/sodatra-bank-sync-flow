@@ -5,6 +5,7 @@ import {
   DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF,
   DAILY_V2_CAPABILITIES,
   applyDailyV2RuntimeMutationLock,
+  resolveDailyV2ImportPermissions,
   validateDailyV2RuntimeTarget,
   type DailyV2Capability,
 } from './dailyV2RuntimeTarget';
@@ -139,5 +140,48 @@ test('the server lock never widens a statically refused target capability', () =
   assert.deepEqual(
     applyDailyV2RuntimeMutationLock(productionCapabilities, true),
     productionCapabilities,
+  );
+});
+
+test('staging read-only mode permits local preparation but never persistence', () => {
+  const targetCapabilities = {
+    read: true,
+    deposit: true,
+    promote: true,
+    admin: true,
+  };
+  const lockedCapabilities = applyDailyV2RuntimeMutationLock(targetCapabilities, false);
+
+  assert.deepEqual(
+    resolveDailyV2ImportPermissions(true, targetCapabilities, lockedCapabilities),
+    { canPrepareLocally: true, canPersist: false },
+  );
+  assert.deepEqual(
+    resolveDailyV2ImportPermissions(true, targetCapabilities, targetCapabilities),
+    { canPrepareLocally: true, canPersist: true },
+  );
+});
+
+test('local preparation stays closed without the role or on a static read-only target', () => {
+  const stagingCapabilities = {
+    read: true,
+    deposit: true,
+    promote: true,
+    admin: true,
+  };
+  const productionCapabilities = {
+    read: true,
+    deposit: false,
+    promote: false,
+    admin: false,
+  };
+
+  assert.deepEqual(
+    resolveDailyV2ImportPermissions(false, stagingCapabilities, stagingCapabilities),
+    { canPrepareLocally: false, canPersist: false },
+  );
+  assert.deepEqual(
+    resolveDailyV2ImportPermissions(true, productionCapabilities, productionCapabilities),
+    { canPrepareLocally: false, canPersist: false },
   );
 });

@@ -271,13 +271,17 @@ test('gives every Daily v2 network operation an explicit capability', () => {
   );
 });
 
-test('keeps production mutations fail closed in the Daily v2 UI', () => {
+test('separates local staging preparation from fail-closed server persistence', () => {
   // Accès page et navigation : capacité read uniquement.
   assert.match(access, /currentDailyV2RuntimeTargetVerdict\('read'\)/);
   assert.match(access, /capabilities: Record<DailyV2Capability, boolean> = currentDailyV2Capabilities\(\)/);
 
-  // Rôle ET capacité pour chaque famille d'actions.
-  assert.match(page, /const canSubmitDeposit = canDeposit && capabilities\.deposit/);
+  // La préparation dépend du rôle et de la politique statique de cible. La
+  // persistance ajoute obligatoirement le verrou serveur effectif.
+  assert.match(
+    page,
+    /\{\s*canPrepareLocally,\s*canPersist: canSubmitDeposit,\s*\} = resolveDailyV2ImportPermissions\(canDeposit, targetCapabilities, capabilities\)/,
+  );
   assert.match(page, /const canDecide = isAdmin && capabilities\.promote/);
   assert.match(page, /const canAdminister = isAdmin && capabilities\.admin/);
   assert.match(page, /queryFn: getDailyV2MutationsEnabled/);
@@ -289,11 +293,25 @@ test('keeps production mutations fail closed in the Daily v2 UI', () => {
     page,
     /const capabilities = applyDailyV2RuntimeMutationLock\(\s*targetCapabilities,\s*runtimeMutationsEnabled/,
   );
-  assert.match(page, /disabled: !canSubmitDeposit/);
+  assert.match(page, /disabled: !canPrepareLocally/);
+
+  const prepareMutation = /const prepareMutation =[\s\S]*?(?=\n[ ]{2}const depositMutation =)/.exec(page)?.[0];
+  assert.ok(prepareMutation, 'the local preparation mutation must remain explicit');
   assert.match(
-    page,
+    prepareMutation,
+    /if \(!canPrepareLocally\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
+  );
+  assert.match(prepareMutation, /return prepareDailyV2BrowserDeposit\(/);
+  assert.doesNotMatch(prepareMutation, /preIngestDailyV2|\.rpc\(|\.from\(/);
+
+  const depositMutation = /const depositMutation =[\s\S]*?(?=\n[ ]{2}const provisionAccountMutation =)/.exec(page)?.[0];
+  assert.ok(depositMutation, 'the persistence mutation must remain explicit');
+  assert.match(
+    depositMutation,
     /if \(!canSubmitDeposit\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
   );
+  assert.match(depositMutation, /return preIngestDailyV2\(prepared\.payload\)/);
+  assert.doesNotMatch(browserPipeline, /dailyV2SupabaseService|preIngestDailyV2/);
 
   // Handlers fail closed, y compris si un bouton résiduel était déclenché.
   for (const guarded of [
@@ -314,9 +332,12 @@ test('keeps production mutations fail closed in the Daily v2 UI', () => {
   assert.match(page, /Production en lecture seule/);
   assert.match(page, /Environnement en lecture seule/);
   assert.match(page, /Verrou serveur : \{runtimeLockLabel\}/);
+  assert.match(page, /Consultation uniquement\. La préparation locale et toutes les mutations sont indisponibles sur cette cible\./);
+  assert.match(page, /Mode parse-only/);
+  assert.match(page, /Persistance bloquée par le verrou serveur/);
   assert.match(
     page,
-    /!canSubmitDeposit \? \(\s*<AccessDenied text="Environnement en lecture seule : import et administration désactivés\."/,
+    /!canPrepareLocally \? \(\s*<AccessDenied text="Préparation indisponible sur cette cible\."/,
   );
 
   // Les lectures par rôle restent inchangées.

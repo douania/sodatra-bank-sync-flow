@@ -78,6 +78,7 @@ import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
 import {
   applyDailyV2RuntimeMutationLock,
   currentDailyV2Capabilities,
+  resolveDailyV2ImportPermissions,
 } from '@/features/daily-v2/dailyV2RuntimeTarget';
 
 const PAGE_SIZE = 20;
@@ -166,7 +167,10 @@ const DailyStatementV2 = () => {
   );
   const readOnlyTarget =
     !capabilities.deposit && !capabilities.promote && !capabilities.admin;
-  const canSubmitDeposit = canDeposit && capabilities.deposit;
+  const {
+    canPrepareLocally,
+    canPersist: canSubmitDeposit,
+  } = resolveDailyV2ImportPermissions(canDeposit, targetCapabilities, capabilities);
   const canDecide = isAdmin && capabilities.promote;
   const canAdminister = isAdmin && capabilities.admin;
   const readOnlyTitle = staticReadOnlyTarget
@@ -207,20 +211,20 @@ const DailyStatementV2 = () => {
   }, []);
 
   useEffect(() => {
-    if (canSubmitDeposit) return;
+    if (canPrepareLocally) return;
     setFile(null);
     setReferenceDate('');
     setBackfillGrantId('');
     resetPrepared();
-  }, [canSubmitDeposit, resetPrepared]);
+  }, [canPrepareLocally, resetPrepared]);
 
   const onDrop = useCallback((accepted: File[]) => {
-    if (!canSubmitDeposit) return;
+    if (!canPrepareLocally) return;
     setFile(accepted[0] ?? null);
     setReferenceDate('');
     setBackfillGrantId('');
     resetPrepared();
-  }, [canSubmitDeposit, resetPrepared]);
+  }, [canPrepareLocally, resetPrepared]);
 
   const dropzone = useDropzone({
     onDrop,
@@ -231,12 +235,12 @@ const DailyStatementV2 = () => {
     },
     multiple: false,
     maxSize: 10 * 1024 * 1024,
-    disabled: !canSubmitDeposit,
+    disabled: !canPrepareLocally,
   });
 
   const prepareMutation = useMutation<PrepareDailyV2BrowserResult, Error, void>({
     mutationFn: async () => {
-      if (!canSubmitDeposit) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
+      if (!canPrepareLocally) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       if (!file) throw new DailyV2ServiceError('Sélectionnez un fichier structuré CSV ou Excel.');
       if (requestedMode === 'backfill' && !isAdmin) {
         throw new DailyV2ServiceError('Le backfill est réservé au rôle admin.');
@@ -471,8 +475,9 @@ const DailyStatementV2 = () => {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>{readOnlyTitle}</AlertTitle>
           <AlertDescription>
-            Consultation autorisée. Dépôt, promotion, supersede et administration du registre
-            sont désactivés tant que le verrou serveur n’autorise pas explicitement les mutations.
+            {staticReadOnlyTarget
+              ? 'Consultation uniquement. La préparation locale et toutes les mutations sont indisponibles sur cette cible.'
+              : 'Consultation et préparation locale autorisées sur staging. Dépôt, promotion, supersede et administration du registre sont désactivés tant que le verrou serveur n’autorise pas explicitement les mutations.'}
           </AlertDescription>
         </Alert>
       )}
@@ -494,10 +499,21 @@ const DailyStatementV2 = () => {
 
         <TabsContent value="import" className="space-y-4">
           {!canDeposit ? <AccessDenied text="Dépôt réservé aux rôles admin et manager." /> :
-          !canSubmitDeposit ? (
-            <AccessDenied text="Environnement en lecture seule : import et administration désactivés." />
+          !canPrepareLocally ? (
+            <AccessDenied text="Préparation indisponible sur cette cible." />
           ) : (
             <>
+              {!canSubmitDeposit && (
+                <Alert>
+                  <ShieldCheck className="h-4 w-4" />
+                  <AlertTitle>Mode parse-only</AlertTitle>
+                  <AlertDescription>
+                    Le fichier est lu et contrôlé uniquement dans ce navigateur. Le payload peut
+                    être préparé pour diagnostic, mais aucun dépôt RPC ni autre mutation serveur
+                    n’est autorisé.
+                  </AlertDescription>
+                </Alert>
+              )}
               <Card>
                 <CardHeader>
                   <CardTitle>Préparer un relevé structuré</CardTitle>
@@ -678,6 +694,11 @@ const DailyStatementV2 = () => {
                     <Button onClick={() => depositMutation.mutate()} disabled={!canSubmitDeposit || depositMutation.isPending}>
                       {depositMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Déposer via RPC
                     </Button>
+                    {!canSubmitDeposit && (
+                      <p className="text-sm text-muted-foreground">
+                        Payload préparé localement. Persistance bloquée par le verrou serveur.
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               )}
