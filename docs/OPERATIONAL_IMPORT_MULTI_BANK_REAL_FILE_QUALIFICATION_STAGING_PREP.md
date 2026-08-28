@@ -23,9 +23,12 @@ Les décisions restent inchangées :
   existants sur du texte extrait et ne retourne que des compteurs, booléens et
   codes d'erreur ;
 - `qualifyOperationalImportRealFile.ts` lit un unique PDF/XLSX/XLS depuis un
-  chemin absolu extérieur au dépôt, sans copie temporaire ni accès réseau ;
+  chemin absolu extérieur au dépôt, sans copie temporaire ni accès réseau. Le
+  vrai nom est utilisé uniquement en mémoire pour corroborer la banque et ne
+  figure jamais dans la sortie ;
 - la suite CI `test:multi-bank-reports`, déjà bloquante, couvre le résultat
-  agrégé, les refus, l'absence de données brutes et les protections de la CLI.
+  agrégé, les refus, l'absence de données brutes et les branches critiques de
+  la CLI (chemin dépôt, type de nœud, taille, signature et archive invalide).
 
 La CLI n'importe aucun client Supabase, ne contient aucun appel réseau et
 n'appelle aucun service de persistance. Elle refuse :
@@ -33,7 +36,12 @@ n'appelle aucun service de persistance. Elle refuse :
 - l'absence d'attestation `--anonymized` ;
 - un chemin relatif ou situé dans le dépôt, y compris après résolution des
   liens ;
-- un fichier vide, supérieur à 25 Mio ou dans un autre format ;
+- un nœud qui n'est pas un fichier régulier ;
+- un fichier vide, supérieur à 25 Mio, dont la signature ne correspond pas à
+  l'extension ou dans un autre format ;
+- un PDF de plus de 200 pages, un classeur de plus de 50 feuilles, une archive
+  XLSX dépassant 50 Mio décompressés ou un texte extrait dépassant 2 millions
+  de caractères ;
 - une identité bancaire non corroborée ;
 - tout document qui échoue aux contrats financiers fail-closed existants.
 
@@ -54,6 +62,10 @@ Le propriétaire des données doit fournir volontairement, hors du dépôt :
 Une seconde période ou variante par famille est recommandée avant toute
 promotion, mais ne doit pas être fabriquée à partir de données réelles dans le
 dépôt.
+
+Le nom de chaque fichier bancaire doit conserver un marqueur non sensible de la
+banque attendue. Le harness exige la cohérence entre ce vrai nom et le contenu,
+comme le chemin d'import actif, mais ne restitue jamais le nom dans son JSON.
 
 ## Exigences d'anonymisation
 
@@ -115,6 +127,11 @@ Pour chaque famille :
    compteurs agrégés correspondent au document anonymisé ;
 5. ne jamais déduire une promotion d'un résultat local.
 
+Cette campagne qualifie la compatibilité des extracteurs. Elle ne remplace pas
+le précontrôle complet du parcours `/upload`, notamment les règles spécifiques
+aux relevés BDK et la résolution de cible. Ces barrières seront rejouées pendant
+le préflight staging avant tout essai autorisé.
+
 La campagne ne peut être déclarée complète que si les sept familles possèdent
 au moins un cas nominal revu humainement. Un seul échec maintient la famille
 concernée en `STAGING_PILOT` et interdit toute promotion groupée.
@@ -132,8 +149,8 @@ Après réception et PASS local des fichiers, un nouveau préflight devra :
 4. nommer précisément les fichiers anonymisés autorisés, les opérateurs et les
    familles testées ;
 5. obtenir un `GO_VALIDATE_STAGING_<PACK>` pour les lectures, puis un
-   `GO_APPLY_STAGING_<PACK>_<ACTION>` séparé pour tout upload, traitement,
-   persistance ou nettoyage ;
+   `GO_APPLY_STAGING_<PACK>` séparé et décrivant précisément tout upload,
+   traitement, persistance ou nettoyage ;
 6. vérifier après chaque cas les écritures, doublons, erreurs, audit et état
    final ;
 7. supprimer les copies temporaires et confirmer l'absence de données de test

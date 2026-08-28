@@ -25,6 +25,7 @@ export interface RealFileQualificationInput {
   caseId: string;
   family: RealFileQualificationFamily;
   format: RealFileQualificationFormat;
+  sourceFileName: string;
   extractedText: string;
   inputSha256: string;
   byteLength: number;
@@ -206,8 +207,7 @@ export async function qualifyOperationalImportRealFileText(
     };
   }
 
-  const safeFileName = `${input.family}_qualification.${input.format.toLowerCase()}`;
-  const identity = corroborateBankIdentity(safeFileName, input.extractedText);
+  const identity = corroborateBankIdentity(input.sourceFileName, input.extractedText);
   if (!identity.corroborated || identity.bank !== input.family) {
     return rejected(input, ['BANK_IDENTITY_UNCORROBORATED']);
   }

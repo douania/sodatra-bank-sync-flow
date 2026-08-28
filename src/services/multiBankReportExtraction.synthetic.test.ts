@@ -1,11 +1,26 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import {
+  closeSync,
+  ftruncateSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 
+import * as XLSX from 'xlsx';
+
 import {
+  hasValidDocumentSignature,
   isPathInsideRepository,
   parseQualificationCliArguments,
   QualificationCliError,
+  runQualificationCli,
 } from '../../scripts/qualifyOperationalImportRealFile';
 import type { OperationalBankCode } from './bankIdentity';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
@@ -199,6 +214,7 @@ test('le harness réel rend une preuve bancaire agrégée sans données financi�
     caseId: 'BDK-R1',
     family: 'BDK',
     format: 'PDF',
+    sourceFileName: 'BDK_R1.pdf',
     extractedText: rawText,
     inputSha256: 'a'.repeat(64),
     byteLength: 1234,
@@ -211,7 +227,7 @@ test('le harness réel rend une preuve bancaire agrégée sans données financi�
   assert.equal(result.environmentAccessed, false);
   assert.equal(result.promotionAuthorized, false);
   const serialized = JSON.stringify(result);
-  assert.doesNotMatch(serialized, /CLIENT_SENSIBLE|777777|900 000|1 000 000/);
+  assert.doesNotMatch(serialized, /CLIENT_SENSIBLE|777777|900 ?000|1 ?000 ?000/);
 });
 
 test('le harness réel refuse l’identité bancaire incohérente sans exposer le contenu', async () => {
@@ -220,6 +236,7 @@ test('le harness réel refuse l’identité bancaire incohérente sans exposer l
     caseId: 'BDK-R2',
     family: 'BDK',
     format: 'XLSX',
+    sourceFileName: 'BDK_R2.xlsx',
     extractedText: rawText,
     inputSha256: 'b'.repeat(64),
     byteLength: 4321,
@@ -243,6 +260,7 @@ test('le harness réel résume Fund Position sans montant, banque de détail ou 
     caseId: 'FUND-R1',
     family: 'FUND_POSITION',
     format: 'XLS',
+    sourceFileName: 'FUND_POSITION_R1.xls',
     extractedText: rawText,
     inputSha256: 'c'.repeat(64),
     byteLength: 987,
@@ -259,6 +277,7 @@ test('le harness réel échoue fermé sur un contenu insuffisant', async () => {
     caseId: 'BIS-R1',
     family: 'BIS',
     format: 'PDF',
+    sourceFileName: 'BIS_R1.pdf',
     extractedText: 'BIS',
     inputSha256: 'd'.repeat(64),
     byteLength: 3,
@@ -294,11 +313,108 @@ test('la CLI exige l’attestation, un chemin absolu hors dépôt et reste sans 
   );
   assert.match(cliSource, /INPUT_PATH_MUST_BE_OUTSIDE_REPOSITORY/);
   assert.match(cliSource, /ANONYMIZATION_ATTESTATION_REQUIRED/);
+  assert.match(cliSource, /isPathInsideRepository\(args\.inputPath/);
+  assert.match(cliSource, /canonicalRepositoryRoot/);
   assert.doesNotMatch(
     `${cliSource}\n${qualificationSource}`,
     /\b(?:writeFile|appendFile|createWriteStream|fetch|supabase|databaseService|saveReport)\b/i,
   );
 });
+
+test('la CLI refuse réellement chemins internes, nœuds, tailles, signatures et archives invalides', async () => {
+  const insideRepository = await executeQualificationCli([
+    '--family', 'BDK', '--case-id', 'BDK-R3', '--file', resolve('package.json'), '--anonymized',
+  ]);
+  assert.equal(insideRepository.exitCode, 2);
+  assert.equal(insideRepository.payload.errorCode, 'INPUT_PATH_MUST_BE_OUTSIDE_REPOSITORY');
+
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'sodatra-real-file-qualification-'));
+  try {
+    const directoryPath = join(temporaryRoot, 'BDK_DIRECTORY.pdf');
+    mkdirSync(directoryPath);
+    const directoryResult = await executeQualificationCli(cliArguments(directoryPath, 'BDK-R4'));
+    assert.equal(directoryResult.payload.errorCode, 'INPUT_FILE_NOT_REGULAR');
+
+    const emptyPath = join(temporaryRoot, 'BDK_EMPTY.pdf');
+    writeFileSync(emptyPath, '');
+    const emptyResult = await executeQualificationCli(cliArguments(emptyPath, 'BDK-R5'));
+    assert.equal(emptyResult.payload.errorCode, 'INPUT_FILE_EMPTY');
+
+    const oversizedPath = join(temporaryRoot, 'BDK_OVERSIZED.pdf');
+    const oversizedHandle = openSync(oversizedPath, 'w');
+    try {
+      ftruncateSync(oversizedHandle, 25 * 1024 * 1024 + 1);
+    } finally {
+      closeSync(oversizedHandle);
+    }
+    const oversizedResult = await executeQualificationCli(cliArguments(oversizedPath, 'BDK-R6'));
+    assert.equal(oversizedResult.payload.errorCode, 'INPUT_FILE_TOO_LARGE');
+
+    const disguisedPdfPath = join(temporaryRoot, 'BDK_DISGUISED.pdf');
+    writeFileSync(disguisedPdfPath, 'NOT A PDF');
+    const disguisedPdfResult = await executeQualificationCli(cliArguments(disguisedPdfPath, 'BDK-R7'));
+    assert.equal(disguisedPdfResult.payload.errorCode, 'INPUT_FILE_SIGNATURE_MISMATCH');
+
+    const invalidArchivePath = join(temporaryRoot, 'BDK_LIMIT.xlsx');
+    const invalidArchive = Buffer.alloc(26);
+    invalidArchive.writeUInt32LE(0x04034b50, 0);
+    invalidArchive.writeUInt32LE(0x06054b50, 4);
+    writeFileSync(invalidArchivePath, invalidArchive);
+    const invalidArchiveResult = await executeQualificationCli(
+      cliArguments(invalidArchivePath, 'BDK-R8'),
+    );
+    assert.equal(invalidArchiveResult.payload.errorCode, 'DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
+
+    const validWorkbookPath = join(temporaryRoot, 'BDK_SHORT.xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['BDK']]), 'DATA');
+    writeFileSync(validWorkbookPath, XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' }));
+    const validWorkbookResult = await executeQualificationCli(
+      cliArguments(validWorkbookPath, 'BDK-R9'),
+    );
+    assert.equal(validWorkbookResult.exitCode, 1);
+    assert.deepEqual(validWorkbookResult.payload.errorCodes, ['CONTENT_TOO_SHORT']);
+
+    for (const result of [
+      directoryResult,
+      emptyResult,
+      oversizedResult,
+      disguisedPdfResult,
+      invalidArchiveResult,
+      validWorkbookResult,
+    ]) {
+      assert.equal(result.payload.containsRawBankingData, false);
+      assert.doesNotMatch(JSON.stringify(result.payload), /sodatra-real-file-qualification/i);
+    }
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('les signatures PDF, XLSX et XLS sont vérifiées avant parsing', () => {
+  assert.equal(hasValidDocumentSignature(Buffer.from('%PDF-1.7'), 'PDF'), true);
+  assert.equal(hasValidDocumentSignature(Buffer.from('NOTPDF'), 'PDF'), false);
+  assert.equal(hasValidDocumentSignature(Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'XLSX'), true);
+  assert.equal(hasValidDocumentSignature(
+    Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+    'XLS',
+  ), true);
+});
+
+function cliArguments(filePath: string, caseId: string): string[] {
+  return ['--family', 'BDK', '--case-id', caseId, '--file', filePath, '--anonymized'];
+}
+
+async function executeQualificationCli(argv: readonly string[]): Promise<{
+  exitCode: number;
+  payload: Record<string, unknown>;
+}> {
+  let output = '';
+  const exitCode = await runQualificationCli(argv, payload => {
+    output += payload;
+  });
+  return { exitCode, payload: JSON.parse(output) as Record<string, unknown> };
+}
 
 function resolveOutsideRepository(): string {
   return process.platform === 'win32' ? 'C:\\qualification-secure\\sample.pdf' : '/qualification-secure/sample.pdf';

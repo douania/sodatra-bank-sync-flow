@@ -195,11 +195,15 @@ ATB, BICIS, ORA, SGBS, BIS et Fund Position. Il exige une attestation
 d'anonymisation, lit un seul PDF/XLSX/XLS depuis un chemin absolu extérieur au
 dépôt, masque les logs des extracteurs et ne retourne qu'une preuve JSON
 agrégée sans valeur financière, identité, référence, texte ou chemin source.
+Le vrai nom du fichier sert uniquement à corroborer la banque en mémoire et
+n'est jamais restitué.
 
 Le harness refuse les chemins dans le dépôt, les formats/tailles interdits,
-l'identité bancaire non corroborée et tout échec du contrat fail-closed. Il
-n'importe aucun client Supabase, n'effectue aucun accès réseau et n'appelle
-aucune persistance. Sa décision positive reste
+l'identité bancaire non corroborée et tout échec du contrat fail-closed. La
+lecture est précédée par le contrôle du fichier régulier, de sa taille et de sa
+signature ; pages PDF, feuilles/lignes Excel, archive décompressée et texte
+extrait sont bornés. Il n'importe aucun client Supabase, n'effectue aucun accès
+réseau et n'appelle aucune persistance. Sa décision positive reste
 `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` : elle ne vaut jamais promotion.
 
 Aucun fichier réel n'a été reçu ou traité et aucun staging n'a été accédé dans
