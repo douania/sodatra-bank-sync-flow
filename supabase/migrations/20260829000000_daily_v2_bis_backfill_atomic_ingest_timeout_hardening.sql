@@ -118,6 +118,7 @@ DECLARE
   v_events jsonb;
   v_expected integer;
   v_inserted integer;
+  v_lock_day_unit_id text;
   c_attempt_allowed constant text[] := ARRAY[
     'requested_mode','source_format','bank','currency','account_fingerprint',
     'account_number_masked','source_file_name_redacted','raw_text_hash',
@@ -346,17 +347,21 @@ BEGIN
                        'period_days',v_period_days,'units_total',v_units_count)
   );
 
-  -- Verrous de journée ordonnés : une seule requête, même ordre anti-deadlock.
-  PERFORM pg_advisory_xact_lock(hashtextextended(day_unit_id,0))
-  FROM (
+  -- Le curseur PL/pgSQL porte l'ordre contractuel d'acquisition. Une simple
+  -- sous-requête ORDER BY ne garantit pas l'ordre d'évaluation des fonctions
+  -- VOLATILE dans la requête englobante.
+  FOR v_lock_day_unit_id IN
     SELECT value ->> 'day_unit_id' AS day_unit_id
     FROM jsonb_array_elements(p_units) u(value)
     ORDER BY value ->> 'day_unit_id' COLLATE "C"
-  ) locked_days;
+  LOOP
+    PERFORM pg_advisory_xact_lock(hashtextextended(v_lock_day_unit_id,0));
+  END LOOP;
 
   WITH units AS MATERIALIZED (
     SELECT value ->> 'day_unit_id' AS day_unit_id,
-           value ->> 'day_content_hash' AS content_hash
+           value ->> 'day_content_hash' AS content_hash,
+           (value ->> 'line_count')::integer AS line_count
     FROM jsonb_array_elements(p_units) u(value)
   ), overlap_days AS MATERIALIZED (
     SELECT DISTINCT l.value ->> 'day_unit_id' AS day_unit_id
@@ -365,7 +370,7 @@ BEGIN
       ON c.daily_line_hash=l.value ->> 'daily_line_hash' AND c.is_active
     WHERE c.day_unit_id<>l.value ->> 'day_unit_id'
   ), decisions AS (
-    SELECT u.day_unit_id,u.content_hash,gen_random_uuid() AS staging_unit_id,
+    SELECT u.day_unit_id,u.content_hash,u.line_count,gen_random_uuid() AS staging_unit_id,
            c.id AS active_id,
            CASE WHEN c.id IS NOT NULL AND c.active_day_content_hash=u.content_hash THEN 'duplicate'
                 WHEN c.id IS NOT NULL THEN 'conflict'
@@ -378,6 +383,7 @@ BEGIN
   )
   SELECT jsonb_agg(jsonb_build_object(
     'day_unit_id',day_unit_id,'day_content_hash',content_hash,
+    'line_count',line_count,
     'staging_unit_id',staging_unit_id,'active_id',active_id,
     'final_status',final_status
   ) ORDER BY day_unit_id COLLATE "C") INTO v_decisions FROM decisions;
@@ -454,6 +460,15 @@ BEGIN
   JOIN jsonb_array_elements(v_decisions) d(value)
     ON d.value ->> 'day_unit_id'=l.value ->> 'day_unit_id'
   WHERE d.value ->> 'final_status'<>'duplicate';
+  GET DIAGNOSTICS v_inserted=ROW_COUNT;
+  SELECT count(*)::integer INTO v_expected
+  FROM jsonb_array_elements(p_lines) l(value)
+  JOIN jsonb_array_elements(v_decisions) d(value)
+    ON d.value ->> 'day_unit_id'=l.value ->> 'day_unit_id'
+  WHERE d.value ->> 'final_status'<>'duplicate';
+  IF v_inserted<>v_expected THEN
+    RAISE EXCEPTION 'DAILY_STMT_BIS_BACKFILL_LINE_CARDINALITY: every non-duplicate line must stage (rollback)';
+  END IF;
 
   SELECT coalesce(jsonb_agg(jsonb_build_object(
     'actor_id',v_actor,'attempt_id',v_attempt_id,
@@ -471,9 +486,7 @@ BEGIN
       ELSE 'active daily_line_hash overlap with another day unit (R3)' END,
     'safe_details',jsonb_build_object('day_unit_id',value ->> 'day_unit_id',
       'day_content_hash',value ->> 'day_content_hash',
-      'line_count',(SELECT (u.value ->> 'line_count')::integer
-                    FROM jsonb_array_elements(p_units) u(value)
-                    WHERE u.value ->> 'day_unit_id'=d.value ->> 'day_unit_id')
+      'line_count',(value ->> 'line_count')::integer
   ))),'[]'::jsonb) INTO v_events
   FROM jsonb_array_elements(v_decisions) d(value);
   v_inserted:=public.daily_stmt_append_audit_events_0v(v_events);
@@ -634,6 +647,11 @@ BEGIN
       e.value ->> 'validation_status' AS validation_status,
       public.daily_stmt_review_reason_codes(e.value -> 'review_reason_codes') AS codes
     FROM jsonb_array_elements(p_units) WITH ORDINALITY e(value, ord)
+  ), result_units AS MATERIALIZED (
+    SELECT
+      e.value ->> 'day_unit_id' AS day_unit_id,
+      e.value
+    FROM jsonb_array_elements(v_result -> 'units') e(value)
   ), resolved AS MATERIALIZED (
     SELECT
       u.day_unit_id,
@@ -647,11 +665,7 @@ BEGIN
         ELSE u.codes
       END AS codes
     FROM unit_input u
-    JOIN LATERAL (
-      SELECT value
-      FROM jsonb_array_elements(v_result -> 'units') result_unit(value)
-      WHERE result_unit.value ->> 'day_unit_id' = u.day_unit_id
-    ) r ON true
+    JOIN result_units r ON r.day_unit_id=u.day_unit_id
     JOIN public.daily_statement_units_staging s
       ON s.attempt_id=v_attempt_id AND s.day_unit_id=u.day_unit_id
   )

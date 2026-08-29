@@ -119,4 +119,70 @@ SELECT poc_test.assert(
   'BIS-857 cleanup: outer rollback removes the complete synthetic campaign'
 );
 
+-- Preuve à la borne structurelle officielle : 4 000 journées distinctes.
+-- Cette campagne ferme le finding O(n²) de la contre-review ; une régression
+-- vers un rescan corrélé du tableau JSON dépasse la borne de requête.
+BEGIN;
+
+INSERT INTO public.daily_statement_account_registry (
+  id, created_by, bank, currency, safe_alias, account_fingerprint,
+  account_number_masked
+) VALUES (
+  '00000000-0000-4000-8000-0000000000f1', poc_test.uid_admin(),
+  'BIS', 'XOF', 'SYNTHETIC BIS CAP', repeat('f',64), NULL
+);
+
+INSERT INTO public.daily_statement_backfill_grants (
+  id, account_registry_id, created_by, period_start, period_end, max_units,
+  expires_at
+) VALUES (
+  '00000000-0000-4000-8000-000000004000',
+  '00000000-0000-4000-8000-0000000000f1', poc_test.uid_admin(),
+  DATE '2015-09-13', DATE '2026-08-25', 4000,
+  TIMESTAMPTZ '2099-01-01 00:00:00+00'
+);
+
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.ctx_set('bis_cap_started_at', clock_timestamp()::text);
+SET LOCAL statement_timeout = '15s';
+CREATE TEMP TABLE bis_cap_result AS
+SELECT public.pre_ingest_daily_statement_units(p_attempt,p_units,p_lines,p_guard) AS result
+FROM poc_test.bis_cap_payload;
+SET LOCAL statement_timeout = '0';
+
+SELECT poc_test.assert(
+  clock_timestamp() - poc_test.ctx_get('bis_cap_started_at')::timestamptz < interval '15 seconds',
+  'BIS-4000 bounded: official structural cap completes inside the 15 second request budget'
+);
+SELECT poc_test.assert(
+  (SELECT jsonb_array_length(result -> 'units') FROM bis_cap_result) = 4000,
+  'BIS-4000 result: all 4000 unit decisions returned'
+);
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_units_staging
+   WHERE account_registry_id='00000000-0000-4000-8000-0000000000f1') = 4000,
+  'BIS-4000 persistence: exactly 4000 units staged'
+);
+SELECT poc_test.assert(
+  (SELECT count(*)
+   FROM public.daily_statement_lines_staging l
+   JOIN public.daily_statement_units_staging u ON u.id=l.staging_unit_id
+   WHERE u.account_registry_id='00000000-0000-4000-8000-0000000000f1') = 4000,
+  'BIS-4000 persistence: exactly 4000 lines staged'
+);
+SELECT poc_test.assert(
+  (SELECT status='consumed' AND consumed_attempt_id IS NOT NULL
+   FROM public.daily_statement_backfill_grants
+   WHERE id='00000000-0000-4000-8000-000000004000'),
+  'BIS-4000 grant: consumed exactly with the cap attempt'
+);
+
+ROLLBACK;
+
+SELECT poc_test.assert(
+  NOT EXISTS (SELECT 1 FROM public.daily_statement_account_registry
+              WHERE id='00000000-0000-4000-8000-0000000000f1'),
+  'BIS-4000 cleanup: outer rollback removes the cap campaign'
+);
+
 \echo 'ALL_BIS_MASS_BACKFILL_TIMEOUT_HARDENING_PASS'

@@ -72,7 +72,14 @@ trap cleanup EXIT
 # --- 0. Préflight ------------------------------------------------------------
 command -v docker >/dev/null 2>&1 || { echo "TEST_FAILED: docker indisponible"; exit 1; }
 docker info >/dev/null 2>&1 || { echo "TEST_FAILED: le daemon docker ne repond pas"; exit 1; }
-command -v psql >/dev/null 2>&1 || { echo "TEST_FAILED: psql indisponible"; exit 1; }
+if command -v psql >/dev/null 2>&1; then
+  HOST_PSQL=1
+else
+  # Docker Desktop Windows n'installe pas nécessairement le client psql sur
+  # l'hôte. Le client de l'image jetable est alors utilisé dans le même
+  # conteneur, sans réseau ni dépendance supplémentaire.
+  HOST_PSQL=0
+fi
 [ -f "$MIGRATION" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION"; exit 1; }
 [ -f "$MIGRATION_0U" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U"; exit 1; }
 [ -f "$MIGRATION_0U3" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0U3"; exit 1; }
@@ -134,7 +141,11 @@ done
 echo "conteneur demarre sur 127.0.0.1:$PORT"
 
 export PGPASSWORD="$PGPASSWORD_LOCAL"
-PSQL=(psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+if [ "$HOST_PSQL" -eq 1 ]; then
+  PSQL=(psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+else
+  PSQL=(docker exec -i "$CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+fi
 
 echo -n "attente de disponibilite"
 for _ in $(seq 1 60); do
