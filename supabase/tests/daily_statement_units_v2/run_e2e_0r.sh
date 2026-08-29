@@ -208,9 +208,20 @@ sleep 2
 wait "$ZC_A_PID"
 "${PSQL[@]}" < "$SCRIPT_DIR/29_provisional_concurrency_asserts_0z.sql"
 
-# --- 4d. Retour fail-closed apres toutes les mutations synthetiques -----------
+# --- 4d. Concurrence du nouveau coeur BIS ensembliste (deux sessions) ---------
 echo ""
-echo "--- [4d] garde serveur : retour lecture seule et refus post-suite"
+echo "--- [4d] concurrence coeur BIS ensembliste (deux sessions reelles)"
+"${PSQL[@]}" < "$SCRIPT_DIR/32a_bis_backfill_concurrency_setup.sql"
+"${PSQL[@]}" < "$SCRIPT_DIR/32b_bis_backfill_concurrency_session_a.sql" &
+BISC_A_PID=$!
+sleep 2
+"${PSQL[@]}" < "$SCRIPT_DIR/32c_bis_backfill_concurrency_session_b.sql"
+wait "$BISC_A_PID"
+"${PSQL[@]}" < "$SCRIPT_DIR/32d_bis_backfill_concurrency_asserts.sql"
+
+# --- 4e. Retour fail-closed apres toutes les mutations synthetiques -----------
+echo ""
+echo "--- [4e] garde serveur : retour lecture seule et refus post-suite"
 "${PSQL[@]}" < "$SCRIPT_DIR/17b_server_readonly_guard_post.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/18_runtime_lock_read_api.sql"
 

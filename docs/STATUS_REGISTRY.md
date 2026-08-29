@@ -15,6 +15,38 @@
 
 ---
 
+## DAILY-V2-BIS-BACKFILL-ATOMIC-INGEST-TIMEOUT-HARDENING
+
+**Statut : `FIXED_LOCAL — PR_135_INDEPENDENT_REVALIDATION_REQUIRED` (2026-08-29)**
+
+Le dépôt atomique Daily v2 route les backfills BIS historiques bornés vers un
+cœur PostgreSQL ensembliste, sans chunking, sans transaction partielle et sans
+augmentation de timeout. Les charges synthétiques réalistes de 857 journées /
+4 798 lignes et la borne de 4 000 journées passent chacune sous un
+`statement_timeout` local de 15 secondes.
+
+La revalidation indépendante du SHA `5b38593` avait correctement bloqué le
+merge pour une régression P1 : un motif R3 ajouté par le serveur pouvait être
+confondu avec un motif déclaré par le client et déclencher à tort
+`DAILY_STMT_REVIEW_STATUS_MISMATCH`. Le correctif sépare ces deux origines,
+restaure le cas journalier client `valid`/sans motif puis serveur
+`needs_review`, réutilise le helper canonique de verrouillage et rend la preuve
+de cardinalité indépendante du comptage d'insertion.
+
+Le delta incrémental conserve toutes les anciennes journées comme historique,
+mais ne transmet que les journées nouvelles, modifiées ou à réconcilier. Le
+`max_units` du grant borne explicitement ce delta ; un no-op ne consomme pas le
+grant et ne crée pas une nouvelle tentative d'audit financier. Une nouvelle
+campagne PostgreSQL à deux sessions prouve directement la sérialisation du
+cœur BIS : une seule unité canonical active, la seconde tentative résolue en
+doublon audité et aucune ligne financière dupliquée.
+
+Le lot reste local sur la draft PR #135. Aucun environnement Supabase ou
+Lovable n'a été modifié. Rapport :
+`docs/DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_REPORT.md`.
+
+---
+
 ## OPS-CORE-4 — Verrouillage du chemin d'écriture financier
 
 **Statut : `CLOSED — PRODUCTION_VALIDATED` (2026-08-13)**

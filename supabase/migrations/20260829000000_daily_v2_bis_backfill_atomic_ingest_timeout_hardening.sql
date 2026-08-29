@@ -355,7 +355,7 @@ BEGIN
     FROM jsonb_array_elements(p_units) u(value)
     ORDER BY value ->> 'day_unit_id' COLLATE "C"
   LOOP
-    PERFORM pg_advisory_xact_lock(hashtextextended(v_lock_day_unit_id,0));
+    PERFORM public.daily_stmt_acquire_day_lock(v_lock_day_unit_id);
   END LOOP;
 
   WITH units AS MATERIALIZED (
@@ -461,10 +461,8 @@ BEGIN
     ON d.value ->> 'day_unit_id'=l.value ->> 'day_unit_id'
   WHERE d.value ->> 'final_status'<>'duplicate';
   GET DIAGNOSTICS v_inserted=ROW_COUNT;
-  SELECT count(*)::integer INTO v_expected
-  FROM jsonb_array_elements(p_lines) l(value)
-  JOIN jsonb_array_elements(v_decisions) d(value)
-    ON d.value ->> 'day_unit_id'=l.value ->> 'day_unit_id'
+  SELECT coalesce(sum((d.value ->> 'line_count')::integer),0)::integer INTO v_expected
+  FROM jsonb_array_elements(v_decisions) d(value)
   WHERE d.value ->> 'final_status'<>'duplicate';
   IF v_inserted<>v_expected THEN
     RAISE EXCEPTION 'DAILY_STMT_BIS_BACKFILL_LINE_CARDINALITY: every non-duplicate line must stage (rollback)';
@@ -656,6 +654,7 @@ BEGIN
     SELECT
       u.day_unit_id,
       u.validation_status,
+      coalesce(cardinality(u.codes),0) > 0 AS input_review_required,
       s.id AS staging_unit_id,
       r.value ->> 'unit_status' AS unit_status,
       CASE
@@ -674,6 +673,7 @@ BEGIN
       jsonb_build_object(
         'day_unit_id', day_unit_id,
         'validation_status', validation_status,
+        'input_review_required', input_review_required,
         'staging_unit_id', staging_unit_id,
         'unit_status', unit_status,
         'review_reason_codes', to_jsonb(codes)
@@ -689,7 +689,7 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM jsonb_array_elements(v_review_units) e(value)
-    WHERE jsonb_array_length(e.value -> 'review_reason_codes') > 0
+    WHERE (e.value ->> 'input_review_required')::boolean
       AND e.value ->> 'validation_status' <> 'needs_review'
   ) THEN
     RAISE EXCEPTION 'DAILY_STMT_REVIEW_STATUS_MISMATCH: coded review reasons require needs_review status (rollback)';

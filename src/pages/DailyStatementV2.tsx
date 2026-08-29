@@ -644,7 +644,7 @@ const DailyStatementV2 = () => {
                   <Card>
                     <CardHeader>
                       <CardTitle>Autorisation backfill BIS</CardTitle>
-                      <CardDescription>Grant serveur à usage unique, borné par compte, période, volume et expiration.</CardDescription>
+                      <CardDescription>Grant serveur à usage unique, borné par compte, période, volume du delta transmis et expiration.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {!selectedAccount || bank !== 'BIS' ? (
@@ -654,7 +654,7 @@ const DailyStatementV2 = () => {
                           <div className="grid gap-3 sm:grid-cols-2">
                             <Field label="Début autorisé"><Input type="date" value={grantPeriodStart} onChange={(event) => setGrantPeriodStart(event.target.value)} /></Field>
                             <Field label="Fin autorisée"><Input type="date" value={grantPeriodEnd} onChange={(event) => setGrantPeriodEnd(event.target.value)} /></Field>
-                            <Field label="Unités maximum"><Input type="number" min="1" max="4000" value={grantMaxUnits} onChange={(event) => setGrantMaxUnits(event.target.value)} /></Field>
+                            <Field label="Journées utiles maximum (delta)"><Input type="number" min="1" max="4000" value={grantMaxUnits} onChange={(event) => setGrantMaxUnits(event.target.value)} /></Field>
                             <Field label="Expiration"><Input type="datetime-local" value={grantExpiresAt} onChange={(event) => setGrantExpiresAt(event.target.value)} /></Field>
                           </div>
                           <Button
@@ -726,6 +726,7 @@ const DailyStatementV2 = () => {
                     <CardDescription>
                       Les journées canonical strictement identiques ne sont pas retransmises à la RPC.
                       Toute journée nouvelle, modifiée ou à réconcilier reste soumise à l’arbitrage serveur.
+                      Une journée ignorée ne crée donc ni tentative ni événement d’audit supplémentaire en base.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-3 text-sm md:grid-cols-4">

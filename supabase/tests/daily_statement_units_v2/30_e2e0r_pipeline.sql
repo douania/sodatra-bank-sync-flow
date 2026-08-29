@@ -586,7 +586,15 @@ BEGIN
   VALUES (
     'atb_d2_r3_probe',
     v_att,
-    jsonb_build_array(jsonb_set(v_units -> 0, '{day_content_hash}', to_jsonb(v_content))),
+    jsonb_build_array(
+      jsonb_set(
+        jsonb_set(
+          jsonb_set(v_units -> 0, '{day_content_hash}', to_jsonb(v_content)),
+          '{validation_status}', '"valid"'::jsonb
+        ),
+        '{review_reason_codes}', '[]'::jsonb
+      )
+    ),
     jsonb_build_array(
       jsonb_set(v_lines -> 0, '{daily_line_hash}', to_jsonb(v_victim)),
       v_lines -> 1
@@ -599,6 +607,12 @@ COMMIT;
 
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.assert(
+  p_units -> 0 ->> 'validation_status' = 'valid'
+    AND jsonb_array_length(p_units -> 0 -> 'review_reason_codes') = 0,
+  '0R-J0: la sonde R3 est declaree valid sans motif par le client'
+)
+FROM poc_test.e2e0r_payload WHERE key = 'atb_d2_r3_probe';
 SELECT poc_test.e2e0r_deposit('atb_d2_r3_probe', 'r3');
 SELECT poc_test.assert(poc_test.ctx_get('r3_status') = 'needs_review',
   '0R-J1: hash de ligne actif sous une autre journee -> needs_review (R3)');

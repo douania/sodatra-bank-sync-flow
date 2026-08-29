@@ -42,6 +42,14 @@ const bisMassSqlTest = readFileSync(
   'supabase/tests/daily_statement_units_v2/31_bis_mass_backfill_timeout_hardening.sql',
   'utf8',
 );
+const e2ePipelineSqlTest = readFileSync(
+  'supabase/tests/daily_statement_units_v2/30_e2e0r_pipeline.sql',
+  'utf8',
+);
+const bisConcurrencyAssertions = readFileSync(
+  'supabase/tests/daily_statement_units_v2/32d_bis_backfill_concurrency_asserts.sql',
+  'utf8',
+);
 
 test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
   for (const rpc of [
@@ -139,11 +147,14 @@ test('hardens the BIS mass backfill with one atomic set-based review batch', () 
     /IF p_attempt ->> 'requested_mode' = 'backfill'[\s\S]*daily_stmt_pre_ingest_bis_backfill_core_0v/,
   );
   assert.match(migrationBisTimeoutHardening, /WITH unit_input AS MATERIALIZED/);
-  assert.match(migrationBisTimeoutHardening, /FOR v_lock_day_unit_id IN[\s\S]*ORDER BY[\s\S]*LOOP[\s\S]*pg_advisory_xact_lock/);
+  assert.match(migrationBisTimeoutHardening, /FOR v_lock_day_unit_id IN[\s\S]*ORDER BY[\s\S]*LOOP[\s\S]*daily_stmt_acquire_day_lock/);
   assert.match(migrationBisTimeoutHardening, /result_units AS MATERIALIZED/);
   assert.doesNotMatch(migrationBisTimeoutHardening, /JOIN LATERAL \([\s\S]*jsonb_array_elements\(v_result -> 'units'\)/);
   assert.doesNotMatch(migrationBisTimeoutHardening, /line_count',\(SELECT[\s\S]*jsonb_array_elements\(p_units\)/);
+  assert.match(migrationBisTimeoutHardening, /sum\(\(d\.value ->> 'line_count'\)::integer\)/);
   assert.match(migrationBisTimeoutHardening, /DAILY_STMT_BIS_BACKFILL_LINE_CARDINALITY/);
+  assert.match(migrationBisTimeoutHardening, /'input_review_required', input_review_required/);
+  assert.match(migrationBisTimeoutHardening, /WHERE \(e\.value ->> 'input_review_required'\)::boolean[\s\S]*validation_status' <> 'needs_review'/);
   assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_units_staging/);
   assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_lines_staging/);
   assert.equal(
@@ -179,10 +190,16 @@ test('hardens the BIS mass backfill with one atomic set-based review batch', () 
   assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_BIS_TIMEOUT_HARDENING"/);
   assert.match(e2eRunner, /e2e0r_generate_bis_mass_backfill\.ts/);
   assert.match(e2eRunner, /31_bis_mass_backfill_timeout_hardening\.sql/);
+  for (const concurrencyScript of ['32a_', '32b_', '32c_', '32d_']) {
+    assert.match(e2eRunner, new RegExp(concurrencyScript));
+  }
   assert.match(bisMassGenerator, /unitCount: 4_000/);
   assert.match(bisMassGenerator, /lineCount: 4_000/);
   assert.match(bisMassSqlTest, /SET LOCAL statement_timeout = '15s'/);
   assert.match(bisMassSqlTest, /BIS-4000 bounded/);
+  assert.match(e2ePipelineSqlTest, /0R-J0: la sonde R3 est declaree valid sans motif par le client/);
+  assert.match(bisConcurrencyAssertions, /BISC2: session B waited at least three seconds/);
+  assert.match(bisConcurrencyAssertions, /BISC4: canonical duplicate B stages no financial line/);
 });
 
 test('submits only useful BIS days and preserves server reconciliation', () => {

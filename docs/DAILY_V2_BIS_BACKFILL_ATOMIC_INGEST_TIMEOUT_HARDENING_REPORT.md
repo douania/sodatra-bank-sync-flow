@@ -54,6 +54,25 @@ dernier risque quadratique et plusieurs réserves de preuve. Le correctif :
 - fait échouer atomiquement la RPC si le nombre de lignes insérées diverge ;
 - ajoute une campagne distincte à la borne contractuelle de 4 000 unités.
 
+La revalidation indépendante du SHA `5b38593` a ensuite identifié une
+régression P1 dans la classification R3 du nouveau cœur. Le wrapper ajoutait le
+motif serveur `ACTIVE_LINE_HASH_SCOPE_CONFLICT` avant de vérifier la cohérence
+du statut déclaré par le client. Une journée correctement déclarée `valid`,
+sans motif client, mais reclassée `needs_review` par R3 était donc refusée à
+tort. La correction :
+
+- mémorise séparément la présence de motifs de revue fournis par le client ;
+- applique `DAILY_STMT_REVIEW_STATUS_MISMATCH` uniquement à ces motifs client ;
+- conserve les motifs ajoutés par le serveur et la classification R3
+  `needs_review` dans le résultat et l'audit ;
+- étend la sonde 0R-J0/J1 pour prouver explicitement le cas client
+  `valid`/sans motif puis serveur R3 `needs_review` ;
+- réutilise le helper canonique `daily_stmt_acquire_day_lock` dans la boucle
+  ordonnée ;
+- calcule la cardinalité attendue des lignes depuis les décisions validées,
+  indépendamment du comptage des lignes effectivement insérées ;
+- ajoute une preuve directe à deux sessions du nouveau cœur BIS ensembliste.
+
 ## Traitement incrémental durable du fichier BIS
 
 Le classeur reste intégralement parsé et validé dans le navigateur : l'application
@@ -78,6 +97,16 @@ vide, aucune RPC n'est appelée et le grant reste actif. Cette optimisation ne
 remplace aucune garantie serveur : une course concurrente reste arbitrée
 atomiquement par R1/R2/R3. La comparaison ne télécharge ni montant, ni libellé,
 ni numéro de compte complet.
+
+Le contrat du grant est désormais explicite : `max_units` borne le nombre de
+journées utiles réellement transmises à la RPC, c'est-à-dire le delta, tandis
+que `period_start` et `period_end` continuent de borner la période complète de
+l'export sélectionné. Une journée canonical identique ignorée ne consomme donc
+pas le grant et ne crée ni tentative ni événement d'audit supplémentaire. Le
+canonical existant reste la preuve financière durable de ce contenu. Si une
+traçabilité de chaque présentation physique du fichier devient nécessaire,
+elle devra être conçue comme un registre de réception distinct, sans recréer de
+staging financier en doublon.
 
 ## Preuve synthétique de volumétrie réelle
 
@@ -116,7 +145,10 @@ Une seconde campagne synthétique vérifie en plus la borne maximale autorisée 
 - charge plafond BIS 4 000 / 4 000 sous 15 s : **PASS** ;
 - chaîne SQL multi-banques 0R : **PASS** (`ALL_E2E_0R_SQL_PASS`) ;
 - cycle de vie provisional 0Z : **PASS** ;
-- concurrence réelle sur deux sessions : **PASS** ;
+- concurrence historique provisional sur deux sessions : **PASS** ;
+- concurrence directe du cœur BIS ensembliste sur deux sessions : **PASS** ;
+  la session B a attendu **4,010 s**, puis a produit un doublon audité sans
+  ligne financière supplémentaire et avec un seul canonical actif ;
 - tests Daily v2 application : **103/103 PASS** ;
 - tests Daily v2 reporting : **70/70 PASS** ;
 - toutes les autres suites `test:*` de la matrice CI : **PASS** ;

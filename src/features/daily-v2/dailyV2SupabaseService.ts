@@ -352,6 +352,9 @@ export async function preIngestDailyV2WithIncrementalDelta(
   }
 
   if (incremental.summary.submittedUnits === 0) {
+    // A no-op is deliberately not persisted: it neither consumes the one-use
+    // grant nor creates a duplicate attempt/audit row. The existing canonical
+    // unit remains the durable proof of the identical financial content.
     return {
       outcome: 'no_changes',
       response: null,
