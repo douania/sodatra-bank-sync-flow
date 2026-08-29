@@ -17,7 +17,7 @@
 
 ## DAILY-V2-BIS-BACKFILL-ATOMIC-INGEST-TIMEOUT-HARDENING
 
-**Statut : `FIXED_LOCAL — PR_135_INDEPENDENT_REVALIDATION_REQUIRED` (2026-08-29)**
+**Statut : `CLOSED — PRODUCTION_VALIDATED_READ_ONLY` (2026-08-29)**
 
 Le dépôt atomique Daily v2 route les backfills BIS historiques bornés vers un
 cœur PostgreSQL ensembliste, sans chunking, sans transaction partielle et sans
@@ -50,8 +50,19 @@ et backfill sous/sur période ainsi que cinq payloads de lignes/cardinalité
 corrompus sont exercés dans PostgreSQL avec rollback intégral. La concurrence
 compare aussi directement le canonical renvoyé à B avec celui promu par A.
 
-Le lot reste local sur la draft PR #135. Aucun environnement Supabase ou
-Lovable n'a été modifié. Rapport :
+La revalidation indépendante finale du SHA `0e4acf2` n'a conservé aucun
+finding P0, P1 ou P2 ouvert. La PR #135 a été fusionnée dans `main` par
+`f6f6c0b` et sa CI est verte. La migration `20260829000000` et le runtime ont
+ensuite été validés sur staging, puis en production sous des GO nominatifs.
+
+En production, le scénario synthétique 857 / 4 798 passe sous 15 secondes dans
+une transaction annulée, sans résidu. Le runtime Lovable canonique est aligné
+sur `f6f6c0b` et le smoke authentifié confirme le verrou production read-only,
+l'absence de sélecteur ou de commande mutative et des appels Supabase
+exclusivement en lecture vers `leakcdbbawzysfqyqsnr`. Le déploiement production
+est tracé par `c8f7e858-af66-476a-bcf0-d881238869ee` ; les GO staging et
+production exacts, la migration `20260829000000`, le SHA runtime et les preuves
+E2E/rollback sont consignés dans le rapport :
 `docs/DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_REPORT.md`.
 
 ---
