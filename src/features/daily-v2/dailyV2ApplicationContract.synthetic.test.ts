@@ -407,7 +407,7 @@ test('keeps role-gated UI decisions fail closed', () => {
   assert.match(page, /const canReadCanonical = isAdmin \|\| roles\.includes\('auditor'\)/);
   assert.match(tables, /unit\.status === 'staged'/);
   assert.match(tables, /unit\.status === 'conflict'/);
-  assert.match(page, /\{isAdmin && bank === 'BIS' && <SelectItem value="backfill"/);
+  assert.match(page, /\{canAdminister && bank === 'BIS' && <SelectItem value="backfill"/);
   assert.match(page, /requestedMode === 'backfill' && !isAdmin/);
   assert.match(browserPipeline, /backfillGrantId is mandatory in backfill mode/);
   assert.match(browserPipeline, /accountRegistryId must identify a provisioned account/);
@@ -492,7 +492,7 @@ test('gives every Daily v2 network operation an explicit capability', () => {
   assert.doesNotMatch(runtimeTarget, /capability: DailyV2Capability = /);
   assert.match(
     runtimeTarget,
-    /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read'\]/,
+    /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read', 'deposit', 'promote'\]/,
   );
   assert.match(
     runtimeTarget,
@@ -558,10 +558,11 @@ test('separates local staging preparation from fail-closed server persistence', 
   assert.match(page, /disabled=\{!canDecide \|\| Boolean\(reasonRequired/);
   assert.match(page, /\{canAdminister && \(/);
   assert.match(page, /if \(!canDecide\) \{\s*toast\.error\(READ_ONLY_TARGET_MESSAGE\);\s*return;/);
-  assert.match(page, /Production en lecture seule/);
+  assert.match(page, /Pilote production verrouillé/);
+  assert.match(page, /Pilote production actif/);
   assert.match(page, /Environnement en lecture seule/);
   assert.match(page, /Verrou serveur : \{runtimeLockLabel\}/);
-  assert.match(page, /Consultation uniquement\. La préparation locale et toutes les mutations sont indisponibles sur cette cible\./);
+  assert.match(page, /La préparation locale est disponible, mais aucune mutation n’est possible tant que le verrou PostgreSQL reste fermé\./);
   assert.match(page, /Mode parse-only/);
   assert.match(page, /Persistance bloquée par le verrou serveur/);
   assert.match(

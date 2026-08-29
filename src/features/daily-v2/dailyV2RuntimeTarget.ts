@@ -6,14 +6,18 @@
  * serveur. Elle empêche seulement une application déployée sur une cible
  * donnée de proposer une opération qui n'y est pas autorisée par la politique.
  *
- * Politique :
+ * Politique statique d'éligibilité :
  *   - staging    : read, deposit, promote, admin ;
- *   - production : read uniquement (revue humaine ; toute mutation exige un
- *     GO CTO distinct qui élargira cette table) ;
+ *   - production : read, deposit et promote pour le pilote contrôlé ;
+ *                  l'administration du registre et le backfill restent exclus ;
  *   - toute autre cible, URL invalide/non Supabase, ou contradiction entre
  *     l'URL et VITE_SUPABASE_PROJECT_ID : refus fail-closed de TOUTE capacité.
  *
- * Aucune capacité n'a de valeur par défaut : chaque appelant la déclare.
+ * Cette table n'ouvre jamais une mutation à elle seule. Les capacités de
+ * mutation restent fermées tant que le verrou PostgreSQL privé ne renvoie pas
+ * explicitement `true`, puis chaque RPC applique encore Auth, rôles, grants et
+ * invariants métier. Aucune capacité n'a de valeur par défaut : chaque
+ * appelant la déclare.
  */
 export const DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF = 'gbbsqcscryygqlmqncyv';
 export const DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF = 'leakcdbbawzysfqyqsnr';
@@ -35,8 +39,14 @@ const DAILY_V2_CAPABILITY_POLICY: Readonly<
   Record<DailyV2AuthorizedProjectRef, readonly DailyV2Capability[]>
 > = {
   [DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF]: ['read', 'deposit', 'promote', 'admin'],
-  [DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF]: ['read'],
+  [DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF]: ['read', 'deposit', 'promote'],
 };
+
+export function isDailyV2ProductionPilotProject(
+  projectRef: string | null | undefined,
+): projectRef is typeof DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF {
+  return projectRef === DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF;
+}
 
 export interface DailyV2RuntimeTargetInput {
   supabaseUrl?: string;

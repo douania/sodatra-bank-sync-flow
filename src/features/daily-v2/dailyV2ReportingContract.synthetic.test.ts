@@ -285,7 +285,7 @@ test('a monotone canonical epoch brackets the reporting read, empty report inclu
   );
 });
 
-test('the runtime lock keeps staging complete and production read-only', () => {
+test('the runtime lock remains authoritative for the production pilot', () => {
   assert.match(
     runtimeTarget,
     /DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF = 'gbbsqcscryygqlmqncyv'/,
@@ -295,8 +295,10 @@ test('the runtime lock keeps staging complete and production read-only', () => {
     /DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF = 'leakcdbbawzysfqyqsnr'/,
   );
   assert.match(runtimeTarget, /hostname !== `\$\{EXPECTED_REF\}\.supabase\.co`|hostname\.endsWith\('\.supabase\.co'\)/);
-  // La production n'accorde que la lecture ; aucune mutation n'y est exposée.
-  assert.match(runtimeTarget, /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read'\]/);
+  // La cible production est éligible au pilote, mais ces capacités restent
+  // inopérantes tant que le verrou serveur ne renvoie pas explicitement true.
+  assert.match(runtimeTarget, /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read', 'deposit', 'promote'\]/);
+  assert.match(runtimeTarget, /const serverAllowsMutations = mutationsEnabled === true/);
   // Le reporting reste strictement read et ne référence aucune cible en dur.
   assert.match(supabaseService, /assertAuthorizedDailyV2Target\('read'\);\s*\n\s*return runDailyV2CanonicalReportingRead/);
   for (const source of newReportingSources) {

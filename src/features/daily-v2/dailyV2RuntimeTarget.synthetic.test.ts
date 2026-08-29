@@ -5,6 +5,7 @@ import {
   DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF,
   DAILY_V2_CAPABILITIES,
   applyDailyV2RuntimeMutationLock,
+  isDailyV2ProductionPilotProject,
   resolveDailyV2ImportPermissions,
   validateDailyV2RuntimeTarget,
   type DailyV2Capability,
@@ -12,8 +13,6 @@ import {
 
 const STAGING_URL = `https://${DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF}.supabase.co`;
 const PRODUCTION_URL = `https://${DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF}.supabase.co`;
-const MUTATIONS: DailyV2Capability[] = ['deposit', 'promote', 'admin'];
-
 test('staging allows the four capabilities', () => {
   for (const capability of DAILY_V2_CAPABILITIES) {
     assert.deepEqual(
@@ -26,22 +25,25 @@ test('staging allows the four capabilities', () => {
   }
 });
 
-test('production allows read only', () => {
-  assert.deepEqual(
-    validateDailyV2RuntimeTarget(
-      { supabaseUrl: PRODUCTION_URL, projectId: DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF },
-      'read',
-    ),
-    { allowed: true, projectRef: DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF },
-  );
-  for (const capability of MUTATIONS) {
-    const result = validateDailyV2RuntimeTarget({ supabaseUrl: PRODUCTION_URL }, capability);
-    assert.equal(result.allowed, false, `production must refuse ${capability}`);
-    assert.match(
-      'reason' in result ? result.reason : '',
-      new RegExp(`capability "${capability}" is not authorized`),
+test('production pilot allows deposit and promotion but excludes administration', () => {
+  for (const capability of ['read', 'deposit', 'promote'] as const) {
+    assert.deepEqual(
+      validateDailyV2RuntimeTarget(
+        { supabaseUrl: PRODUCTION_URL, projectId: DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF },
+        capability,
+      ),
+      { allowed: true, projectRef: DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF },
     );
   }
+  const adminVerdict = validateDailyV2RuntimeTarget(
+    { supabaseUrl: PRODUCTION_URL, projectId: DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF },
+    'admin',
+  );
+  assert.equal(adminVerdict.allowed, false);
+  assert.match('reason' in adminVerdict ? adminVerdict.reason : '', /capability "admin" is not authorized/);
+  assert.equal(isDailyV2ProductionPilotProject(DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF), true);
+  assert.equal(isDailyV2ProductionPilotProject(DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF), false);
+  assert.equal(isDailyV2ProductionPilotProject(undefined), false);
 });
 
 test('an unknown target fails closed for every capability', () => {
@@ -130,13 +132,21 @@ test('the server runtime lock closes every mutation capability but preserves rea
   );
 });
 
-test('the server lock never widens a statically refused target capability', () => {
+test('the server lock keeps every production pilot mutation closed until explicitly enabled', () => {
   const productionCapabilities = {
     read: true,
-    deposit: false,
-    promote: false,
+    deposit: true,
+    promote: true,
     admin: false,
   };
+  assert.deepEqual(
+    applyDailyV2RuntimeMutationLock(productionCapabilities, false),
+    { read: true, deposit: false, promote: false, admin: false },
+  );
+  assert.deepEqual(
+    applyDailyV2RuntimeMutationLock(productionCapabilities, undefined),
+    { read: true, deposit: false, promote: false, admin: false },
+  );
   assert.deepEqual(
     applyDailyV2RuntimeMutationLock(productionCapabilities, true),
     productionCapabilities,
@@ -162,15 +172,15 @@ test('staging read-only mode permits local preparation but never persistence', (
   );
 });
 
-test('local preparation stays closed without the role or on a static read-only target', () => {
+test('local preparation stays closed without the role or on an unknown static target', () => {
   const stagingCapabilities = {
     read: true,
     deposit: true,
     promote: true,
     admin: true,
   };
-  const productionCapabilities = {
-    read: true,
+  const unknownCapabilities = {
+    read: false,
     deposit: false,
     promote: false,
     admin: false,
@@ -181,7 +191,7 @@ test('local preparation stays closed without the role or on a static read-only t
     { canPrepareLocally: false, canPersist: false },
   );
   assert.deepEqual(
-    resolveDailyV2ImportPermissions(true, productionCapabilities, productionCapabilities),
+    resolveDailyV2ImportPermissions(true, unknownCapabilities, unknownCapabilities),
     { canPrepareLocally: false, canPersist: false },
   );
 });

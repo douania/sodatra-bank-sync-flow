@@ -270,8 +270,10 @@ test('le service aval partage la classification stricte du précontrôle', {
 
 test('le guard réutilise la politique canonique Daily v2 sans dupliquer les refs projet', () => {
   assert.match(guard, /from '@\/features\/daily-v2\/dailyV2RuntimeTarget'/);
-  assert.match(guard, /validateDailyV2RuntimeTarget\(input, capability\)/);
-  assert.match(guard, /currentDailyV2RuntimeTargetVerdict\(capability\)/);
+  assert.match(guard, /validateDailyV2RuntimeTarget\(input, 'read'\)/);
+  assert.match(guard, /currentDailyV2RuntimeTargetVerdict\('read'\)/);
+  assert.match(guard, /DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF/);
+  assert.match(guard, /targetVerdict\.projectRef !== DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF/);
   // La capacité est obligatoire : aucune valeur par défaut, chaque appelant
   // la déclare (même règle que la garde canonique).
   assert.match(guard, /capability: UploadMutationCapability,/);

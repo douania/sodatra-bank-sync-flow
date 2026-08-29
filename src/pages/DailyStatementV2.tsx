@@ -80,6 +80,8 @@ import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
 import {
   applyDailyV2RuntimeMutationLock,
   currentDailyV2Capabilities,
+  currentDailyV2RuntimeTargetVerdict,
+  isDailyV2ProductionPilotProject,
   resolveDailyV2ImportPermissions,
 } from '@/features/daily-v2/dailyV2RuntimeTarget';
 
@@ -150,6 +152,9 @@ const DailyStatementV2 = () => {
   // sécurité : Auth, rôles, RLS et gates RPC restent serveur). Chaque action
   // combine le rôle ET la capacité ; une cible read-only n'expose aucune mutation.
   const targetCapabilities = currentDailyV2Capabilities();
+  const targetVerdict = currentDailyV2RuntimeTargetVerdict('read');
+  const productionPilotTarget =
+    targetVerdict.allowed && isDailyV2ProductionPilotProject(targetVerdict.projectRef);
   const staticReadOnlyTarget =
     !targetCapabilities.deposit && !targetCapabilities.promote && !targetCapabilities.admin;
   const runtimeLockQuery = useQuery<boolean>({
@@ -177,12 +182,14 @@ const DailyStatementV2 = () => {
   const canDecide = isAdmin && capabilities.promote;
   const canAdminister = isAdmin && capabilities.admin;
   const readOnlyTitle = staticReadOnlyTarget
-    ? 'Production en lecture seule'
-    : runtimeLockQuery.isPending
-      ? 'Vérification du verrou serveur'
-      : runtimeLockQuery.isError
-        ? 'Verrou serveur indisponible'
-        : 'Environnement en lecture seule';
+    ? 'Cible non autorisée'
+    : productionPilotTarget
+      ? 'Pilote production verrouillé'
+      : runtimeLockQuery.isPending
+        ? 'Vérification du verrou serveur'
+        : runtimeLockQuery.isError
+          ? 'Verrou serveur indisponible'
+          : 'Environnement en lecture seule';
   const runtimeLockLabel = staticReadOnlyTarget
     ? 'lecture seule imposée'
     : runtimeLockQuery.isPending
@@ -192,6 +199,11 @@ const DailyStatementV2 = () => {
         : runtimeLockQuery.data === true
           ? 'mutations autorisées'
           : 'lecture seule';
+  const targetLabel = productionPilotTarget
+    ? 'production · pilote contrôlé'
+    : targetVerdict.allowed
+      ? 'staging'
+      : 'non autorisée';
   const accountsQuery = useQuery<DailyV2AccountRegistryRow[]>({
     queryKey: ['daily-v2', 'accounts', bank, currency, isAdmin],
     queryFn: () => listDailyV2Accounts({ bank, currency, includeInactive: isAdmin }),
@@ -204,7 +216,7 @@ const DailyStatementV2 = () => {
   const grantsQuery = useQuery<DailyV2BackfillGrantRow[]>({
     queryKey: ['daily-v2', 'backfill-grants', accountRegistryId],
     queryFn: () => listDailyV2BackfillGrants(accountRegistryId),
-    enabled: isAdmin && requestedMode === 'backfill' && Boolean(accountRegistryId),
+    enabled: canAdminister && requestedMode === 'backfill' && Boolean(accountRegistryId),
   });
 
   const resetPrepared = useCallback(() => {
@@ -493,13 +505,27 @@ const DailyStatementV2 = () => {
           <AlertDescription>
             {staticReadOnlyTarget
               ? 'Consultation uniquement. La préparation locale et toutes les mutations sont indisponibles sur cette cible.'
-              : 'Consultation et préparation locale autorisées sur staging. Dépôt, promotion, supersede et administration du registre sont désactivés tant que le verrou serveur n’autorise pas explicitement les mutations.'}
+              : productionPilotTarget
+                ? 'La préparation locale est disponible, mais aucune mutation n’est possible tant que le verrou PostgreSQL reste fermé. Son absence, une erreur de lecture ou toute valeur autre que true maintient le pilote fermé.'
+                : 'Consultation et préparation locale autorisées sur staging. Dépôt, promotion, supersede et administration du registre sont désactivés tant que le verrou serveur n’autorise pas explicitement les mutations.'}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {productionPilotTarget && !readOnlyTarget && (
+        <Alert>
+          <ShieldCheck className="h-4 w-4" />
+          <AlertTitle>Pilote production actif</AlertTitle>
+          <AlertDescription>
+            Le verrou PostgreSQL autorise actuellement les mutations Daily v2. Les rôles serveur,
+            les RPC atomiques, la revue staging et l’audit restent obligatoires.
           </AlertDescription>
         </Alert>
       )}
 
       <div className="flex flex-wrap gap-2">
         <Badge variant="outline">Session requise</Badge>
+        <Badge variant="outline">Cible : {targetLabel}</Badge>
         <Badge variant="secondary">Rôles : {rolesQuery.isLoading ? 'chargement…' : roles.join(', ') || 'aucun'}</Badge>
         <Badge variant="secondary">Verrou serveur : {runtimeLockLabel}</Badge>
       </div>
@@ -578,7 +604,7 @@ const DailyStatementV2 = () => {
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="daily">Daily — 45 jours maximum</SelectItem>
-                          {isAdmin && bank === 'BIS' && <SelectItem value="backfill">Backfill BIS admin — 4000 jours maximum</SelectItem>}
+                          {canAdminister && bank === 'BIS' && <SelectItem value="backfill">Backfill BIS admin — 4000 jours maximum</SelectItem>}
                         </SelectContent>
                       </Select>
                     </Field>
