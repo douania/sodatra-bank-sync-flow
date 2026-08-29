@@ -78,7 +78,7 @@ Pas d'API bancaire directe.
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
 | Quality Control | `/quality-control` | Actif |
 | Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
-| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt daily ou backfill BIS admin sous grant, staging, promotion/supersede, canonical, audit et reporting ; accès par rôles ; cible verrouillée staging |
+| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt daily ou backfill BIS admin sous grant, staging, promotion/supersede, canonical, audit et reporting ; mutations autorisées uniquement sur staging ; runtime production publié en consultation seule |
 
 ## Modules supprimés / retirés
 

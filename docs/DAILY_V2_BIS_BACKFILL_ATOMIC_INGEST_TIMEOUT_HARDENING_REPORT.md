@@ -2,7 +2,7 @@
 
 ## Statut
 
-`FIXED_LOCAL — INDEPENDENT_REVALIDATION_REQUIRED` — 2026-08-29.
+`CLOSED — PRODUCTION_VALIDATED_READ_ONLY` — 2026-08-29.
 
 Le lot corrige le timeout PostgreSQL `57014` observé pendant la qualification
 staging du fichier BIS réel : le parsing avait produit 857 unités et 4 798
@@ -186,10 +186,116 @@ Une seconde campagne synthétique vérifie en plus la borne maximale autorisée 
 Les conteneurs PostgreSQL et le worktree baseline étaient jetables et ont été
 supprimés. Aucun fichier bancaire réel, secret ou payload généré n'est versionné.
 
-## Frontières et prochaine étape
+## Revalidations indépendantes, merge et CI
 
-Ce verdict est local. Aucun merge, aucune migration distante et aucune
-publication runtime ne sont compris dans l'implémentation. La migration touche
-un chemin financier, des fonctions `SECURITY DEFINER`, les ACL et l'audit : une
-revalidation indépendante approfondie du nouveau SHA de la draft PR est
-obligatoire avant tout GO de merge.
+La draft PR #135 a fait l'objet de revalidations indépendantes successives.
+Elles ont bloqué le merge tant que subsistaient la régression R3, la faille de
+portée temporelle du grant, les preuves comportementales incomplètes et les
+derniers écarts de concurrence. Le SHA final
+`0e4acf20e85164e477977fcb68f4a65ec1109b4e` ne conserve aucun finding P0, P1
+ou P2 ouvert et a été déclaré prêt au merge.
+
+La PR #135, `fix(daily-v2): harden atomic BIS backfill timeout`, a été fusionnée
+le 2026-08-29. Son head est intégré dans `main` par le commit
+`f6f6c0bdd435532b82dc3195f8d09f143b3d6299`. Le check GitHub Actions
+`Lint and build` s'est terminé avec la conclusion `SUCCESS`.
+
+## Validation staging
+
+Les phases staging ont ciblé exclusivement le projet Lovable
+`8c508b94-d03f-4165-ab2b-7a3cd52d2d2b` et le projet Supabase canonique
+`gbbsqcscryygqlmqncyv`.
+
+Sous leurs GO nominatifs distincts :
+
+- le préflight read-only a confirmé la cible, le SHA et l'absence de la
+  migration du lot ;
+- la migration `20260829000000` a été appliquée avec son entrée de ledger ;
+- le runtime staging a été synchronisé sur le code fusionné ;
+- le scénario authentifié BIS 857 journées / 4 798 lignes a traversé le
+  chemin atomique optimisé sous le budget de requête puis a été annulé ;
+- le contrôle final n'a trouvé aucun résidu synthétique ni verrou temporaire.
+
+Cette validation n'a promu aucune donnée staging vers le canonical de
+production. Les fichiers bancaires réels utilisés pour qualifier le parsing ne
+sont ni versionnés ni reproduits dans ce rapport.
+
+## Validation production
+
+### Préflight, migration et E2E avec rollback
+
+Le préflight a verrouillé la cible sur le projet Supabase production
+`leakcdbbawzysfqyqsnr`. La migration du lot était absente et les prérequis
+Daily v2 étaient présents. L'application transactionnelle de
+`20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql` a
+ensuite été autorisée séparément.
+
+Le post-contrôle a confirmé :
+
+- 39 versions au ledger, avec `20260829000000` comme dernière version ;
+- aucun verrou de migration restant ;
+- les fonctions internes du nouveau cœur toujours fermées aux rôles clients ;
+- la RPC publique existante et les contrôles Auth, rôles, grant et audit
+  conservés.
+
+Le scénario production authentifié, exécuté dans une transaction annulée, a
+rejoué la volumétrie synthétique représentative de 857 unités et 4 798 lignes.
+Il a terminé sous 15 secondes, consommé le grant dans la transaction, conservé
+les cardinalités attendues et prouvé le rollback intégral. Le contrôle final a
+confirmé zéro donnée et zéro grant synthétique résiduel.
+
+### Publication du runtime
+
+Le projet Lovable production exact est
+`e52d9fce-f1b4-46f8-900c-c559a6eb2115`, publié à l'URL canonique
+`https://sodatra-bank-sync-flow.lovable.app`. Le runtime est aligné sur le
+commit de merge `f6f6c0bdd435532b82dc3195f8d09f143b3d6299`. Le bundle actif
+`index-BU3Wr_fP.js` contient les marqueurs incrémentaux `submittedUnits`,
+`identicalUnitsSkipped` et `Synthèse incrémentale BIS`, et ne référence que la
+cible Supabase production `leakcdbbawzysfqyqsnr`.
+
+### Smokes post-publication
+
+Le smoke anonyme a confirmé :
+
+- chargement HTTP du domaine canonique et du bundle publié ;
+- redirection de `/daily-statements` vers `/auth` ;
+- aucun contenu Daily v2 protégé exposé ;
+- aucun échec réseau ni erreur ou avertissement frontend ;
+- aucune requête métier ou Supabase, hors télémétrie technique Lovable.
+
+Le smoke authentifié a ensuite confirmé :
+
+- accès à `/daily-statements` sur une session production valide ;
+- affichage de `Production en lecture seule` et
+  `Verrou serveur : lecture seule imposée` ;
+- absence de sélecteur de fichier et de commande d'import ou de mutation ;
+- chargement des vues Staging, Canonical, Audit et Reporting ;
+- appels Supabase exclusivement en `GET` vers
+  `leakcdbbawzysfqyqsnr.supabase.co` ;
+- aucun appel métier `POST`, `PATCH` ou `DELETE`, aucun échec réseau et aucun
+  finding console. Les seuls `POST` observés sont la télémétrie Lovable.
+
+## Sécurité, rollback et limites
+
+La migration est additive et transactionnelle. Un retour arrière après commit
+nécessiterait une nouvelle migration additive et un GO production dédié ; il
+ne doit pas réintroduire l'ancien chemin quadratique ni ouvrir les fonctions
+internes aux rôles clients.
+
+Les validations environnementales ont utilisé des transactions annulées pour
+les données synthétiques. Aucun secret, fichier bancaire, numéro de compte,
+montant détaillé ou payload financier n'est consigné dans Git ou dans ce
+rapport. La publication n'a modifié ni Auth, ni RLS, ni les rôles métier.
+
+La production reste volontairement en consultation seule. Cette clôture prouve
+que le correctif est déployé et que le chemin atomique tient la volumétrie
+contractuelle ; elle n'autorise pas l'import opérationnel BIS en production.
+Toute ouverture future d'une mutation Daily v2, tout nouveau format de fichier
+ou tout registre de réception physique exigera un pack et des GO distincts.
+
+## Clôture
+
+Le timeout atomique BIS est corrigé, fusionné, migré et validé sur staging puis
+production. Le runtime publié expose le delta incrémental tout en conservant la
+garde production read-only. Le pack est clos sans réserve bloquante.
