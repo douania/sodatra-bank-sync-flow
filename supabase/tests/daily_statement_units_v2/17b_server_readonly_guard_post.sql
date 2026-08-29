@@ -24,10 +24,11 @@ SELECT poc_test.assert(
 
 SELECT poc_test.assert(
   (
-    SELECT count(*) = 3
+    SELECT count(*) = 4
        AND (array_agg(new_enabled ORDER BY event_id))[1] = false
        AND (array_agg(new_enabled ORDER BY event_id))[2] = true
-       AND (array_agg(new_enabled ORDER BY event_id))[3] = false
+       AND (array_agg(new_enabled ORDER BY event_id))[3] = true
+       AND (array_agg(new_enabled ORDER BY event_id))[4] = false
        AND bool_and(char_length(btrim(safe_reason)) BETWEEN 8 AND 240)
        AND bool_and(session_actor IS NOT NULL)
        AND bool_and(effective_actor IS NOT NULL)
@@ -119,7 +120,7 @@ SELECT poc_test.assert(
 );
 
 SELECT poc_test.assert(
-  (SELECT count(*) FROM daily_v2_private.runtime_control_events) = 3,
+  (SELECT count(*) FROM daily_v2_private.runtime_control_events) = 4,
   'server-readonly-post: test absence rollbacke sans faux evenement'
 );
 

@@ -12,7 +12,10 @@ de vie provisional 0Z
 fail-closed
 `20260730170000_daily_v2_server_readonly_guard.sql`, puis son API booléenne
 read-only
-`20260730180000_daily_v2_runtime_lock_read_api.sql`.
+`20260730180000_daily_v2_runtime_lock_read_api.sql`, le hardening BIS 0V
+`20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql`,
+puis les scopes serveur du pilote contrôlé
+`20260829120000_daily_v2_controlled_production_pilot_server_scope.sql`.
 
 **Périmètre strict :**
 - Postgres local **jetable** uniquement (Docker). Jamais Supabase live, jamais
@@ -122,6 +125,12 @@ jetable, puis après le retour à `false`. Les tests prouvent qu'elle reflète
 dynamiquement le singleton sans accorder au frontend un accès direct au schéma
 privé ni exposer de setter.
 
+`33_controlled_production_server_scope.sql` simule dans une transaction
+rollbackée le tuple production `master=true`, `daily=true`, `admin=false`,
+`backfill=false`. Il appelle directement les huit RPC mutatives, prouve le refus
+des six chemins admin/backfill, l'accès des trois opérations daily à leurs
+invariants métier, l'absence d'écriture partielle et les ACL fermées des cœurs.
+
 Fichiers : `e2e0r_generate_payloads.ts`,
 `25_e2e0r_historical_adoption_seed.sql`,
 `26_e2e0r_historical_adoption_assert.sql`,
@@ -134,6 +143,7 @@ Fichiers : `e2e0r_generate_payloads.ts`,
 `28a_provisional_concurrency_session_a_0z.sql`,
 `28b_provisional_concurrency_session_b_0z.sql`,
 `29_provisional_concurrency_asserts_0z.sql`, `30_e2e0r_pipeline.sql`,
+`33_controlled_production_server_scope.sql`,
 `e2e0r_reporting_assert.ts`, `run_e2e_0r.sh`.
 
 Deux points de contrat :

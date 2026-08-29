@@ -78,7 +78,7 @@ Pas d'API bancaire directe.
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
 | Quality Control | `/quality-control` | Actif |
 | Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
-| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt, staging, promotion/supersede, canonical, audit et reporting ; pilote production journalier bloqué en review : le masquage client du backfill/admin n'est pas une séparation serveur ; non publié et non activé |
+| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt, staging, promotion/supersede, canonical, audit et reporting ; pilote production journalier et scopes serveur daily/admin/backfill implémentés localement, migration non appliquée, contre-review requise ; non publié et non activé |
 
 ## Modules supprimés / retirés
 
@@ -117,10 +117,13 @@ Le flux `/daily-statements` est séparé de ces deux pipelines :
 
 Le pack `DAILY-V2-CONTROLLED-PRODUCTION-ACTIVATION-PILOT` rend côté client la
 cible production statiquement éligible au dépôt journalier et aux décisions
-Daily v2, mais jamais à l'administration. La contre-review a établi que le
-verrou PostgreSQL global ne garantit pas cette séparation côté serveur : le pack
-est bloqué et non merge-ready. Le verrou reste fermé ; le pack local ne
-constitue ni une publication ni une activation.
+Daily v2, mais jamais à l'administration. La migration candidate
+`20260829120000_daily_v2_controlled_production_pilot_server_scope.sql` sépare
+côté serveur les scopes `daily`, `admin` et `backfill` sous le kill switch
+maître et protège les huit RPC mutatives. Le correctif est validé sur PostgreSQL
+jetable mais attend une contre-review indépendante ; il n'est appliqué à aucun
+environnement. Le verrou production reste fermé ; le pack local ne constitue ni
+une publication ni une activation.
 Voir `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.
 
 ## Vérité DB / idempotence
@@ -156,7 +159,7 @@ Ne pas modifier sans justification CTO explicite :
 ## Backlog prioritaire
 
 Ouverts / suivis :
-- Daily v2 production pilot : `BLOCKED — SERVER_SCOPE_REQUIRED — PRODUCTION_LOCK_UNCHANGED` ;
+- Daily v2 production pilot : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_REQUIRED — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED` ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
 - Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;

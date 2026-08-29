@@ -2,15 +2,16 @@
 
 ## Statut
 
-`BLOCKED — SERVER_SCOPE_REQUIRED — PRODUCTION_LOCK_UNCHANGED`
-— 2026-08-29.
+`IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_REQUIRED — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED`
+— 2026-08-30.
 
-Ce lot prépare côté client le premier pilote mutatif Daily v2 en production. Il ne publie
-aucun runtime, n'accède à aucun environnement, n'exécute aucun SQL et ne change
-pas le verrou PostgreSQL. La production reste donc effectivement en lecture
-seule. La contre-review indépendante a établi que ce lot n'est pas merge-ready :
-le verrou PostgreSQL actuel est global et ne sépare pas les capacités
-journalières des capacités d'administration et de backfill.
+Ce lot prépare le premier pilote mutatif Daily v2 en production, côté client et
+côté serveur. La migration candidate ajoute trois scopes privés audités
+(`daily`, `admin`, `backfill`) sous le kill switch maître existant et protège les
+huit RPC mutatives publiques. Elle n'a été appliquée à aucun environnement :
+aucun runtime n'est publié, aucun Supabase live n'est accédé et le verrou
+production reste inchangé. La production reste donc effectivement en lecture
+seule.
 
 ## Périmètre du premier pilote
 
@@ -26,12 +27,20 @@ staging :
 - administration du registre et backfill BIS destinés à rester hors du pilote
   production.
 
-Cette exclusion est actuellement portée uniquement par la politique statique de cible :
-la production est éligible à `read`, `deposit` et `promote`, jamais à `admin`.
-L'option backfill et les commandes de création/révocation de grant ne sont donc
-pas rendues dans l'interface de ce pilote. Le staging conserve les quatre
-capacités. Ce masquage client n'empêche pas un appel direct aux RPC et ne
-constitue donc pas l'exclusion serveur requise.
+La politique statique de cible rend la production éligible à `read`, `deposit`
+et `promote`, jamais à `admin`. L'option backfill et les commandes de gestion du
+registre/grant ne sont pas rendues dans l'interface. La migration candidate
+porte désormais la même frontière côté serveur :
+
+- `daily` : dépôt `requested_mode=daily`, promotion et supersede ;
+- `admin` : provisionnement, désactivation et adoption historique ;
+- `backfill` : émission/révocation de grant et dépôt
+  `requested_mode=backfill`.
+
+Les huit implémentations existantes deviennent des cœurs sans `EXECUTE` pour
+`PUBLIC`, `anon`, `authenticated` et `service_role`. Seuls leurs wrappers
+publics restent exécutables par `authenticated` et vérifient leur scope avant
+toute délégation métier.
 
 ## Barrières cumulatives
 
@@ -41,9 +50,10 @@ Une opération mutative exige simultanément :
 2. une capacité statique connue et explicitement autorisée ;
 3. une session Auth valide ;
 4. le rôle métier attendu ;
-5. une réponse explicite `true` du verrou PostgreSQL privé ;
-6. l'autorisation `EXECUTE` et les contrôles de rôle de la RPC ;
-7. les invariants atomiques, d'idempotence, de concurrence et d'audit Daily v2.
+5. une réponse explicite `true` du kill switch PostgreSQL privé ;
+6. une réponse explicite `true` du scope serveur de la RPC ;
+7. l'autorisation `EXECUTE` du wrapper et les contrôles de rôle métier ;
+8. les invariants atomiques, d'idempotence, de concurrence et d'audit Daily v2.
 
 Une cible inconnue, une contradiction URL/project ref, une capacité inconnue,
 une erreur de lecture du verrou, une réponse absente/invalide ou toute valeur
@@ -60,8 +70,9 @@ sécurité suffisante.
   chaque action avec le rôle et la capacité applicables ;
 - la cible exacte et l'état du verrou restent visibles à l'opérateur ;
 - les commandes d'administration et le backfill BIS restent absents de
-  l'interface en production, même lorsque le verrou est ouvert ; cette propriété
-  n'est pas encore garantie côté serveur.
+  l'interface en production ; après application de la migration candidate, les
+  appels directs correspondants restent refusés tant que leurs scopes privés
+  sont `false`.
 
 ## Verdict de contre-review indépendante
 
@@ -79,11 +90,29 @@ MERGE_READY: NO**.
   serveur borné ne sépare pas le journalier de l'administration/backfill et que
   les tests directs correspondants ne sont pas verts.
 
-## Séquence environnementale future — bloquée
+## Réconciliation locale du finding P1
 
-La séquence ci-dessous ne peut commencer qu'après implémentation locale,
-contre-review et merge d'un contrôle serveur borné. Chaque étape exigera ensuite
-un GO distinct :
+Le correctif serveur est matérialisé par
+`20260829120000_daily_v2_controlled_production_pilot_server_scope.sql`.
+La chaîne PostgreSQL 0R complète a été rejouée dans un conteneur jetable :
+
+- `master=true`, `daily=true`, `admin=false`, `backfill=false` ;
+- six appels directs admin/backfill refusés avant toute logique métier ;
+- trois chemins daily autorisés à atteindre leurs invariants métier ;
+- zéro écriture partielle après les refus ;
+- huit cœurs mutatifs inaccessibles aux rôles API et `PUBLIC` ;
+- état antérieur préservé et initialisation des scopes auditée ;
+- charges BIS 857 unités/4 798 lignes et plafond 4 000/4 000 verts ;
+- concurrences, retour du kill switch à `false` et reporting verts ;
+- conteneur et fichiers temporaires détruits.
+
+Le P1 est donc corrigé **localement**, sous réserve d'une nouvelle contre-review
+indépendante du SHA final. Cela ne vaut ni merge ni validation staging.
+
+## Séquence environnementale future — conditionnelle
+
+La séquence ci-dessous ne peut commencer qu'après contre-review conforme et
+merge du contrôle serveur borné. Chaque étape exigera ensuite un GO distinct :
 
 1. préflight staging read-only du SHA fusionné ;
 2. synchronisation et publication du runtime sur staging ;
@@ -91,8 +120,10 @@ un GO distinct :
 4. préflight production read-only : cible, SHA, rôles, registre, état du verrou
    et compteurs avant pilote ;
 5. publication production avec verrou toujours fermé, puis smoke parse-only ;
-6. ouverture temporaire du verrou par l'opérateur sous un GO production exact,
-   avec une raison non sensible et auditée ;
+6. activation atomique exacte par l'opérateur sous un GO production dédié :
+   `mutations_enabled=true`, `daily_scope_enabled=true`,
+   `admin_scope_enabled=false`, `backfill_scope_enabled=false`, avec une raison
+   non sensible et auditée ;
 7. dépôt d'un seul petit export journalier autorisé, revue, promotion et
    vérifications canonical/audit/idempotence ;
 8. fermeture immédiate du verrou au moindre écart, puis réconciliation ;
@@ -110,7 +141,9 @@ les mécanismes auditables de supersede/réconciliation et un GO dédié.
 - aucun backfill BIS ou provisionnement/désactivation de compte en production ;
 - aucune mutation automatique au chargement de la page ;
 - aucun secret, fichier bancaire ou payload réel dans Git, les tests ou ce rapport ;
-- aucune migration, modification Auth/RLS/grants ou setter client du verrou.
+- aucune application de migration sur un environnement SODATRA, modification
+  Auth/RLS ou setter client du verrou ; les changements de grants restent
+  bornés aux cœurs/wrappers de la migration candidate.
 
 ## Validation requise avant merge
 
@@ -121,18 +154,20 @@ les mécanismes auditables de supersede/réconciliation et un GO dédié.
 - build Vite production et hygiène du bundle ;
 - comparaison lint/typecheck à `origin/main` ;
 - review indépendante obligatoire, le lot touchant une garde d'intégrité.
-- contrôle serveur par capacité/mode et tests négatifs directs prouvant qu'un
-  verrou journalier ouvert ne permet ni backfill ni administration.
+- contre-review indépendante du contrôle serveur par capacité/mode et de ses
+  tests négatifs directs.
 
 ## Risques résiduels
 
 - le contrôle de cible frontend n'est pas une frontière de sécurité ; les RPC et
   le verrou PostgreSQL restent indispensables ;
-- l'ouverture du verrou est globale à Daily v2 côté serveur ; les rôles et
-  invariants propres des RPC ne remplacent pas une séparation serveur des modes,
-  ce qui bloque le pilote ;
+- tant que la migration candidate n'est pas appliquée, les environnements
+  conservent le verrou global historique et le pilote reste inexécutable ;
+- l'activation production devra modifier le kill switch et les trois scopes
+  dans une seule transaction auditée afin d'éviter tout état intermédiaire ;
 - le premier export réel reste une opération financière : préflight, opérateur,
   période, compte, observations et critères d'arrêt doivent être nommés dans le
   GO d'exécution ;
 - l'élargissement futur au backfill BIS ou à l'administration exigera un nouveau
-  pack et un GO distinct après la mise en place de la barrière serveur.
+  pack et un GO distinct ; il ne doit jamais réutiliser implicitement le GO du
+  pilote journalier.
