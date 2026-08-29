@@ -110,4 +110,3 @@ les mécanismes auditables de supersede/réconciliation et un GO dédié.
   GO d'exécution ;
 - l'élargissement au backfill BIS ou à l'administration exige un nouveau pack et
   un GO distinct.
-
