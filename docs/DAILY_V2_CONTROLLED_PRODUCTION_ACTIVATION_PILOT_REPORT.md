@@ -2,7 +2,7 @@
 
 ## Statut
 
-`IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_REQUIRED — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED`
+`IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS — MERGE_READY — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED`
 — 2026-08-30.
 
 Ce lot prépare le premier pilote mutatif Daily v2 en production, côté client et
@@ -124,8 +124,14 @@ principalement textuelle. Les deux réserves sont réconciliées localement :
 - un contrôle positif staging/admin/verrou `true` empêche une preuve vacuement
   verte.
 
-Le SHA incluant ces deux corrections reste soumis à une revalidation
-indépendante finale. Aucun environnement n'a été touché.
+La revalidation indépendante du SHA
+`e7634696d8a34a0b208d9f5d858bd921ed734ac1` a confirmé le comportement et
+rendu **PASS — MERGE_READY: YES**, avec un dernier P2 limité à la précision du
+compteur de test. Le delta ciblé
+`e7634696d8a34a0b208d9f5d858bd921ed734ac1..39af326897125ef38b6d70ff6c61af16ad653676`
+sépare désormais l'invocation du render prop du rendu de l'enfant. Sa dernière
+revalidation a rendu **PASS — MERGE_READY: YES**, avec `0 P0`, `0 P1` et
+`0 P2`. Aucun environnement n'a été touché.
 
 ## Séquence environnementale future — conditionnelle
 

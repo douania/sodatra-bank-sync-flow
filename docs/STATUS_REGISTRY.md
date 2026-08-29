@@ -17,7 +17,7 @@
 
 ## DAILY-V2-CONTROLLED-PRODUCTION-ACTIVATION-PILOT
 
-**Statut : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_REQUIRED — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED` (2026-08-30)**
+**Statut : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS — MERGE_READY — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED` (2026-08-30)**
 
 Le premier pilote production Daily v2 est préparé localement côté client. La politique de
 cible rend la production éligible à `read`, `deposit` et `promote`, tandis que
@@ -50,7 +50,9 @@ aucun environnement. La contre-review du SHA `d0e3abf` a rendu
 `PASS_WITH_RESERVES — MERGE_READY: YES`, sans P0/P1 et avec deux P2 UI/doc
 non bloquants. Ces réserves sont corrigées par un commentaire exact et une
 frontière React rendue, testée sur la matrice production × états du verrou ×
-rôles. Le SHA corrigé attend une revalidation indépendante finale.
+rôles. La revalidation finale du SHA `39af326` rend `PASS — MERGE_READY: YES`,
+avec `0 P0`, `0 P1` et `0 P2`. La PR reste draft et aucun environnement n'a été
+touché.
 
 Rapport et séquence des futurs GO :
 `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.
