@@ -208,6 +208,46 @@ SELECT poc_test.expect_error($mask$
   ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
 $mask$, '%DAILY_STMT_ACCOUNT_MASK_MISMATCH%',
   '0U-B0d: identite masquee differente du registre refusee');
+SELECT poc_test.expect_error($date_below$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,accounting_date}','"01/01/1900"'::jsonb),
+    p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$date_below$, '%DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD%',
+  '0U-B0e: daily date below the declared period is rejected');
+SELECT poc_test.expect_error($date_above$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,accounting_date}','"31/12/2099"'::jsonb),
+    p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$date_above$, '%DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD%',
+  '0U-B0f: daily date above the declared period is rejected');
+SELECT poc_test.assert(
+  NOT EXISTS (
+    SELECT 1 FROM public.daily_statement_export_attempts a
+    WHERE a.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM public.daily_statement_units_staging u
+    WHERE u.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.daily_statement_lines_staging l
+    JOIN public.daily_statement_units_staging u ON u.id=l.staging_unit_id
+    WHERE u.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.daily_statement_import_events e
+    JOIN public.daily_statement_export_attempts a ON a.id=e.attempt_id
+    WHERE a.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  ),
+  '0U-B0g: rejected daily periods leave no attempt, unit, line or import audit'
+)
+FROM poc_test.e2e0r_payload WHERE key = 'atb_v1';
 COMMIT;
 
 BEGIN;
@@ -586,7 +626,15 @@ BEGIN
   VALUES (
     'atb_d2_r3_probe',
     v_att,
-    jsonb_build_array(jsonb_set(v_units -> 0, '{day_content_hash}', to_jsonb(v_content))),
+    jsonb_build_array(
+      jsonb_set(
+        jsonb_set(
+          jsonb_set(v_units -> 0, '{day_content_hash}', to_jsonb(v_content)),
+          '{validation_status}', '"valid"'::jsonb
+        ),
+        '{review_reason_codes}', '[]'::jsonb
+      )
+    ),
     jsonb_build_array(
       jsonb_set(v_lines -> 0, '{daily_line_hash}', to_jsonb(v_victim)),
       v_lines -> 1
@@ -599,6 +647,12 @@ COMMIT;
 
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.assert(
+  p_units -> 0 ->> 'validation_status' = 'valid'
+    AND jsonb_array_length(p_units -> 0 -> 'review_reason_codes') = 0,
+  '0R-J0: la sonde R3 est declaree valid sans motif par le client'
+)
+FROM poc_test.e2e0r_payload WHERE key = 'atb_d2_r3_probe';
 SELECT poc_test.e2e0r_deposit('atb_d2_r3_probe', 'r3');
 SELECT poc_test.assert(poc_test.ctx_get('r3_status') = 'needs_review',
   '0R-J1: hash de ligne actif sous une autre journee -> needs_review (R3)');

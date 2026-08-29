@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { buildDailyV2BackfillIncrementalDelta } from './dailyV2IncrementalDelta';
+import type { DailyV2PreIngestPayload, DailyV2RpcLine, DailyV2RpcUnit } from './dailyV2Types';
 
 const app = readFileSync('src/App.tsx', 'utf8');
 const layout = readFileSync('src/components/Layout.tsx', 'utf8');
@@ -27,7 +29,27 @@ const migrationRuntimeLockReadApi = readFileSync(
   'supabase/migrations/20260730180000_daily_v2_runtime_lock_read_api.sql',
   'utf8',
 );
+const migrationBisTimeoutHardening = readFileSync(
+  'supabase/migrations/20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
+const bisMassGenerator = readFileSync(
+  'supabase/tests/daily_statement_units_v2/e2e0r_generate_bis_mass_backfill.ts',
+  'utf8',
+);
+const bisMassSqlTest = readFileSync(
+  'supabase/tests/daily_statement_units_v2/31_bis_mass_backfill_timeout_hardening.sql',
+  'utf8',
+);
+const e2ePipelineSqlTest = readFileSync(
+  'supabase/tests/daily_statement_units_v2/30_e2e0r_pipeline.sql',
+  'utf8',
+);
+const bisConcurrencyAssertions = readFileSync(
+  'supabase/tests/daily_statement_units_v2/32d_bis_backfill_concurrency_asserts.sql',
+  'utf8',
+);
 
 test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
   for (const rpc of [
@@ -109,6 +131,208 @@ test('keeps the 0U migration additive and makes the historical ingest core inter
   assert.doesNotMatch(migration0U, /DROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX)/i);
   assert.match(e2eRunner, /MIGRATION_0U=/);
   assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U"/);
+});
+
+test('hardens the BIS mass backfill with one atomic set-based review batch', () => {
+  assert.match(
+    migrationBisTimeoutHardening,
+    /CREATE OR REPLACE FUNCTION public\.pre_ingest_daily_statement_units\(/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /CREATE OR REPLACE FUNCTION public\.daily_stmt_pre_ingest_bis_backfill_core_0v\(/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /IF p_attempt ->> 'requested_mode' = 'backfill'[\s\S]*daily_stmt_pre_ingest_bis_backfill_core_0v/,
+  );
+  assert.match(migrationBisTimeoutHardening, /WITH unit_input AS MATERIALIZED/);
+  assert.match(migrationBisTimeoutHardening, /FOR v_lock_day_unit_id IN[\s\S]*ORDER BY[\s\S]*LOOP[\s\S]*daily_stmt_acquire_day_lock/);
+  assert.match(migrationBisTimeoutHardening, /result_units AS MATERIALIZED/);
+  assert.doesNotMatch(migrationBisTimeoutHardening, /JOIN LATERAL \([\s\S]*jsonb_array_elements\(v_result -> 'units'\)/);
+  assert.doesNotMatch(migrationBisTimeoutHardening, /line_count',\(SELECT[\s\S]*jsonb_array_elements\(p_units\)/);
+  assert.match(migrationBisTimeoutHardening, /sum\(\(d\.value ->> 'line_count'\)::integer\)/);
+  assert.match(migrationBisTimeoutHardening, /DAILY_STMT_BIS_BACKFILL_LINE_CARDINALITY/);
+  assert.match(migrationBisTimeoutHardening, /DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD/);
+  assert.match(migrationBisTimeoutHardening, /'input_review_required', input_review_required/);
+  assert.match(migrationBisTimeoutHardening, /WHERE \(e\.value ->> 'input_review_required'\)::boolean[\s\S]*validation_status' <> 'needs_review'/);
+  assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_units_staging/);
+  assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_lines_staging/);
+  assert.equal(
+    (migrationBisTimeoutHardening.match(/INSERT INTO public\.daily_statement_import_events/g) ?? []).length,
+    1,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /FUNCTION public\.daily_stmt_append_audit_events_0v\(jsonb\)/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /REVOKE ALL ON FUNCTION public\.daily_stmt_append_audit_events_0v\(jsonb\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /REVOKE ALL ON FUNCTION public\.daily_stmt_pre_ingest_bis_backfill_core_0v\(jsonb,jsonb,jsonb,jsonb\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /REVOKE ALL ON FUNCTION public\.pre_ingest_daily_statement_units\(jsonb,jsonb,jsonb,jsonb\)[\s\S]*FROM PUBLIC, anon, service_role/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /GRANT EXECUTE ON FUNCTION public\.pre_ingest_daily_statement_units\(jsonb,jsonb,jsonb,jsonb\)[\s\S]*TO authenticated/,
+  );
+  assert.doesNotMatch(migrationBisTimeoutHardening, /statement_timeout/i);
+  assert.doesNotMatch(migrationBisTimeoutHardening, /CREATE\s+(?:TEMP|TEMPORARY)\s+TABLE/i);
+  assert.equal((migrationBisTimeoutHardening.match(/^BEGIN;$/gm) ?? []).length, 1);
+  assert.equal((migrationBisTimeoutHardening.match(/^COMMIT;$/gm) ?? []).length, 1);
+
+  assert.match(e2eRunner, /MIGRATION_BIS_TIMEOUT_HARDENING=/);
+  assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_BIS_TIMEOUT_HARDENING"/);
+  assert.match(e2eRunner, /e2e0r_generate_bis_mass_backfill\.ts/);
+  assert.match(e2eRunner, /31_bis_mass_backfill_timeout_hardening\.sql/);
+  for (const concurrencyScript of ['32a_', '32b_', '32c_', '32d_']) {
+    assert.match(e2eRunner, new RegExp(concurrencyScript));
+  }
+  assert.match(bisMassGenerator, /unitCount: 4_000/);
+  assert.match(bisMassGenerator, /lineCount: 4_000/);
+  assert.match(bisMassSqlTest, /SET LOCAL statement_timeout = '15s'/);
+  assert.match(bisMassSqlTest, /BIS-4000 bounded/);
+  for (const invariant of [
+    'missing line',
+    'excess line',
+    'orphan line',
+    'duplicate line hash',
+    'dishonest line_count',
+  ]) {
+    assert.match(bisMassSqlTest, new RegExp(invariant));
+  }
+  assert.match(e2ePipelineSqlTest, /0R-J0: la sonde R3 est declaree valid sans motif par le client/);
+  assert.match(e2ePipelineSqlTest, /daily date below the declared period is rejected/);
+  assert.match(e2ePipelineSqlTest, /daily date above the declared period is rejected/);
+  assert.match(bisConcurrencyAssertions, /BISC2: session B waited at least three seconds/);
+  assert.match(bisConcurrencyAssertions, /B directly returns the exact canonical unit promoted by A/);
+  assert.match(bisConcurrencyAssertions, /BISC4: canonical duplicate B stages no financial line/);
+});
+
+test('submits only useful BIS days and preserves server reconciliation', () => {
+  const unit = (day: string, content: string): DailyV2RpcUnit => ({
+    day_unit_id: day.repeat(64),
+    accounting_date: '01/01/2026',
+    day_content_hash: content.repeat(64),
+    line_count: 1,
+    day_total_debits: 0,
+    day_total_credits: 1,
+    opening_balance_derived: null,
+    closing_balance_derived: null,
+    aggregates_status: 'unavailable',
+    validation_status: 'needs_review',
+    review_reason_codes: ['BACKFILL_REVIEW_REQUIRED'],
+    requested_unit_status: 'staged',
+  });
+  const line = (day: string): DailyV2RpcLine => ({
+    day_unit_id: day.repeat(64),
+    daily_line_hash: day.repeat(64),
+    daily_occurrence_ordinal: 1,
+    source_line_index: 1,
+    accounting_date: '01/01/2026',
+    value_date: null,
+    description_sanitized: 'SYNTHETIC',
+    debit_amount: null,
+    credit_amount: 1,
+    signed_amount: 1,
+    running_balance: null,
+    direction: 'credit',
+    currency: 'XOF',
+  });
+  const payload: DailyV2PreIngestPayload = {
+    p_attempt: {
+      requested_mode: 'backfill',
+      source_format: 'xls',
+      bank: 'BIS',
+      currency: 'XOF',
+      account_fingerprint: 'f'.repeat(64),
+      account_registry_id: '00000000-0000-4000-8000-000000000001',
+      account_number_masked: null,
+      source_file_name_redacted: null,
+      raw_text_hash: 'e'.repeat(64),
+      export_period_start: '01/01/2026',
+      export_period_end: '03/01/2026',
+      statement_date: null,
+      export_reference_date: null,
+      parser_validation_status: 'needs_review',
+      errors_count: 0,
+      warnings_count: 0,
+      runtime_version: 'synthetic',
+      parser_version: 'synthetic',
+      review_reason_codes: ['BACKFILL_REVIEW_REQUIRED'],
+    },
+    p_units: [unit('1', 'a'), unit('2', 'b'), unit('3', 'c')],
+    p_lines: [line('1'), line('2'), line('3')],
+    p_guard_context: {
+      ingestion_ready: true,
+      period_days: 3,
+      bridge_guard_passed: true,
+      backfill_grant_id: '00000000-0000-4000-8000-000000000002',
+    },
+  };
+
+  const delta = buildDailyV2BackfillIncrementalDelta(payload, [
+    { day_unit_id: '1'.repeat(64), active_day_content_hash: 'a'.repeat(64) },
+    { day_unit_id: '2'.repeat(64), active_day_content_hash: 'd'.repeat(64) },
+  ]);
+  assert.deepEqual(delta.summary, {
+    sourceUnits: 3,
+    sourceLines: 3,
+    identicalUnitsSkipped: 1,
+    identicalLinesSkipped: 1,
+    newUnits: 1,
+    changedUnits: 1,
+    serverReconciliationUnits: 0,
+    submittedUnits: 2,
+    submittedLines: 2,
+  });
+  assert.deepEqual(delta.payload.p_units.map((entry) => entry.day_unit_id), [
+    '2'.repeat(64),
+    '3'.repeat(64),
+  ]);
+  assert.deepEqual(delta.payload.p_lines.map((entry) => entry.day_unit_id), [
+    '2'.repeat(64),
+    '3'.repeat(64),
+  ]);
+  assert.equal(payload.p_units.length, 3, 'the source payload must remain immutable');
+
+  const reconciliationDelta = buildDailyV2BackfillIncrementalDelta(
+    payload,
+    [{ day_unit_id: '1'.repeat(64), active_day_content_hash: 'a'.repeat(64) }],
+    ['1'.repeat(64)],
+  );
+  assert.equal(
+    reconciliationDelta.summary.serverReconciliationUnits,
+    1,
+    'an identical canonical day must still reach the server when a live provisional needs sweeping',
+  );
+  assert.equal(reconciliationDelta.summary.identicalUnitsSkipped, 0);
+  assert.deepEqual(reconciliationDelta.payload.p_units, payload.p_units);
+
+  assert.throws(
+    () => buildDailyV2BackfillIncrementalDelta(payload, [
+      { day_unit_id: '1'.repeat(64), active_day_content_hash: 'a'.repeat(64) },
+      { day_unit_id: '1'.repeat(64), active_day_content_hash: 'a'.repeat(64) },
+    ]),
+    /DAILY_V2_INCREMENTAL_DUPLICATE_ACTIVE_CANONICAL/,
+  );
+  assert.throws(
+    () => buildDailyV2BackfillIncrementalDelta(
+      { ...payload, p_lines: [...payload.p_lines, line('4')] },
+      [],
+    ),
+    /DAILY_V2_INCREMENTAL_ORPHAN_SOURCE_LINE/,
+  );
+
+  assert.match(service, /\.from\('daily_statement_units_canonical'\)[\s\S]*?\.select\('id,day_unit_id,active_day_content_hash'\)[\s\S]*?\.eq\('status', 'ingested'\)/);
+  assert.match(service, /\.from\('daily_statement_units_staging'\)[\s\S]*?\.select\('id,day_unit_id'\)[\s\S]*?\.eq\('status', 'provisional'\)/);
+  assert.match(service, /if \(incremental\.summary\.submittedUnits === 0\)[\s\S]*?outcome: 'no_changes'/);
 });
 
 test('adopts one historical identity without exposing or changing its fingerprint', () => {
@@ -229,7 +453,7 @@ test('gives every Daily v2 network operation an explicit capability', () => {
     getActiveDailyV2CanonicalUnit: 'read',
     listDailyV2AuditEvents: 'read',
     listDailyV2CanonicalUnitsForReporting: 'read',
-    preIngestDailyV2: 'deposit',
+    preIngestDailyV2WithIncrementalDelta: 'deposit',
     promoteDailyV2Unit: 'promote',
     supersedeDailyV2Unit: 'promote',
     provisionDailyV2Account: 'admin',
@@ -257,6 +481,11 @@ test('gives every Daily v2 network operation an explicit capability', () => {
     seen.add(name);
   }
   assert.equal(seen.size, Object.keys(CAPABILITY_BY_OPERATION).length);
+  assert.doesNotMatch(
+    service,
+    /export async function preIngestDailyV2\(/,
+    'the service must expose no direct full-payload ingest path',
+  );
 
   // La capacité est obligatoire côté garde : aucune valeur par défaut.
   assert.match(runtimeTarget, /capability: DailyV2Capability,\s*\)/);
@@ -310,7 +539,7 @@ test('separates local staging preparation from fail-closed server persistence', 
     depositMutation,
     /if \(!canSubmitDeposit\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
   );
-  assert.match(depositMutation, /return preIngestDailyV2\(prepared\.payload\)/);
+  assert.match(depositMutation, /return preIngestDailyV2WithIncrementalDelta\(prepared\.payload\)/);
   assert.doesNotMatch(browserPipeline, /dailyV2SupabaseService|preIngestDailyV2/);
 
   // Handlers fail closed, y compris si un bouton résiduel était déclenché.

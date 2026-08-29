@@ -30,6 +30,11 @@ import {
   type DailyV2ReportingReadAdapter,
   type DailyV2ReportingReadFilters,
 } from './dailyV2ReportingReadCore';
+import {
+  buildDailyV2BackfillIncrementalDelta,
+  type DailyV2ActiveCanonicalFingerprint,
+  type DailyV2IncrementalDeltaSummary,
+} from './dailyV2IncrementalDelta';
 
 // Stable public surface: the error class and the reporting ceiling moved to
 // the pure read core but stay importable from this module.
@@ -37,6 +42,8 @@ export { DAILY_V2_REPORTING_MAX_UNITS, DailyV2ServiceError } from './dailyV2Repo
 
 const dailyV2Supabase = supabase as unknown as SupabaseClient<DailyV2Database>;
 const MAX_SAFE_REASON_LENGTH = 200;
+const INCREMENTAL_CANONICAL_PAGE_SIZE = 1000;
+const INCREMENTAL_CANONICAL_MAX_ROWS = 4000;
 
 const accountRegistryCommonShape = {
   id: z.string().uuid(),
@@ -109,6 +116,29 @@ const preIngestResponseSchema = z.object({
     }),
   ),
 });
+
+const activeCanonicalFingerprintSchema = z.object({
+  id: z.string().uuid(),
+  day_unit_id: z.string().regex(/^[0-9a-f]{64}$/),
+  active_day_content_hash: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+const liveProvisionalFingerprintSchema = z.object({
+  id: z.string().uuid(),
+  day_unit_id: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+export type DailyV2IncrementalIngestResult =
+  | {
+      outcome: 'deposited';
+      response: DailyV2PreIngestResponse;
+      incrementalDelta: DailyV2IncrementalDeltaSummary | null;
+    }
+  | {
+      outcome: 'no_changes';
+      response: null;
+      incrementalDelta: DailyV2IncrementalDeltaSummary;
+    };
 
 const promoteResponseSchema = z.object({
   outcome: z.enum(['duplicate', 'conflict', 'needs_review', 'promoted']),
@@ -283,11 +313,57 @@ export async function listDailyV2AccountEvents(input: {
   return { rows: data ?? [], count: count ?? 0, page, pageSize };
 }
 
-export async function preIngestDailyV2(
+export async function preIngestDailyV2WithIncrementalDelta(
   payload: DailyV2PreIngestPayload,
-): Promise<DailyV2PreIngestResponse> {
+): Promise<DailyV2IncrementalIngestResult> {
   assertAuthorizedDailyV2Target('deposit');
   await assertAuthenticatedSession();
+
+  if (payload.p_attempt.requested_mode !== 'backfill') {
+    return {
+      outcome: 'deposited',
+      response: await executePreIngestDailyV2(payload),
+      incrementalDelta: null,
+    };
+  }
+
+  let incremental;
+  try {
+    const serverState = await listIncrementalServerState(payload);
+    incremental = buildDailyV2BackfillIncrementalDelta(
+      payload,
+      serverState.activeCanonical,
+      serverState.liveProvisionalDayUnitIds,
+    );
+  } catch (error) {
+    if (error instanceof DailyV2ServiceError) throw error;
+    throw new DailyV2ServiceError(
+      'Comparaison incrémentale BIS refusée : aucune journée ne sera déposée.',
+      error instanceof Error ? error.message : 'DAILY_V2_INCREMENTAL_COMPARISON_FAILED',
+    );
+  }
+
+  if (incremental.summary.submittedUnits === 0) {
+    // A no-op is deliberately not persisted: it neither consumes the one-use
+    // grant nor creates a duplicate attempt/audit row. The existing canonical
+    // unit remains the durable proof of the identical financial content.
+    return {
+      outcome: 'no_changes',
+      response: null,
+      incrementalDelta: incremental.summary,
+    };
+  }
+
+  return {
+    outcome: 'deposited',
+    response: await executePreIngestDailyV2(incremental.payload),
+    incrementalDelta: incremental.summary,
+  };
+}
+
+async function executePreIngestDailyV2(
+  payload: DailyV2PreIngestPayload,
+): Promise<DailyV2PreIngestResponse> {
   const { data, error } = await dailyV2Supabase.rpc('pre_ingest_daily_statement_units', payload);
   if (error) throw toSafeError(error, 'Le dépôt Daily v2 a été refusé.');
   return parseRpcResponse<DailyV2PreIngestResponse>(
@@ -295,6 +371,99 @@ export async function preIngestDailyV2(
     data,
     'Réponse de dépôt Daily v2 invalide.',
   );
+}
+
+async function listIncrementalServerState(
+  payload: DailyV2PreIngestPayload,
+): Promise<{
+  activeCanonical: DailyV2ActiveCanonicalFingerprint[];
+  liveProvisionalDayUnitIds: string[];
+}> {
+  const accountRegistryId = payload.p_attempt.account_registry_id;
+  const periodStart = toIsoDateForIncrementalQuery(payload.p_attempt.export_period_start);
+  const periodEnd = toIsoDateForIncrementalQuery(payload.p_attempt.export_period_end);
+  const rows: DailyV2ActiveCanonicalFingerprint[] = [];
+  const liveProvisionalDayUnitIds: string[] = [];
+
+  for (let offset = 0; offset <= INCREMENTAL_CANONICAL_MAX_ROWS; offset += INCREMENTAL_CANONICAL_PAGE_SIZE) {
+    const { data, error } = await dailyV2Supabase
+      .from('daily_statement_units_canonical')
+      .select('id,day_unit_id,active_day_content_hash')
+      .eq('account_registry_id', accountRegistryId)
+      .eq('status', 'ingested')
+      .gte('accounting_date', periodStart)
+      .lte('accounting_date', periodEnd)
+      .order('accounting_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(offset, offset + INCREMENTAL_CANONICAL_PAGE_SIZE - 1);
+    if (error) {
+      throw toSafeError(error, 'Lecture des empreintes canonical BIS impossible.');
+    }
+
+    const page = z.array(activeCanonicalFingerprintSchema).parse(data ?? []);
+    rows.push(...page.map(({ day_unit_id, active_day_content_hash }) => ({
+      day_unit_id,
+      active_day_content_hash,
+    })));
+    if (rows.length > INCREMENTAL_CANONICAL_MAX_ROWS) {
+      throw new DailyV2ServiceError(
+        'Comparaison incrémentale BIS hors limite structurelle.',
+        'DAILY_V2_INCREMENTAL_CANONICAL_CAP',
+      );
+    }
+    if (page.length < INCREMENTAL_CANONICAL_PAGE_SIZE) break;
+  }
+
+  for (let offset = 0; offset <= INCREMENTAL_CANONICAL_MAX_ROWS; offset += INCREMENTAL_CANONICAL_PAGE_SIZE) {
+    const { data, error } = await dailyV2Supabase
+      .from('daily_statement_units_staging')
+      .select('id,day_unit_id')
+      .eq('account_registry_id', accountRegistryId)
+      .eq('status', 'provisional')
+      .gte('accounting_date', periodStart)
+      .lte('accounting_date', periodEnd)
+      .order('accounting_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(offset, offset + INCREMENTAL_CANONICAL_PAGE_SIZE - 1);
+    if (error) {
+      throw toSafeError(error, 'Lecture des journées provisional BIS impossible.');
+    }
+
+    const page = z.array(liveProvisionalFingerprintSchema).parse(data ?? []);
+    liveProvisionalDayUnitIds.push(...page.map(({ day_unit_id }) => day_unit_id));
+    if (liveProvisionalDayUnitIds.length > INCREMENTAL_CANONICAL_MAX_ROWS) {
+      throw new DailyV2ServiceError(
+        'Comparaison incrémentale BIS hors limite structurelle.',
+        'DAILY_V2_INCREMENTAL_PROVISIONAL_CAP',
+      );
+    }
+    if (page.length < INCREMENTAL_CANONICAL_PAGE_SIZE) break;
+  }
+
+  return { activeCanonical: rows, liveProvisionalDayUnitIds };
+}
+
+function toIsoDateForIncrementalQuery(value: string): string {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) {
+    throw new DailyV2ServiceError(
+      'Période BIS invalide pour la comparaison incrémentale.',
+      'DAILY_V2_INCREMENTAL_PERIOD_INVALID',
+    );
+  }
+  const [, day, month, year] = match;
+  const iso = `${year}-${month}-${day}`;
+  const date = new Date(`${iso}T00:00:00Z`);
+  if (
+    Number.isNaN(date.getTime())
+    || date.toISOString().slice(0, 10) !== iso
+  ) {
+    throw new DailyV2ServiceError(
+      'Période BIS invalide pour la comparaison incrémentale.',
+      'DAILY_V2_INCREMENTAL_PERIOD_INVALID',
+    );
+  }
+  return iso;
 }
 
 export async function promoteDailyV2Unit(

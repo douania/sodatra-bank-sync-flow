@@ -34,14 +34,16 @@ import {
   listDailyV2CanonicalUnits,
   listDailyV2StagingLines,
   listDailyV2StagingUnits,
-  preIngestDailyV2,
+  preIngestDailyV2WithIncrementalDelta,
   provisionDailyV2Account,
   deactivateDailyV2Account,
   issueDailyV2BackfillGrant,
   revokeDailyV2BackfillGrant,
   promoteDailyV2Unit,
   supersedeDailyV2Unit,
+  type DailyV2IncrementalIngestResult,
 } from '@/features/daily-v2/dailyV2SupabaseService';
+import type { DailyV2IncrementalDeltaSummary } from '@/features/daily-v2/dailyV2IncrementalDelta';
 import type {
   DailyV2AppRole,
   DailyV2AccountEventRow,
@@ -120,6 +122,7 @@ const DailyStatementV2 = () => {
   const [prepared, setPrepared] = useState<Extract<PrepareDailyV2BrowserResult, { success: true }> | null>(null);
   const [prepareErrors, setPrepareErrors] = useState<string[]>([]);
   const [depositResult, setDepositResult] = useState<DailyV2PreIngestResponse | null>(null);
+  const [incrementalDelta, setIncrementalDelta] = useState<DailyV2IncrementalDeltaSummary | null>(null);
   const [stagingPage, setStagingPage] = useState(0);
   const [stagingStatus, setStagingStatus] = useState<'all' | DailyV2StagingStatus>('all');
   const [stagingReview, setStagingReview] = useState<'all' | 'required' | 'clear'>('all');
@@ -208,6 +211,7 @@ const DailyStatementV2 = () => {
     setPrepared(null);
     setPrepareErrors([]);
     setDepositResult(null);
+    setIncrementalDelta(null);
   }, []);
 
   useEffect(() => {
@@ -272,20 +276,32 @@ const DailyStatementV2 = () => {
     onError: (error) => showSafeError(error, 'Préparation impossible.'),
   });
 
-  const depositMutation = useMutation<DailyV2PreIngestResponse, Error, void>({
+  const depositMutation = useMutation<DailyV2IncrementalIngestResult, Error, void>({
     mutationFn: async () => {
       if (!canSubmitDeposit) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       if (!prepared) throw new DailyV2ServiceError('Aucun payload validé à déposer.');
-      return preIngestDailyV2(prepared.payload);
+      return preIngestDailyV2WithIncrementalDelta(prepared.payload);
     },
     onSuccess: async (result) => {
-      setDepositResult(result);
+      setIncrementalDelta(result.incrementalDelta);
       setPrepared(null);
       setFile(null);
       setReferenceDate('');
+      if (result.outcome === 'no_changes') {
+        setDepositResult(null);
+        toast.success('Aucune nouvelle journée BIS à déposer', {
+          description: `${result.incrementalDelta.identicalUnitsSkipped} journée(s) historiques identiques ignorée(s). Le grant reste actif.`,
+        });
+        return;
+      }
+      setDepositResult(result.response);
       setBackfillGrantId('');
       await invalidateDailyV2(queryClient);
-      toast.success('Dépôt Daily v2 terminé');
+      toast.success('Dépôt Daily v2 terminé', {
+        description: result.incrementalDelta
+          ? `${result.incrementalDelta.submittedUnits} journée(s) utile(s) déposée(s), ${result.incrementalDelta.identicalUnitsSkipped} identique(s) ignorée(s).`
+          : undefined,
+      });
     },
     onError: (error) => showSafeError(error, 'Dépôt impossible.'),
   });
@@ -628,7 +644,7 @@ const DailyStatementV2 = () => {
                   <Card>
                     <CardHeader>
                       <CardTitle>Autorisation backfill BIS</CardTitle>
-                      <CardDescription>Grant serveur à usage unique, borné par compte, période, volume et expiration.</CardDescription>
+                      <CardDescription>Grant serveur à usage unique, borné par compte, période, volume du delta transmis et expiration.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {!selectedAccount || bank !== 'BIS' ? (
@@ -638,7 +654,7 @@ const DailyStatementV2 = () => {
                           <div className="grid gap-3 sm:grid-cols-2">
                             <Field label="Début autorisé"><Input type="date" value={grantPeriodStart} onChange={(event) => setGrantPeriodStart(event.target.value)} /></Field>
                             <Field label="Fin autorisée"><Input type="date" value={grantPeriodEnd} onChange={(event) => setGrantPeriodEnd(event.target.value)} /></Field>
-                            <Field label="Unités maximum"><Input type="number" min="1" max="4000" value={grantMaxUnits} onChange={(event) => setGrantMaxUnits(event.target.value)} /></Field>
+                            <Field label="Journées utiles maximum (delta)"><Input type="number" min="1" max="4000" value={grantMaxUnits} onChange={(event) => setGrantMaxUnits(event.target.value)} /></Field>
                             <Field label="Expiration"><Input type="datetime-local" value={grantExpiresAt} onChange={(event) => setGrantExpiresAt(event.target.value)} /></Field>
                           </div>
                           <Button
@@ -699,6 +715,30 @@ const DailyStatementV2 = () => {
                         Payload préparé localement. Persistance bloquée par le verrou serveur.
                       </p>
                     )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {incrementalDelta && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Synthèse incrémentale BIS</CardTitle>
+                    <CardDescription>
+                      Les journées canonical strictement identiques ne sont pas retransmises à la RPC.
+                      Toute journée nouvelle, modifiée ou à réconcilier reste soumise à l’arbitrage serveur.
+                      Une journée ignorée ne crée donc ni tentative ni événement d’audit supplémentaire en base.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid gap-3 text-sm md:grid-cols-4">
+                    <Fact label="Journées du fichier" value={String(incrementalDelta.sourceUnits)} />
+                    <Fact label="Identiques ignorées" value={String(incrementalDelta.identicalUnitsSkipped)} />
+                    <Fact label="Nouvelles" value={String(incrementalDelta.newUnits)} />
+                    <Fact label="Modifiées à revoir" value={String(incrementalDelta.changedUnits)} />
+                    <Fact label="À réconcilier serveur" value={String(incrementalDelta.serverReconciliationUnits)} />
+                    <Fact label="Journées déposées" value={String(incrementalDelta.submittedUnits)} />
+                    <Fact label="Lignes du fichier" value={String(incrementalDelta.sourceLines)} />
+                    <Fact label="Lignes ignorées" value={String(incrementalDelta.identicalLinesSkipped)} />
+                    <Fact label="Lignes déposées" value={String(incrementalDelta.submittedLines)} />
                   </CardContent>
                 </Card>
               )}
