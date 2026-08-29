@@ -6,8 +6,10 @@
 
 Le lot corrige le timeout PostgreSQL `57014` observé pendant la qualification
 staging du fichier BIS réel : le parsing avait produit 857 unités et 4 798
-lignes, mais la RPC atomique dépassait le budget de requête. Aucune migration
-n'a été appliquée sur staging ou production par ce lot.
+lignes, mais la RPC atomique dépassait le budget de requête. Durant la phase
+d'implémentation locale et de review de la PR #135, aucune migration n'a été
+appliquée sur staging ou production. Les applications distantes, réalisées
+ultérieurement sous des GO nominatifs, sont tracées ci-dessous.
 
 ## Cause confirmée
 
@@ -206,15 +208,31 @@ Les phases staging ont ciblé exclusivement le projet Lovable
 `8c508b94-d03f-4165-ab2b-7a3cd52d2d2b` et le projet Supabase canonique
 `gbbsqcscryygqlmqncyv`.
 
-Sous leurs GO nominatifs distincts :
+Traçabilité du 2026-08-29 :
+
+- `GO_VALIDATE_STAGING_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_PREFLIGHT_READ_ONLY` ;
+- `GO_APPLY_STAGING_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_MIGRATION` ;
+- `GO_APPLY_STAGING_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_RUNTIME_SYNC` ;
+- `GO_VALIDATE_STAGING_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_RUNTIME_E2E_ROLLBACK` ;
+- confirmation utilisateur de l'E2E BIS et de son rollback avant toute phase
+  production.
+
+Sous ces autorisations distinctes :
 
 - le préflight read-only a confirmé la cible, le SHA et l'absence de la
   migration du lot ;
 - la migration `20260829000000` a été appliquée avec son entrée de ledger ;
-- le runtime staging a été synchronisé sur le code fusionné ;
+- le runtime staging a été synchronisé sur le code fusionné
+  `f6f6c0bdd435532b82dc3195f8d09f143b3d6299` ;
 - le scénario authentifié BIS 857 journées / 4 798 lignes a traversé le
   chemin atomique optimisé sous le budget de requête puis a été annulé ;
 - le contrôle final n'a trouvé aucun résidu synthétique ni verrou temporaire.
+
+Les identifiants de réconciliation staging sont donc le projet Lovable
+`8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, le project ref
+`gbbsqcscryygqlmqncyv`, le SHA runtime `f6f6c0b`, la version de migration
+`20260829000000` et la preuve E2E `857 unités / 4 798 lignes / rollback sans
+résidu`.
 
 Cette validation n'a promu aucune donnée staging vers le canonical de
 production. Les fichiers bancaires réels utilisés pour qualifier le parsing ne
@@ -223,6 +241,15 @@ sont ni versionnés ni reproduits dans ce rapport.
 ## Validation production
 
 ### Préflight, migration et E2E avec rollback
+
+Traçabilité du 2026-08-29 :
+
+- `GO_PRODUCTION_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_PREFLIGHT_READ_ONLY` ;
+- `GO_PRODUCTION_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_APPLY_MIGRATION` ;
+- `GO_PRODUCTION_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_AUTHENTICATED_E2E_ROLLBACK` ;
+- `GO_PRODUCTION_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_PUBLISH_RUNTIME` ;
+- `GO_PRODUCTION_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_POST_PUBLISH_SMOKE_READ_ONLY` ;
+- `GO_PRODUCTION_DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_AUTHENTICATED_SMOKE_READ_ONLY`.
 
 Le préflight a verrouillé la cible sur le projet Supabase production
 `leakcdbbawzysfqyqsnr`. La migration du lot était absente et les prérequis
@@ -253,6 +280,11 @@ commit de merge `f6f6c0bdd435532b82dc3195f8d09f143b3d6299`. Le bundle actif
 `index-BU3Wr_fP.js` contient les marqueurs incrémentaux `submittedUnits`,
 `identicalUnitsSkipped` et `Synthèse incrémentale BIS`, et ne référence que la
 cible Supabase production `leakcdbbawzysfqyqsnr`.
+
+La publication est réconciliée par l'identifiant de déploiement Lovable
+`c8f7e858-af66-476a-bcf0-d881238869ee`. Après déploiement, le projet a été
+observé `ready`, publié et aligné sur `f6f6c0b`, avec
+`updated_at = 2026-08-29T20:44:05.348Z`.
 
 ### Smokes post-publication
 

@@ -59,7 +59,10 @@ En production, le scénario synthétique 857 / 4 798 passe sous 15 secondes dans
 une transaction annulée, sans résidu. Le runtime Lovable canonique est aligné
 sur `f6f6c0b` et le smoke authentifié confirme le verrou production read-only,
 l'absence de sélecteur ou de commande mutative et des appels Supabase
-exclusivement en lecture vers `leakcdbbawzysfqyqsnr`. Rapport :
+exclusivement en lecture vers `leakcdbbawzysfqyqsnr`. Le déploiement production
+est tracé par `c8f7e858-af66-476a-bcf0-d881238869ee` ; les GO staging et
+production exacts, la migration `20260829000000`, le SHA runtime et les preuves
+E2E/rollback sont consignés dans le rapport :
 `docs/DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_REPORT.md`.
 
 ---
