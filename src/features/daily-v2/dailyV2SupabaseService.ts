@@ -461,9 +461,7 @@ function toIsoDateForIncrementalQuery(value: string): string {
   const date = new Date(`${iso}T00:00:00Z`);
   if (
     Number.isNaN(date.getTime())
-    || date.getUTCFullYear() !== Number(year)
-    || date.getUTCMonth() + 1 !== Number(month)
-    || date.getUTCDate() !== Number(day)
+    || date.toISOString().slice(0, 10) !== iso
   ) {
     throw new DailyV2ServiceError(
       'Période BIS invalide pour la comparaison incrémentale.',

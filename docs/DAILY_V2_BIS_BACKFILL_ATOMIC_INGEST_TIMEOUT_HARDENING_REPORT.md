@@ -118,6 +118,7 @@ Une seconde campagne synthétique vérifie en plus la borne maximale autorisée 
 - cycle de vie provisional 0Z : **PASS** ;
 - concurrence réelle sur deux sessions : **PASS** ;
 - tests Daily v2 application : **103/103 PASS** ;
+- tests Daily v2 reporting : **70/70 PASS** ;
 - toutes les autres suites `test:*` de la matrice CI : **PASS** ;
 - typecheck canonique `tsc -p tsconfig.app.json --noEmit` : 17 diagnostics sur
   `origin/main`, 17 sur le lot, **0 nouveau** ;
