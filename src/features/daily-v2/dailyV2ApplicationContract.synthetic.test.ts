@@ -27,6 +27,10 @@ const migrationRuntimeLockReadApi = readFileSync(
   'supabase/migrations/20260730180000_daily_v2_runtime_lock_read_api.sql',
   'utf8',
 );
+const migrationBisTimeoutHardening = readFileSync(
+  'supabase/migrations/20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 
 test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
@@ -109,6 +113,58 @@ test('keeps the 0U migration additive and makes the historical ingest core inter
   assert.doesNotMatch(migration0U, /DROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX)/i);
   assert.match(e2eRunner, /MIGRATION_0U=/);
   assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_0U"/);
+});
+
+test('hardens the BIS mass backfill with one atomic set-based review batch', () => {
+  assert.match(
+    migrationBisTimeoutHardening,
+    /CREATE OR REPLACE FUNCTION public\.pre_ingest_daily_statement_units\(/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /CREATE OR REPLACE FUNCTION public\.daily_stmt_pre_ingest_bis_backfill_core_0v\(/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /IF p_attempt ->> 'requested_mode' = 'backfill'[\s\S]*daily_stmt_pre_ingest_bis_backfill_core_0v/,
+  );
+  assert.match(migrationBisTimeoutHardening, /WITH unit_input AS MATERIALIZED/);
+  assert.match(migrationBisTimeoutHardening, /PERFORM pg_advisory_xact_lock/);
+  assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_units_staging/);
+  assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_lines_staging/);
+  assert.equal(
+    (migrationBisTimeoutHardening.match(/INSERT INTO public\.daily_statement_import_events/g) ?? []).length,
+    1,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /FUNCTION public\.daily_stmt_append_audit_events_0v\(jsonb\)/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /REVOKE ALL ON FUNCTION public\.daily_stmt_append_audit_events_0v\(jsonb\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /REVOKE ALL ON FUNCTION public\.daily_stmt_pre_ingest_bis_backfill_core_0v\(jsonb,jsonb,jsonb,jsonb\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /REVOKE ALL ON FUNCTION public\.pre_ingest_daily_statement_units\(jsonb,jsonb,jsonb,jsonb\)[\s\S]*FROM PUBLIC, anon, service_role/,
+  );
+  assert.match(
+    migrationBisTimeoutHardening,
+    /GRANT EXECUTE ON FUNCTION public\.pre_ingest_daily_statement_units\(jsonb,jsonb,jsonb,jsonb\)[\s\S]*TO authenticated/,
+  );
+  assert.doesNotMatch(migrationBisTimeoutHardening, /statement_timeout/i);
+  assert.doesNotMatch(migrationBisTimeoutHardening, /CREATE\s+(?:TEMP|TEMPORARY)\s+TABLE/i);
+  assert.equal((migrationBisTimeoutHardening.match(/^BEGIN;$/gm) ?? []).length, 1);
+  assert.equal((migrationBisTimeoutHardening.match(/^COMMIT;$/gm) ?? []).length, 1);
+
+  assert.match(e2eRunner, /MIGRATION_BIS_TIMEOUT_HARDENING=/);
+  assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_BIS_TIMEOUT_HARDENING"/);
+  assert.match(e2eRunner, /e2e0r_generate_bis_mass_backfill\.ts/);
+  assert.match(e2eRunner, /31_bis_mass_backfill_timeout_hardening\.sql/);
 });
 
 test('adopts one historical identity without exposing or changing its fingerprint', () => {

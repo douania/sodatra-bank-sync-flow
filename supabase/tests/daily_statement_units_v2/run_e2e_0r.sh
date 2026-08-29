@@ -34,6 +34,7 @@ MIGRATION_0U4="$REPO_ROOT/supabase/migrations/20260716000000_daily_v2_legacy_fin
 MIGRATION_0Z="$REPO_ROOT/supabase/migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql"
 MIGRATION_SERVER_READONLY="$REPO_ROOT/supabase/migrations/20260730170000_daily_v2_server_readonly_guard.sql"
 MIGRATION_RUNTIME_LOCK_READ_API="$REPO_ROOT/supabase/migrations/20260730180000_daily_v2_runtime_lock_read_api.sql"
+MIGRATION_BIS_TIMEOUT_HARDENING="$REPO_ROOT/supabase/migrations/20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -79,6 +80,7 @@ command -v psql >/dev/null 2>&1 || { echo "TEST_FAILED: psql indisponible"; exit
 [ -f "$MIGRATION_0Z" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_0Z"; exit 1; }
 [ -f "$MIGRATION_SERVER_READONLY" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_SERVER_READONLY"; exit 1; }
 [ -f "$MIGRATION_RUNTIME_LOCK_READ_API" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_RUNTIME_LOCK_READ_API"; exit 1; }
+[ -f "$MIGRATION_BIS_TIMEOUT_HARDENING" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_BIS_TIMEOUT_HARDENING"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -106,6 +108,10 @@ echo "--- [1/6] generation des payloads via prepareDailyV2BrowserDeposit"
     supabase/tests/daily_statement_units_v2/e2e0r_generate_payloads.ts \
     "$(winpath "$WORKDIR")" )
 [ -f "$WORKDIR/e2e0r_payloads.sql" ] || { echo "TEST_FAILED: artefact SQL non genere"; exit 1; }
+( cd "$REPO_ROOT" && ./node_modules/.bin/tsx \
+    supabase/tests/daily_statement_units_v2/e2e0r_generate_bis_mass_backfill.ts \
+    "$(winpath "$WORKDIR")" )
+[ -f "$WORKDIR/bis_mass_payload.sql" ] || { echo "TEST_FAILED: payload BIS mass non genere"; exit 1; }
 
 # --- 2. Conteneur Postgres jetable ------------------------------------------
 echo ""
@@ -152,17 +158,24 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0Z" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_SERVER_READONLY" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_RUNTIME_LOCK_READ_API" >/dev/null
+"${PSQL[@]}" --single-transaction < "$MIGRATION_BIS_TIMEOUT_HARDENING" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/18_runtime_lock_read_api.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/17a_server_readonly_guard_pre.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/18a_runtime_lock_read_api_enabled.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/26_e2e0r_historical_adoption_assert.sql"
-echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur + API read-only appliquees"
+echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur + API read-only + hardening BIS appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""
 echo "--- [4/6] chargement de l artefact et execution de la suite 0R"
 "${PSQL[@]}" < "$WORKDIR/e2e0r_payloads.sql" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/30_e2e0r_pipeline.sql"
+
+# --- 4a. Charge BIS 857 unités / 4 798 lignes sous budget 15 s --------------
+echo ""
+echo "--- [4a] hardening timeout BIS mass (857 unites / 4798 lignes)"
+"${PSQL[@]}" < "$WORKDIR/bis_mass_payload.sql" >/dev/null
+"${PSQL[@]}" < "$SCRIPT_DIR/31_bis_mass_backfill_timeout_hardening.sql"
 
 # --- 4b. Cycle de vie provisional 0Z (payloads synthetiques dedies) ----------
 echo ""
