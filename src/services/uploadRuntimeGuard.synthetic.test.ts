@@ -17,9 +17,9 @@ import type { CollectionImportReview } from '@/types/processing';
 
 // ⭐ 0Z_AM — GLOBAL-PRODUCTION-READ-ONLY-UPLOAD-GUARD.
 // Aucune donnée bancaire réelle, aucun accès Supabase. La garde /upload est une
-// barrière d'interface (jamais de sécurité) qui réutilise la politique
-// canonique cible × capacité de Daily v2 : production = read uniquement,
-// inconnu/invalide = refus fail-closed. Capacités du flux d'import :
+// barrière d'interface (jamais de sécurité) qui réutilise la résolution de cible
+// canonique de Daily v2, puis impose sa propre règle : /upload reste staging-only
+// et toute cible production/inconnue/invalide est refusée fail-closed. Capacités du flux d'import :
 // sélection/traitement = deposit ; promotion Collection = promote.
 
 // Note runner : le client Supabase généré (`@/integrations/supabase/client`)

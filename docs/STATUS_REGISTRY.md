@@ -17,17 +17,25 @@
 
 ## DAILY-V2-CONTROLLED-PRODUCTION-ACTIVATION-PILOT
 
-**Statut : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_REQUIRED — PRODUCTION_LOCK_UNCHANGED` (2026-08-30)**
+**Statut : `BLOCKED — SERVER_SCOPE_REQUIRED — PRODUCTION_LOCK_UNCHANGED` (2026-08-29)**
 
-Le premier pilote production Daily v2 est préparé localement. La politique de
+Le premier pilote production Daily v2 est préparé localement côté client. La politique de
 cible rend la production éligible à `read`, `deposit` et `promote`, tandis que
 `admin` reste refusé : le backfill BIS et l'administration du registre ne sont
-pas exposés. Le dépôt reste réservé à `admin/manager` et la décision à `admin`.
+pas exposés dans l'interface. Le dépôt reste réservé à `admin/manager` et la
+décision à `admin`.
 
 Cette éligibilité n'ouvre aucune écriture à elle seule. Le verrou PostgreSQL
 privé doit répondre explicitement `true`; absent, faux, invalide ou
 indisponible, il ferme dépôt, promotion et supersede. Aucune migration, SQL,
 publication, cible live ou donnée bancaire réelle n'est incluse dans ce lot.
+
+La contre-review indépendante du SHA `b997dfd` a rendu `FAIL — MERGE_READY: NO`
+avec un P1 : lorsque le verrou global est ouvert, le masquage client n'empêche
+pas un administrateur authentifié d'appeler directement les RPC
+d'administration/backfill. Le pilote reste bloqué jusqu'à l'ajout d'un contrôle
+serveur borné par capacité/mode et de tests négatifs directs. Aucun enchaînement
+d'environnement n'est autorisé.
 
 Rapport et séquence des futurs GO :
 `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.
