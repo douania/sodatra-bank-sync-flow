@@ -39,9 +39,13 @@ function targetCapabilities(projectRef: string): Record<DailyV2Capability, boole
   };
 }
 
-function renderAdminSurface(allowed: boolean, onRender: () => void): string {
+function renderAdminSurface(
+  allowed: boolean,
+  onRenderControls: () => void,
+  onRenderChild: () => void,
+): string {
   function ServiceBackedAdminControls() {
-    onRender();
+    onRenderChild();
     return (
       <section>
         <button>Provisionner un compte</button>
@@ -53,7 +57,10 @@ function renderAdminSurface(allowed: boolean, onRender: () => void): string {
   return renderToStaticMarkup(
     <DailyV2AdminControlsGate
       allowed={allowed}
-      renderControls={() => <ServiceBackedAdminControls />}
+      renderControls={() => {
+        onRenderControls();
+        return <ServiceBackedAdminControls />;
+      }}
     />,
   );
 }
@@ -74,14 +81,21 @@ test('never renders or evaluates admin/backfill controls in the production pilot
         lockCase.queryError ? false : lockCase.value,
       );
       const canAdminister = role === 'admin' && effectiveCapabilities.admin;
+      let renderControlsCallCount = 0;
       let serviceBackedControlRenderCount = 0;
       const markup = renderAdminSurface(
         canAdminister,
+        () => { renderControlsCallCount += 1; },
         () => { serviceBackedControlRenderCount += 1; },
       );
 
       assert.equal(canAdminister, false, `${lockCase.name}/${role} must stay closed`);
       assert.equal(markup, '', `${lockCase.name}/${role} must expose no privileged markup`);
+      assert.equal(
+        renderControlsCallCount,
+        0,
+        `${lockCase.name}/${role} must not invoke the privileged render prop`,
+      );
       assert.equal(
         serviceBackedControlRenderCount,
         0,
@@ -95,13 +109,16 @@ test('never renders or evaluates admin/backfill controls in the production pilot
 test('renders the same gate only for staging admin with an explicit true lock', () => {
   const staticCapabilities = targetCapabilities(DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF);
   const effectiveCapabilities = applyDailyV2RuntimeMutationLock(staticCapabilities, true);
+  let renderControlsCallCount = 0;
   let serviceBackedControlRenderCount = 0;
   const markup = renderAdminSurface(
     effectiveCapabilities.admin,
+    () => { renderControlsCallCount += 1; },
     () => { serviceBackedControlRenderCount += 1; },
   );
 
   assert.match(markup, /Provisionner un compte/);
   assert.match(markup, /Créer un grant backfill/);
+  assert.equal(renderControlsCallCount, 1);
   assert.equal(serviceBackedControlRenderCount, 1);
 });
