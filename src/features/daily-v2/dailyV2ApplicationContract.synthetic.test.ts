@@ -661,7 +661,10 @@ test('separates local staging preparation from fail-closed server persistence', 
   // Boutons et cartes de mutation neutralisés sans la capacité.
   assert.match(page, /disabled=\{!canSubmitDeposit \|\| depositMutation\.isPending\}/);
   assert.match(page, /disabled=\{!canDecide \|\| Boolean\(reasonRequired/);
-  assert.match(page, /\{canAdminister && \(/);
+  assert.match(
+    page,
+    /<DailyV2AdminControlsGate allowed=\{canAdminister\} renderControls=\{\(\) => \(/,
+  );
   assert.match(page, /if \(!canDecide\) \{\s*toast\.error\(READ_ONLY_TARGET_MESSAGE\);\s*return;/);
   assert.match(page, /Pilote production verrouillé/);
   assert.match(page, /Pilote production actif/);

@@ -77,6 +77,7 @@ import {
 } from '@/features/daily-v2/DailyV2Tables';
 import { invalidateDailyV2, shortId } from '@/features/daily-v2/dailyV2UiUtils';
 import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
+import { DailyV2AdminControlsGate } from '@/features/daily-v2/DailyV2AdminControlsGate';
 import {
   applyDailyV2RuntimeMutationLock,
   currentDailyV2Capabilities,
@@ -630,7 +631,7 @@ const DailyStatementV2 = () => {
                 </CardContent>
               </Card>
 
-              {canAdminister && (
+              <DailyV2AdminControlsGate allowed={canAdminister} renderControls={() => (
                 <div className="grid gap-4 lg:grid-cols-2">
                   <Card>
                     <CardHeader>
@@ -704,7 +705,7 @@ const DailyStatementV2 = () => {
                     </CardContent>
                   </Card>
                 </div>
-              )}
+              )} />
 
               {prepareErrors.length > 0 && <ErrorList title="Préparation refusée" errors={prepareErrors} />}
 

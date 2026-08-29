@@ -121,9 +121,11 @@ Daily v2, mais jamais à l'administration. La migration candidate
 `20260829120000_daily_v2_controlled_production_pilot_server_scope.sql` sépare
 côté serveur les scopes `daily`, `admin` et `backfill` sous le kill switch
 maître et protège les huit RPC mutatives. Le correctif est validé sur PostgreSQL
-jetable mais attend une contre-review indépendante ; il n'est appliqué à aucun
-environnement. Le verrou production reste fermé ; le pack local ne constitue ni
-une publication ni une activation.
+jetable et sa première contre-review indépendante est favorable, sans P0/P1 ;
+les deux réserves P2 UI/doc ont été corrigées localement et attendent la
+revalidation du SHA final. Il n'est appliqué à aucun environnement. Le verrou
+production reste fermé ; le pack local ne constitue ni une publication ni une
+activation.
 Voir `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.
 
 ## Vérité DB / idempotence

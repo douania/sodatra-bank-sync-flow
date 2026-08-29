@@ -46,7 +46,11 @@ conserve le kill switch maître, ajoute les scopes privés audités `daily`,
 retire tout `EXECUTE` API de leurs cœurs. Le scénario exact daily-only refuse
 les appels directs admin/backfill sans écriture partielle dans PostgreSQL
 jetable ; la chaîne 0R complète reste verte. La migration n'est appliquée à
-aucun environnement et le nouveau SHA attend une contre-review indépendante.
+aucun environnement. La contre-review du SHA `d0e3abf` a rendu
+`PASS_WITH_RESERVES — MERGE_READY: YES`, sans P0/P1 et avec deux P2 UI/doc
+non bloquants. Ces réserves sont corrigées par un commentaire exact et une
+frontière React rendue, testée sur la matrice production × états du verrou ×
+rôles. Le SHA corrigé attend une revalidation indépendante finale.
 
 Rapport et séquence des futurs GO :
 `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.

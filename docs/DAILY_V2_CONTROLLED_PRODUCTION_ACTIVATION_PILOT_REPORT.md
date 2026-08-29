@@ -109,6 +109,24 @@ La chaîne PostgreSQL 0R complète a été rejouée dans un conteneur jetable :
 Le P1 est donc corrigé **localement**, sous réserve d'une nouvelle contre-review
 indépendante du SHA final. Cela ne vaut ni merge ni validation staging.
 
+La contre-review indépendante du SHA
+`d0e3abf9176018b8b844e61f67bf6936c569a9f7` a ensuite rendu
+**PASS_WITH_RESERVES — MERGE_READY: YES**, avec `0 P0`, `0 P1` et deux P2 non
+bloquants : un commentaire runtime devenu obsolète et une preuve UI encore
+principalement textuelle. Les deux réserves sont réconciliées localement :
+
+- le commentaire nomme désormais staging et pilote production autorisé ;
+- `DailyV2AdminControlsGate` constitue une frontière de rendu explicite ;
+- un test React rendu couvre production × verrou `true`/`false`/absent/erreur ×
+  rôles `admin`/`manager`/`auditor`/`user`, vérifie l'absence de markup
+  admin/backfill et prouve que le sous-arbre adossé aux services n'est jamais
+  évalué ;
+- un contrôle positif staging/admin/verrou `true` empêche une preuve vacuement
+  verte.
+
+Le SHA incluant ces deux corrections reste soumis à une revalidation
+indépendante finale. Aucun environnement n'a été touché.
+
 ## Séquence environnementale future — conditionnelle
 
 La séquence ci-dessous ne peut commencer qu'après contre-review conforme et

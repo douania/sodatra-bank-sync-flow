@@ -156,9 +156,9 @@ export interface DailyV2ImportPermissions {
  * Distingue la préparation purement locale de la persistance serveur.
  *
  * La préparation reste réservée aux rôles de dépôt et aux cibles dont la
- * politique statique autorise le flux (staging aujourd'hui). Le verrou serveur
- * ne peut ouvrir que la persistance : lorsqu'il est fermé ou indisponible, le
- * parsing local reste disponible mais aucun appel RPC ne l'est.
+ * politique statique autorise le flux (staging et pilote production autorisé).
+ * Le verrou serveur ne peut ouvrir que la persistance : lorsqu'il est fermé ou
+ * indisponible, le parsing local reste disponible mais aucun appel RPC ne l'est.
  */
 export function resolveDailyV2ImportPermissions(
   hasDepositRole: boolean,
