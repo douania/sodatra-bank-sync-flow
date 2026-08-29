@@ -91,6 +91,10 @@ BEGIN
   PERFORM poc_test.ctx_set(p_prefix || '_staging',v_result -> 'units' -> 0 ->> 'staging_unit_id');
   PERFORM poc_test.ctx_set(p_prefix || '_status',v_result -> 'units' -> 0 ->> 'unit_status');
   PERFORM poc_test.ctx_set(p_prefix || '_duid',v_result -> 'units' -> 0 ->> 'day_unit_id');
+  PERFORM poc_test.ctx_set(
+    p_prefix || '_active_canonical',
+    coalesce(v_result -> 'units' -> 0 ->> 'active_canonical_unit_id','')
+  );
   RETURN v_result;
 END
 $fn$;

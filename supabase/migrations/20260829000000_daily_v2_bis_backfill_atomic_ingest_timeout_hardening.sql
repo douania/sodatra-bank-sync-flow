@@ -586,6 +586,18 @@ BEGIN
   IF p_units IS NULL OR jsonb_typeof(p_units) <> 'array' OR jsonb_array_length(p_units)=0 THEN
     RAISE EXCEPTION 'DAILY_STMT_UNITS_REQUIRED: non-empty array required (fail-closed)';
   END IF;
+  -- La fenêtre de tentative n'est pas une simple métadonnée d'audit : chaque
+  -- unité doit réellement lui appartenir, quel que soit le mode routé ensuite.
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_units) e(value)
+    WHERE public.daily_stmt_parse_date_strict(e.value ->> 'accounting_date') IS NULL
+       OR public.daily_stmt_parse_date_strict(e.value ->> 'accounting_date') NOT BETWEEN
+          public.daily_stmt_parse_date_strict(p_attempt ->> 'export_period_start')
+          AND public.daily_stmt_parse_date_strict(p_attempt ->> 'export_period_end')
+  ) THEN
+    RAISE EXCEPTION 'DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD: every accounting date must fit the declared export window (fail-closed)';
+  END IF;
   SELECT jsonb_agg(e.value - 'review_reason_codes' ORDER BY e.ord)
     INTO v_legacy_units
   FROM jsonb_array_elements(p_units) WITH ORDINALITY e(value,ord);

@@ -73,6 +73,26 @@ tort. La correction :
   indépendamment du comptage des lignes effectivement insérées ;
 - ajoute une preuve directe à deux sessions du nouveau cœur BIS ensembliste.
 
+La revalidation indépendante du SHA `ce9dcff` a confirmé ce correctif R3, puis
+a détecté un nouveau P1 : le grant bornait la fenêtre déclarée dans la
+tentative, sans vérifier que chaque `accounting_date` d'unité appartenait
+réellement à cette fenêtre. Elle a également demandé la fermeture de l'entrée
+applicative backfill directe, des preuves comportementales négatives du cœur et
+une comparaison directe du canonical dans la course. Le correctif V2 :
+
+- refuse avant tout routage toute unité daily ou backfill dont la date est
+  absente ou hors de la période d'export déclarée ;
+- conserve ensuite le contrôle distinct de cette période déclarée contre la
+  période du grant ;
+- supprime l'export applicatif `preIngestDailyV2`, sans consommateur, afin que
+  tout backfill passe nécessairement par l'entrée incrémentale ;
+- injecte réellement dans PostgreSQL une ligne manquante, excédentaire,
+  orpheline, un hash dupliqué et un `line_count` mensonger ; chaque refus
+  prouve zéro tentative, unité, ligne ou audit et un grant encore actif ;
+- teste les deux dépassements de période en daily et en backfill ;
+- compare directement l'identifiant canonical renvoyé à la session B avec
+  celui promu par la session A.
+
 ## Traitement incrémental durable du fichier BIS
 
 Le classeur reste intégralement parsé et validé dans le navigateur : l'application
@@ -144,11 +164,14 @@ Une seconde campagne synthétique vérifie en plus la borne maximale autorisée 
 - charge BIS 857 / 4 798 sous 15 s : **PASS** ;
 - charge plafond BIS 4 000 / 4 000 sous 15 s : **PASS** ;
 - chaîne SQL multi-banques 0R : **PASS** (`ALL_E2E_0R_SQL_PASS`) ;
+- bornes de période daily et backfill, inférieure et supérieure : **PASS** ;
+- cinq corruptions de cardinalité/ligne sur le nouveau cœur avec rollback
+  complet : **PASS** ;
 - cycle de vie provisional 0Z : **PASS** ;
 - concurrence historique provisional sur deux sessions : **PASS** ;
 - concurrence directe du cœur BIS ensembliste sur deux sessions : **PASS** ;
-  la session B a attendu **4,010 s**, puis a produit un doublon audité sans
-  ligne financière supplémentaire et avec un seul canonical actif ;
+  la session B a attendu **4,082 s**, a renvoyé exactement le canonical promu
+  par A, puis a produit un doublon audité sans ligne financière supplémentaire ;
 - tests Daily v2 application : **103/103 PASS** ;
 - tests Daily v2 reporting : **70/70 PASS** ;
 - toutes les autres suites `test:*` de la matrice CI : **PASS** ;

@@ -35,6 +35,10 @@ SELECT poc_test.assert(
   'BISC3: exactly one active canonical unit exists for the raced day'
 );
 SELECT poc_test.assert(
+  poc_test.ctx_get('bisc_b_active_canonical')=poc_test.ctx_get('bisc_a_canonical'),
+  'BISC3: B directly returns the exact canonical unit promoted by A'
+);
+SELECT poc_test.assert(
   (SELECT status='promoted'
    FROM public.daily_statement_units_staging
    WHERE id=poc_test.ctx_get('bisc_a_staging')::uuid)

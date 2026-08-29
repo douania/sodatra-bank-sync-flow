@@ -208,6 +208,46 @@ SELECT poc_test.expect_error($mask$
   ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
 $mask$, '%DAILY_STMT_ACCOUNT_MASK_MISMATCH%',
   '0U-B0d: identite masquee differente du registre refusee');
+SELECT poc_test.expect_error($date_below$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,accounting_date}','"01/01/1900"'::jsonb),
+    p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$date_below$, '%DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD%',
+  '0U-B0e: daily date below the declared period is rejected');
+SELECT poc_test.expect_error($date_above$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,accounting_date}','"31/12/2099"'::jsonb),
+    p_lines, p_guard
+  ) FROM poc_test.e2e0r_payload WHERE key = 'atb_v1'
+$date_above$, '%DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD%',
+  '0U-B0f: daily date above the declared period is rejected');
+SELECT poc_test.assert(
+  NOT EXISTS (
+    SELECT 1 FROM public.daily_statement_export_attempts a
+    WHERE a.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM public.daily_statement_units_staging u
+    WHERE u.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.daily_statement_lines_staging l
+    JOIN public.daily_statement_units_staging u ON u.id=l.staging_unit_id
+    WHERE u.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.daily_statement_import_events e
+    JOIN public.daily_statement_export_attempts a ON a.id=e.attempt_id
+    WHERE a.account_registry_id=(p_attempt ->> 'account_registry_id')::uuid
+  ),
+  '0U-B0g: rejected daily periods leave no attempt, unit, line or import audit'
+)
+FROM poc_test.e2e0r_payload WHERE key = 'atb_v1';
 COMMIT;
 
 BEGIN;

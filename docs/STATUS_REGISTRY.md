@@ -41,6 +41,15 @@ campagne PostgreSQL à deux sessions prouve directement la sérialisation du
 cœur BIS : une seule unité canonical active, la seconde tentative résolue en
 doublon audité et aucune ligne financière dupliquée.
 
+La revalidation indépendante du SHA `ce9dcff` a confirmé la correction R3 mais
+a bloqué le merge sur un nouveau P1 de portée temporelle. Le wrapper vérifie
+désormais chaque date d'unité contre la période déclarée avant tout routage,
+puis le grant contre cette même période. L'entrée applicative de dépôt direct a
+été supprimée : tout backfill passe par le delta incrémental. Les rejets daily
+et backfill sous/sur période ainsi que cinq payloads de lignes/cardinalité
+corrompus sont exercés dans PostgreSQL avec rollback intégral. La concurrence
+compare aussi directement le canonical renvoyé à B avec celui promu par A.
+
 Le lot reste local sur la draft PR #135. Aucun environnement Supabase ou
 Lovable n'a été modifié. Rapport :
 `docs/DAILY_V2_BIS_BACKFILL_ATOMIC_INGEST_TIMEOUT_HARDENING_REPORT.md`.

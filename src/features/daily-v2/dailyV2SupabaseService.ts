@@ -313,14 +313,6 @@ export async function listDailyV2AccountEvents(input: {
   return { rows: data ?? [], count: count ?? 0, page, pageSize };
 }
 
-export async function preIngestDailyV2(
-  payload: DailyV2PreIngestPayload,
-): Promise<DailyV2PreIngestResponse> {
-  assertAuthorizedDailyV2Target('deposit');
-  await assertAuthenticatedSession();
-  return executePreIngestDailyV2(payload);
-}
-
 export async function preIngestDailyV2WithIncrementalDelta(
   payload: DailyV2PreIngestPayload,
 ): Promise<DailyV2IncrementalIngestResult> {

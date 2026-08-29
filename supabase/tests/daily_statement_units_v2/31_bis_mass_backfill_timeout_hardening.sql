@@ -37,6 +37,105 @@ INSERT INTO public.daily_statement_backfill_grants (
 
 SELECT poc_test.as_user(poc_test.uid_admin());
 
+-- Sous-payload réel d'une journée, dérivé de la campagne navigateur, pour
+-- exercer chaque garde du nouveau cœur sans confondre volume et invariant.
+CREATE TEMP TABLE bis_invariant_payload ON COMMIT DROP AS
+SELECT
+  p.p_attempt,
+  jsonb_build_array(p.p_units -> 0) AS p_units,
+  (
+    SELECT jsonb_agg(l.value ORDER BY l.ord)
+    FROM jsonb_array_elements(p.p_lines) WITH ORDINALITY l(value,ord)
+    WHERE l.value ->> 'day_unit_id'=p.p_units -> 0 ->> 'day_unit_id'
+  ) AS p_lines,
+  p.p_guard
+FROM poc_test.bis_mass_payload p;
+
+SELECT poc_test.expect_error($date_below$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,accounting_date}','"31/07/2016"'::jsonb),
+    p_lines,p_guard
+  ) FROM bis_invariant_payload
+$date_below$, '%DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD%',
+  'BIS invariant: backfill date below the declared period is rejected');
+
+SELECT poc_test.expect_error($date_above$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(p_units,'{0,accounting_date}','"26/08/2026"'::jsonb),
+    p_lines,p_guard
+  ) FROM bis_invariant_payload
+$date_above$, '%DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD%',
+  'BIS invariant: backfill date above the declared period is rejected');
+
+SELECT poc_test.expect_error($missing_line$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,p_units,p_lines - 0,p_guard
+  ) FROM bis_invariant_payload
+$missing_line$, '%DAILY_STMT_BIS_BACKFILL_CONTENT_MISMATCH%',
+  'BIS invariant: missing line is rejected');
+
+SELECT poc_test.expect_error($excess_line$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,p_units,
+    p_lines || jsonb_build_array(
+      jsonb_set(p_lines -> 0,'{daily_line_hash}',to_jsonb(repeat('e',64)))
+    ),p_guard
+  ) FROM bis_invariant_payload
+$excess_line$, '%DAILY_STMT_BIS_BACKFILL_CONTENT_MISMATCH%',
+  'BIS invariant: excess line is rejected');
+
+SELECT poc_test.expect_error($orphan_line$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,p_units,
+    jsonb_set(p_lines,'{0,day_unit_id}',to_jsonb(repeat('0',64))),p_guard
+  ) FROM bis_invariant_payload
+$orphan_line$, '%DAILY_STMT_BIS_BACKFILL_LINE_INVALID%',
+  'BIS invariant: orphan line is rejected');
+
+SELECT poc_test.expect_error($duplicate_hash$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,p_units,p_lines || jsonb_build_array(p_lines -> 0),p_guard
+  ) FROM bis_invariant_payload
+$duplicate_hash$, '%DAILY_STMT_BIS_BACKFILL_LINE_INVALID%',
+  'BIS invariant: duplicate line hash is rejected');
+
+SELECT poc_test.expect_error($dishonest_count$
+  SELECT public.pre_ingest_daily_statement_units(
+    p_attempt,
+    jsonb_set(
+      p_units,'{0,line_count}',
+      to_jsonb(((p_units -> 0 ->> 'line_count')::integer)+1)
+    ),
+    p_lines,p_guard
+  ) FROM bis_invariant_payload
+$dishonest_count$, '%DAILY_STMT_BIS_BACKFILL_CONTENT_MISMATCH%',
+  'BIS invariant: dishonest line_count is rejected');
+
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_export_attempts
+   WHERE account_registry_id='00000000-0000-4000-8000-0000000000f1') = 0
+  AND
+  (SELECT count(*) FROM public.daily_statement_units_staging
+   WHERE account_registry_id='00000000-0000-4000-8000-0000000000f1') = 0
+  AND
+  (SELECT count(*)
+   FROM public.daily_statement_lines_staging l
+   JOIN public.daily_statement_units_staging u ON u.id=l.staging_unit_id
+   WHERE u.account_registry_id='00000000-0000-4000-8000-0000000000f1') = 0
+  AND
+  (SELECT count(*)
+   FROM public.daily_statement_import_events e
+   JOIN public.daily_statement_export_attempts a ON a.id=e.attempt_id
+   WHERE a.account_registry_id='00000000-0000-4000-8000-0000000000f1') = 0
+  AND
+  (SELECT status='active' AND consumed_attempt_id IS NULL
+   FROM public.daily_statement_backfill_grants
+   WHERE id='00000000-0000-4000-8000-00000000f857'),
+  'BIS invariant: every rejection leaves zero attempt, unit, line, audit and an active grant'
+);
+
 -- Erreur tardive : le cœur a fini ses écritures, puis le wrapper détecte que
 -- des motifs de revue portent un status "valid". La sous-transaction de
 -- expect_error doit rendre absolument toutes les écritures et le verrou grant.

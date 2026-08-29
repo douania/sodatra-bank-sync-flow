@@ -153,6 +153,7 @@ test('hardens the BIS mass backfill with one atomic set-based review batch', () 
   assert.doesNotMatch(migrationBisTimeoutHardening, /line_count',\(SELECT[\s\S]*jsonb_array_elements\(p_units\)/);
   assert.match(migrationBisTimeoutHardening, /sum\(\(d\.value ->> 'line_count'\)::integer\)/);
   assert.match(migrationBisTimeoutHardening, /DAILY_STMT_BIS_BACKFILL_LINE_CARDINALITY/);
+  assert.match(migrationBisTimeoutHardening, /DAILY_STMT_UNIT_DATE_OUT_OF_PERIOD/);
   assert.match(migrationBisTimeoutHardening, /'input_review_required', input_review_required/);
   assert.match(migrationBisTimeoutHardening, /WHERE \(e\.value ->> 'input_review_required'\)::boolean[\s\S]*validation_status' <> 'needs_review'/);
   assert.match(migrationBisTimeoutHardening, /INSERT INTO public\.daily_statement_units_staging/);
@@ -197,8 +198,20 @@ test('hardens the BIS mass backfill with one atomic set-based review batch', () 
   assert.match(bisMassGenerator, /lineCount: 4_000/);
   assert.match(bisMassSqlTest, /SET LOCAL statement_timeout = '15s'/);
   assert.match(bisMassSqlTest, /BIS-4000 bounded/);
+  for (const invariant of [
+    'missing line',
+    'excess line',
+    'orphan line',
+    'duplicate line hash',
+    'dishonest line_count',
+  ]) {
+    assert.match(bisMassSqlTest, new RegExp(invariant));
+  }
   assert.match(e2ePipelineSqlTest, /0R-J0: la sonde R3 est declaree valid sans motif par le client/);
+  assert.match(e2ePipelineSqlTest, /daily date below the declared period is rejected/);
+  assert.match(e2ePipelineSqlTest, /daily date above the declared period is rejected/);
   assert.match(bisConcurrencyAssertions, /BISC2: session B waited at least three seconds/);
+  assert.match(bisConcurrencyAssertions, /B directly returns the exact canonical unit promoted by A/);
   assert.match(bisConcurrencyAssertions, /BISC4: canonical duplicate B stages no financial line/);
 });
 
@@ -440,7 +453,6 @@ test('gives every Daily v2 network operation an explicit capability', () => {
     getActiveDailyV2CanonicalUnit: 'read',
     listDailyV2AuditEvents: 'read',
     listDailyV2CanonicalUnitsForReporting: 'read',
-    preIngestDailyV2: 'deposit',
     preIngestDailyV2WithIncrementalDelta: 'deposit',
     promoteDailyV2Unit: 'promote',
     supersedeDailyV2Unit: 'promote',
@@ -469,6 +481,11 @@ test('gives every Daily v2 network operation an explicit capability', () => {
     seen.add(name);
   }
   assert.equal(seen.size, Object.keys(CAPABILITY_BY_OPERATION).length);
+  assert.doesNotMatch(
+    service,
+    /export async function preIngestDailyV2\(/,
+    'the service must expose no direct full-payload ingest path',
+  );
 
   // La capacité est obligatoire côté garde : aucune valeur par défaut.
   assert.match(runtimeTarget, /capability: DailyV2Capability,\s*\)/);
