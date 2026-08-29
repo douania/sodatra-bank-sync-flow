@@ -78,7 +78,7 @@ Pas d'API bancaire directe.
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
 | Quality Control | `/quality-control` | Actif |
 | Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
-| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt, staging, promotion/supersede, canonical, audit et reporting ; pilote production journalier et scopes serveur daily/admin/backfill implémentés localement, migration non appliquée, contre-review requise ; non publié et non activé |
+| Daily v2 | `/daily-statements` | Actif : CSV structuré BDK/ORA et Excel ONLINE profilé ATB/BICIS/BIS/BRIDGE, dépôt, staging, promotion/supersede, canonical, audit et reporting ; pilote production journalier et scopes serveur daily/admin/backfill implémentés localement, contre-review passée et merge-ready, migration non appliquée ; non publié et non activé |
 
 ## Modules supprimés / retirés
 
@@ -160,7 +160,7 @@ Ne pas modifier sans justification CTO explicite :
 ## Backlog prioritaire
 
 Ouverts / suivis :
-- Daily v2 production pilot : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_REQUIRED — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED` ;
+- Daily v2 production pilot : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS — MERGE_READY — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED` ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
 - Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;
