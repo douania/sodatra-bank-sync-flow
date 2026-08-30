@@ -17,9 +17,9 @@ import type { CollectionImportReview } from '@/types/processing';
 
 // ⭐ 0Z_AM — GLOBAL-PRODUCTION-READ-ONLY-UPLOAD-GUARD.
 // Aucune donnée bancaire réelle, aucun accès Supabase. La garde /upload est une
-// barrière d'interface (jamais de sécurité) qui réutilise la politique
-// canonique cible × capacité de Daily v2 : production = read uniquement,
-// inconnu/invalide = refus fail-closed. Capacités du flux d'import :
+// barrière d'interface (jamais de sécurité) qui réutilise la résolution de cible
+// canonique de Daily v2, puis impose sa propre règle : /upload reste staging-only
+// et toute cible production/inconnue/invalide est refusée fail-closed. Capacités du flux d'import :
 // sélection/traitement = deposit ; promotion Collection = promote.
 
 // Note runner : le client Supabase généré (`@/integrations/supabase/client`)
@@ -270,8 +270,10 @@ test('le service aval partage la classification stricte du précontrôle', {
 
 test('le guard réutilise la politique canonique Daily v2 sans dupliquer les refs projet', () => {
   assert.match(guard, /from '@\/features\/daily-v2\/dailyV2RuntimeTarget'/);
-  assert.match(guard, /validateDailyV2RuntimeTarget\(input, capability\)/);
-  assert.match(guard, /currentDailyV2RuntimeTargetVerdict\(capability\)/);
+  assert.match(guard, /validateDailyV2RuntimeTarget\(input, 'read'\)/);
+  assert.match(guard, /currentDailyV2RuntimeTargetVerdict\('read'\)/);
+  assert.match(guard, /DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF/);
+  assert.match(guard, /targetVerdict\.projectRef !== DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF/);
   // La capacité est obligatoire : aucune valeur par défaut, chaque appelant
   // la déclare (même règle que la garde canonique).
   assert.match(guard, /capability: UploadMutationCapability,/);

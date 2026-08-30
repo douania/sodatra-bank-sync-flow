@@ -35,6 +35,7 @@ MIGRATION_0Z="$REPO_ROOT/supabase/migrations/20260728000000_daily_v2_provisional
 MIGRATION_SERVER_READONLY="$REPO_ROOT/supabase/migrations/20260730170000_daily_v2_server_readonly_guard.sql"
 MIGRATION_RUNTIME_LOCK_READ_API="$REPO_ROOT/supabase/migrations/20260730180000_daily_v2_runtime_lock_read_api.sql"
 MIGRATION_BIS_TIMEOUT_HARDENING="$REPO_ROOT/supabase/migrations/20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql"
+MIGRATION_SERVER_SCOPE="$REPO_ROOT/supabase/migrations/20260829120000_daily_v2_controlled_production_pilot_server_scope.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -88,6 +89,7 @@ fi
 [ -f "$MIGRATION_SERVER_READONLY" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_SERVER_READONLY"; exit 1; }
 [ -f "$MIGRATION_RUNTIME_LOCK_READ_API" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_RUNTIME_LOCK_READ_API"; exit 1; }
 [ -f "$MIGRATION_BIS_TIMEOUT_HARDENING" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_BIS_TIMEOUT_HARDENING"; exit 1; }
+[ -f "$MIGRATION_SERVER_SCOPE" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_SERVER_SCOPE"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -169,12 +171,14 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" --single-transaction < "$MIGRATION_0Z" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_SERVER_READONLY" >/dev/null
 "${PSQL[@]}" --single-transaction < "$MIGRATION_RUNTIME_LOCK_READ_API" >/dev/null
-"${PSQL[@]}" --single-transaction < "$MIGRATION_BIS_TIMEOUT_HARDENING" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/18_runtime_lock_read_api.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/17a_server_readonly_guard_pre.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/18a_runtime_lock_read_api_enabled.sql"
+"${PSQL[@]}" --single-transaction < "$MIGRATION_BIS_TIMEOUT_HARDENING" >/dev/null
+"${PSQL[@]}" --single-transaction < "$MIGRATION_SERVER_SCOPE" >/dev/null
+"${PSQL[@]}" < "$SCRIPT_DIR/33_controlled_production_server_scope.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/26_e2e0r_historical_adoption_assert.sql"
-echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur + API read-only + hardening BIS appliquees"
+echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur + API read-only + hardening BIS + scopes serveur appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""

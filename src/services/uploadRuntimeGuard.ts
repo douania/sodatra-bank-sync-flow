@@ -3,9 +3,10 @@
  *
  * Cette garde est une barrière d'interface, JAMAIS une barrière de sécurité :
  * la sécurité réelle reste Auth + rôles + RLS + grants côté serveur (audit
- * production séparé). Elle réutilise la politique canonique cible × capacité
- * de Daily v2 (src/features/daily-v2/dailyV2RuntimeTarget.ts) — production :
- * read uniquement — sans créer de seconde logique d'environnement.
+ * production séparé). Elle réutilise la résolution canonique des deux cibles
+ * de Daily v2 (src/features/daily-v2/dailyV2RuntimeTarget.ts), mais conserve
+ * sa propre politique : seul le staging peut muter. L'ouverture bornée du
+ * pilote Daily v2 ne doit jamais ouvrir implicitement `/upload`.
  *
  * Capacités du flux d'import global, alignées sur la table canonique :
  *   - « deposit » : sélection et traitement de fichiers (processFiles) ;
@@ -19,6 +20,7 @@
  *     illisible : refus fail-closed de toute mutation.
  */
 import {
+  DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF,
   currentDailyV2RuntimeTargetVerdict,
   validateDailyV2RuntimeTarget,
   type DailyV2RuntimeTargetInput,
@@ -36,7 +38,16 @@ export function validateUploadMutationTarget(
   input: DailyV2RuntimeTargetInput,
   capability: UploadMutationCapability,
 ): DailyV2RuntimeTargetVerdict {
-  return validateDailyV2RuntimeTarget(input, capability);
+  if (capability !== 'deposit' && capability !== 'promote') {
+    return { allowed: false, reason: UPLOAD_READ_ONLY_TARGET_MESSAGE };
+  }
+
+  const targetVerdict = validateDailyV2RuntimeTarget(input, 'read');
+  if (!targetVerdict.allowed) return targetVerdict;
+  if (targetVerdict.projectRef !== DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF) {
+    return { allowed: false, reason: UPLOAD_READ_ONLY_TARGET_MESSAGE };
+  }
+  return targetVerdict;
 }
 
 /**
@@ -47,7 +58,15 @@ export function currentUploadMutationVerdict(
   capability: UploadMutationCapability,
 ): DailyV2RuntimeTargetVerdict {
   try {
-    return currentDailyV2RuntimeTargetVerdict(capability);
+    if (capability !== 'deposit' && capability !== 'promote') {
+      return { allowed: false, reason: UPLOAD_READ_ONLY_TARGET_MESSAGE };
+    }
+    const targetVerdict = currentDailyV2RuntimeTargetVerdict('read');
+    if (!targetVerdict.allowed) return targetVerdict;
+    if (targetVerdict.projectRef !== DAILY_V2_AUTHORIZED_STAGING_PROJECT_REF) {
+      return { allowed: false, reason: UPLOAD_READ_ONLY_TARGET_MESSAGE };
+    }
+    return targetVerdict;
   } catch {
     return { allowed: false, reason: UPLOAD_READ_ONLY_TARGET_MESSAGE };
   }

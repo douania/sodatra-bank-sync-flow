@@ -33,6 +33,10 @@ const migrationBisTimeoutHardening = readFileSync(
   'supabase/migrations/20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql',
   'utf8',
 );
+const migrationServerScope = readFileSync(
+  'supabase/migrations/20260829120000_daily_v2_controlled_production_pilot_server_scope.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 const bisMassGenerator = readFileSync(
   'supabase/tests/daily_statement_units_v2/e2e0r_generate_bis_mass_backfill.ts',
@@ -48,6 +52,10 @@ const e2ePipelineSqlTest = readFileSync(
 );
 const bisConcurrencyAssertions = readFileSync(
   'supabase/tests/daily_statement_units_v2/32d_bis_backfill_concurrency_asserts.sql',
+  'utf8',
+);
+const serverScopeSqlTest = readFileSync(
+  'supabase/tests/daily_statement_units_v2/33_controlled_production_server_scope.sql',
   'utf8',
 );
 
@@ -112,6 +120,103 @@ test('exposes only a fail-closed read API for the private runtime lock', () => {
   assert.match(e2eRunner, /MIGRATION_RUNTIME_LOCK_READ_API=/);
   assert.match(e2eRunner, /18_runtime_lock_read_api\.sql/);
   assert.match(e2eRunner, /18a_runtime_lock_read_api_enabled\.sql/);
+});
+
+test('enforces daily, admin and backfill scopes at all eight public mutation RPCs', () => {
+  for (const scopeColumn of [
+    'daily_scope_enabled',
+    'admin_scope_enabled',
+    'backfill_scope_enabled',
+  ]) {
+    assert.match(migrationServerScope, new RegExp(`ADD COLUMN ${scopeColumn} boolean`));
+    assert.match(
+      migrationServerScope,
+      new RegExp(`ALTER COLUMN ${scopeColumn} SET NOT NULL`),
+    );
+  }
+
+  assert.match(
+    migrationServerScope,
+    /FUNCTION daily_v2_private\.assert_runtime_scope\(p_scope text\)[\s\S]*p_scope NOT IN \('daily', 'admin', 'backfill'\)/,
+  );
+  assert.match(
+    migrationServerScope,
+    /IF COALESCE\(v_master_enabled, false\) IS NOT TRUE[\s\S]*DAILY_V2_SERVER_READ_ONLY/,
+  );
+  assert.match(
+    migrationServerScope,
+    /IF COALESCE\(v_scope_enabled, false\) IS NOT TRUE[\s\S]*DAILY_V2_RUNTIME_SCOPE_DISABLED/,
+  );
+  assert.match(
+    migrationServerScope,
+    /REVOKE ALL ON FUNCTION daily_v2_private\.assert_runtime_scope\(text\)[\s\S]*FROM PUBLIC, anon, authenticated, service_role/,
+  );
+
+  const scopeByRpc: Record<string, 'daily' | 'admin' | 'backfill'> = {
+    promote_daily_statement_unit: 'daily',
+    supersede_daily_statement_unit: 'daily',
+    provision_daily_statement_account: 'admin',
+    deactivate_daily_statement_account: 'admin',
+    adopt_daily_statement_historical_account: 'admin',
+    issue_daily_statement_backfill_grant: 'backfill',
+    revoke_daily_statement_backfill_grant: 'backfill',
+  };
+  for (const [rpc, scope] of Object.entries(scopeByRpc)) {
+    assert.match(
+      migrationServerScope,
+      new RegExp(
+        `CREATE FUNCTION public\\.${rpc}\\([\\s\\S]*?assert_runtime_scope\\('${scope}'\\)`,
+      ),
+    );
+  }
+  assert.match(
+    migrationServerScope,
+    /CREATE FUNCTION public\.pre_ingest_daily_statement_units\([\s\S]*v_mode = 'daily'[\s\S]*assert_runtime_scope\('daily'\)[\s\S]*v_mode = 'backfill'[\s\S]*assert_runtime_scope\('backfill'\)/,
+  );
+
+  const coreNames = migrationServerScope.match(
+    /RENAME TO daily_stmt_[a-z0-9_]+_scoped_core_0w/g,
+  ) ?? [];
+  assert.equal(coreNames.length, 8);
+  for (const coreName of coreNames.map((entry) => entry.replace('RENAME TO ', ''))) {
+    assert.match(
+      migrationServerScope,
+      new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.${coreName}\\([\\s\\S]*?FROM PUBLIC, anon, authenticated, service_role`,
+      ),
+    );
+  }
+
+  assert.match(
+    migrationServerScope,
+    /SELECT control\.mutations_enabled AND control\.daily_scope_enabled/,
+  );
+  assert.match(
+    migrationServerScope,
+    /UPDATE daily_v2_private\.runtime_control[\s\S]*daily_scope_enabled = mutations_enabled[\s\S]*admin_scope_enabled = mutations_enabled[\s\S]*backfill_scope_enabled = mutations_enabled/,
+  );
+  assert.doesNotMatch(migrationServerScope, /DROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+  assert.equal((migrationServerScope.match(/^BEGIN;$/gm) ?? []).length, 1);
+  assert.equal((migrationServerScope.match(/^COMMIT;$/gm) ?? []).length, 1);
+
+  assert.match(e2eRunner, /MIGRATION_SERVER_SCOPE=/);
+  assert.match(e2eRunner, /--single-transaction < "\$MIGRATION_SERVER_SCOPE"/);
+  assert.match(e2eRunner, /33_controlled_production_server_scope\.sql/);
+  assert.match(serverScopeSqlTest, /daily_scope_enabled = true/);
+  assert.match(serverScopeSqlTest, /admin_scope_enabled = false/);
+  assert.match(serverScopeSqlTest, /backfill_scope_enabled = false/);
+  assert.match(serverScopeSqlTest, /ROLLBACK;/);
+  for (const rpc of Object.keys(scopeByRpc)) {
+    assert.match(serverScopeSqlTest, new RegExp(`public\\.${rpc}\\(`));
+  }
+  assert.match(
+    serverScopeSqlTest,
+    /pre_ingest_daily_statement_units\('\{"requested_mode":"backfill"\}/,
+  );
+  assert.match(
+    serverScopeSqlTest,
+    /pre_ingest_daily_statement_units\('\{"requested_mode":"daily"\}/,
+  );
 });
 
 test('keeps the 0U migration additive and makes the historical ingest core internal', () => {
@@ -407,7 +512,7 @@ test('keeps role-gated UI decisions fail closed', () => {
   assert.match(page, /const canReadCanonical = isAdmin \|\| roles\.includes\('auditor'\)/);
   assert.match(tables, /unit\.status === 'staged'/);
   assert.match(tables, /unit\.status === 'conflict'/);
-  assert.match(page, /\{isAdmin && bank === 'BIS' && <SelectItem value="backfill"/);
+  assert.match(page, /\{canAdminister && bank === 'BIS' && <SelectItem value="backfill"/);
   assert.match(page, /requestedMode === 'backfill' && !isAdmin/);
   assert.match(browserPipeline, /backfillGrantId is mandatory in backfill mode/);
   assert.match(browserPipeline, /accountRegistryId must identify a provisioned account/);
@@ -492,7 +597,7 @@ test('gives every Daily v2 network operation an explicit capability', () => {
   assert.doesNotMatch(runtimeTarget, /capability: DailyV2Capability = /);
   assert.match(
     runtimeTarget,
-    /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read'\]/,
+    /\[DAILY_V2_AUTHORIZED_PRODUCTION_PROJECT_REF\]: \['read', 'deposit', 'promote'\]/,
   );
   assert.match(
     runtimeTarget,
@@ -556,12 +661,16 @@ test('separates local staging preparation from fail-closed server persistence', 
   // Boutons et cartes de mutation neutralisés sans la capacité.
   assert.match(page, /disabled=\{!canSubmitDeposit \|\| depositMutation\.isPending\}/);
   assert.match(page, /disabled=\{!canDecide \|\| Boolean\(reasonRequired/);
-  assert.match(page, /\{canAdminister && \(/);
+  assert.match(
+    page,
+    /<DailyV2AdminControlsGate allowed=\{canAdminister\} renderControls=\{\(\) => \(/,
+  );
   assert.match(page, /if \(!canDecide\) \{\s*toast\.error\(READ_ONLY_TARGET_MESSAGE\);\s*return;/);
-  assert.match(page, /Production en lecture seule/);
+  assert.match(page, /Pilote production verrouillé/);
+  assert.match(page, /Pilote production actif/);
   assert.match(page, /Environnement en lecture seule/);
   assert.match(page, /Verrou serveur : \{runtimeLockLabel\}/);
-  assert.match(page, /Consultation uniquement\. La préparation locale et toutes les mutations sont indisponibles sur cette cible\./);
+  assert.match(page, /La préparation locale est disponible, mais aucune mutation n’est possible tant que le verrou PostgreSQL reste fermé\./);
   assert.match(page, /Mode parse-only/);
   assert.match(page, /Persistance bloquée par le verrou serveur/);
   assert.match(
