@@ -11,8 +11,9 @@ import { BankReport, FundPosition, CollectionReport } from '@/types/banking';
 import ConsolidatedMetrics from '@/components/ConsolidatedMetrics';
 import ConsolidatedCharts from '@/components/ConsolidatedCharts';
 import CriticalAlertsPanel from '@/components/CriticalAlertsPanel';
+import DailyV2OperationalDashboard from '@/features/daily-v2/dashboard/DailyV2OperationalDashboard';
 
-const Dashboard = () => {
+const LegacyDashboard = () => {
   const [bankReports, setBankReports] = useState<BankReport[]>([]);
   const [collectionReports, setCollectionReports] = useState<CollectionReport[]>([]);
   const [fundPosition, setFundPosition] = useState<FundPosition | null>(null);
@@ -219,14 +220,14 @@ const Dashboard = () => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-900">Dashboard Consolidé Multi-Banques SODATRA</h1>
+        <h2 className="text-2xl font-bold text-gray-900">Indicateurs historiques SODATRA</h2>
         <div className="flex items-center space-x-4">
           <Button variant="outline" onClick={loadDashboardData} className="bg-blue-50 hover:bg-blue-100 border-blue-200">
             <RefreshCw className="h-4 w-4 mr-2" />
             Actualiser
           </Button>
           <div className="text-sm text-gray-500">
-            Position consolidée au {new Date().toLocaleDateString('fr-FR')} • 
+            Consultation du {new Date().toLocaleDateString('fr-FR')} (pas la date des relevés) •
             {bankReports.length} banques • {collectionReports.length} collections
           </div>
         </div>
@@ -432,6 +433,25 @@ const Dashboard = () => {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+};
+
+const Dashboard = () => {
+  const [source, setSource] = useState<'canonical' | 'legacy'>('canonical');
+  return (
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold">Dashboard SODATRA</h1>
+      <div className="flex flex-wrap gap-3" aria-label="Source des indicateurs">
+        <Button variant={source === 'canonical' ? 'default' : 'outline'} aria-pressed={source === 'canonical'} onClick={() => setSource('canonical')}>Daily v2 — relevés validés</Button>
+        <Button variant={source === 'legacy' ? 'default' : 'outline'} aria-pressed={source === 'legacy'} onClick={() => setSource('legacy')}>Sources historiques — vue séparée</Button>
+      </div>
+      {source === 'canonical' ? <DailyV2OperationalDashboard /> : (
+        <section aria-label="Indicateurs historiques" className="space-y-4">
+          <p className="rounded border border-amber-200 bg-amber-50 p-4 text-sm">Sources historiques : rapports bancaires, Collection Report et Fund Position. Ces indicateurs ne sont ni complétés ni additionnés aux données Daily v2. Leur couverture et leurs règles de calcul restent distinctes.</p>
+          <LegacyDashboard />
+        </section>
+      )}
     </div>
   );
 };

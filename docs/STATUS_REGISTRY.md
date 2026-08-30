@@ -15,6 +15,32 @@
 
 ---
 
+## DAILY-V2-CANONICAL-OPERATIONAL-DASHBOARD
+
+**Statut : `IN_PROGRESS — IMPLEMENTED_LOCAL — REVIEWED_WITH_RESERVES — NOT_DEPLOYED`**
+
+Pack autorisé par `GO_IMPLEMENT_DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD`,
+base `2d700ed76dc6fe15c742f76951446768f7b5032d` (clôture pilote PR #138).
+La nouvelle vue `/dashboard` lit exclusivement le canonical actif par le
+reader snapshot existant, admin/auditor uniquement. Dernier solde de chaque
+identité/devise, flux observés, ancienneté et couverture ; jamais de somme des
+soldes historiques, ni total de soldes par devise (identités physiques non
+réconciliées), ni mélange avec les sources legacy consultables séparément.
+Lecture bornée à 400 jours / 5 000 unités : pas une couverture exhaustive.
+
+213 tests synthétiques ciblés PASS ; build PASS ; aucune régression par rapport
+aux 180 erreurs/11 warnings ESLint et 17 erreurs TypeScript préexistantes.
+Vérification interactive locale synthétique, pas d'Auth/Supabase live.
+Contre-review Claude et revalidations terminées : `PASS_WITH_RESERVES`, 0 P0,
+0 P1, une réserve P2 de couverture Auth/hooks/DB réels, acceptée pour la draft
+locale uniquement. Les findings de calcul, volume et état de formulaire sont
+levés. Aucun merge, environnement, publication
+ou changement des droits/verrous autorisé par ce pack.
+
+Rapport : `docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
+
+---
+
 ## DAILY-V2-CONTROLLED-PRODUCTION-ACTIVATION-PILOT
 
 **Statut : `CLOSED_WITH_RESERVE — ORA_FIRST_IMPORT_AND_REPORTING_VALIDATED — PILOT_RELOCKED` (2026-08-30)**
