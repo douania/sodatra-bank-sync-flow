@@ -34,6 +34,14 @@ Le premier pilote réel ORABANK Daily v2 est toutefois validé avec réserves en
 (dépôt, promotion et reporting), puis reverrouillé. Cette réussite bornée ne
 qualifie pas encore l'application entière ni le dashboard Direction.
 
+Le pack `DAILY-V2-CANONICAL-OPERATIONAL-DASHBOARD` implémente localement une
+vue distincte sur les seules journées canonical actives, avec derniers soldes
+par identité/devise, dates des relevés et couverture explicite, sans total de
+soldes par devise. La contre-review locale est validée avec une réserve de
+couverture Auth/DB réelle ; ce code n'est ni fusionné ni publié. Le runtime en production
+reste donc sur le dashboard historique à ce stade. Voir
+`docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
+
 Priorité actuelle :
 1. sécurité Supabase / RLS ;
 2. intégrité et idempotence des imports ;
@@ -76,7 +84,7 @@ Pas d'API bancaire directe.
 
 | Module | Route | Statut |
 |---|---|---|
-| Dashboard principal | `/dashboard` | Actif sur sources legacy ; pas encore raccordé au reporting Daily v2 canonical de ce pilote |
+| Dashboard principal | `/dashboard` | Runtime publié sur sources legacy ; vue Daily v2 canonical séparée implémentée et reviewée localement avec réserve, non fusionnée/non déployée |
 | Import opérationnel | `/upload` | Pipeline global unique ; Collection Report/Internal Book candidats production ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
 | Alias upload bulk | `/upload-bulk` | Compatibilité : redirection vers `/upload`, aucun pipeline distinct |
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
@@ -168,7 +176,7 @@ Ne pas modifier sans justification CTO explicite :
 
 Ouverts / suivis :
 - Daily v2 production pilot : `CLOSED_WITH_RESERVE — ORA_FIRST_IMPORT_AND_REPORTING_VALIDATED — PILOT_RELOCKED` ;
-- Dashboard opérationnel Daily v2 canonical : `PLANNED — NOT_IMPLEMENTED`, cadrage read-only dans le rapport du pilote, sans double comptage avec les sources legacy ;
+- Dashboard opérationnel Daily v2 canonical : `IN_PROGRESS — IMPLEMENTED_LOCAL — REVIEWED_WITH_RESERVES — NOT_DEPLOYED`, positions par identité séparées des sources legacy, sans total de soldes par devise ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
 - Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;
