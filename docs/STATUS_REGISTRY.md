@@ -17,44 +17,46 @@
 
 ## DAILY-V2-CONTROLLED-PRODUCTION-ACTIVATION-PILOT
 
-**Statut : `IMPLEMENTED_LOCAL — INDEPENDENT_REVIEW_PASS — MERGE_READY — MIGRATION_NOT_APPLIED — PRODUCTION_LOCK_UNCHANGED` (2026-08-30)**
+**Statut : `CLOSED_WITH_RESERVE — ORA_FIRST_IMPORT_AND_REPORTING_VALIDATED — PILOT_RELOCKED` (2026-08-30)**
 
-Le premier pilote production Daily v2 est préparé localement côté client. La politique de
-cible rend la production éligible à `read`, `deposit` et `promote`, tandis que
-`admin` reste refusé : le backfill BIS et l'administration du registre ne sont
-pas exposés dans l'interface. Le dépôt reste réservé à `admin/manager` et la
-décision à `admin`.
+La PR #137 est fusionnée : source production
+`85150a6a466cf87e12b28d945e0849458c5ddf2c`. Le P1 historique d'ouverture
+admin/backfill via le seul verrou maître a été corrigé par les scopes serveur
+de `20260829120000_daily_v2_controlled_production_pilot_server_scope.sql`.
+La revalidation finale locale `39af326` était `PASS`, sans P0/P1/P2 restant ;
+elle ne doit pas être confondue avec les preuves environnementales suivantes.
 
-Cette éligibilité n'ouvre aucune écriture à elle seule. Le verrou PostgreSQL
-privé doit répondre explicitement `true`; absent, faux, invalide ou
-indisponible, il ferme dépôt, promotion et supersede. La migration et les tests
-SQL ont été exécutés uniquement sur PostgreSQL Docker jetable avec données
-synthétiques ; aucune cible live, publication ou donnée bancaire réelle n'a été
-utilisée.
+Migration et runtime ont ensuite été appliqués/publiés en staging puis en
+production sous GO distincts. L'E2E staging a validé 35 assertions synthétiques
+avec `ROLLBACK`, rôle SQL authentifié simulé (pas transport JWT navigateur) ;
+aucune ligne résiduelle, mais une avance normale de séquence d'audit.
 
-La contre-review indépendante du SHA `b997dfd` a rendu `FAIL — MERGE_READY: NO`
-avec un P1 : lorsque le verrou global est ouvert, le masquage client n'empêche
-pas un administrateur authentifié d'appeler directement les RPC
-d'administration/backfill. Le pilote reste bloqué jusqu'à l'ajout d'un contrôle
-serveur borné par capacité/mode et de tests négatifs directs. Aucun enchaînement
-d'environnement n'est autorisé.
+Un seul export réel ORABANK a été déposé, contrôlé puis promu en production :
+trois journées et quatre lignes canonical actives. Les interruptions de
+promotion ont été suivies de fermetures de sécurité et de reprises bornées,
+sans supprimer les données déjà promues ni redéposer le fichier. Les deux
+unités/41 lignes BDK déjà en staging métier sont préservées et non promues.
+Le smoke reporting final est `PASS_WITH_RESERVES` : huit scénarios UI rapprochés
+des agrégats SQL, invariants de soldes et snapshots inchangés ; 63 tests
+synthétiques ciblés verts. Aucun export CSV/XLSX de rapport n'a été exécuté.
 
-Le correctif est désormais implémenté localement par la migration candidate
-`20260829120000_daily_v2_controlled_production_pilot_server_scope.sql`. Elle
-conserve le kill switch maître, ajoute les scopes privés audités `daily`,
-`admin` et `backfill`, transforme les huit RPC mutatives en wrappers scopés et
-retire tout `EXECUTE` API de leurs cœurs. Le scénario exact daily-only refuse
-les appels directs admin/backfill sans écriture partielle dans PostgreSQL
-jetable ; la chaîne 0R complète reste verte. La migration n'est appliquée à
-aucun environnement. La contre-review du SHA `d0e3abf` a rendu
-`PASS_WITH_RESERVES — MERGE_READY: YES`, sans P0/P1 et avec deux P2 UI/doc
-non bloquants. Ces réserves sont corrigées par un commentaire exact et une
-frontière React rendue, testée sur la matrice production × états du verrou ×
-rôles. La revalidation finale du SHA `39af326` rend `PASS — MERGE_READY: YES`,
-avec `0 P0`, `0 P1` et `0 P2`. La PR reste draft et aucun environnement n'a été
-touché.
+Au dernier contrôle (`2026-08-30T19:05:00.917Z`), maître, `daily`, `admin`,
+`backfill` sont tous `false`, ledger 40, audit runtime 12 lignes. Le pilote
+n'est pas ouvert en permanence ; admin/backfill sont restés fermés pendant
+toutes les fenêtres production. Réserves : interruptions tracées, capture
+réseau non exhaustive, badge « Session requise » malgré des lectures
+authentifiées réussies, qualification limitée à cet export/compte ORABANK.
 
-Rapport et séquence des futurs GO :
+Le dashboard principal reste sur les sources legacy (constat statique, pas
+un smoke live du dashboard). Son raccordement read-only aux données canonical
+est cadré comme prochain pack **PLANNED — NOT_IMPLEMENTED**, sans double
+comptage, activation d'autres banques, `/upload` ou Collection Report implicite.
+Cette clôture documentaire n'a exécuté aucune nouvelle action d'environnement.
+Le statut ci-dessus décrit le pilote opérationnel. À la préparation de cette
+entrée, la livraison documentaire était destinée à une draft PR, en attente
+du verdict CTO autorisant sa fusion ; cette entrée n'atteste pas ce merge.
+
+Rapport, identités/version, index des preuves et limites :
 `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.
 
 ---
