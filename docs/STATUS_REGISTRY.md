@@ -15,6 +15,30 @@
 
 ---
 
+## DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING
+
+**Statut : `IN_PROGRESS — LOCAL_REVIEWED — AWAITING_MERGE_AND_ENVIRONMENT` (2026-08-31)**
+
+Base PR #140 fusionnée : `be8555c541846b63a98c39decf1ba697c0813c9d`.
+Pack local du badge de session, vérification des rôles/verrous, isolement du
+workspace et refus des réponses périmées ; aucune modification des droits
+serveur, Auth/RLS, RPC, calculs ou parsers. 220 tests ciblés et 4 contrats logs
+PASS, 10 scénarios navigateur React synthétiques PASS, build PASS ; dette lint
+et TypeScript inchangée. Première revue Claude réconciliée (focus au polling,
+messages partagés, invariant de montage, CI) ; revalidation indépendante
+`PASS_WITH_RESERVES`, aucun P0/P1 ouvert, commit/push/draft PR autorisés. Réserves
+UX mineures : affichage transitoire des choix backfill/décision pendant polling ;
+pas de perte de saisie admin dans le scénario testé. Le hash de tree n'a pas été
+vérifié par Claude (restriction de commande), mais l'égalité worktree/index et
+le préflight sont certifiés ; comparaison cryptographique complétée par le CTO.
+Aucun merge ni environnement autorisé par ce pack. Matrice réelle multi-rôles
+et révocation non observée non qualifiées ; opération serveur déjà lancée ou
+téléchargement engagé non annulables par la frontière UI.
+
+Rapport : `docs/DAILY_V2_SESSION_AND_ACCESS_UX_HARDENING_REPORT.md`.
+
+---
+
 ## DAILY-V2-CANONICAL-OPERATIONAL-DASHBOARD
 
 **Statut : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE` (2026-08-31 Europe/Paris)**

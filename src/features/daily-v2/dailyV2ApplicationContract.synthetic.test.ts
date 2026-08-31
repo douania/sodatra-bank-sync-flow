@@ -8,6 +8,8 @@ const app = readFileSync('src/App.tsx', 'utf8');
 const layout = readFileSync('src/components/Layout.tsx', 'utf8');
 const access = readFileSync('src/features/daily-v2/dailyV2Access.ts', 'utf8');
 const accessState = readFileSync('src/features/daily-v2/dailyV2AccessState.ts', 'utf8');
+const sessionPresentation = readFileSync('src/features/daily-v2/session/dailyV2SessionPresentation.ts', 'utf8');
+const accessFeedback = readFileSync('src/features/daily-v2/session/DailyV2AccessFeedback.tsx', 'utf8');
 const browserPipeline = readFileSync('src/features/daily-v2/dailyV2BrowserPipeline.ts', 'utf8');
 const service = readFileSync('src/features/daily-v2/dailyV2SupabaseService.ts', 'utf8');
 const types = readFileSync('src/features/daily-v2/dailyV2Types.ts', 'utf8');
@@ -621,7 +623,7 @@ test('separates local staging preparation from fail-closed server persistence', 
   assert.match(page, /queryFn: getDailyV2MutationsEnabled/);
   assert.match(
     page,
-    /const runtimeMutationsEnabled =\s*staticReadOnlyTarget \|\| runtimeLockQuery\.isError\s*\? false\s*: runtimeLockQuery\.data/,
+    /const runtimeMutationsEnabled =\s*staticReadOnlyTarget \|\| runtimeLockQuery\.isError \|\| runtimeLockQuery\.isPending \|\| runtimeLockQuery\.isFetching\s*\? false\s*: runtimeLockQuery\.data/,
   );
   assert.match(
     page,
@@ -635,7 +637,7 @@ test('separates local staging preparation from fail-closed server persistence', 
     prepareMutation,
     /if \(!canPrepareLocally\) throw new DailyV2ServiceError\(READ_ONLY_TARGET_MESSAGE\)/,
   );
-  assert.match(prepareMutation, /return prepareDailyV2BrowserDeposit\(/);
+  assert.match(prepareMutation, /await prepareDailyV2BrowserDeposit\(/);
   assert.doesNotMatch(prepareMutation, /preIngestDailyV2|\.rpc\(|\.from\(/);
 
   const depositMutation = /const depositMutation =[\s\S]*?(?=\n[ ]{2}const provisionAccountMutation =)/.exec(page)?.[0];
@@ -658,17 +660,19 @@ test('separates local staging preparation from fail-closed server persistence', 
   assert.equal((page.match(/if \(!canAdminister\) throw new DailyV2ServiceError/g) ?? []).length, 4);
   assert.equal((page.match(/if \(!canDecide\) throw new DailyV2ServiceError/g) ?? []).length, 2);
 
-  // Boutons et cartes de mutation neutralisés sans la capacité.
+  // Actions neutralisées sans la capacité ; saisies admin locales conservées pendant le polling.
   assert.match(page, /disabled=\{!canSubmitDeposit \|\| depositMutation\.isPending\}/);
   assert.match(page, /disabled=\{!canDecide \|\| Boolean\(reasonRequired/);
   assert.match(
     page,
-    /<DailyV2AdminControlsGate allowed=\{canAdminister\} renderControls=\{\(\) => \(/,
+    /<DailyV2AdminControlsGate allowed=\{showAdminForms\} renderControls=\{\(\) => \(/,
   );
+  assert.match(page, /const showAdminForms = isAdmin && targetCapabilities.admin/);
+  assert.equal((page.match(/disabled=\{!canAdminister \|\|/g) ?? []).length, 4);
   assert.match(page, /if \(!canDecide\) \{\s*toast\.error\(READ_ONLY_TARGET_MESSAGE\);\s*return;/);
-  assert.match(page, /Pilote production verrouillé/);
+  assert.match(sessionPresentation, /Pilote production verrouillé/);
   assert.match(page, /Pilote production actif/);
-  assert.match(page, /Environnement en lecture seule/);
+  assert.match(sessionPresentation, /Environnement en lecture seule/);
   assert.match(page, /Verrou serveur : \{runtimeLockLabel\}/);
   assert.match(page, /La préparation locale est disponible, mais aucune mutation n’est possible tant que le verrou PostgreSQL reste fermé\./);
   assert.match(page, /Mode parse-only/);
@@ -722,7 +726,8 @@ test('blocks the Daily v2 page and navigation for the user-only role', () => {
   assert.match(accessState, /insufficient_role/);
   assert.match(app, /accessState\.status === "checking"/);
   assert.match(app, /accessState\.status === "blocked"/);
-  assert.match(app, /Aucun accès Daily v2 n’a été accordé/);
+  assert.match(app, /<DailyV2AccessFeedback state=\{accessState\}/);
+  assert.match(accessFeedback, /Aucun accès Daily v2 n’a été accordé/);
   assert.doesNotMatch(app, /rolesQuery\.isError \|\| !canAccessPage/);
   assert.match(
     layout,

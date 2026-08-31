@@ -2,12 +2,16 @@ import React from 'react';
 import { formatDailyV2MinorUnits } from '../dailyV2Money';
 import type { DashboardState } from './dailyV2DashboardController';
 
-export function DailyV2DashboardAccessGate({ status, renderAuthorized }: {
+export function DailyV2DashboardAccessGate({ status, reason, renderAuthorized }: {
   status: 'checking' | 'allowed' | 'blocked';
+  reason?: 'session' | 'target' | 'lookup' | 'role';
   renderAuthorized: () => React.ReactNode;
 }) {
-  if (status === 'checking') return <p role="status">Vérification de l’accès Daily v2…</p>;
-  if (status !== 'allowed') return <p role="alert">Vue Daily v2 indisponible : session, cible et rôle admin ou auditor requis. Aucun indicateur historique ne remplace cette vue. Les sources historiques restent consultables séparément par le bouton « Sources historiques — vue séparée ».</p>;
+  if (status === 'checking') return <p role="status">Vérification de {reason === 'session' ? 'la session' : 'l’accès Daily v2'}… Les anciens résultats sont masqués.</p>;
+  const detail = reason === 'session' ? 'Connexion requise.' : reason === 'target' ? 'Cible Daily v2 non autorisée.'
+    : reason === 'lookup' ? 'Vérification des droits impossible. Réessayez après rétablissement de l’accès.'
+      : 'Un rôle admin ou auditor vérifié est requis.';
+  if (status !== 'allowed') return <p role="alert">Vue Daily v2 indisponible : {detail} Aucun ancien résultat ni indicateur historique ne remplace cette vue. Les sources historiques restent consultables séparément par le bouton « Sources historiques — vue séparée ».</p>;
   return <>{renderAuthorized()}</>;
 }
 

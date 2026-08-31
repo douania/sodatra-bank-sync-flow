@@ -26,6 +26,15 @@ test('idle/loading/error states contain no prior balances or technical errors', 
     assert.match(markup, /role="(?:status|alert)"/);
   }
 });
+
+test('dashboard access feedback distinguishes session, target, lookup and role without financial children', () => {
+  const messages = { session: 'Connexion requise', target: 'Cible Daily v2 non autorisée', lookup: 'Vérification des droits impossible', role: 'rôle admin ou auditor' } as const;
+  for (const reason of Object.keys(messages) as Array<keyof typeof messages>) {
+    const markup = renderToStaticMarkup(<DailyV2DashboardAccessGate status="blocked" reason={reason} renderAuthorized={() => { throw Error('blocked'); }} />);
+    assert.ok(markup.includes(messages[reason]));
+    assert.doesNotMatch(markup, /<table|UUID|token/i);
+  }
+});
 test('empty render explicitly distinguishes absence of coverage from zero money', async () => {
   const snapshot = await buildDashboardSnapshot({ asOfDate: '2026-06-30', flowStartDate: '2026-06-01' }, [], 0, '2026-07-01T00:00:00Z');
   const markup = renderToStaticMarkup(<DailyV2DashboardView state={{ status: 'ready', snapshot }} />);
