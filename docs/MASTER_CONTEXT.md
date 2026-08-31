@@ -44,13 +44,16 @@ fermés. Badge de session Daily v2, matrice multi-rôles/refetch/concurrence et
 qualification au-delà du pilote restent à traiter sous GO distincts. Voir
 `docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
 
-Le pack local `DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING` traite le badge et la
-séparation session/rôles/verrous, l'isolation des caches/formulaires et les
-réponses tardives. Tests synthétiques locaux validés, contre-review Claude
-`PASS_WITH_RESERVES` après correction du focus au polling ;
-aucun merge ni déploiement de ce pack, aucune modification Auth/RLS. La matrice
-réelle des rôles et les contrôles d'environnement restent à qualifier sous GO
-distinct. Voir `docs/DAILY_V2_SESSION_AND_ACCESS_UX_HARDENING_REPORT.md`.
+Le pack `DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING`, fusionné via PR #141, est
+publié en production et validé read-only avec réserves. Le badge distingue la
+session, la cible, les rôles vérifiés et le verrou serveur ; les caches,
+formulaires et réponses tardives sont bornés par la durée d'accès. Le smoke
+authentifié production confirme le passage fail-closed par la vérification des
+droits, puis la session `user + admin` et le verrou lecture seule, sans mutation.
+Aucune modification Auth/RLS ou permission serveur. La matrice réelle
+manager/auditor/user seul, la révocation, l'expiration et la concurrence restent
+à qualifier sous GO distinct. Voir
+`docs/DAILY_V2_SESSION_AND_ACCESS_UX_HARDENING_REPORT.md`.
 
 Priorité actuelle :
 1. sécurité Supabase / RLS ;
@@ -187,7 +190,7 @@ Ne pas modifier sans justification CTO explicite :
 
 Ouverts / suivis :
 - Daily v2 production pilot : `CLOSED_WITH_RESERVE — ORA_FIRST_IMPORT_AND_REPORTING_VALIDATED — PILOT_RELOCKED` ;
-- Dashboard opérationnel Daily v2 canonical : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE`, suivi du badge de session et de la couverture Auth/refetch/concurrence dans le rapport canonique ;
+- Dashboard opérationnel Daily v2 canonical : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE` ; le badge et les frontières de session sont publiés, tandis que la matrice réelle multi-rôles/révocation/refetch/concurrence reste ouverte ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
 - Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;

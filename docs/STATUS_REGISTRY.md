@@ -17,23 +17,37 @@
 
 ## DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING
 
-**Statut : `IN_PROGRESS — LOCAL_REVIEWED — AWAITING_MERGE_AND_ENVIRONMENT` (2026-08-31)**
+**Statut : `CLOSED_WITH_RESERVE — PRODUCTION_AUTHENTICATED_READ_ONLY_VALIDATED` (2026-09-01 Europe/Paris)**
 
-Base PR #140 fusionnée : `be8555c541846b63a98c39decf1ba697c0813c9d`.
-Pack local du badge de session, vérification des rôles/verrous, isolement du
-workspace et refus des réponses périmées ; aucune modification des droits
-serveur, Auth/RLS, RPC, calculs ou parsers. 220 tests ciblés et 4 contrats logs
-PASS, 10 scénarios navigateur React synthétiques PASS, build PASS ; dette lint
-et TypeScript inchangée. Première revue Claude réconciliée (focus au polling,
-messages partagés, invariant de montage, CI) ; revalidation indépendante
-`PASS_WITH_RESERVES`, aucun P0/P1 ouvert, commit/push/draft PR autorisés. Réserves
-UX mineures : affichage transitoire des choix backfill/décision pendant polling ;
-pas de perte de saisie admin dans le scénario testé. Le hash de tree n'a pas été
-vérifié par Claude (restriction de commande), mais l'égalité worktree/index et
-le préflight sont certifiés ; comparaison cryptographique complétée par le CTO.
-Aucun merge ni environnement autorisé par ce pack. Matrice réelle multi-rôles
-et révocation non observée non qualifiées ; opération serveur déjà lancée ou
-téléchargement engagé non annulables par la frontière UI.
+Le pack du badge de session, de la vérification des rôles/verrous, de
+l'isolation du workspace et du refus des réponses périmées a été fusionné via
+PR #141 au commit `3db3846bfe60a48a088815a74f0ace146fa05cbe` ; CI
+`33419485210` verte. Aucune modification des droits serveur, Auth/RLS, RPC,
+calculs ou parsers. Les validations locales restent : 220 tests ciblés et
+4 contrats logs PASS, 10 scénarios navigateur React synthétiques PASS, build
+PASS, dette lint et TypeScript inchangée, revalidation Claude
+`PASS_WITH_RESERVES` sans P0/P1 ouvert.
+
+Le runtime a été synchronisé et validé sur staging, puis publié sur le projet
+production exact `e52d9fce-f1b4-46f8-900c-c559a6eb2115`, ciblant exclusivement
+Supabase `leakcdbbawzysfqyqsnr`. Déploiement production
+`e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle
+`index-BZ9uZmBU.js`. Les routes protégées refusent la session anonyme. Le smoke
+authentifié réel confirme `Session : connectée`, la cible production, les rôles
+`user, admin`, le passage fail-closed par la vérification après rechargement et
+le verrou serveur lecture seule. Import, staging, canonical, audit, reporting
+et dashboard ont été consultés sans import, dépôt, promotion, export ni autre
+mutation ; zéro warning/erreur navigateur.
+
+Les quatre verrous sont restés `false` et les compteurs agrégés avant/après sont
+inchangés : ledger 40, 5 unités/45 lignes staging, 3 unités/4 lignes canonical,
+10 événements d'import, 12 événements runtime, 2 tentatives et 0 grant
+backfill. Réserves : une seule combinaison réelle `user + admin` ; matrice
+manager/auditor/user seul, révocation réelle, expiration, transition d'identité,
+réponses retardées et concurrence non qualifiées. Une opération serveur ou un
+export déjà engagé ne sont pas annulés par la frontière UI. Le libellé public
+« Créer un Compte » mène encore au formulaire de connexion uniquement ; aucune
+inscription publique n'a été observée.
 
 Rapport : `docs/DAILY_V2_SESSION_AND_ACCESS_UX_HARDENING_REPORT.md`.
 
