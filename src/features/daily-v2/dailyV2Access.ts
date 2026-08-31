@@ -20,7 +20,7 @@ export function canAccessDailyV2Page(roles: readonly DailyV2AppRole[]): boolean 
 }
 
 export function useDailyV2Access() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   // L'accès à la page et à la navigation relève de la seule capacité read.
   const targetVerdict = currentDailyV2RuntimeTargetVerdict('read');
   const targetAllowed = targetVerdict.allowed;
@@ -28,12 +28,17 @@ export function useDailyV2Access() {
   const rolesQuery = useQuery<DailyV2AppRole[]>({
     queryKey: ['daily-v2', 'roles', user?.id],
     queryFn: getCurrentUserDailyV2Roles,
-    enabled: Boolean(user?.id) && targetAllowed,
+    enabled: Boolean(user?.id) && targetAllowed && !loading,
     staleTime: 5 * 60 * 1000,
+    gcTime: 0,
   });
-  const roles = rolesQuery.data ?? [];
+  const rolesReady = Boolean(user?.id) && !loading && !rolesQuery.isPending && !rolesQuery.isFetching && !rolesQuery.isError;
+  const roles = rolesReady ? rolesQuery.data ?? [] : [];
   const canAccessPage = targetAllowed && canAccessDailyV2Page(roles);
   const accessState = classifyDailyV2AccessState({
+    sessionPresent: Boolean(user?.id),
+    sessionLoading: loading,
+    rolesFetching: rolesQuery.isFetching,
     targetVerdict,
     rolesPending: rolesQuery.isPending,
     rolesError: rolesQuery.isError,

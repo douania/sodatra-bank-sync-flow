@@ -1,6 +1,7 @@
 import type { DailyV2RuntimeTargetVerdict } from './dailyV2RuntimeTarget';
 
 export type DailyV2AccessBlockReason =
+  | 'session_required'
   | 'runtime_target_rejected'
   | 'role_lookup_failed'
   | 'insufficient_role';
@@ -15,6 +16,9 @@ export type DailyV2AccessState =
     };
 
 export interface ClassifyDailyV2AccessInput {
+  sessionPresent?: boolean;
+  sessionLoading?: boolean;
+  rolesFetching?: boolean;
   targetVerdict: DailyV2RuntimeTargetVerdict;
   rolesPending: boolean;
   rolesError: boolean;
@@ -22,11 +26,16 @@ export interface ClassifyDailyV2AccessInput {
 }
 
 export function classifyDailyV2AccessState({
+  sessionPresent = true,
+  sessionLoading = false,
+  rolesFetching = false,
   targetVerdict,
   rolesPending,
   rolesError,
   canAccessPage,
 }: ClassifyDailyV2AccessInput): DailyV2AccessState {
+  if (sessionLoading) return { status: 'checking' };
+  if (!sessionPresent) return { status: 'blocked', reason: 'session_required' };
   if ('reason' in targetVerdict) {
     return {
       status: 'blocked',
@@ -35,7 +44,7 @@ export function classifyDailyV2AccessState({
     };
   }
 
-  if (rolesPending) {
+  if (rolesPending || rolesFetching) {
     return { status: 'checking' };
   }
 

@@ -115,6 +115,7 @@ jobs:
           npm run test:daily-v2-application
           npm run test:daily-v2-reporting
           npx tsx --test src/features/daily-v2/dashboard/*.synthetic.test.ts src/features/daily-v2/dashboard/*.synthetic.test.tsx
+          npx tsx --test src/features/daily-v2/session/*.synthetic.test.ts src/features/daily-v2/session/*.synthetic.test.tsx src/features/daily-v2/dailyV2AccessState.synthetic.test.ts
           npm run test:collections-core
           npm run test:auth-signin
           npm run test:bdk-pdf

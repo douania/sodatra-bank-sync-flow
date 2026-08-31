@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
+import { useDailyV2ScopedMutation as useMutation, useDailyV2SessionScope } from './session/dailyV2SessionScope';
+import { DailyV2ExpiredViewError } from './session/dailyV2SessionLifetime';
 import { Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { toast } from '@/components/ui/sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -23,6 +24,8 @@ import {
  * ni exporté.
  */
 const DailyV2Reporting = () => {
+  const { lifetime } = useDailyV2SessionScope();
+  const generation = useRef(0);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [bank, setBank] = useState('');
@@ -30,13 +33,21 @@ const DailyV2Reporting = () => {
   const [report, setReport] = useState<DailyV2SafeReport | null>(null);
 
   const generateMutation = useMutation<DailyV2SafeReport, Error, void>({
-    mutationFn: () =>
-      generateDailyV2Report({
+    mutationFn: async () => {
+      const ticket = ++generation.current;
+      setReport(null);
+      const result = await generateDailyV2Report({
         startDate,
         endDate,
         bank: bank.trim() || undefined,
         currency: currency.trim() || undefined,
-      }),
+      }).catch((error) => {
+        if (ticket !== generation.current) throw new DailyV2ExpiredViewError();
+        throw error;
+      });
+      if (ticket !== generation.current) throw new DailyV2ExpiredViewError();
+      return result;
+    },
     onSuccess: (result) => {
       setReport(result);
       toast.success('Rapport Daily v2 généré');
@@ -47,8 +58,10 @@ const DailyV2Reporting = () => {
     },
   });
 
+  const invalidate = () => { generation.current++; setReport(null); };
+
   const exportCsv = () => {
-    if (!report) return;
+    if (!report || !lifetime.isActive()) return;
     try {
       downloadDailyV2SummaryCsv(report.filters, report.groups);
     } catch (error) {
@@ -57,11 +70,11 @@ const DailyV2Reporting = () => {
   };
 
   const exportXlsx = async () => {
-    if (!report) return;
+    if (!report || !lifetime.isActive()) return;
     try {
       await downloadDailyV2SummaryXlsx(report.filters, report.groups);
     } catch (error) {
-      showSafeReportingError(error, 'Export XLSX impossible.');
+      if (lifetime.isActive()) showSafeReportingError(error, 'Export XLSX impossible.');
     }
   };
 
@@ -80,16 +93,16 @@ const DailyV2Reporting = () => {
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
             <Field label="Date de début">
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <Input type="date" value={startDate} onChange={(e) => { invalidate(); setStartDate(e.target.value); }} />
             </Field>
             <Field label="Date de fin">
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <Input type="date" value={endDate} onChange={(e) => { invalidate(); setEndDate(e.target.value); }} />
             </Field>
             <Field label="Banque (optionnelle)">
-              <Input value={bank} maxLength={12} placeholder="ex. BDK" onChange={(e) => setBank(e.target.value.toUpperCase())} />
+              <Input value={bank} maxLength={12} placeholder="ex. BDK" onChange={(e) => { invalidate(); setBank(e.target.value.toUpperCase()); }} />
             </Field>
             <Field label="Devise (optionnelle)">
-              <Input value={currency} maxLength={12} placeholder="ex. XOF" onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+              <Input value={currency} maxLength={12} placeholder="ex. XOF" onChange={(e) => { invalidate(); setCurrency(e.target.value.toUpperCase()); }} />
             </Field>
           </div>
           <Button

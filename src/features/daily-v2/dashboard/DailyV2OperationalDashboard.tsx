@@ -9,20 +9,25 @@ import { generateDailyV2Dashboard } from './dailyV2DashboardService';
 
 export default function DailyV2OperationalDashboard() {
   const { user, loading } = useAuth();
+  if (loading || !user) return <DailyV2DashboardAccessGate status={loading ? 'checking' : 'blocked'} reason="session" renderAuthorized={() => null} />;
+  return <AuthenticatedDashboard key={user!.id} userId={user.id} />;
+}
+
+function AuthenticatedDashboard({ userId }: { userId: string }) {
   const { targetAllowed, rolesQuery, roles } = useDailyV2Access();
   // Preserve submitted parameters during role refetch, never a draft or a financial snapshot.
   const [savedInput, setSavedInput] = useState<{ userId: string; value: DashboardInput } | null>(null);
   const now = Date.now();
-  const status = resolveDashboardAccess({ session: Boolean(user), loading, targetAllowed,
+  const status = resolveDashboardAccess({ session: true, loading: false, targetAllowed,
     pending: rolesQuery.isPending, fetching: rolesQuery.isFetching, error: rolesQuery.isError, roles });
-  return <DailyV2DashboardAccessGate status={status} renderAuthorized={() => (
+  return <DailyV2DashboardAccessGate status={status} reason={!targetAllowed ? 'target' : rolesQuery.isError ? 'lookup' : 'role'} renderAuthorized={() => (
     <DailyV2DashboardPanel
-      key={user!.id}
-      initialInput={savedInput?.userId === user!.id ? savedInput.value : {
+      key={userId}
+      initialInput={savedInput?.userId === userId ? savedInput.value : {
         asOfDate: new Date(now).toISOString().slice(0, 10),
         flowStartDate: new Date(now - 29 * 86_400_000).toISOString().slice(0, 10),
       }}
-      onInputSubmit={(value) => setSavedInput({ userId: user!.id, value })}
+      onInputSubmit={(value) => setSavedInput({ userId, value })}
       generate={generateDailyV2Dashboard}
     />
   )} />;

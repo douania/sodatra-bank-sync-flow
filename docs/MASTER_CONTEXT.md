@@ -44,6 +44,14 @@ fermés. Badge de session Daily v2, matrice multi-rôles/refetch/concurrence et
 qualification au-delà du pilote restent à traiter sous GO distincts. Voir
 `docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
 
+Le pack local `DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING` traite le badge et la
+séparation session/rôles/verrous, l'isolation des caches/formulaires et les
+réponses tardives. Tests synthétiques locaux validés, contre-review Claude
+`PASS_WITH_RESERVES` après correction du focus au polling ;
+aucun merge ni déploiement de ce pack, aucune modification Auth/RLS. La matrice
+réelle des rôles et les contrôles d'environnement restent à qualifier sous GO
+distinct. Voir `docs/DAILY_V2_SESSION_AND_ACCESS_UX_HARDENING_REPORT.md`.
+
 Priorité actuelle :
 1. sécurité Supabase / RLS ;
 2. intégrité et idempotence des imports ;

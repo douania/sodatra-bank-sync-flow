@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, Upload } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/sonner';
@@ -25,7 +25,6 @@ import {
   getActiveDailyV2CanonicalUnit,
   getDailyV2AccountOpaqueIdentity,
   getDailyV2MutationsEnabled,
-  getCurrentUserDailyV2Roles,
   listDailyV2Accounts,
   listDailyV2AccountEvents,
   listDailyV2BackfillGrants,
@@ -78,6 +77,12 @@ import {
 import { invalidateDailyV2, shortId } from '@/features/daily-v2/dailyV2UiUtils';
 import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
 import { DailyV2AdminControlsGate } from '@/features/daily-v2/DailyV2AdminControlsGate';
+import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
+import { DailyV2SessionBoundary } from '@/features/daily-v2/session/DailyV2SessionBoundary';
+import { useDailyV2ScopedMutation as useMutation, useDailyV2SessionScope } from '@/features/daily-v2/session/dailyV2SessionScope';
+import { dailyV2RuntimeLockPresentation, dailyV2SessionLabel } from '@/features/daily-v2/session/dailyV2SessionPresentation';
+import { DailyV2ExpiredViewError } from '@/features/daily-v2/session/dailyV2SessionLifetime';
+import { DailyV2AccessFeedback } from '@/features/daily-v2/session/DailyV2AccessFeedback';
 import {
   applyDailyV2RuntimeMutationLock,
   currentDailyV2Capabilities,
@@ -106,7 +111,19 @@ type DecisionDialog =
 
 const DailyStatementV2 = () => {
   const { user } = useAuth();
+  const { roles, accessState } = useDailyV2Access();
+  if (accessState.status !== 'allowed') return <DailyV2AccessFeedback state={accessState} />;
+  if (!user) return <DailyV2AccessFeedback state={{ status: 'blocked', reason: 'session_required' }} />;
+  return <DailyV2SessionBoundary key={JSON.stringify([user.id, [...roles].sort()])}>
+    <DailyStatementWorkspace userId={user.id} roles={roles} />
+  </DailyV2SessionBoundary>;
+};
+
+const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: readonly DailyV2AppRole[] }) => {
+  const { user, loading } = useAuth();
   const queryClient = useQueryClient();
+  const { lifetime } = useDailyV2SessionScope();
+  const preparationEpoch = useRef(0);
   const [file, setFile] = useState<File | null>(null);
   const [bank, setBank] = useState<DailyV2SupportedBank>('BDK');
   const [currency, setCurrency] = useState('XOF');
@@ -137,13 +154,6 @@ const DailyStatementV2 = () => {
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialog>(null);
   const [reason, setReason] = useState('');
 
-  const rolesQuery = useQuery<DailyV2AppRole[]>({
-    queryKey: ['daily-v2', 'roles', user?.id],
-    queryFn: getCurrentUserDailyV2Roles,
-    enabled: Boolean(user?.id),
-    staleTime: 5 * 60 * 1000,
-  });
-  const roles = rolesQuery.data ?? [];
   const isAdmin = roles.includes('admin');
   const canDeposit = isAdmin || roles.includes('manager');
   const canReadStaging = canDeposit;
@@ -159,9 +169,9 @@ const DailyStatementV2 = () => {
   const staticReadOnlyTarget =
     !targetCapabilities.deposit && !targetCapabilities.promote && !targetCapabilities.admin;
   const runtimeLockQuery = useQuery<boolean>({
-    queryKey: ['daily-v2', 'runtime-mutations-enabled', user?.id],
+    queryKey: ['daily-v2', 'runtime-mutations-enabled', userId],
     queryFn: getDailyV2MutationsEnabled,
-    enabled: Boolean(user?.id) && targetCapabilities.read && !staticReadOnlyTarget,
+    enabled: targetCapabilities.read && !staticReadOnlyTarget,
     staleTime: 15 * 1000,
     refetchInterval: 30 * 1000,
   });
@@ -169,7 +179,8 @@ const DailyStatementV2 = () => {
   // refetch. Neutraliser explicitement cette valeur évite qu'un ancien `true`
   // maintienne les commandes ouvertes pendant que le verrou est indisponible.
   const runtimeMutationsEnabled =
-    staticReadOnlyTarget || runtimeLockQuery.isError ? false : runtimeLockQuery.data;
+    staticReadOnlyTarget || runtimeLockQuery.isError || runtimeLockQuery.isPending || runtimeLockQuery.isFetching
+      ? false : runtimeLockQuery.data;
   const capabilities = applyDailyV2RuntimeMutationLock(
     targetCapabilities,
     runtimeMutationsEnabled,
@@ -182,24 +193,13 @@ const DailyStatementV2 = () => {
   } = resolveDailyV2ImportPermissions(canDeposit, targetCapabilities, capabilities);
   const canDecide = isAdmin && capabilities.promote;
   const canAdminister = isAdmin && capabilities.admin;
-  const readOnlyTitle = staticReadOnlyTarget
-    ? 'Cible non autorisée'
-    : productionPilotTarget
-      ? 'Pilote production verrouillé'
-      : runtimeLockQuery.isPending
-        ? 'Vérification du verrou serveur'
-        : runtimeLockQuery.isError
-          ? 'Verrou serveur indisponible'
-          : 'Environnement en lecture seule';
-  const runtimeLockLabel = staticReadOnlyTarget
-    ? 'lecture seule imposée'
-    : runtimeLockQuery.isPending
-      ? 'vérification…'
-      : runtimeLockQuery.isError
-        ? 'indisponible — lecture seule'
-        : runtimeLockQuery.data === true
-          ? 'mutations autorisées'
-          : 'lecture seule';
+  // A polling refresh suspends actions, not local typing or its focused DOM node.
+  const showAdminForms = isAdmin && targetCapabilities.admin;
+  const { title: readOnlyTitle, label: runtimeLockLabel } = dailyV2RuntimeLockPresentation({
+    staticReadOnly: staticReadOnlyTarget, productionPilot: productionPilotTarget,
+    pending: runtimeLockQuery.isPending, fetching: runtimeLockQuery.isFetching,
+    error: runtimeLockQuery.isError, value: runtimeLockQuery.data,
+  });
   const targetLabel = productionPilotTarget
     ? 'production · pilote contrôlé'
     : targetVerdict.allowed
@@ -221,6 +221,7 @@ const DailyStatementV2 = () => {
   });
 
   const resetPrepared = useCallback(() => {
+    preparationEpoch.current++;
     setPrepared(null);
     setPrepareErrors([]);
     setDepositResult(null);
@@ -262,7 +263,8 @@ const DailyStatementV2 = () => {
       if (requestedMode === 'backfill' && !isAdmin) {
         throw new DailyV2ServiceError('Le backfill est réservé au rôle admin.');
       }
-      return prepareDailyV2BrowserDeposit({
+      const epoch = preparationEpoch.current;
+      const result = await prepareDailyV2BrowserDeposit({
         file,
         bank,
         currency,
@@ -272,7 +274,12 @@ const DailyStatementV2 = () => {
         exportReferenceDate: referenceDate.trim() || undefined,
         requestedMode,
         backfillGrantId: backfillGrantId || undefined,
+      }).catch((error) => {
+        if (epoch !== preparationEpoch.current) throw new DailyV2ExpiredViewError();
+        throw error;
       });
+      if (epoch !== preparationEpoch.current) throw new DailyV2ExpiredViewError();
+      return result;
     },
     onSuccess: (result) => {
       setDepositResult(null);
@@ -310,6 +317,7 @@ const DailyStatementV2 = () => {
       setDepositResult(result.response);
       setBackfillGrantId('');
       await invalidateDailyV2(queryClient);
+      if (!lifetime.isActive()) return;
       toast.success('Dépôt Daily v2 terminé', {
         description: result.incrementalDelta
           ? `${result.incrementalDelta.submittedUnits} journée(s) utile(s) déposée(s), ${result.incrementalDelta.identicalUnitsSkipped} identique(s) ignorée(s).`
@@ -333,6 +341,7 @@ const DailyStatementV2 = () => {
       setNewAccountAlias('');
       setNewAccountMasked('');
       await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'accounts'] });
+      if (!lifetime.isActive()) return;
       setAccountRegistryId(account.id);
       toast.success('Compte Daily v2 provisionné');
     },
@@ -352,6 +361,7 @@ const DailyStatementV2 = () => {
       setAccountDeactivationReason('');
       resetPrepared();
       await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'accounts'] });
+      if (!lifetime.isActive()) return;
       toast.success('Compte Daily v2 désactivé');
     },
     onError: (error) => showSafeError(error, 'Désactivation impossible.'),
@@ -370,6 +380,7 @@ const DailyStatementV2 = () => {
     },
     onSuccess: async (grant) => {
       await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'backfill-grants'] });
+      if (!lifetime.isActive()) return;
       setRequestedMode('backfill');
       setBackfillGrantId(grant.id);
       resetPrepared();
@@ -391,6 +402,7 @@ const DailyStatementV2 = () => {
       setGrantRevocationReason('');
       resetPrepared();
       await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'backfill-grants'] });
+      if (!lifetime.isActive()) return;
       toast.success('Autorisation backfill révoquée');
     },
     onError: (error) => showSafeError(error, 'Révocation du grant impossible.'),
@@ -444,6 +456,7 @@ const DailyStatementV2 = () => {
     onSuccess: async (result) => {
       closeDecision();
       await invalidateDailyV2(queryClient);
+      if (!lifetime.isActive()) return;
       toast.success(`Promotion : ${result.outcome}`);
     },
     onError: (error) => showSafeError(error, 'Promotion impossible.'),
@@ -457,6 +470,7 @@ const DailyStatementV2 = () => {
     mutationFn: async ({ unit, supersedeReason }: { unit: DailyV2StagingUnitRow; supersedeReason: string }) => {
       if (!canDecide) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       const active = await getActiveDailyV2CanonicalUnit(unit.day_unit_id);
+      lifetime.assertActive();
       if (!active) throw new DailyV2ServiceError('Aucune unité canonical active correspondante.');
       return supersedeDailyV2Unit({
         oldCanonicalUnitId: active.id,
@@ -467,6 +481,7 @@ const DailyStatementV2 = () => {
     onSuccess: async (result) => {
       closeDecision();
       await invalidateDailyV2(queryClient);
+      if (!lifetime.isActive()) return;
       toast.success(`Supersede : ${result.outcome}`);
     },
     onError: (error) => showSafeError(error, 'Supersede impossible.'),
@@ -518,18 +533,19 @@ const DailyStatementV2 = () => {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>Pilote production actif</AlertTitle>
           <AlertDescription>
-            Le verrou PostgreSQL autorise actuellement les mutations Daily v2. Les rôles serveur,
-            les RPC atomiques, la revue staging et l’audit restent obligatoires.
+            Le verrou maître PostgreSQL est ouvert. Chaque action exige encore son scope et ses droits serveur ;
+            cela ne vaut pas autorisation générale de dépôt, promotion, administration ou backfill.
           </AlertDescription>
         </Alert>
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Badge variant="outline">Session requise</Badge>
+        <Badge variant="outline">{dailyV2SessionLabel(loading, Boolean(user))}</Badge>
         <Badge variant="outline">Cible : {targetLabel}</Badge>
-        <Badge variant="secondary">Rôles : {rolesQuery.isLoading ? 'chargement…' : roles.join(', ') || 'aucun'}</Badge>
+        <Badge variant="secondary">Rôles vérifiés : {roles.join(', ')}</Badge>
         <Badge variant="secondary">Verrou serveur : {runtimeLockLabel}</Badge>
       </div>
+      <p className="text-xs text-muted-foreground">Une nouvelle vérification des droits efface les données, fichiers et décisions en cours, notamment au retour dans l’onglet ou à la reconnexion réseau si les droits en cache ont plus de cinq minutes. Après interruption d’une action, consultez son état avant de la relancer : fermer la vue n’annule pas une opération déjà reçue par le serveur.</p>
 
       <Tabs defaultValue="import" className="space-y-4">
         <TabsList className="grid w-full grid-cols-5">
@@ -631,7 +647,7 @@ const DailyStatementV2 = () => {
                 </CardContent>
               </Card>
 
-              <DailyV2AdminControlsGate allowed={canAdminister} renderControls={() => (
+              <DailyV2AdminControlsGate allowed={showAdminForms} renderControls={() => (
                 <div className="grid gap-4 lg:grid-cols-2">
                   <Card>
                     <CardHeader>
@@ -647,7 +663,7 @@ const DailyStatementV2 = () => {
                       </Field>
                       <Button
                         onClick={() => provisionAccountMutation.mutate()}
-                        disabled={!newAccountAlias.trim() || provisionAccountMutation.isPending}
+                        disabled={!canAdminister || !newAccountAlias.trim() || provisionAccountMutation.isPending}
                       >
                         {provisionAccountMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         Provisionner pour {bank}/{currency}
@@ -661,7 +677,7 @@ const DailyStatementV2 = () => {
                           <Button
                             variant="destructive"
                             onClick={() => deactivateAccountMutation.mutate()}
-                            disabled={!accountDeactivationReason.trim() || deactivateAccountMutation.isPending}
+                            disabled={!canAdminister || !accountDeactivationReason.trim() || deactivateAccountMutation.isPending}
                           >Désactiver ce compte</Button>
                         </div>
                       )}
@@ -686,7 +702,7 @@ const DailyStatementV2 = () => {
                           </div>
                           <Button
                             onClick={() => issueGrantMutation.mutate()}
-                            disabled={!grantPeriodStart || !grantPeriodEnd || !grantExpiresAt || !grantMaxUnits || issueGrantMutation.isPending}
+                            disabled={!canAdminister || !grantPeriodStart || !grantPeriodEnd || !grantExpiresAt || !grantMaxUnits || issueGrantMutation.isPending}
                           >Créer un grant</Button>
                           {backfillGrantId && (
                             <div className="space-y-3 rounded border p-3">
@@ -696,7 +712,7 @@ const DailyStatementV2 = () => {
                               <Button
                                 variant="destructive"
                                 onClick={() => revokeGrantMutation.mutate()}
-                                disabled={!grantRevocationReason.trim() || revokeGrantMutation.isPending}
+                                disabled={!canAdminister || !grantRevocationReason.trim() || revokeGrantMutation.isPending}
                               >Révoquer le grant sélectionné</Button>
                             </div>
                           )}
