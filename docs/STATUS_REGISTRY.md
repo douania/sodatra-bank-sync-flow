@@ -32,7 +32,8 @@ Le runtime a été synchronisé et validé sur staging, puis publié sur le proj
 production exact `e52d9fce-f1b4-46f8-900c-c559a6eb2115`, ciblant exclusivement
 Supabase `leakcdbbawzysfqyqsnr`. Déploiement production
 `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle
-`index-BZ9uZmBU.js`. Les routes protégées refusent la session anonyme. Le smoke
+`index-BZ9uZmBU.js`. Les trois routes protégées testées (`/dashboard`,
+`/daily-statements` et `/upload`) refusent la session anonyme. Le smoke
 authentifié réel confirme `Session : connectée`, la cible production, les rôles
 `user, admin`, le passage fail-closed par la vérification après rechargement et
 le verrou serveur lecture seule. Import, staging, canonical, audit, reporting

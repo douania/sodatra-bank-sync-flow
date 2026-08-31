@@ -40,8 +40,8 @@ publié en production et validé read-only avec réserves sur le pilote ORABANK
 journées canonical actives : derniers soldes par identité/devise, flux, dates
 des relevés et couverture explicite, sans total de soldes par devise. Les
 sources historiques restent séparées. Les quatre verrous d'écriture restent
-fermés. Badge de session Daily v2, matrice multi-rôles/refetch/concurrence et
-qualification au-delà du pilote restent à traiter sous GO distincts. Voir
+fermés. La matrice multi-rôles/refetch/concurrence et la qualification au-delà
+du pilote restent à traiter sous GO distincts. Voir
 `docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
 
 Le pack `DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING`, fusionné via PR #141, est
