@@ -17,25 +17,47 @@
 
 ## DAILY-V2-CANONICAL-OPERATIONAL-DASHBOARD
 
-**Statut : `IN_PROGRESS — IMPLEMENTED_LOCAL — REVIEWED_WITH_RESERVES — NOT_DEPLOYED`**
+**Statut : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE` (2026-08-31 Europe/Paris)**
 
-Pack autorisé par `GO_IMPLEMENT_DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD`,
-base `2d700ed76dc6fe15c742f76951446768f7b5032d` (clôture pilote PR #138).
-La nouvelle vue `/dashboard` lit exclusivement le canonical actif par le
+Pack implémenté sur `2d700ed76dc6fe15c742f76951446768f7b5032d`, fusionné via
+PR #139 au commit `c85e715b59be76fbcffb57c07b32de453e4cb63b` ; CI post-merge
+33336340850 verte. La vue `/dashboard` publiée lit par défaut le canonical actif par le
 reader snapshot existant, admin/auditor uniquement. Dernier solde de chaque
 identité/devise, flux observés, ancienneté et couverture ; jamais de somme des
 soldes historiques, ni total de soldes par devise (identités physiques non
 réconciliées), ni mélange avec les sources legacy consultables séparément.
 Lecture bornée à 400 jours / 5 000 unités : pas une couverture exhaustive.
 
-213 tests synthétiques ciblés PASS ; build PASS ; aucune régression par rapport
-aux 180 erreurs/11 warnings ESLint et 17 erreurs TypeScript préexistantes.
-Vérification interactive locale synthétique, pas d'Auth/Supabase live.
-Contre-review Claude et revalidations terminées : `PASS_WITH_RESERVES`, 0 P0,
-0 P1, une réserve P2 de couverture Auth/hooks/DB réels, acceptée pour la draft
-locale uniquement. Les findings de calcul, volume et état de formulaire sont
-levés. Aucun merge, environnement, publication
-ou changement des droits/verrous autorisé par ce pack.
+Implémentation locale : 213 tests ciblés PASS, build PASS, zéro nouvelle erreur
+face aux baselines mesurées (180 erreurs/11 warnings ESLint, 17 TypeScript).
+Contre-review Claude locale : `PASS_WITH_RESERVES`, 0 P0/0 P1, une réserve P2
+Auth/hooks/DB réelle. Ces validations ne sont pas rejouées par la clôture docs.
+
+Sous GO d'environnement distincts : synchronisation staging à `46478b6`,
+publication du build production sur staging, E2E read-only avec réserves ; puis
+préflight, publication et smokes public/authentifié sur la production exacte
+`leakcdbbawzysfqyqsnr`. Déploiement production
+`8612d3f7-c62e-4e99-a6eb-e30815dd511c`, bundle `index-agrhGBVY.js` effectivement
+servi. Aucune migration ni ouverture des écritures pour ce pack.
+
+Smoke authentifié dans Chrome : une identité ORABANK/XOF, trois journées et
+quatre lignes ; dernier solde et flux rapprochés exactement des agrégats SQL,
+filtres et refus sûrs, dates au clavier natif, séparation du legacy peuplé et
+retour canonical vérifiés. Les refus REST anonymes sont HTTP 401 / `42501`
+sur les trois surfaces testées. Compteurs production inchangés : ledger 40,
+audit runtime 12, canonical 3 unités/4 lignes ; quatre verrous toujours `false`.
+
+Réserves : badge Daily v2 « Session requise », matrice réelle multi-rôles,
+révocation/refetch/concurrence non testée, qualification limitée au pilote,
+pas d'audit exhaustif legacy ni de capture réseau complète. La réserve de dates
+est levée pour les scénarios testés dans Chrome en production, pas requalifiée
+rétroactivement sur staging. La réserve Auth/DB locale n'est donc levée qu'en
+partie. Aucun nouveau fichier chargé, import, promotion ou export dans ces smokes.
+
+La clôture documentaire ne fait aucune nouvelle action d'environnement ; sa
+draft PR reste soumise à une contre-review puis à un GO de merge distinct.
+Ce statut opérationnel n'atteste pas le merge de cette clôture et ne qualifie
+ni l'application entière, ni d'autres banques, ni `/upload`/Collection Report.
 
 Rapport : `docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
 
@@ -73,10 +95,10 @@ toutes les fenêtres production. Réserves : interruptions tracées, capture
 réseau non exhaustive, badge « Session requise » malgré des lectures
 authentifiées réussies, qualification limitée à cet export/compte ORABANK.
 
-Le dashboard principal reste sur les sources legacy (constat statique, pas
-un smoke live du dashboard). Son raccordement read-only aux données canonical
-est cadré comme prochain pack **PLANNED — NOT_IMPLEMENTED**, sans double
-comptage, activation d'autres banques, `/upload` ou Collection Report implicite.
+À la clôture de ce pilote, le dashboard principal restait sur les sources legacy
+(constat statique, pas un smoke live du dashboard). Le raccordement canonical,
+alors planifié, a depuis été livré par la PR #139 : voir l'entrée dashboard
+ci-dessus. Cela n'active ni d'autres banques, ni `/upload`, ni Collection Report.
 Cette clôture documentaire n'a exécuté aucune nouvelle action d'environnement.
 Le statut ci-dessus décrit le pilote opérationnel. À la préparation de cette
 entrée, la livraison documentaire était destinée à une draft PR, en attente

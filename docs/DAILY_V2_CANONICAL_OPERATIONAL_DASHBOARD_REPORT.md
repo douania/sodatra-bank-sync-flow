@@ -1,6 +1,17 @@
 # Daily v2 — Dashboard opérationnel canonical
 
-## Qualification du pack
+> Statut opérationnel au 2026-08-31 (Europe/Paris) :
+> `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE`.
+> PR #139 fusionnée, runtime publié et contrôlé sous GO distincts. La clôture
+> documentaire reste soumise à sa propre review/PR ; ce statut ne vaut pas merge
+> de cette clôture ni qualification production générale de l'application.
+>
+> Les sections jusqu'au « Statut historique » conservent le dossier local
+> antérieur au merge. Leurs mentions « non publié », « aucun SQL/live » et leurs
+> verdicts locaux décrivent cette phase uniquement. Les preuves ultérieures et
+> les réserves actuelles figurent dans « Clôture production » ci-dessous.
+
+## Qualification du pack local — historique
 
 - GO : `GO_IMPLEMENT_DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD`.
 - Base vérifiée : `2d700ed76dc6fe15c742f76951446768f7b5032d` (PR #138 fusionnée).
@@ -45,7 +56,7 @@ alias du reporting atteint React, en mémoire uniquement. Aucun cache financier 
 mutative. Erreur, filtre modifié, perte d'accès et réponse obsolète effacent
 ou refusent le résultat précédent.
 
-## Validations
+## Validations locales — historique
 
 Baselines mesurées avant patch au commit de base exact avec les dépendances
 locales existantes, sans installation, suppression ou déplacement de caches.
@@ -116,7 +127,7 @@ Diff du pack : 14 fichiers, dont 10 créés et 4 modifiés ; aucune suppression
 de fichier. Les seuls changements du legacy sont son enveloppe de sélection,
 son nom local et les libellés annoncés, pas ses calculs.
 
-## Sécurité et limites
+## Sécurité et limites du pack local — historique
 
 Secrets, fichiers/données bancaires réels, SQL, Supabase live, migration,
 modification Auth/RLS, écriture métier, publication et merge : **NON**.
@@ -138,7 +149,7 @@ Le serveur et le reader existants restent responsables de la sélection des
 unités canonical actives et du snapshot cohérent. Un refus du reader bloque
 toute la vue. Dette lint/typecheck et taille du bundle restent hors périmètre.
 
-## Contre-review indépendante
+## Contre-review indépendante du pack local — historique
 
 Premier avis Claude Code (Opus, read-only) : `RESERVES`, avec 2 P1 et 11 P2.
 Les P1 n'ont pas été acceptés comme état de livraison. Aucun patch par Claude.
@@ -204,9 +215,185 @@ Les 213 tests, le build et les comparaisons lint/typecheck ont été rejoués ap
 le dernier correctif ; aucune nouvelle erreur. Le reviewer n'a pas exécuté
 ces commandes, conformément à son mandat strictement read-only.
 
-## Statut
+## Statut historique avant merge
 
 `IN_PROGRESS — IMPLEMENTED_LOCAL — REVIEWED_WITH_RESERVES — NOT_DEPLOYED`.
 
 Fusion soumise au GO de merge et au contrôle du SHA exact/CI ; validation
 staging et publication restent des phases distinctes, non exécutées ici.
+
+## Clôture production — 2026-08-31 Europe/Paris
+
+### Mandat documentaire et provenance
+
+GO : `GO_IMPLEMENT_DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_PRODUCTION_CLOSURE_DOCUMENTATION`.
+Base de cette clôture : `c85e715b59be76fbcffb57c07b32de453e4cb63b` ; branche
+`codex/daily-v2-canonical-dashboard-production-closure`. Au préflight, la
+branche d'implémentation était propre à `1c60a820782dfef6112ab370c644b2203b5eab56`,
+avec une tree identique à `origin/main`, puis la branche documentaire a été
+créée depuis ce `origin/main` vérifié.
+
+Périmètre fermé : ce rapport, `docs/MASTER_CONTEXT.md`, `docs/STATUS_REGISTRY.md`.
+Niveau moyen, docs-only. Aucun changement applicatif, package/lockfile, `.env`,
+artefact MCP, migration ou configuration de sécurité. Aucun accès Lovable,
+Supabase, navigateur ou SQL n'est réalisé par cette clôture. Les résultats
+ci-dessous proviennent des retours GitHub, Lovable, HTTP, navigateur et SELECT
+des GO antérieurs de cette conversation (2026-08-30 UTC, nuit du 30 au 31 à Paris),
+pas d'une nouvelle campagne ni d'une nouvelle contre-review indépendante.
+
+Les identifiants et empreintes ci-dessous permettent de rattacher les constats
+à leurs versions. Ce compte rendu ne remplace pas une capture réseau exhaustive :
+aucun HAR, dump, capture bancaire ou journal brut n'est ajouté au dépôt. Les
+valeurs financières ont été comparées en mémoire pendant le smoke, sans être
+reproduites ici. Aucun fichier bancaire source n'a été relu pour cette clôture.
+
+### Références de livraison
+
+- [PR #139](https://github.com/douania/sodatra-bank-sync-flow/pull/139), head
+  `1c60a820782dfef6112ab370c644b2203b5eab56`, fusionnée le
+  `2026-08-30T21:24:19Z` ; merge/source production
+  `c85e715b59be76fbcffb57c07b32de453e4cb63b`.
+- [CI post-merge 33336340850](https://github.com/douania/sodatra-bank-sync-flow/actions/runs/33336340850) :
+  `completed/success` sur ce merge. Les 213 tests et baselines décrits plus haut
+  appartiennent au pack d'implémentation ; ils ne sont pas annoncés comme rejoués
+  par cette clôture documentaire.
+- Staging : Lovable `8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, Supabase
+  `gbbsqcscryygqlmqncyv`, [build publié](https://cash-sync-wiz.lovable.app),
+  source synchronisée `46478b65be8c42dbe181360d0c0448fd696b2b4c`.
+- Production : Lovable `e52d9fce-f1b4-46f8-900c-c559a6eb2115`, Supabase
+  `leakcdbbawzysfqyqsnr`, [dashboard publié](https://sodatra-bank-sync-flow.lovable.app/dashboard).
+  Les dix fichiers runtime/tests du dashboard ont été comparés, avec
+  normalisation LF, entre le candidat production et la source validée staging :
+  dix correspondances exactes. Aucun delta de migration, Auth/RLS ou reader
+  snapshot existant dans cette livraison.
+
+| Publication | Déploiement accepté | Bundle observé | SHA-256 du contenu JS réencodé UTF-8 |
+|---|---|---|---|
+| Staging, build production | `2fde9c3b-8935-44b5-979f-f723204ac676` | `index-D0x4DovO.js` | `1f9fbbddfa8c4120273bf9141d37b4318b7e93a68cb47a8f0f34ed04668d2b59` |
+| Production | `8612d3f7-c62e-4e99-a6eb-e30815dd511c` | `index-agrhGBVY.js` | `d4e09f1edd8cf3b6d34ea8421c87079fd8cc198fd8790c7dc30c6519e65451c4` |
+
+Le connecteur a répondu `pending` aux publications : ce statut n'est pas
+présenté comme un retour final `succeeded`. La disponibilité a été constatée
+par HTTP 200 sur le HTML et le nouveau JS, leurs références/empreintes et les
+marqueurs du dashboard, puis par les smokes UI. La production servait auparavant
+`index-C4s2fvfW.js`, sans le dashboard canonical. Le nouveau bundle contient
+l'URL Supabase production, pas l'URL staging, et la clé frontend publique
+moderne attendue ; aucune valeur de clé n'est reproduite. La source et `.env`
+sont restés inchangés lors de la publication. Les recherches statiques ont
+trouvé zéro appel direct `console.*(...)` et zéro `debugger` ; ce n'est pas une
+preuve générale de l'absence de toute télémétrie.
+
+### Phases autorisées et résultats
+
+Les suffixes ci-dessous complètent les GO du pack
+`DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD` ; chaque phase a reçu son GO propre.
+
+| GO / phase | Résultat établi |
+|---|---|
+| `GO_VALIDATE_STAGING_<PACK>_PREFLIGHT_READ_ONLY` | Préflight staging préalable à la synchronisation ; aucune autorisation production implicite. |
+| `GO_APPLY_STAGING_<PACK>_RUNTIME_SYNC` | Dix fichiers runtime/tests synchronisés sur `46478b6`, sans modification de configuration, DB ou services existants. |
+| `GO_VALIDATE_STAGING_<PACK>_RUNTIME_E2E_READ_ONLY` | Preview authentifié : vue canonical, filtres, refus sûrs, legacy séparé et verrous contrôlés ; ne prouve pas le build publié. |
+| `GO_APPLY_STAGING_<PACK>_PRODUCTION_BUILD_PUBLISH` | Build production publié sur le staging uniquement, référence ci-dessus. |
+| `GO_VALIDATE_STAGING_<PACK>_PRODUCTION_RUNTIME_E2E_READ_ONLY` | `PASS_WITH_RESERVES` : 7 identités, 50 journées actives dans la fenêtre, 3 positions exploitables ; filtre BDK/XOF à 2 lignes ; vide/invalide et séparation legacy validés ; compteurs inchangés. Dates non qualifiées à cette étape, legacy vide. |
+| `GO_PRODUCTION_<PACK>_PREFLIGHT_READ_ONLY` | Source/CI/cible vérifiées ; contrat de lecture canonical présent (15 colonnes requises), RLS active, SELECT anonyme fermé, policy SELECT authenticated limitée à admin/auditor ; quatre verrous fermés. Aucune migration nécessaire. |
+| `GO_PRODUCTION_<PACK>_PUBLISH_RUNTIME` | Nouveau bundle effectivement servi ; aucune action DB ni modification des droits ou verrous pendant cette phase. |
+| `GO_PRODUCTION_<PACK>_POST_PUBLISH_SMOKE_READ_ONLY` | `PASS_PUBLIC_SMOKE` : `/dashboard` et `/daily-statements` redirigent vers `/auth` sans session ; aucune donnée affichée. GET sans JWT utilisateur sur unités canonical, lignes canonical et `user_roles` : HTTP 401, code `42501` dans les trois cas ; clé publique conforme au bundle. |
+| `GO_PRODUCTION_<PACK>_AUTHENTICATED_SMOKE_READ_ONLY` | `PASS_WITH_RESERVES` dans Chrome avec une session existante ; détail des assertions et réserves ci-dessous. Aucune saisie/récupération de credentials. |
+
+Le connecteur de requêtes DB Lovable a refusé la base externe
+(`database_not_managed`). Les SELECT ont été exécutés dans la console Supabase
+du projet exact, sans provisionnement ni modification de connexion. Les droits
+SQL de cette console ne constituent pas à eux seuls une preuve du transport
+Auth utilisateur : les smokes navigateur et les refus REST sont des preuves
+distinctes. La divergence de ledger staging/production n'a pas été « réparée »
+par ce pack, qui n'ajoute aucune migration.
+
+### Smoke authentifié : assertions réellement exercées
+
+- Vue canonical par défaut : une identité ORABANK/XOF, trois journées, quatre
+  lignes. Date du dernier relevé, dernier solde, débits, crédits et flux net
+  correspondent aux agrégats SELECT indépendants ; la synthèse XOF correspond
+  au tableau. Aucun montant, empreinte de compte ou identifiant de ligne ici.
+- Filtre ORA/XOF : une ligne. BDK : résultat vide malgré les unités BDK en
+  staging métier, sans inclusion des journées non promues. USD : résultat vide,
+  sans conversion ni substitution. Le vide n'est pas présenté comme un solde nul.
+- Modification d'un filtre : résultat précédent effacé ; banque invalide
+  `ORA-1` refusée sans ancien tableau ni total partiel.
+- Dates : période du 13 au 20 août, 2/8 journées observées, les trois journées
+  source restant dans la fenêtre de positions. Période inversée et période
+  dépassant 400 jours refusées sans ancien résultat. La saisie automatisée seule
+  modifiait le champ visible sans invalider React ; les événements clavier
+  natifs ont ensuite déclenché l'invalidation et les résultats attendus.
+  Cette vérification production lève la réserve de saisie pour ces scénarios
+  dans Chrome, sans transformer rétroactivement les essais staging en PASS.
+- Vue historique peuplée, explicitement séparée ; retour canonical avec les
+  mêmes cellules financières. Ceci ne valide pas tous les calculs legacy.
+- Navigation vers Daily v2 : « Pilote production verrouillé » et « Verrou serveur :
+  lecture seule », aucune commande de dépôt/promotion/supersede/activation.
+  Le sélecteur parse-only peut rester disponible ; aucun fichier n'a été chargé.
+- Aucun UUID brut ou champ `account_fingerprint` dans le tableau contrôlé ;
+  aucun total de soldes par devise. Aucun log console remonté aux points
+  contrôlés, sans prétendre disposer d'une capture réseau exhaustive.
+- Vue par défaut et session restaurées en fin de test ; cellules financières,
+  compteurs et contrat de lecture inchangés.
+
+### Conservation constatée avant/après
+
+En production, préflight, smoke public et smoke authentifié retrouvent les
+quatre verrous `master/daily/admin/backfill = false`, RLS canonical active,
+SELECT anonyme fermé et policy de lecture admin/auditor inchangée.
+
+| Compteur production | Avant/après |
+|---|---:|
+| Ledger migrations | 40 (dernière `20260829120000`) |
+| Événements runtime control | 12 |
+| Tentatives d'import | 2 |
+| Unités / lignes staging métier | 5 / 45 |
+| Unités / lignes canonical | 3 / 4 |
+| Événements d'import / de comptes | 10 / 6 |
+| Registre de comptes / grants backfill | 6 / 0 |
+
+En staging, les compteurs mesurés avant/après l'E2E du build publié étaient
+également inchangés : ledger 43, audit runtime 20, tentatives 15, unités staging
+65, unités canonical 51, événements d'import 227 ; les 50 journées actives de
+la fenêtre ne sont pas le total de 51 unités canonical tous statuts.
+
+Ces contrôles portent sur les compteurs et métadonnées énumérés, pas sur une
+empreinte intégrale de toutes les lignes de la DB. Leur stabilité ne prouve
+pas à elle seule l'absence de toute requête réseau ou modification compensée.
+Les actions effectuées dans ces smokes étaient des lectures ; aucun import,
+promotion, export, supersede, déverrouillage, migration ou changement Auth/RLS.
+
+### Réserves et suivi après clôture
+
+Verdict opérationnel : **PASS_WITH_RESERVES**, limité au dashboard read-only
+et au pilote ORABANK. La réserve locale Auth/DB est partiellement levée par les
+lectures authentifiées et leur corroboration SQL, pas intégralement fermée.
+
+1. Badge Daily v2 « Session requise » encore visible malgré la session et les
+   lectures réussies : défaut d'affichage connu, non corrigé ici ; futur GO UI.
+2. Matrice réelle multi-rôles, révocation, refetch des droits avec brouillon et
+   lectures concurrentes non exercés. Les tests synthétiques ne les remplacent
+   pas ; futur lot de validation dédié, sans ouverture implicite des écritures.
+3. Une identité ORABANK/XOF seulement qualifiée financièrement en production ;
+   autres banques, plusieurs devises renseignées et volumes limites non qualifiés
+   par ce smoke. Aucun feu vert pour de nouveaux imports ni pour `/upload`.
+4. Affichage/séparation legacy vérifiés, pas audit exhaustif Collection Report,
+   Fund Position ou autres calculs historiques ; pas de capture réseau exhaustive.
+
+Le produit reste un prototype avancé, pas une certification globale du dashboard
+Direction, de l'exhaustivité SODATRA ou de l'application. Le traitement de ces
+réserves exige son propre périmètre/GO ; aucun rollback de données n'est demandé.
+
+### Validation et livraison de cette clôture
+
+Validation docs-only : périmètre exact de trois fichiers confirmé,
+`git diff --check` et `git diff --cached --check` PASS, références de livraison
+contrôlées et diff relu avant commit. Recherche de motifs de clés/JWT/chemins
+locaux/alias de compte dans les ajouts : aucun résultat ; ce contrôle textuel
+ne remplace pas la relecture. Aucun test applicatif, build, installation ou
+mesure de baseline exécuté dans cette clôture ; les preuves locales et CI antérieures
+restent distinctes. Aucun secret, fichier bancaire, montant ni donnée de compte
+ajouté. Commit/push/draft PR autorisés par le GO ; aucun merge ni déploiement.
+La contre-review documentaire de cette clôture reste à effectuer avant le GO
+de merge ; le verdict Claude historique ne constitue pas cette review.

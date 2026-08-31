@@ -34,12 +34,14 @@ Le premier pilote réel ORABANK Daily v2 est toutefois validé avec réserves en
 (dépôt, promotion et reporting), puis reverrouillé. Cette réussite bornée ne
 qualifie pas encore l'application entière ni le dashboard Direction.
 
-Le pack `DAILY-V2-CANONICAL-OPERATIONAL-DASHBOARD` implémente localement une
-vue distincte sur les seules journées canonical actives, avec derniers soldes
-par identité/devise, dates des relevés et couverture explicite, sans total de
-soldes par devise. La contre-review locale est validée avec une réserve de
-couverture Auth/DB réelle ; ce code n'est ni fusionné ni publié. Le runtime en production
-reste donc sur le dashboard historique à ce stade. Voir
+Le pack `DAILY-V2-CANONICAL-OPERATIONAL-DASHBOARD`, fusionné via PR #139, est
+publié en production et validé read-only avec réserves sur le pilote ORABANK
+(clôture au 2026-08-31 Europe/Paris). Le dashboard affiche par défaut les seules
+journées canonical actives : derniers soldes par identité/devise, flux, dates
+des relevés et couverture explicite, sans total de soldes par devise. Les
+sources historiques restent séparées. Les quatre verrous d'écriture restent
+fermés. Badge de session Daily v2, matrice multi-rôles/refetch/concurrence et
+qualification au-delà du pilote restent à traiter sous GO distincts. Voir
 `docs/DAILY_V2_CANONICAL_OPERATIONAL_DASHBOARD_REPORT.md`.
 
 Priorité actuelle :
@@ -84,7 +86,7 @@ Pas d'API bancaire directe.
 
 | Module | Route | Statut |
 |---|---|---|
-| Dashboard principal | `/dashboard` | Runtime publié sur sources legacy ; vue Daily v2 canonical séparée implémentée et reviewée localement avec réserve, non fusionnée/non déployée |
+| Dashboard principal | `/dashboard` | Daily v2 canonical par défaut en production ; smoke authentifié ORABANK validé avec réserves ; vue historique séparée, aucun total de soldes par devise ni ouverture d'écriture |
 | Import opérationnel | `/upload` | Pipeline global unique ; Collection Report/Internal Book candidats production ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
 | Alias upload bulk | `/upload-bulk` | Compatibilité : redirection vers `/upload`, aucun pipeline distinct |
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
@@ -138,8 +140,9 @@ déclenché des fermetures de sécurité et des reprises bornées ; aucune donn�
 validée n'a été supprimée pour simuler un rollback. Les quatre verrous — maître,
 `daily`, `admin`, `backfill` — sont finalement `false` ; administration et backfill
 n'ont jamais été ouverts pendant ce pilote production. Ce résultat ne promeut
-ni les autres banques, ni `/upload`, ni Collection Report. Le dashboard
-principal reste alimenté par les sources legacy, pas par ce reporting canonical.
+ni les autres banques, ni `/upload`, ni Collection Report. Au terme de ce pilote,
+le dashboard principal restait historique ; son raccordement canonical a ensuite
+été publié et contrôlé dans le pack PR #139 décrit ci-dessus.
 Voir `docs/DAILY_V2_CONTROLLED_PRODUCTION_ACTIVATION_PILOT_REPORT.md`.
 
 ## Vérité DB / idempotence
@@ -176,7 +179,7 @@ Ne pas modifier sans justification CTO explicite :
 
 Ouverts / suivis :
 - Daily v2 production pilot : `CLOSED_WITH_RESERVE — ORA_FIRST_IMPORT_AND_REPORTING_VALIDATED — PILOT_RELOCKED` ;
-- Dashboard opérationnel Daily v2 canonical : `IN_PROGRESS — IMPLEMENTED_LOCAL — REVIEWED_WITH_RESERVES — NOT_DEPLOYED`, positions par identité séparées des sources legacy, sans total de soldes par devise ;
+- Dashboard opérationnel Daily v2 canonical : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE`, suivi du badge de session et de la couverture Auth/refetch/concurrence dans le rapport canonique ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
 - Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;
