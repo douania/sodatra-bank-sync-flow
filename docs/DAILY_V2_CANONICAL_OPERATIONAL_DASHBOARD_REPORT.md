@@ -392,8 +392,9 @@ Validation docs-only : périmètre exact de trois fichiers confirmé,
 contrôlées et diff relu avant commit. Recherche de motifs de clés/JWT/chemins
 locaux/alias de compte dans les ajouts : aucun résultat ; ce contrôle textuel
 ne remplace pas la relecture. Aucun test applicatif, build, installation ou
-mesure de baseline exécuté dans cette clôture ; les preuves locales et CI antérieures
-restent distinctes. Aucun secret, fichier bancaire, montant ni donnée de compte
+mesure de baseline exécuté localement dans cette clôture. La CI automatique de
+sa draft PR est distincte des preuves locales et CI du pack d'implémentation.
+Aucun secret, fichier bancaire, montant ni donnée de compte
 ajouté. Commit/push/draft PR autorisés par le GO ; aucun merge ni déploiement.
 La contre-review documentaire de cette clôture reste à effectuer avant le GO
 de merge ; le verdict Claude historique ne constitue pas cette review.
