@@ -128,4 +128,98 @@ Réserves finales acceptées : affichage transitoire des boutons de décision et
 - `tests/daily-v2-session/harness.tsx`
 - `tests/daily-v2-session/serve.mjs`
 
-Verdict CTO : **`PASS_WITH_RESERVES — LOCAL_REVIEWED — READY_FOR_DRAFT_PR`**. Les serveurs et onglets synthétiques sont fermés ; aucun cache de dépendances déplacé. Commit/push/draft PR autorisés par le GO initial ; merge et toute action d'environnement restent interdits sans leur GO distinct.
+Verdict CTO local : **`PASS_WITH_RESERVES — LOCAL_REVIEWED — READY_FOR_DRAFT_PR`**. Les serveurs et onglets synthétiques ont été fermés ; aucun cache de dépendances déplacé. Cette phase n'autorisait alors aucun environnement.
+
+## Fusion et CI
+
+- PR #141 fusionnée dans `main` au commit
+  `3db3846bfe60a48a088815a74f0ace146fa05cbe` ; head de la PR
+  `9ba9a23208747ccd6ba736106a74f5f5e31227a1`.
+- Workflow GitHub `33419485210`, job `99578068005` : succès, avec ratchet
+  ESLint, tests, build et hygiène des logs de production verts.
+- Le tree du head local et celui du merge commit ont été comparés égaux avant
+  les actions d'environnement. Aucun changement de source n'a été introduit
+  pendant les validations staging ou production.
+
+## Validation staging
+
+Cible exacte : Lovable `8c508b94-d03f-4165-ab2b-7a3cd52d2d2b`, Supabase
+`gbbsqcscryygqlmqncyv`. Le runtime autorisé a été synchronisé au commit Lovable
+`cc23244ca4555c55557272356f9a9d34859d031e`, 16 fichiers applicatifs exactement
+égaux à la source approuvée ; `.env`, `supabase/config.toml`, client Supabase,
+package/lockfile et artefact MCP sont restés inchangés. Aucun SQL, migration,
+changement Auth/RLS, publication production ou donnée réelle pendant ce sync.
+
+Le preview authentifié puis le build de production publié sur staging ont été
+validés read-only. Déploiement staging
+`04d7add4-bea2-45f1-83fa-d661bd261d8e`, bundle
+`index-KFR6vHQu.js`, SHA-256 UTF-8
+`e068d94e6270cf2ae8870ec8ac9dd87e02354020cd4575d46a474d1ff6c55c48`.
+Le badge affiche session connectée, cible staging, rôles `user, admin` et
+verrou lecture seule. Import parse-only, staging, canonical, audits, dashboard
+et reporting ont été exercés sans mutation ; l'invalidation immédiate des
+résultats de reporting après modification des filtres et la conservation de la
+saisie admin pendant plus de 60 secondes ont été observées. Aucun fichier,
+import ou export. Les agrégats avant/après sont strictement identiques : quatre
+verrous `false`, ledger 43, 65 unités/221 lignes staging, 51 unités/192 lignes
+canonical, 227 événements d'import, 20 événements runtime, 15 tentatives et
+1 grant backfill historique.
+
+Réserves staging : période de reporting exercée sans ligne active ; pas de
+résultat peuplé ni d'export éligible. La matrice réelle manager/auditor/user
+seul, la révocation, l'expiration, la transition d'identité, les réponses
+volontairement retardées et la concurrence ne sont pas qualifiées. Le maintien
+du focus au polling est une observation DOM, pas une trace instrumentée de
+chaque réponse réseau.
+
+## Publication et smokes production
+
+Cible exacte : Lovable `e52d9fce-f1b4-46f8-900c-c559a6eb2115`, Supabase
+`leakcdbbawzysfqyqsnr`, URL publique
+`https://sodatra-bank-sync-flow.lovable.app`. Le préflight a confirmé le source
+fusionné `3db3846bfe60a48a088815a74f0ace146fa05cbe`, le projet prêt, la CI verte,
+les trois seules variables frontend attendues avec clé moderne publishable et
+les quatre verrous fermés.
+
+Publication unique : déploiement
+`e3088376-c757-4477-aa96-8dcb67ecea9e`. Le bundle public est passé de
+`index-agrhGBVY.js` à `index-BZ9uZmBU.js`, SHA-256 UTF-8
+`0828c08ba94c5c177216dce8376fb4f5e403566d326c852827921f7aaf901df0`.
+HTML et JavaScript répondent 200 ; seule l'URL Supabase production est
+embarquée, les marqueurs session/expiration/scope sont présents, aucun runtime
+Vite de développement ni appel `console.*` direct n'est détecté.
+
+Smoke anonyme : `/dashboard`, `/daily-statements` et `/upload` redirigent vers
+`/auth`, qui expose uniquement la connexion. Le libellé d'accueil « Créer un
+Compte » mène toutefois à ce même formulaire de connexion : réserve UX, sans
+formulaire public d'inscription observé.
+
+Smoke authentifié réel dans Chrome, sans inspection des cookies, mots de passe
+ou jetons : le dashboard canonical pilote est lisible ; Daily v2 affiche
+`Session : connectée`, cible production, rôles `user, admin` et verrou lecture
+seule. Après rechargement, l'interface passe par « Vérification des accès Daily
+v2… » avant de rétablir les seuls droits confirmés. Import reste parse-only ;
+staging, canonical, audit et reporting n'exposent aucune commande de mutation
+active. Zéro erreur ou warning navigateur. Aucun fichier sélectionné, import,
+dépôt, promotion, export, changement Auth/RLS ou mutation de données.
+
+Le contrôle agrégé final est strictement identique au préflight : quatre
+verrous `false`, ledger 40, 5 unités/45 lignes staging, 3 unités/4 lignes
+canonical, 10 événements d'import, 12 événements runtime, 2 tentatives,
+6 comptes, 6 événements de compte et 0 grant backfill. Le source Lovable,
+`.env`, `supabase/config.toml` et le dépôt sont restés inchangés.
+
+## Clôture production
+
+Verdict CTO : **`PASS_WITH_RESERVES — PRODUCTION_AUTHENTICATED_READ_ONLY_VALIDATED`**.
+Le pack est publié et les chemins anonymes/authentifiés exercés sont conformes
+à son contrat fail-closed. Il ne modifie ni ne remplace les contrôles serveur.
+
+Réserves finales : une seule combinaison réelle `user + admin` a été observée.
+Les rôles manager, auditor et user seul, la révocation réelle, l'expiration de
+session, la transition d'identité, les réponses retardées et la concurrence
+restent à qualifier. Une RPC ou un export déjà lancé ne peut pas être annulé
+par cette frontière UI. Les choix backfill/décision peuvent rester
+transitoirement masqués pendant le polling, sans perte de saisie admin dans le
+scénario testé. Cette clôture ne qualifie ni d'autres banques, ni `/upload`, ni
+l'application entière pour une exploitation générale.
