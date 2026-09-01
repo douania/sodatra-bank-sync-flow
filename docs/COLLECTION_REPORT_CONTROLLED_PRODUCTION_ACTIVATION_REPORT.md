@@ -16,6 +16,30 @@ Le pack ne déclare donc pas Collection Report actif en production. La route
 reste sans capacité d'écriture tant que la migration et le runtime n'ont pas
 été qualifiés sur staging, puis autorisés par des GO d'environnement distincts.
 
+## Hotfix PG17 CI readiness
+
+La PR #143 a été fusionnée dans `main` au commit `22f7cf9`. Son préflight
+staging read-only a confirmé la cible `gbbsqcscryygqlmqncyv`, le ledger exact
+des 43 migrations antérieures, l'absence du candidat `20260901000000`, les
+objets privés absents, le scope fermé par absence et une table
+`collection_report` vide et conforme. Aucune migration ni mutation staging n'a
+été exécutée.
+
+La CI du merge a ensuite échoué avant le premier SQL : `pg_isready` avait pu
+observer le serveur PostgreSQL temporaire utilisé par l'image officielle pour
+l'initialisation, puis `psql` avait rencontré le redémarrage vers le serveur
+final. Ce défaut de synchronisation du runner ne modifie pas le contrat SQL,
+mais bloque volontairement l'application staging tant que `main` n'est pas de
+nouveau vert.
+
+Le hotfix `COLLECTION-REPORT-PG17-CI-READINESS-HARDENING` attend désormais le
+marqueur de fin du bootstrap Docker, vérifie que le conteneur reste actif, puis
+exige qu'un vrai `SELECT 1` réussisse sur le serveur final. La fenêtre maximale
+reste bornée à 30 secondes et le teardown fail-closed existant est conservé.
+Quatre créations successives de conteneur PostgreSQL 17 ont rejoué localement
+l'intégralité du contrat avec les deux tests de concurrence et la suppression
+du conteneur : 4 PASS, 0 FAIL.
+
 ## Diagnostic initial
 
 Le flux disposait d'un parsing et d'une review humaine, mais pas des garanties
@@ -195,4 +219,4 @@ secret, JWT réel ou environnement Supabase n'a été lu pendant les tests du lo
   commit ne font pas partie de cet ingest atomique ; ils exigent des lots de
   gouvernance distincts.
 
-Verdict CTO local : **`PASS_WITH_RESERVES — REVALIDATION_FINDINGS_FIXED — NEW_SHA_PENDING_REVIEW`**.
+Verdict local du hotfix : **`PASS — PG17_FINAL_SERVER_READINESS_PROVEN — DRAFT_PR_PENDING_REVIEW`**.

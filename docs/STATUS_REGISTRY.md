@@ -17,7 +17,7 @@
 
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — REVALIDATION_FINDINGS_FIXED — NEW_SHA_PENDING_REVIEW` (2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — PR_143_MERGED — STAGING_PREFLIGHT_READY — CI_HOTFIX_PENDING_REVIEW` (2026-09-01 Europe/Paris)**
 
 Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
 promotion Collection Report par RPC atomique unique, scope serveur privé fermé
@@ -44,8 +44,19 @@ replay PostgreSQL 17 PASS avec fonction historique fidèle, cas NULL/UNKNOWN et
 deux concurrences réelles (relock 2 675 ms ; préimage d'audit 2 780 ms),
 conteneur supprimé, build PASS, artefact MCP
 inchangé, ESLint 180/11 et TypeScript 17 strictement identiques à la base.
-Migration candidate uniquement : aucun SQL live, merge, staging, publication ou
-production dans ce lot. Contre-review indépendante obligatoire avant merge.
+La PR #143 a été fusionnée dans `main` au commit `22f7cf9`. Le préflight
+staging read-only a confirmé la cible exacte, les 43 migrations antérieures,
+l'absence exclusive du candidat `20260901000000`, les objets/scope absents,
+les dépendances et ownership compatibles, une table Collection vide et aucun
+verrou concurrent. Aucune migration ni mutation staging n'a été exécutée.
+
+La CI post-merge `33535208111` a échoué avant le premier SQL : `pg_isready`
+avait observé le serveur temporaire d'initialisation de l'image PostgreSQL,
+puis le premier `psql` a rencontré son redémarrage final. Le hotfix dédié
+attend maintenant le marqueur de fin de bootstrap et un vrai `SELECT 1` sur le
+serveur final. Quatre replays locaux consécutifs sont PASS, avec les deux
+preuves de concurrence et le teardown. L'application staging reste bloquée
+jusqu'à review, merge et CI verte de ce hotfix.
 
 Rapport : `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
 

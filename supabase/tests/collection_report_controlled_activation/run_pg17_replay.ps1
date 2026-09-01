@@ -21,14 +21,35 @@ function Invoke-SqlCommand([string]$sql) {
   return $output
 }
 
-try {
-  docker run --name $container -e POSTGRES_PASSWORD=postgres -d $Image | Out-Null
-  for ($attempt = 0; $attempt -lt 40; $attempt++) {
-    docker exec $container pg_isready -U postgres -d postgres *> $null
-    if ($LASTEXITCODE -eq 0) { break }
+function Wait-PostgresFinalReady {
+  $initCompleteMarker = 'PostgreSQL init process complete; ready for start up.'
+
+  for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    $running = docker inspect --format '{{.State.Running}}' $container 2>$null
+    if ($LASTEXITCODE -ne 0 -or $running -ne 'true') {
+      throw 'PostgreSQL 17 container stopped before becoming ready'
+    }
+
+    # The official image starts a temporary bootstrap server before restarting
+    # PostgreSQL for normal operation. pg_isready alone can observe that first
+    # server and let the replay race the restart. Wait for the bootstrap-complete
+    # marker, then prove the final server accepts a real SQL query.
+    $containerLogs = docker logs $container 2>&1
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect PostgreSQL 17 startup logs' }
+    if ([string]::Join("`n", $containerLogs) -match [regex]::Escape($initCompleteMarker)) {
+      docker exec $container psql -v ON_ERROR_STOP=1 -U postgres -d postgres -At -c 'SELECT 1' *> $null
+      if ($LASTEXITCODE -eq 0) { return }
+    }
+
     Start-Sleep -Milliseconds 500
   }
-  if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL 17 did not become ready' }
+
+  throw 'PostgreSQL 17 final server did not become ready within 30 seconds'
+}
+
+try {
+  docker run --name $container -e POSTGRES_PASSWORD=postgres -d $Image | Out-Null
+  Wait-PostgresFinalReady
 
   Invoke-SqlFile 'supabase/tests/collection_report_controlled_activation/00_schema.sql'
   Invoke-SqlFile 'supabase/migrations/20260901000000_collection_report_controlled_production_activation.sql'
