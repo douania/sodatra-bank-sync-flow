@@ -125,6 +125,10 @@ jobs:
           npm run test:import-preflight
           npm run test:multi-bank-reports
 
+      - name: Collection Report atomic activation contract (PostgreSQL 17)
+        shell: pwsh
+        run: ./supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1
+
       - name: Build
         run: npm run build
 

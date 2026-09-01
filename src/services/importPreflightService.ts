@@ -4,6 +4,10 @@ import {
   type OperationalImportQualification,
 } from './operationalImportReadiness';
 import { detectBankFromContent, detectBankFromFileName } from './bankIdentity';
+import {
+  COLLECTION_IMPORT_MAX_FILE_BYTES,
+  COLLECTION_IMPORT_MAX_FILES,
+} from './collectionImportLimits';
 
 export type ImportDocumentKind =
   | 'COLLECTION_REPORT'
@@ -25,6 +29,8 @@ export interface ImportFileDescriptor {
 export interface ImportPreflightIssue {
   code:
     | 'EMPTY_FILE'
+    | 'FILE_TOO_LARGE'
+    | 'TOO_MANY_FILES'
     | 'UNSUPPORTED_EXTENSION'
     | 'UNSUPPORTED_DOCUMENT_FORMAT'
     | 'FEATURE_NOT_OPERATIONAL'
@@ -55,6 +61,7 @@ export interface ImportPreflightResult<TFile extends ImportFileDescriptor = Impo
 
 export interface ImportPreflightOptions {
   deploymentTarget?: OperationalImportDeploymentTarget;
+  allowedDocumentKinds?: readonly ImportDocumentKind[];
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['xlsx', 'xls', 'csv', 'pdf']);
@@ -207,12 +214,16 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
   const deploymentTarget = options.deploymentTarget ?? 'staging';
   const fingerprints = new Map<string, number>();
   const singletonCounts = new Map<ImportDocumentKind, number>();
+  let collectionFileCount = 0;
 
   for (const file of files) {
     const fingerprint = getFingerprint(file);
     fingerprints.set(fingerprint, (fingerprints.get(fingerprint) ?? 0) + 1);
 
     const detection = detectImportDocument(file.name);
+    if (detection.kind === 'COLLECTION_REPORT') {
+      collectionFileCount += 1;
+    }
     if (detection.kind === 'FUND_POSITION' || detection.kind === 'CLIENT_RECONCILIATION') {
       singletonCounts.set(detection.kind, (singletonCounts.get(detection.kind) ?? 0) + 1);
     }
@@ -232,6 +243,28 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
 
     if (file.size <= 0) {
       issues.push({ code: 'EMPTY_FILE', message: 'Le fichier est vide.' });
+    }
+
+    // Ces bornes protègent le nouveau parseur/RPC Collection. Les appliquer à
+    // toutes les familles modifierait silencieusement les contrats legacy.
+    if (
+      detection.kind === 'COLLECTION_REPORT'
+      && file.size > COLLECTION_IMPORT_MAX_FILE_BYTES
+    ) {
+      issues.push({
+        code: 'FILE_TOO_LARGE',
+        message: `Le fichier dépasse la limite de ${COLLECTION_IMPORT_MAX_FILE_BYTES / 1024 / 1024} Mo.`,
+      });
+    }
+
+    if (
+      detection.kind === 'COLLECTION_REPORT'
+      && collectionFileCount > COLLECTION_IMPORT_MAX_FILES
+    ) {
+      issues.push({
+        code: 'TOO_MANY_FILES',
+        message: `Un lot contient au maximum ${COLLECTION_IMPORT_MAX_FILES} fichiers.`,
+      });
     }
 
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
@@ -276,6 +309,16 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
       issues.push({
         code: 'TARGET_NOT_AUTHORIZED',
         message: 'La cible de déploiement n’est pas reconnue ; import bloqué par défaut.',
+      });
+    }
+
+    if (
+      options.allowedDocumentKinds
+      && !options.allowedDocumentKinds.includes(detection.kind)
+    ) {
+      issues.push({
+        code: 'TARGET_NOT_AUTHORIZED',
+        message: `${detection.label} n'est pas autorisé par le scope de cette cible.`,
       });
     }
 

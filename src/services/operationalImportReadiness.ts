@@ -39,7 +39,8 @@ export const OPERATIONAL_IMPORT_FORMAT_READINESS: readonly OperationalImportRead
     route: '/upload',
     formats: ['XLSX', 'XLS'],
     qualification: 'PRODUCTION_CANDIDATE',
-    evidence: 'Précontrôle, review humaine, promotion explicite et tests synthétiques.',
+    evidence: 'Précontrôle, review humaine, validation stricte et promotion atomique sous scope serveur expirant.',
+    limitation: 'La migration et le runtime doivent encore être validés sur staging avant toute activation production.',
   },
   {
     id: 'internal-book',

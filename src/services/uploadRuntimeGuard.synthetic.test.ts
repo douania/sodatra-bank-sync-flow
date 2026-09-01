@@ -11,8 +11,12 @@ import {
 } from './uploadRuntimeGuard';
 import {
   promoteValidatedCollections,
-  type CollectionSyncEngine,
+  type CollectionAtomicPromotionEngine,
 } from './collectionImportPromotionService';
+import {
+  COLLECTION_IMPORT_TARGET_BLOCKED_MESSAGE,
+  validateCollectionImportTarget,
+} from './collectionImportRuntimeTarget';
 import type { CollectionImportReview } from '@/types/processing';
 
 // ⭐ 0Z_AM — GLOBAL-PRODUCTION-READ-ONLY-UPLOAD-GUARD.
@@ -63,13 +67,10 @@ const processing = readFileSync('src/services/fileProcessingService.ts', 'utf8')
 const promotion = readFileSync('src/services/collectionImportPromotionService.ts', 'utf8');
 const guard = readFileSync('src/services/uploadRuntimeGuard.ts', 'utf8');
 
-function trappedEngine(): CollectionSyncEngine {
+function trappedEngine(): CollectionAtomicPromotionEngine {
   return {
-    async analyze() {
-      throw new Error('analyze ne doit jamais être appelé sous la garde read-only');
-    },
-    async sync() {
-      throw new Error('sync ne doit jamais être appelé sous la garde read-only');
+    async promote() {
+      throw new Error('promote ne doit jamais être appelé sous une cible refusée');
     },
   };
 }
@@ -145,6 +146,17 @@ test('matrice : production refuse deposit ET promote (lecture seule)', () => {
   }
 });
 
+test('Collection Report : staging et production éligibles, cible inconnue refusée', () => {
+  for (const capability of ['review', 'promote'] as const) {
+    assert.equal(validateCollectionImportTarget({ supabaseUrl: STAGING_URL }, capability).allowed, true);
+    assert.equal(validateCollectionImportTarget({ supabaseUrl: PRODUCTION_URL }, capability).allowed, true);
+    assert.equal(
+      validateCollectionImportTarget({ supabaseUrl: 'https://unknown.supabase.co' }, capability).allowed,
+      false,
+    );
+  }
+});
+
 test('matrice : cible inconnue, invalide, absente ou contradictoire refusée pour chaque capacité', () => {
   for (const capability of MUTATION_CAPABILITIES) {
     for (const input of [
@@ -192,14 +204,14 @@ test('matrice : une cible déposante mais non promouvante est refusée pour la p
       trappedEngine(),
       () => hypotheticalDepositOnlyTarget.promote,
     ),
-    new RegExp(UPLOAD_READ_ONLY_TARGET_MESSAGE.slice(0, 30)),
+    new RegExp(COLLECTION_IMPORT_TARGET_BLOCKED_MESSAGE.slice(0, 30)),
   );
 });
 
 test('promotion avec garde par défaut hors cible autorisée : rejet avant tout appel moteur', async () => {
   await assert.rejects(
     promoteValidatedCollections(syntheticReadyReview(), trappedEngine()),
-    new RegExp(UPLOAD_READ_ONLY_TARGET_MESSAGE.slice(0, 30)),
+    new RegExp(COLLECTION_IMPORT_TARGET_BLOCKED_MESSAGE.slice(0, 30)),
   );
 });
 
@@ -288,12 +300,15 @@ test('le guard réutilise la politique canonique Daily v2 sans dupliquer les ref
 // --- Contrat : la page /upload est fail-closed en lecture seule --------------
 
 test('la page /upload déclare une capacité par famille d\'actions et reste fail-closed', () => {
-  // Sélection/traitement = deposit ; promotion = promote.
+  // Les flux legacy restent staging-only ; Collection possède une cible
+  // statique dédiée et un verrou serveur distinct.
   assert.match(page, /const targetAllowsDeposit = isUploadMutationAllowed\('deposit'\);/);
-  assert.match(page, /const targetAllowsPromotion = isUploadMutationAllowed\('promote'\);/);
+  assert.match(page, /const targetAllowsCollectionReview = isCollectionImportTargetAllowed\('review'\);/);
+  assert.match(page, /const targetAllowsCollectionPromotion = isCollectionImportTargetAllowed\('promote'\);/);
   assert.match(page, /const importAccess = evaluateOperationalImportAccess\(\{/);
   assert.match(page, /const canProcessFiles = importAccess\.allowed;/);
-  assert.match(page, /const canPromoteCollections = importAccess\.allowed && targetAllowsPromotion;/);
+  assert.match(page, /collectionPromotionScopeQuery\.data === true/);
+  assert.match(page, /const canPromoteCollections =/);
   assert.match(
     page,
     /function isBlockedOperationalImportAccess\([\s\S]*?Extract<OperationalImportAccessVerdict, \{ allowed: false \}>[\s\S]*?return verdict\.allowed === false;/,
@@ -319,7 +334,7 @@ test('la page /upload déclare une capacité par famille d\'actions et reste fai
   );
   assert.match(
     page,
-    /if \(!canPromoteCollections\) \{\s*toast\(\{\s*variant: "destructive",\s*title: blockedCopy\.title,\s*description: blockedCopy\.description,\s*\}\);\s*return;\s*\}/,
+    /if \(!canPromoteCollections\) \{[\s\S]*?Promotion Collection verrouillée[\s\S]*?return;/,
   );
   assert.equal((page.match(/if \(!canProcessFiles\) \{/g) ?? []).length, 2);
   assert.equal((page.match(/if \(!canPromoteCollections\) \{/g) ?? []).length, 1);
@@ -333,7 +348,7 @@ test('staging : le pipeline d\'import de la page reste strictement inchangé', (
   assert.match(page, /await promoteValidatedCollections\(reviewWithSelection\)/);
   assert.match(page, /const gate = assertPromotionAllowed\(reviewWithSelection\)/);
   assert.match(page, /roles: rolesQuery\.data \?\? \[\]/);
-  assert.match(page, /enabled: Boolean\(user\?\.id\) && targetAllowsDeposit/);
+  assert.match(page, /enabled: Boolean\(user\?\.id\) && targetAllowsImportPage/);
 });
 
 // --- Contrat : services fail-closed avant tout travail -----------------------
@@ -351,16 +366,16 @@ test('processFiles exige la capacité deposit avant timeout, heartbeat et tout t
 });
 
 test('promoteValidatedCollections exige la capacité promote par défaut, fail-closed', () => {
-  assert.match(promotion, /from '\.\/uploadRuntimeGuard'/);
+  assert.match(promotion, /from '\.\/collectionImportRuntimeTarget'/);
   assert.match(
     promotion,
-    /uploadMutationGate: UploadMutationGate = \(\) => currentUploadMutationVerdict\('promote'\)/,
+    /collectionPromotionGate: CollectionPromotionGate = \(\) =>[\s\S]*currentCollectionImportTargetVerdict\('promote'\)/,
   );
   assert.match(
     promotion,
-    /if \(!uploadMutationGate\(\)\.allowed\) \{\s*throw new Error\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*\}/,
+    /if \(!collectionPromotionGate\(\)\.allowed\) \{\s*throw new Error\(COLLECTION_IMPORT_TARGET_BLOCKED_MESSAGE\);\s*\}/,
   );
-  const gateIndex = promotion.indexOf('if (!uploadMutationGate().allowed)');
+  const gateIndex = promotion.indexOf('if (!collectionPromotionGate().allowed)');
   const businessGateIndex = promotion.indexOf('const gate = assertPromotionAllowed(review);');
   assert.ok(gateIndex >= 0 && businessGateIndex >= 0);
   assert.ok(gateIndex < businessGateIndex, 'the target gate must precede the business gate');

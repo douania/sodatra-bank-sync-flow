@@ -118,11 +118,31 @@ class ExcelMappingService {
       rowContext,
     });
 
+    // Aucun fallback financier n'est acceptable sur le chemin de production.
+    // Une cellule vide, illisible, non positive ou hors bornes sûres rejette la
+    // ligne au lieu de créer silencieusement un encaissement à zéro.
+    const parsedCollectionAmount = this.parseNumber(row.collectionAmount);
+    if (
+      parsedCollectionAmount === undefined
+      || !Number.isFinite(parsedCollectionAmount)
+      || parsedCollectionAmount <= 0
+      || Math.abs(parsedCollectionAmount) > Number.MAX_SAFE_INTEGER
+    ) {
+      throw new Error(
+        `collectionAmount obligatoire, positif et valide (${rowContext}). Ligne rejetée.`
+      );
+    }
+
+    const parsedBankName = this.parseString(row.bankName);
+    if (!parsedBankName) {
+      throw new Error(`bankName manquant ou vide (${rowContext}). Ligne rejetée.`);
+    }
+
     const collection: CollectionReport = {
       reportDate: parsedReportDate as string, // garanti non-null par required:true
       clientCode: parsedClientCode,
-      collectionAmount: this.parseNumber(row.collectionAmount) || 0,
-      bankName: this.parseString(row.bankName),
+      collectionAmount: parsedCollectionAmount,
+      bankName: parsedBankName,
       status: 'pending',
       
       // Logique métier effet/chèque

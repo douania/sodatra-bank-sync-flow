@@ -173,6 +173,85 @@ test('clientCode vide → ligne rejetée visible, les lignes valides restent sta
   assert.match(review.rejectedRows[0].message, /clientCode/);
 });
 
+test('montant vide, nul, négatif ou illisible → lignes rejetées fail-closed', async () => {
+  const file = createExcelFile(
+    [
+      VALID_HEADERS,
+      ['05/06/2026', 'CLIENT_SYN_EMPTY', '', 'BANQUE_SYNTHETIQUE_1', '', '', ''],
+      ['05/06/2026', 'CLIENT_SYN_ZERO', 0, 'BANQUE_SYNTHETIQUE_1', '', '', ''],
+      ['05/06/2026', 'CLIENT_SYN_NEG', -10, 'BANQUE_SYNTHETIQUE_1', '', '', ''],
+      ['05/06/2026', 'CLIENT_SYN_TEXT', 'not-a-number', 'BANQUE_SYNTHETIQUE_1', '', '', ''],
+      ['05/06/2026', 'CLIENT_SYN_OK', 150000, 'BANQUE_SYNTHETIQUE_1', '', '', ''],
+    ],
+    'COLLECTION_AMOUNT_FAIL_CLOSED_SYNTHETIC.xlsx',
+  );
+
+  const review = await prepareCollectionImportReview([file]);
+  assert.equal(review.acceptedRows.length, 1);
+  assert.equal(review.acceptedRows[0].collection.clientCode, 'CLIENT_SYN_OK');
+  assert.equal(review.rejectedRows.length, 4);
+  assert.ok(review.rejectedRows.every(issue => /collectionAmount obligatoire/.test(issue.message)));
+});
+
+test('banque vide → ligne rejetée fail-closed', async () => {
+  const file = createExcelFile(
+    [
+      VALID_HEADERS,
+      ['05/06/2026', 'CLIENT_SYN_NO_BANK', 150000, '', '', '', ''],
+      ['05/06/2026', 'CLIENT_SYN_OK', 275000, 'BANQUE_SYNTHETIQUE_2', '', '', ''],
+    ],
+    'COLLECTION_BANK_FAIL_CLOSED_SYNTHETIC.xlsx',
+  );
+
+  const review = await prepareCollectionImportReview([file]);
+  assert.equal(review.acceptedRows.length, 1);
+  assert.equal(review.rejectedRows.length, 1);
+  assert.match(review.rejectedRows[0].message, /bankName manquant/);
+});
+
+test('plus de 5 000 lignes de données → fichier rejeté sans troncature silencieuse', async () => {
+  const rows: unknown[][] = [VALID_HEADERS];
+  for (let index = 0; index < 5_001; index += 1) {
+    rows.push([
+      '05/06/2026',
+      `CLIENT_SYN_LIMIT_${index}`,
+      100_000 + index,
+      'BANQUE_SYNTHETIQUE_1',
+      '',
+      '',
+      '',
+    ]);
+  }
+
+  const review = await prepareCollectionImportReview([
+    createExcelFile(rows, 'COLLECTION_TOO_MANY_ROWS_SYNTHETIC.xlsx'),
+  ]);
+
+  assert.equal(review.acceptedRows.length, 0);
+  assert.equal(review.rejectedRows.length, 0);
+  assert.equal(review.fileLevelErrors.length, 1);
+  assert.match(review.fileLevelErrors[0].message, /limite de 5000 lignes/);
+});
+
+test('plus de 5 000 lignes acceptées sur plusieurs fichiers → lot atomique entièrement bloqué', () => {
+  const first = Array.from({ length: 2_501 }, (_, index) =>
+    syntheticCollection(index + 2, { excelFilename: 'COLLECTION_MULTI_A_SYNTHETIC.xlsx' })
+  );
+  const second = Array.from({ length: 2_500 }, (_, index) =>
+    syntheticCollection(index + 2, { excelFilename: 'COLLECTION_MULTI_B_SYNTHETIC.xlsx' })
+  );
+
+  const review = buildReviewFromExcelResults([
+    { file: 'COLLECTION_MULTI_A_SYNTHETIC.xlsx', result: { success: true, data: first } },
+    { file: 'COLLECTION_MULTI_B_SYNTHETIC.xlsx', result: { success: true, data: second } },
+  ]);
+
+  assert.equal(review.acceptedRows.length, 0);
+  assert.equal(review.counters.accepted_rows, 0);
+  assert.equal(review.fileLevelErrors.length, 1);
+  assert.match(review.fileLevelErrors[0].message, /5001 lignes.*limite atomique.*5000/i);
+});
+
 // --- Builder pur : classification des erreurs et warnings -------------------
 
 test('buildReviewFromExcelResults : erreurs "Ligne N:" classées ligne, autres classées globales', () => {

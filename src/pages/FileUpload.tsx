@@ -28,6 +28,10 @@ import {
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from '@/services/uploadRuntimeGuard';
 import { buildImportPreflight } from '@/services/importPreflightService';
+import {
+  isCollectionImportTargetAllowed,
+} from '@/services/collectionImportRuntimeTarget';
+import { readCollectionReportPromotionScope } from '@/services/collectionReportAtomicImportService';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   evaluateOperationalImportAccess,
@@ -127,25 +131,49 @@ const FileUpload = () => {
   // Chaque famille d'actions déclare sa capacité exacte : sélection/traitement
   // = deposit ; promotion Collection = promote.
   const targetAllowsDeposit = isUploadMutationAllowed('deposit');
-  const targetAllowsPromotion = isUploadMutationAllowed('promote');
+  const targetAllowsCollectionReview = isCollectionImportTargetAllowed('review');
+  const targetAllowsCollectionPromotion = isCollectionImportTargetAllowed('promote');
+  const targetAllowsImportPage = targetAllowsDeposit || targetAllowsCollectionReview;
   const rolesQuery = useQuery<OperationalImportRole[]>({
     queryKey: ['operational-import', 'roles', user?.id],
     queryFn: getCurrentUserOperationalImportRoles,
-    enabled: Boolean(user?.id) && targetAllowsDeposit,
+    enabled: Boolean(user?.id) && targetAllowsImportPage,
     staleTime: 5 * 60 * 1000,
   });
   const importAccess = evaluateOperationalImportAccess({
-    targetAllowsMutation: targetAllowsDeposit,
+    targetAllowsMutation: targetAllowsImportPage,
     roles: rolesQuery.data ?? [],
     rolesPending: rolesQuery.isPending,
     rolesError: rolesQuery.isError,
   });
   const canProcessFiles = importAccess.allowed;
-  const canPromoteCollections = importAccess.allowed && targetAllowsPromotion;
+  const collectionPromotionScopeQuery = useQuery<boolean>({
+    queryKey: ['operational-import', 'collection-report', 'promotion-scope', user?.id],
+    queryFn: readCollectionReportPromotionScope,
+    enabled: Boolean(user?.id) && importAccess.allowed && targetAllowsCollectionPromotion,
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: 'always',
+  });
+  const serverAllowsCollectionPromotion =
+    collectionPromotionScopeQuery.data === true
+    && !collectionPromotionScopeQuery.isFetching
+    && !collectionPromotionScopeQuery.isError;
+  const canPromoteCollections =
+    importAccess.allowed
+    && targetAllowsCollectionPromotion
+    && serverAllowsCollectionPromotion;
   const blockedCopy = blockedImportCopy(importAccess);
   const deploymentTarget = currentOperationalImportDeploymentTarget();
   const importPreflight = useMemo(
-    () => buildImportPreflight(selectedFiles, { deploymentTarget }),
+    () => buildImportPreflight(selectedFiles, {
+      deploymentTarget,
+      // The controlled production scope is Collection-only. Internal Book and
+      // every legacy write path remain closed even though they share /upload.
+      allowedDocumentKinds: deploymentTarget === 'production'
+        ? ['COLLECTION_REPORT']
+        : undefined,
+    }),
     [deploymentTarget, selectedFiles],
   );
 
@@ -189,7 +217,7 @@ const FileUpload = () => {
       'text/csv': ['.csv'],
       'application/pdf': ['.pdf']
     },
-    multiple: true
+    multiple: true,
   });
   
   const removeFile = (fileToRemove: File) => {
@@ -298,8 +326,10 @@ const FileUpload = () => {
     if (!canPromoteCollections) {
       toast({
         variant: "destructive",
-        title: blockedCopy.title,
-        description: blockedCopy.description,
+        title: "Promotion Collection verrouillée",
+        description: collectionPromotionScopeQuery.isError
+          ? "Le verrou serveur Collection est indisponible ; promotion refusée par défaut."
+          : "Le scope serveur Collection est fermé ou en cours de vérification.",
       });
       return;
     }
@@ -512,6 +542,10 @@ const FileUpload = () => {
           review={collectionReview}
           promoting={promoting}
           promotionDone={!!promotionResult}
+          promotionAllowed={canPromoteCollections}
+          promotionBlockedReason={collectionPromotionScopeQuery.isError
+            ? 'Verrou serveur indisponible — promotion refusée.'
+            : 'Scope serveur fermé ou en cours de vérification — review locale uniquement.'}
           onPromote={handlePromote}
         />
       )}

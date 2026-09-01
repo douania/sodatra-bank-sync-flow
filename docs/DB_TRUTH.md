@@ -264,3 +264,32 @@ Les nouvelles migrations (`20250625000000`, `20250626101100`) sont antérieures
 au dernier appliqué prod : un futur `db push` prod exigerait `--include-all`
 (ou un repair-mark) — décision réservée à un lot prod dédié avec GO explicite.
 Elles sont no-op sur base conforme par construction.
+
+---
+
+## 9. Candidat d'activation contrôlée Collection Report (non appliqué)
+
+Le lot local du 2026-09-01 ajoute la migration candidate
+`20260901000000_collection_report_controlled_production_activation.sql`.
+**Aucun environnement live n'a été modifié** et ce fichier ne fait donc pas
+encore partie de la vérité DB staging ou production.
+
+Le candidat ne change aucune colonne, contrainte ou index historique de
+`collection_report`, ni `unique_excel_traceability`, ni le câblage du trigger
+`trg_detect_collection_type`. Il redéfinit toutefois sa fonction active
+`detect_collection_type()` de façon conservatrice : une valeur effet/chèque
+déjà enrichie n'est jamais écrasée par une nouvelle dérivation. Il ajoute :
+
+- un schéma privé de scope expirant, commandes, capacité transactionnelle et
+  audit avant/après ;
+- un RPC atomique d'import sur la clé canonique
+  `(excel_filename, excel_source_row)`, normalisée avant tout usage, avec rejeu
+  conservateur, verrouillage des lignes existantes avant leur préimage d'audit
+  et refus de toute divergence d'identité stable ;
+- un trigger bloquant les INSERT directs et les UPDATE directs de l'identité
+  stable hors capacité privée créée par le RPC.
+
+Avant application, un GO staging distinct doit confirmer la vérité de cette
+section, les propriétaires/droits réels des fonctions, la compatibilité avec
+les enrichissements existants et l'absence de dérive de ledger. Rapport :
+`docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
