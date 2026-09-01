@@ -45,7 +45,7 @@ function Wait-PostgresFinalReady {
     Start-Sleep -Milliseconds 500
   }
 
-  throw 'PostgreSQL 17 final server did not become ready within 30 seconds'
+  throw 'PostgreSQL 17 final server did not become ready after 60 attempts'
 }
 
 try {

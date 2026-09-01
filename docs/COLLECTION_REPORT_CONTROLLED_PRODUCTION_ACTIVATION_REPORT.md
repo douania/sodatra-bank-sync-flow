@@ -18,6 +18,10 @@ reste sans capacité d'écriture tant que la migration et le runtime n'ont pas
 
 ## Hotfix PG17 CI readiness
 
+GO reçus pour ce pack :
+`GO_IMPLEMENT_COLLECTION_REPORT_PG17_CI_READINESS_HARDENING`, puis
+`GO_FIX_COLLECTION_REPORT_PG17_CI_READINESS_HARDENING_REVIEW_FINDINGS`.
+
 La PR #143 a été fusionnée dans `main` au commit `22f7cf9`. Son préflight
 staging read-only a confirmé la cible `gbbsqcscryygqlmqncyv`, le ledger exact
 des 43 migrations antérieures, l'absence du candidat `20260901000000`, les
@@ -25,21 +29,31 @@ objets privés absents, le scope fermé par absence et une table
 `collection_report` vide et conforme. Aucune migration ni mutation staging n'a
 été exécutée.
 
-La CI du merge a ensuite échoué avant le premier SQL : `pg_isready` avait pu
+La CI du merge `33535208111` a ensuite échoué avant le premier SQL : `pg_isready` avait pu
 observer le serveur PostgreSQL temporaire utilisé par l'image officielle pour
 l'initialisation, puis `psql` avait rencontré le redémarrage vers le serveur
 final. Ce défaut de synchronisation du runner ne modifie pas le contrat SQL,
 mais bloque volontairement l'application staging tant que `main` n'est pas de
 nouveau vert.
 
-Le hotfix `COLLECTION-REPORT-PG17-CI-READINESS-HARDENING` attend désormais le
-marqueur de fin du bootstrap Docker, vérifie que le conteneur reste actif, puis
-exige qu'un vrai `SELECT 1` réussisse sur le serveur final. La fenêtre maximale
-reste bornée à 30 secondes, une lecture de logs encore vide est traitée comme
-un état d'attente normal et le teardown fail-closed existant est conservé.
-Quatre créations successives de conteneur PostgreSQL 17 ont rejoué localement
-l'intégralité du contrat avec les deux tests de concurrence et la suppression
-du conteneur : 4 PASS, 0 FAIL.
+Le premier SHA du hotfix, `09c0139`, attendait le marqueur de fin du bootstrap
+Docker, vérifiait que le conteneur restait actif, puis exigeait un vrai
+`SELECT 1` sur le serveur final. Quatre replays locaux complets et consécutifs
+ont réussi sur ce SHA. Sa CI `33536836132` a néanmoins échoué avant le replay :
+sous pwsh Linux, `docker logs` pouvait ne produire encore aucune ligne et
+`[string]::Join` refusait alors la valeur `null`.
+
+Le SHA `b999a83` traite cette absence de logs comme un état d'attente normal via
+`@($containerLogs) -join "`n"`. Un replay local complet post-correction a réussi,
+puis la CI finale `33537123541`, job `99954049972`, a validé le même SHA :
+contrat Collection PASS, concurrence scope PASS à 2 727 ms, préimage d'audit
+PASS à 2 708 ms, teardown PASS et build PASS en 11,87 s. La boucle reste bornée
+à 60 tentatives et 30 secondes de sommeil cumulé ; les appels Docker ajoutent
+leur propre durée, donc ce chiffre n'est pas un plafond mural. Le teardown
+fail-closed existant est conservé. Après correction des findings de review, un
+replay local complet supplémentaire a validé le delta final : contrat PASS,
+concurrence scope PASS à 2 766 ms, préimage d'audit PASS à 2 407 ms et teardown
+PASS.
 
 ## Diagnostic initial
 
@@ -220,4 +234,4 @@ secret, JWT réel ou environnement Supabase n'a été lu pendant les tests du lo
   commit ne font pas partie de cet ingest atomique ; ils exigent des lots de
   gouvernance distincts.
 
-Verdict local du hotfix : **`PASS — PG17_FINAL_SERVER_READINESS_PROVEN — DRAFT_PR_PENDING_REVIEW`**.
+Verdict local du hotfix : **`PASS — REVIEW_FINDINGS_FIXED — NEW_SHA_PENDING_REVALIDATION`**.
