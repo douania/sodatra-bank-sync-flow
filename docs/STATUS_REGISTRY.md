@@ -54,7 +54,8 @@ La CI post-merge `33535208111` a échoué avant le premier SQL : `pg_isready`
 avait observé le serveur temporaire d'initialisation de l'image PostgreSQL,
 puis le premier `psql` a rencontré son redémarrage final. Le hotfix dédié
 attend maintenant le marqueur de fin de bootstrap et un vrai `SELECT 1` sur le
-serveur final. Quatre replays locaux consécutifs sont PASS, avec les deux
+serveur final ; une lecture de logs encore vide reste un état d'attente normal.
+Quatre replays locaux consécutifs sont PASS, avec les deux
 preuves de concurrence et le teardown. L'application staging reste bloquée
 jusqu'à review, merge et CI verte de ce hotfix.
 

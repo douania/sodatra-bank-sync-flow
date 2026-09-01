@@ -35,7 +35,8 @@ nouveau vert.
 Le hotfix `COLLECTION-REPORT-PG17-CI-READINESS-HARDENING` attend désormais le
 marqueur de fin du bootstrap Docker, vérifie que le conteneur reste actif, puis
 exige qu'un vrai `SELECT 1` réussisse sur le serveur final. La fenêtre maximale
-reste bornée à 30 secondes et le teardown fail-closed existant est conservé.
+reste bornée à 30 secondes, une lecture de logs encore vide est traitée comme
+un état d'attente normal et le teardown fail-closed existant est conservé.
 Quatre créations successives de conteneur PostgreSQL 17 ont rejoué localement
 l'intégralité du contrat avec les deux tests de concurrence et la suppression
 du conteneur : 4 PASS, 0 FAIL.

@@ -36,7 +36,8 @@ function Wait-PostgresFinalReady {
     # marker, then prove the final server accepts a real SQL query.
     $containerLogs = docker logs $container 2>&1
     if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect PostgreSQL 17 startup logs' }
-    if ([string]::Join("`n", $containerLogs) -match [regex]::Escape($initCompleteMarker)) {
+    $containerLogsText = @($containerLogs) -join "`n"
+    if ($containerLogsText -match [regex]::Escape($initCompleteMarker)) {
       docker exec $container psql -v ON_ERROR_STOP=1 -U postgres -d postgres -At -c 'SELECT 1' *> $null
       if ($LASTEXITCODE -eq 0) { return }
     }
