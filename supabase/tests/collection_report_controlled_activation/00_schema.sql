@@ -79,8 +79,62 @@ CREATE TABLE public.collection_report (
 CREATE UNIQUE INDEX idx_collection_excel_source
   ON public.collection_report(excel_filename, excel_source_row)
   WHERE excel_filename IS NOT NULL AND excel_source_row IS NOT NULL;
+ALTER TABLE public.collection_report
+  ADD CONSTRAINT unique_excel_traceability UNIQUE (unique_excel_traceability);
+
+CREATE FUNCTION public.detect_collection_type()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.collection_type IS NOT NULL AND NEW.collection_type <> 'UNKNOWN' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.no_chq_bd IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.no_chq_bd ~ '^\d{2}[/\-]\d{2}[/\-]\d{4}$'
+     OR NEW.no_chq_bd ~ '^\d{4}[/\-]\d{2}[/\-]\d{2}$'
+  THEN
+    NEW.collection_type := 'EFFET';
+    NEW.effet_status := COALESCE(NEW.effet_status, 'PENDING');
+  ELSIF NEW.no_chq_bd ~ '^\d+$' THEN
+    NEW.collection_type := 'CHEQUE';
+    NEW.cheque_number := COALESCE(NEW.cheque_number, NEW.no_chq_bd);
+    NEW.cheque_status := COALESCE(NEW.cheque_status, 'PENDING');
+  ELSE
+    NEW.collection_type := COALESCE(NEW.collection_type, 'UNKNOWN');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_detect_collection_type
+BEFORE INSERT OR UPDATE ON public.collection_report
+FOR EACH ROW EXECUTE FUNCTION public.detect_collection_type();
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.collection_report TO authenticated;
+ALTER TABLE public.collection_report ENABLE ROW LEVEL SECURITY;
+CREATE POLICY collection_report_select ON public.collection_report
+  FOR SELECT TO authenticated
+  USING (true);
+CREATE POLICY collection_report_insert ON public.collection_report
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(auth.uid(), 'admin'::public.app_role)
+    OR public.has_role(auth.uid(), 'manager'::public.app_role)
+  );
+CREATE POLICY collection_report_update ON public.collection_report
+  FOR UPDATE TO authenticated
+  USING (
+    public.has_role(auth.uid(), 'admin'::public.app_role)
+    OR public.has_role(auth.uid(), 'manager'::public.app_role)
+  )
+  WITH CHECK (
+    public.has_role(auth.uid(), 'admin'::public.app_role)
+    OR public.has_role(auth.uid(), 'manager'::public.app_role)
+  );
 
 CREATE SCHEMA test;
 CREATE FUNCTION test.assert(p_condition boolean, p_message text) RETURNS void

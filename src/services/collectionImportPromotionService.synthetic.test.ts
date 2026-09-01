@@ -212,7 +212,7 @@ function identityRow(seed: number): Partial<CollectionReport> {
   };
 }
 
-test('diagnostic de décalage : seuil absolu 5 et relatif 20 %', () => {
+test('diagnostic de décalage : toute divergence d’identité stable bloque', () => {
   const identical = (count: number, offset = 0) =>
     Array.from({ length: count }, (_, index) =>
       shiftComparison(identityRow(offset + index), identityRow(offset + index))
@@ -221,8 +221,8 @@ test('diagnostic de décalage : seuil absolu 5 et relatif 20 %', () => {
     Array.from({ length: count }, (_, index) =>
       shiftComparison(identityRow(offset + index), identityRow(offset + index + 1000))
     );
-  assert.equal(assessCollectionRowShift([...identical(26), ...divergent(4, 100)]).blocked, false);
-  const absolute = assessCollectionRowShift([...identical(25), ...divergent(5, 100)]);
+  assert.equal(assessCollectionRowShift(identical(30)).blocked, false);
+  const absolute = assessCollectionRowShift([...identical(99), ...divergent(1, 100)]);
   assert.equal(absolute.divergentCount, COLLECTION_SHIFT_MIN_DIVERGENT_ROWS);
   assert.equal(absolute.blocked, true);
   assert.equal(assessCollectionRowShift([...identical(8), ...divergent(2, 100)]).blocked, true);
@@ -254,11 +254,19 @@ test('contrat serveur : scope expirant, RPC atomique, audit et garde anti-contou
   assert.match(migration, /SECURITY DEFINER/);
   assert.match(migration, /COLLECTION_IMPORT_FORBIDDEN/);
   assert.match(migration, /assert_promotion_scope_v1\(\)/);
+  assert.match(migration, /FROM collection_import_private\.runtime_control AS control[\s\S]*FOR SHARE/);
+  assert.match(migration, /v_enabled_until <= clock_timestamp\(\)/);
   assert.match(migration, /pg_advisory_xact_lock/);
+  assert.match(migration, /encode\(sha256\(convert_to\(p_rows::text, 'UTF8'\)\), 'hex'\)/);
   assert.match(migration, /jsonb_array_length\(p_rows\) NOT BETWEEN 1 AND 5000/);
   assert.match(migration, /COLLECTION_IMPORT_DUPLICATE_TRACEABILITY_IN_PAYLOAD/);
   assert.match(migration, /COLLECTION_IMPORT_MASS_ROW_SHIFT_DETECTED/);
   assert.match(migration, /ON CONFLICT \(excel_filename, excel_source_row\)/);
+  assert.doesNotMatch(migration, /status = EXCLUDED\.status/);
+  assert.doesNotMatch(migration, /processing_status = EXCLUDED\.processing_status/);
+  assert.match(migration, /date_of_validity = COALESCE\(current_row\.date_of_validity, EXCLUDED\.date_of_validity\)/);
+  assert.match(migration, /GET DIAGNOSTICS v_audit_rows = ROW_COUNT/);
+  assert.match(migration, /COLLECTION_IMPORT_AUDIT_INCOMPLETE/);
   assert.doesNotMatch(migration, /set_config\('sodatra\.collection_import_authorized'/);
   assert.match(migration, /COLLECTION_IMPORT_ATOMIC_RPC_REQUIRED/);
   assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.import_collection_report_atomic_v1\(uuid,jsonb\)[\s\S]*TO authenticated/);

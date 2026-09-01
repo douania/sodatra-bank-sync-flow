@@ -32,10 +32,6 @@ import {
   isCollectionImportTargetAllowed,
 } from '@/services/collectionImportRuntimeTarget';
 import { readCollectionReportPromotionScope } from '@/services/collectionReportAtomicImportService';
-import {
-  COLLECTION_IMPORT_MAX_FILE_BYTES,
-  COLLECTION_IMPORT_MAX_FILES,
-} from '@/services/collectionImportLimits';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   evaluateOperationalImportAccess,
@@ -222,8 +218,6 @@ const FileUpload = () => {
       'application/pdf': ['.pdf']
     },
     multiple: true,
-    maxFiles: COLLECTION_IMPORT_MAX_FILES,
-    maxSize: COLLECTION_IMPORT_MAX_FILE_BYTES,
   });
   
   const removeFile = (fileToRemove: File) => {

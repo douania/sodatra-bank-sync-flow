@@ -29,7 +29,7 @@ export interface CollectionAtomicPromotionEngine {
 export type CollectionPromotionGate = () => { allowed: boolean };
 
 // ---------------------------------------------------------------------------
-// ⭐ DAILY-INGESTION-0C — Garde-fou de décalage massif des lignes Collection.
+// ⭐ DAILY-INGESTION-0C — Garde-fou de décalage des lignes Collection.
 //
 // Un fichier cumulatif réexporté avec une ligne insérée au milieu (ou un tri
 // modifié) décale toutes les excel_source_row suivantes : l'idempotence par
@@ -47,8 +47,7 @@ export type CollectionPromotionGate = () => { allowed: boolean };
 // produirait une divergence systématique artificielle (faux positifs).
 // ---------------------------------------------------------------------------
 
-export const COLLECTION_SHIFT_MIN_DIVERGENT_ROWS = 5;
-export const COLLECTION_SHIFT_MAX_DIVERGENT_RATIO = 0.2;
+export const COLLECTION_SHIFT_MIN_DIVERGENT_ROWS = 1;
 
 const STABLE_IDENTITY_FIELDS = [
   'reportDate',
@@ -85,10 +84,10 @@ export function assessCollectionRowShift(
     }
   }
 
-  const blocked =
-    divergentCount >= COLLECTION_SHIFT_MIN_DIVERGENT_ROWS ||
-    (comparedExistingCount > 0 &&
-      divergentCount / comparedExistingCount >= COLLECTION_SHIFT_MAX_DIVERGENT_RATIO);
+  // Une même clé Excel ne peut pas désigner deux identités métier différentes.
+  // Toute divergence exige un futur workflow de correction explicite ; l'import
+  // ordinaire échoue fermé, même pour 1 ligne sur un grand fichier.
+  const blocked = divergentCount >= COLLECTION_SHIFT_MIN_DIVERGENT_ROWS;
 
   return { comparedExistingCount, divergentCount, blocked };
 }

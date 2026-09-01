@@ -17,21 +17,26 @@
 
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — LOCAL_READY_FOR_INDEPENDENT_REVIEW` (2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — FIXES_READY_FOR_INDEPENDENT_REVALIDATION` (2026-09-01 Europe/Paris)**
 
 Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
 promotion Collection Report par RPC atomique unique, scope serveur privé fermé
 par défaut et expirant, idempotence acteur/commande déterministe sur le payload
-exact, audit avant/après, garde
-anti-décalage transactionnelle et validation fail-closed. Les insertions
+exact avec SHA-256 serveur, audit avant/après compté réellement, rejeu
+conservateur, normalisation de la clé Excel, verrou partagé du scope et
+validation fail-closed. Toute divergence d'identité stable est refusée. Les insertions
 directes et changements directs d'identité stable sont bloqués ; la capacité
 d'écriture interne est privée et liée à la transaction, donc non falsifiable
-par paramètre de session. Bornes : 10 fichiers, 15 Mo par fichier et 5 000
-lignes. En production, seul Collection Report peut atteindre la review locale ;
+par paramètre de session. Bornes Collection : 10 fichiers, 15 Mo par fichier et
+5 000 lignes sur l'unité atomique complète, sans modifier les autres familles.
+En production, seul Collection Report peut atteindre la review locale ;
 tous les autres chemins `/upload` restent fermés.
 
-Validation locale : 66 PASS / 0 FAIL / 2 SKIP documentés sur 68 tests ciblés,
-replay PostgreSQL 17 PASS avec conteneur supprimé, build PASS, artefact MCP
+La contre-review du SHA `631ce3f` avait relevé 1 P0 et 2 P1 ; les trois sont
+réconciliés et attendent une revalidation indépendante du nouveau SHA.
+Validation locale : 68 PASS / 0 FAIL / 2 SKIP documentés sur 70 tests ciblés,
+replay PostgreSQL 17 PASS avec concurrence réelle (relock bloqué 2 486 ms) et
+conteneur supprimé, build PASS, artefact MCP
 inchangé, ESLint 180/11 et TypeScript 17 strictement identiques à la base.
 Migration candidate uniquement : aucun SQL live, merge, staging, publication ou
 production dans ce lot. Contre-review indépendante obligatoire avant merge.

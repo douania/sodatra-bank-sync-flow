@@ -54,7 +54,7 @@ CREATE TABLE collection_import_private.runtime_control_events (
 CREATE TABLE collection_import_private.commands (
   actor_id uuid NOT NULL,
   command_key uuid NOT NULL,
-  payload_hash text NOT NULL CHECK (payload_hash ~ '^[0-9a-f]{32}$'),
+  payload_hash text NOT NULL CHECK (payload_hash ~ '^[0-9a-f]{64}$'),
   row_count integer NOT NULL CHECK (row_count BETWEEN 1 AND 5000),
   result_payload jsonb,
   created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
@@ -222,11 +222,12 @@ BEGIN
   SELECT control.promotion_scope_enabled, control.enabled_until
   INTO v_enabled, v_enabled_until
   FROM collection_import_private.runtime_control AS control
-  WHERE control.singleton = true;
+  WHERE control.singleton = true
+  FOR SHARE;
 
   IF COALESCE(v_enabled, false) IS NOT TRUE
      OR v_enabled_until IS NULL
-     OR v_enabled_until <= statement_timestamp()
+     OR v_enabled_until <= clock_timestamp()
   THEN
     RAISE EXCEPTION USING
       ERRCODE = '25006',
@@ -237,20 +238,33 @@ $$;
 
 CREATE FUNCTION public.collection_report_promotion_enabled_v1()
 RETURNS boolean
-LANGUAGE sql
-STABLE
+LANGUAGE plpgsql
+VOLATILE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
+DECLARE
+  v_actor uuid := auth.uid();
+  v_enabled boolean;
+BEGIN
+  IF v_actor IS NULL OR NOT (
+    public.has_role(v_actor, 'admin'::public.app_role)
+    OR public.has_role(v_actor, 'manager'::public.app_role)
+  ) THEN
+    RETURN false;
+  END IF;
+
   SELECT COALESCE(
-    (
-      SELECT control.promotion_scope_enabled
-             AND control.enabled_until > statement_timestamp()
-      FROM collection_import_private.runtime_control AS control
-      WHERE control.singleton = true
-    ),
+    control.promotion_scope_enabled
+    AND control.enabled_until > clock_timestamp(),
     false
-  );
+  )
+  INTO v_enabled
+  FROM collection_import_private.runtime_control AS control
+  WHERE control.singleton = true;
+
+  RETURN COALESCE(v_enabled, false);
+END;
 $$;
 
 CREATE FUNCTION collection_import_private.guard_collection_report_write_v1()
@@ -318,6 +332,7 @@ DECLARE
   v_compared integer;
   v_divergent integer;
   v_inserted integer;
+  v_audit_rows integer;
   v_result jsonb;
 BEGIN
   IF v_actor IS NULL OR NOT (
@@ -341,7 +356,7 @@ BEGIN
   END IF;
 
   v_total := jsonb_array_length(p_rows);
-  v_payload_hash := md5(p_rows::text);
+  v_payload_hash := encode(sha256(convert_to(p_rows::text, 'UTF8')), 'hex');
 
   PERFORM pg_advisory_xact_lock(hashtextextended('collection-report-atomic-import-v1', 0));
 
@@ -351,10 +366,16 @@ BEGIN
     v_actor, p_command_key, v_payload_hash, v_total
   ) ON CONFLICT DO NOTHING;
 
-  SELECT * INTO v_command
-  FROM collection_import_private.commands
-  WHERE actor_id = v_actor AND command_key = p_command_key
+  SELECT ledger.* INTO v_command
+  FROM collection_import_private.commands AS ledger
+  WHERE ledger.actor_id = v_actor AND ledger.command_key = p_command_key
   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'COLLECTION_IMPORT_COMMAND_LEDGER_MISSING';
+  END IF;
 
   IF v_command.payload_hash <> v_payload_hash OR v_command.row_count <> v_total THEN
     RAISE EXCEPTION USING
@@ -458,8 +479,45 @@ BEGIN
   ) ON COMMIT DROP;
   TRUNCATE pg_temp.collection_import_rows_v1;
 
-  INSERT INTO pg_temp.collection_import_rows_v1
-  SELECT *
+  INSERT INTO pg_temp.collection_import_rows_v1 (
+    report_date, client_code, collection_amount, bank_name, status,
+    collection_type, effet_echeance_date, effet_status, cheque_number, cheque_status,
+    excel_filename, excel_source_row, date_of_validity, facture_no, no_chq_bd,
+    bank_name_display, depo_ref, nj, taux, interet, commission, tob,
+    frais_escompte, bank_commission, sg_or_fa_no, d_n_amount, income,
+    date_of_impay, reglement_impaye, remarques
+  )
+  SELECT
+    x.report_date,
+    btrim(x.client_code),
+    x.collection_amount,
+    btrim(x.bank_name),
+    btrim(x.status),
+    NULLIF(btrim(x.collection_type), ''),
+    x.effet_echeance_date,
+    NULLIF(btrim(x.effet_status), ''),
+    NULLIF(btrim(x.cheque_number), ''),
+    NULLIF(btrim(x.cheque_status), ''),
+    btrim(x.excel_filename),
+    x.excel_source_row,
+    x.date_of_validity,
+    NULLIF(btrim(x.facture_no), ''),
+    NULLIF(btrim(x.no_chq_bd), ''),
+    NULLIF(btrim(x.bank_name_display), ''),
+    NULLIF(btrim(x.depo_ref), ''),
+    x.nj,
+    x.taux,
+    x.interet,
+    x.commission,
+    x.tob,
+    x.frais_escompte,
+    x.bank_commission,
+    NULLIF(btrim(x.sg_or_fa_no), ''),
+    x.d_n_amount,
+    x.income,
+    x.date_of_impay,
+    x.reglement_impaye,
+    NULLIF(btrim(x.remarques), '')
   FROM jsonb_to_recordset(p_rows) AS x(
     report_date date,
     client_code text,
@@ -546,9 +604,7 @@ BEGIN
     ON existing.excel_filename = incoming.excel_filename
    AND existing.excel_source_row = incoming.excel_source_row;
 
-  IF v_divergent >= 5
-     OR (v_compared > 0 AND v_divergent::numeric / v_compared::numeric >= 0.20)
-  THEN
+  IF v_divergent > 0 THEN
     RAISE EXCEPTION USING
       ERRCODE = '22023',
       MESSAGE = format(
@@ -582,13 +638,19 @@ BEGIN
 
   v_inserted := v_total - v_compared;
 
+  -- La première assertion détient un verrou partagé sur le singleton jusqu'à
+  -- la fin de la transaction. Cette seconde lecture, au plus près de l'écriture
+  -- et fondée sur l'horloge réelle, refuse aussi une portée expirée pendant la
+  -- validation du payload.
+  PERFORM collection_import_private.assert_promotion_scope_v1();
+
   INSERT INTO collection_import_private.write_contexts (
     transaction_id, actor_id, command_key
   ) VALUES (
     txid_current(), v_actor, p_command_key
   );
 
-  INSERT INTO public.collection_report (
+  INSERT INTO public.collection_report AS current_row (
     report_date, client_code, collection_amount, bank_name, status,
     collection_type, effet_echeance_date, effet_status, cheque_number, cheque_status,
     excel_filename, excel_source_row, excel_processed_at,
@@ -598,9 +660,9 @@ BEGIN
     processing_status, processed_at
   )
   SELECT
-    report_date, btrim(client_code), collection_amount, btrim(bank_name), status,
+    report_date, client_code, collection_amount, bank_name, status,
     collection_type, effet_echeance_date, effet_status, cheque_number, cheque_status,
-    btrim(excel_filename), excel_source_row, statement_timestamp(),
+    excel_filename, excel_source_row, statement_timestamp(),
     date_of_validity, facture_no, no_chq_bd, bank_name_display, depo_ref,
     nj, taux, interet, commission, tob, frais_escompte, bank_commission,
     sg_or_fa_no, d_n_amount, income, date_of_impay, reglement_impaye, remarques,
@@ -609,37 +671,31 @@ BEGIN
   ON CONFLICT (excel_filename, excel_source_row)
     WHERE excel_filename IS NOT NULL AND excel_source_row IS NOT NULL
   DO UPDATE SET
-    report_date = EXCLUDED.report_date,
-    client_code = EXCLUDED.client_code,
-    collection_amount = EXCLUDED.collection_amount,
-    bank_name = EXCLUDED.bank_name,
-    status = EXCLUDED.status,
-    collection_type = EXCLUDED.collection_type,
-    effet_echeance_date = EXCLUDED.effet_echeance_date,
-    effet_status = EXCLUDED.effet_status,
-    cheque_number = EXCLUDED.cheque_number,
-    cheque_status = EXCLUDED.cheque_status,
-    excel_processed_at = EXCLUDED.excel_processed_at,
-    date_of_validity = EXCLUDED.date_of_validity,
-    facture_no = EXCLUDED.facture_no,
-    no_chq_bd = EXCLUDED.no_chq_bd,
-    bank_name_display = EXCLUDED.bank_name_display,
-    depo_ref = EXCLUDED.depo_ref,
-    nj = EXCLUDED.nj,
-    taux = EXCLUDED.taux,
-    interet = EXCLUDED.interet,
-    commission = EXCLUDED.commission,
-    tob = EXCLUDED.tob,
-    frais_escompte = EXCLUDED.frais_escompte,
-    bank_commission = EXCLUDED.bank_commission,
-    sg_or_fa_no = EXCLUDED.sg_or_fa_no,
-    d_n_amount = EXCLUDED.d_n_amount,
-    income = EXCLUDED.income,
-    date_of_impay = EXCLUDED.date_of_impay,
-    reglement_impaye = EXCLUDED.reglement_impaye,
-    remarques = EXCLUDED.remarques,
-    processing_status = EXCLUDED.processing_status,
-    processed_at = EXCLUDED.processed_at;
+    -- Rejeu conservateur : l'identité stable a déjà été vérifiée identique.
+    -- Les états opérationnels (status, processing_status, processed_at,
+    -- impayés et statuts effet/chèque) ne sont jamais réinitialisés. Seules les
+    -- lacunes d'enrichissement peuvent être complétées par le fichier entrant.
+    collection_type = COALESCE(current_row.collection_type, EXCLUDED.collection_type),
+    effet_echeance_date = COALESCE(current_row.effet_echeance_date, EXCLUDED.effet_echeance_date),
+    effet_status = COALESCE(current_row.effet_status, EXCLUDED.effet_status),
+    cheque_number = COALESCE(current_row.cheque_number, EXCLUDED.cheque_number),
+    cheque_status = COALESCE(current_row.cheque_status, EXCLUDED.cheque_status),
+    date_of_validity = COALESCE(current_row.date_of_validity, EXCLUDED.date_of_validity),
+    bank_name_display = COALESCE(current_row.bank_name_display, EXCLUDED.bank_name_display),
+    depo_ref = COALESCE(current_row.depo_ref, EXCLUDED.depo_ref),
+    nj = COALESCE(current_row.nj, EXCLUDED.nj),
+    taux = COALESCE(current_row.taux, EXCLUDED.taux),
+    interet = COALESCE(current_row.interet, EXCLUDED.interet),
+    commission = COALESCE(current_row.commission, EXCLUDED.commission),
+    tob = COALESCE(current_row.tob, EXCLUDED.tob),
+    frais_escompte = COALESCE(current_row.frais_escompte, EXCLUDED.frais_escompte),
+    bank_commission = COALESCE(current_row.bank_commission, EXCLUDED.bank_commission),
+    sg_or_fa_no = COALESCE(current_row.sg_or_fa_no, EXCLUDED.sg_or_fa_no),
+    d_n_amount = COALESCE(current_row.d_n_amount, EXCLUDED.d_n_amount),
+    income = COALESCE(current_row.income, EXCLUDED.income),
+    date_of_impay = COALESCE(current_row.date_of_impay, EXCLUDED.date_of_impay),
+    reglement_impaye = COALESCE(current_row.reglement_impaye, EXCLUDED.reglement_impaye),
+    remarques = COALESCE(current_row.remarques, EXCLUDED.remarques);
 
   DELETE FROM collection_import_private.write_contexts
   WHERE transaction_id = txid_current()
@@ -669,13 +725,25 @@ BEGIN
     ON current_row.excel_filename = before.excel_filename
    AND current_row.excel_source_row = before.excel_source_row;
 
+  GET DIAGNOSTICS v_audit_rows = ROW_COUNT;
+
+  IF v_audit_rows <> v_total THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = format(
+        'COLLECTION_IMPORT_AUDIT_INCOMPLETE: %s audited rows of %s',
+        v_audit_rows,
+        v_total
+      );
+  END IF;
+
   v_result := jsonb_build_object(
     'command_key', p_command_key,
     'total_rows', v_total,
     'inserted_rows', v_inserted,
     'updated_rows', v_compared,
     'divergent_rows', v_divergent,
-    'audit_rows', v_total
+    'audit_rows', v_audit_rows
   );
 
   UPDATE collection_import_private.commands

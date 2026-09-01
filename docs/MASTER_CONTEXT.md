@@ -136,8 +136,9 @@ preuve synthétique ne vaut promotion production.
 
 Le pack local `COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION` prépare une
 promotion atomique sous scope serveur privé, fermé par défaut et expirant, avec
-validation stricte, idempotence acteur/commande, audit avant/après et garde
-anti-décalage dans la transaction. Il ne constitue pas une activation : la
+validation stricte, idempotence acteur/commande SHA-256, rejeu conservateur,
+audit avant/après vérifié et refus de toute divergence d'identité sous verrou
+de scope transactionnel. Il ne constitue pas une activation : la
 migration candidate `20260901000000_collection_report_controlled_production_activation.sql`
 n'est appliquée à aucun environnement et le runtime production reste fermé.
 Voir `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.

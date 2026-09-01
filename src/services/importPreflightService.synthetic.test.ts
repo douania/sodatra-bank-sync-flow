@@ -97,6 +97,24 @@ test('borne la taille et le nombre de fichiers avant parsing', () => {
   assert.ok(tooMany.entries.every(entry => entry.issues.some(issue => issue.code === 'TOO_MANY_FILES')));
 });
 
+test('réserve les bornes 15 Mo / 10 fichiers à Collection Report', () => {
+  const oversizedBankReport = buildImportPreflight([
+    file('Releve BDK.pdf', COLLECTION_IMPORT_MAX_FILE_BYTES + 1),
+  ]);
+  assert.equal(oversizedBankReport.canProcess, true);
+  assert.ok(!oversizedBankReport.entries[0].issues.some(issue => issue.code === 'FILE_TOO_LARGE'));
+
+  const elevenBankReports = buildImportPreflight(
+    Array.from({ length: COLLECTION_IMPORT_MAX_FILES + 1 }, (_, index) =>
+      file(`Releve BDK ${index}.pdf`, 1024, index + 1)
+    ),
+  );
+  assert.equal(elevenBankReports.canProcess, true);
+  assert.ok(elevenBankReports.entries.every(entry => (
+    !entry.issues.some(issue => issue.code === 'TOO_MANY_FILES')
+  )));
+});
+
 test('le scope production contrôlé autorise uniquement Collection Report', () => {
   const result = buildImportPreflight(
     [file('Collection Report.xlsx'), file('synthetic-BDK-internal-book.xlsx')],
@@ -169,5 +187,7 @@ test('la page upload applique le précontrôle avant toute mutation', () => {
   assert.match(pageSource, /disabled=\{processing \|\| !importPreflight\.canProcess\}/);
   assert.match(pageSource, /buildImportPreflight\(selectedFiles, \{/);
   assert.match(pageSource, /allowedDocumentKinds: deploymentTarget === 'production'/);
+  assert.doesNotMatch(pageSource, /maxFiles: COLLECTION_IMPORT_MAX_FILES/);
+  assert.doesNotMatch(pageSource, /maxSize: COLLECTION_IMPORT_MAX_FILE_BYTES/);
   assert.doesNotMatch(pageSource, /return 'Autre Document'/);
 });

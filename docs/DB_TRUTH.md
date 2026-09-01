@@ -281,7 +281,8 @@ Le candidat ne change aucune colonne, contrainte ou index historique de
 - un schéma privé de scope expirant, commandes, capacité transactionnelle et
   audit avant/après ;
 - un RPC atomique d'import sur la clé canonique
-  `(excel_filename, excel_source_row)` ;
+  `(excel_filename, excel_source_row)`, normalisée avant tout usage, avec rejeu
+  conservateur et refus de toute divergence d'identité stable ;
 - un trigger bloquant les INSERT directs et les UPDATE directs de l'identité
   stable hors capacité privée créée par le RPC.
 

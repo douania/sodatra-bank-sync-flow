@@ -207,7 +207,7 @@ export async function promoteCollectionReportAtomically(
       COLLECTION_IMPORT_ROW_VALUES_INVALID: 'Une valeur Collection obligatoire est invalide.',
       COLLECTION_IMPORT_FILE_LIMIT_EXCEEDED: 'Le lot Collection dépasse la limite de fichiers.',
       COLLECTION_IMPORT_DUPLICATE_TRACEABILITY_IN_PAYLOAD: 'La sélection contient une traçabilité dupliquée.',
-      COLLECTION_IMPORT_MASS_ROW_SHIFT_DETECTED: 'Un décalage massif de lignes a été détecté ; aucune écriture effectuée.',
+      COLLECTION_IMPORT_MASS_ROW_SHIFT_DETECTED: 'Une clé Excel correspond à une identité métier différente ; aucune écriture effectuée.',
     };
     const safeMessage = Object.entries(knownErrors).find(([code]) => error.message?.includes(code))?.[1];
     throw new Error(safeMessage ?? 'Promotion atomique Collection refusée ; aucune écriture partielle attendue.');

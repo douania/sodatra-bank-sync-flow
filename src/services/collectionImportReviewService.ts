@@ -6,6 +6,7 @@ import type {
   CollectionReviewRow,
   ExcelImportIssue,
 } from '@/types/processing';
+import { COLLECTION_IMPORT_MAX_ROWS } from './collectionImportLimits';
 
 // ⭐ PACK-C — Service de staging/review pour l'import Collection Report Excel.
 //
@@ -73,6 +74,14 @@ export function buildReviewFromExcelResults(results: NamedExcelResult[]): Collec
         proposedStatus: undefined,
       });
     }
+  }
+
+  if (acceptedRows.length > COLLECTION_IMPORT_MAX_ROWS) {
+    fileLevelErrors.push({
+      file: 'Lot Collection Report',
+      message: `Le lot contient ${acceptedRows.length} lignes acceptées ; la limite atomique est de ${COLLECTION_IMPORT_MAX_ROWS}. Import annulé sans troncature.`,
+    });
+    acceptedRows.length = 0;
   }
 
   return {
