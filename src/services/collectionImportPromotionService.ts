@@ -1,14 +1,12 @@
-import { aggregateBatchSyncResults } from './syncResultAggregator';
 import {
-  currentUploadMutationVerdict,
-  UPLOAD_READ_ONLY_TARGET_MESSAGE,
-  type UploadMutationGate,
-} from './uploadRuntimeGuard';
+  COLLECTION_IMPORT_TARGET_BLOCKED_MESSAGE,
+  currentCollectionImportTargetVerdict,
+} from './collectionImportRuntimeTarget';
 import type { CollectionReport } from '@/types/banking';
 import type {
   CollectionImportReview,
   CollectionPromotionResult,
-  PartialSyncResultData,
+  SyncResultData,
 } from '@/types/processing';
 import type { CollectionComparison } from './intelligentSyncService';
 
@@ -17,21 +15,18 @@ import type { CollectionComparison } from './intelligentSyncService';
 // Règles :
 //  - Promotion UNIQUEMENT après action utilisateur explicite (bouton dédié).
 //  - Promotion UNIQUEMENT des lignes validées (selected === true).
-//  - Idempotence : déléguée à la mécanique existante d'intelligentSyncService
-//    sur (excel_filename, excel_source_row). Aucune traçabilité artificielle.
-//  - Le moteur de sync est injectable : les tests synthétiques n'ont jamais
-//    besoin de Supabase live. Le moteur par défaut est chargé dynamiquement
-//    (le client Supabase ne supporte pas l'import hors Vite).
-//  - ⭐ DAILY-INGESTION-0C : garde-fou de décalage massif AVANT toute écriture
-//    (voir assessCollectionRowShift ci-dessous).
+//  - Idempotence : RPC atomique sur (excel_filename, excel_source_row), sans
+//    traçabilité artificielle ni écriture partielle.
+//  - Le moteur atomique est injectable pour les tests synthétiques ; le moteur
+//    par défaut est chargé dynamiquement car le client Supabase est Vite-only.
+//  - La garde de décalage autoritative s'exécute dans la même transaction SQL
+//    que les écritures. Le helper pur ci-dessous reste un diagnostic testable.
 
-export interface CollectionSyncEngine {
-  analyze(collections: CollectionReport[]): Promise<CollectionComparison[]>;
-  sync(comparisons: CollectionComparison[]): Promise<PartialSyncResultData>;
+export interface CollectionAtomicPromotionEngine {
+  promote(collections: CollectionReport[]): Promise<SyncResultData>;
 }
 
-// Aligné sur la taille de lot du flux legacy (BatchProcessingService).
-const PROMOTION_BATCH_SIZE = 50;
+export type CollectionPromotionGate = () => { allowed: boolean };
 
 // ---------------------------------------------------------------------------
 // ⭐ DAILY-INGESTION-0C — Garde-fou de décalage massif des lignes Collection.
@@ -39,10 +34,9 @@ const PROMOTION_BATCH_SIZE = 50;
 // Un fichier cumulatif réexporté avec une ligne insérée au milieu (ou un tri
 // modifié) décale toutes les excel_source_row suivantes : l'idempotence par
 // (excel_filename, excel_source_row) écraserait alors en masse des lignes
-// existantes par le contenu d'autres lignes. Avant TOUTE écriture, on compare
-// donc un fingerprint d'identité stable entre la ligne Excel entrante et la
-// ligne déjà en base pour chaque trace existante ; une divergence massive
-// bloque la promotion.
+// existantes par le contenu d'autres lignes. Le même calcul est appliqué de
+// façon autoritative par import_collection_report_atomic_v1 avant toute
+// écriture ; cette version pure sert à la review et aux tests de contrat.
 //
 // Champs d'identité stable : reportDate, clientCode, collectionAmount,
 // bankName, factureNo, noChqBd. Les champs enrichissables/volatils (status,
@@ -154,11 +148,10 @@ export function assertPromotionAllowed(review: CollectionImportReview | null | u
   return { allowed: true };
 }
 
-async function createDefaultCollectionSyncEngine(): Promise<CollectionSyncEngine> {
-  const { intelligentSyncService } = await import('./intelligentSyncService');
+async function createDefaultCollectionAtomicPromotionEngine(): Promise<CollectionAtomicPromotionEngine> {
+  const { promoteCollectionReportAtomically } = await import('./collectionReportAtomicImportService');
   return {
-    analyze: collections => intelligentSyncService.analyzeExcelFile(collections),
-    sync: comparisons => intelligentSyncService.processIntelligentSync(comparisons),
+    promote: collections => promoteCollectionReportAtomically(collections),
   };
 }
 
@@ -167,24 +160,19 @@ async function createDefaultCollectionSyncEngine(): Promise<CollectionSyncEngine
  * Seul point d'entrée du flux PACK-C qui déclenche des écritures DB, et
  * uniquement pour les lignes validées. Throw si la promotion n'est pas permise.
  *
- * ⭐ DAILY-INGESTION-0C : déroulé en trois phases pour que la garde de
- * décalage massif s'exécute AVANT la première écriture :
- *  1. analyser tous les lots validés (lecture seule) ;
- *  2. évaluer la garde de décalage sur l'ensemble des comparaisons ;
- *  3. seulement ensuite, synchroniser lot par lot.
+ * Le moteur par défaut effectue une unique RPC atomique. Validation, garde de
+ * décalage, idempotence, audit et écritures s'exécutent dans la même
+ * transaction PostgreSQL. Le helper assessCollectionRowShift reste un
+ * diagnostic pur, mais la décision de sécurité autoritative vit côté serveur.
  */
 export async function promoteValidatedCollections(
   review: CollectionImportReview,
-  engine?: CollectionSyncEngine,
-  // ⭐ 0Z_AM : garde injectable comme le moteur de sync — les tests synthétiques
-  // injectent une garde explicite ; le défaut reste canonique et fail-closed.
-  uploadMutationGate: UploadMutationGate = () => currentUploadMutationVerdict('promote')
+  engine?: CollectionAtomicPromotionEngine,
+  collectionPromotionGate: CollectionPromotionGate = () =>
+    currentCollectionImportTargetVerdict('promote')
 ): Promise<CollectionPromotionResult> {
-  // ⭐ 0Z_AM : refus fail-closed AVANT toute analyse ou écriture — la cible
-  // courante doit autoriser la capacité promote (production = lecture seule).
-  // Une cible qui saurait déposer sans promouvoir serait refusée ici.
-  if (!uploadMutationGate().allowed) {
-    throw new Error(UPLOAD_READ_ONLY_TARGET_MESSAGE);
+  if (!collectionPromotionGate().allowed) {
+    throw new Error(COLLECTION_IMPORT_TARGET_BLOCKED_MESSAGE);
   }
 
   const gate = assertPromotionAllowed(review);
@@ -193,54 +181,8 @@ export async function promoteValidatedCollections(
   }
 
   const validated = getValidatedCollections(review);
-  const syncEngine = engine ?? (await createDefaultCollectionSyncEngine());
-
-  const batchResults: PartialSyncResultData[] = [];
-  const batchLevelErrors: string[] = [];
-
-  // Phase 1 : analyse de tous les lots (aucune écriture). Un lot dont
-  // l'analyse échoue est écarté avec une erreur visible ; les autres continuent.
-  const analyzedBatches: Array<{ batchNumber: number; comparisons: CollectionComparison[] }> = [];
-  for (let i = 0; i < validated.length; i += PROMOTION_BATCH_SIZE) {
-    const batch = validated.slice(i, i + PROMOTION_BATCH_SIZE);
-    const batchNumber = Math.floor(i / PROMOTION_BATCH_SIZE) + 1;
-
-    try {
-      const comparisons = await syncEngine.analyze(batch);
-      analyzedBatches.push({ batchNumber, comparisons });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erreur inconnue';
-      batchLevelErrors.push(`Erreur lot ${batchNumber}: ${message}`);
-    }
-  }
-
-  // Phase 2 : garde de décalage massif AVANT toute écriture DB.
-  const shift = assessCollectionRowShift(analyzedBatches.flatMap((entry) => entry.comparisons));
-  if (shift.blocked) {
-    throw new Error(
-      'Promotion bloquée : possible décalage massif des lignes Collection — ' +
-        `${shift.divergentCount} ligne(s) existante(s) sur ${shift.comparedExistingCount} comparée(s) ` +
-        "divergent sur les champs d'identité stable (seuils : " +
-        `${COLLECTION_SHIFT_MIN_DIVERGENT_ROWS} lignes ou ${COLLECTION_SHIFT_MAX_DIVERGENT_RATIO * 100} %). ` +
-        "Aucune écriture DB n'a été effectuée. Vérifiez si le fichier réexporté contient une ligne " +
-        'insérée ou un ordre modifié, puis relancez la promotion après contrôle.'
-    );
-  }
-
-  // Phase 3 : synchronisation lot par lot (écritures DB).
-  for (const { batchNumber, comparisons } of analyzedBatches) {
-    try {
-      const result = await syncEngine.sync(comparisons);
-      batchResults.push(result);
-    } catch (error) {
-      // Erreur visible, jamais masquée : reportée dans syncResult.errors
-      // via l'agrégateur (les autres lots continuent).
-      const message = error instanceof Error ? error.message : 'Erreur inconnue';
-      batchLevelErrors.push(`Erreur lot ${batchNumber}: ${message}`);
-    }
-  }
-
-  const syncResult = aggregateBatchSyncResults(batchResults, batchLevelErrors);
+  const atomicEngine = engine ?? (await createDefaultCollectionAtomicPromotionEngine());
+  const syncResult = await atomicEngine.promote(validated);
 
   return {
     promoted: true,

@@ -15,6 +15,31 @@
 
 ---
 
+## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
+
+**Statut : `IN_PROGRESS — LOCAL_READY_FOR_INDEPENDENT_REVIEW` (2026-09-01 Europe/Paris)**
+
+Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
+promotion Collection Report par RPC atomique unique, scope serveur privé fermé
+par défaut et expirant, idempotence acteur/commande déterministe sur le payload
+exact, audit avant/après, garde
+anti-décalage transactionnelle et validation fail-closed. Les insertions
+directes et changements directs d'identité stable sont bloqués ; la capacité
+d'écriture interne est privée et liée à la transaction, donc non falsifiable
+par paramètre de session. Bornes : 10 fichiers, 15 Mo par fichier et 5 000
+lignes. En production, seul Collection Report peut atteindre la review locale ;
+tous les autres chemins `/upload` restent fermés.
+
+Validation locale : 66 PASS / 0 FAIL / 2 SKIP documentés sur 68 tests ciblés,
+replay PostgreSQL 17 PASS avec conteneur supprimé, build PASS, artefact MCP
+inchangé, ESLint 180/11 et TypeScript 17 strictement identiques à la base.
+Migration candidate uniquement : aucun SQL live, merge, staging, publication ou
+production dans ce lot. Contre-review indépendante obligatoire avant merge.
+
+Rapport : `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
+
+---
+
 ## DAILY-V2-SESSION-AND-ACCESS-UX-HARDENING
 
 **Statut : `CLOSED_WITH_RESERVE — PRODUCTION_AUTHENTICATED_READ_ONLY_VALIDATED` (2026-09-01 Europe/Paris)**

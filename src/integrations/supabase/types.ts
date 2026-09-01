@@ -1739,6 +1739,10 @@ export type Database = {
         Args: { client_code: string; description: string }
         Returns: string
       }
+      collection_report_promotion_enabled_v1: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
       daily_stmt_acquire_day_lock: {
         Args: { p_day_unit_id: string }
         Returns: undefined
@@ -1894,6 +1898,10 @@ export type Database = {
           p_statement?: Json
           p_warnings_count?: number
         }
+        Returns: Json
+      }
+      import_collection_report_atomic_v1: {
+        Args: { p_command_key: string; p_rows: Json }
         Returns: Json
       }
       promote_daily_statement_unit: {

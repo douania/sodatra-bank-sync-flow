@@ -98,7 +98,7 @@ Pas d'API bancaire directe.
 | Module | Route | Statut |
 |---|---|---|
 | Dashboard principal | `/dashboard` | Daily v2 canonical par défaut en production ; smoke authentifié ORABANK validé avec réserves ; vue historique séparée, aucun total de soldes par devise ni ouverture d'écriture |
-| Import opérationnel | `/upload` | Pipeline global unique ; Collection Report/Internal Book candidats production ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
+| Import opérationnel | `/upload` | Pipeline global unique ; fondation locale d'activation contrôlée Collection Report prête pour contre-review, migration non appliquée ; Internal Book candidat production ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
 | Alias upload bulk | `/upload-bulk` | Compatibilité : redirection vers `/upload`, aucun pipeline distinct |
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
 | Quality Control | `/quality-control` | Actif |
@@ -133,6 +133,14 @@ Fund Position exige une date extraite, un grand total explicite (zéro autorisé
 et au moins un détail bancaire exploitable. Ces familles restent
 `STAGING_PILOT` jusqu'à qualification sur fichiers réels anonymisés ; aucune
 preuve synthétique ne vaut promotion production.
+
+Le pack local `COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION` prépare une
+promotion atomique sous scope serveur privé, fermé par défaut et expirant, avec
+validation stricte, idempotence acteur/commande, audit avant/après et garde
+anti-décalage dans la transaction. Il ne constitue pas une activation : la
+migration candidate `20260901000000_collection_report_controlled_production_activation.sql`
+n'est appliquée à aucun environnement et le runtime production reste fermé.
+Voir `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
 
 Le flux `/daily-statements` est séparé de ces deux pipelines :
 - seuls les relevés ONLINE correspondant à un profil structurel exact sont acceptés ;

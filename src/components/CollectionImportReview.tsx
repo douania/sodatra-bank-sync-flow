@@ -23,6 +23,8 @@ interface CollectionImportReviewProps {
   review: CollectionImportReviewData;
   promoting: boolean;
   promotionDone: boolean;
+  promotionAllowed: boolean;
+  promotionBlockedReason: string;
   onPromote: (reviewWithSelection: CollectionImportReviewData) => void;
 }
 
@@ -52,6 +54,8 @@ const CollectionImportReview: React.FC<CollectionImportReviewProps> = ({
   review,
   promoting,
   promotionDone,
+  promotionAllowed,
+  promotionBlockedReason,
   onPromote,
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
@@ -100,7 +104,12 @@ const CollectionImportReview: React.FC<CollectionImportReviewProps> = ({
     });
   };
 
-  const promotionBlocked = !review.reviewReady || selectedCount === 0 || promoting || promotionDone;
+  const promotionBlocked =
+    !review.reviewReady
+    || selectedCount === 0
+    || promoting
+    || promotionDone
+    || !promotionAllowed;
 
   return (
     <Card className="mb-8 border-blue-300">
@@ -263,7 +272,9 @@ const CollectionImportReview: React.FC<CollectionImportReviewProps> = ({
               <span>
                 {promotionDone
                   ? 'Écriture DB effectuée après validation.'
-                  : `${formatNumber(selectedCount)} ligne(s) validée(s) sur ${formatNumber(review.acceptedRows.length)} — montant sélectionné : ${formatCurrency(totalSelectedAmount)}. Aucune écriture DB avant promotion.`}
+                  : !promotionAllowed
+                    ? promotionBlockedReason
+                    : `${formatNumber(selectedCount)} ligne(s) validée(s) sur ${formatNumber(review.acceptedRows.length)} — montant sélectionné : ${formatCurrency(totalSelectedAmount)}. Aucune écriture DB avant promotion.`}
               </span>
             </div>
             <Button

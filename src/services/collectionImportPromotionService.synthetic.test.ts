@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -7,25 +8,24 @@ import {
   getValidatedCollections,
   promoteValidatedCollections,
   COLLECTION_SHIFT_MIN_DIVERGENT_ROWS,
-  type CollectionSyncEngine,
+  type CollectionAtomicPromotionEngine,
 } from './collectionImportPromotionService';
+import { createCollectionImportCommandKey } from './collectionImportCommandKey';
 import { buildCollectionRowId } from './collectionImportReviewService';
 import type { CollectionReport } from '@/types/banking';
-import type { CollectionImportReview, CollectionReviewRow } from '@/types/processing';
+import type {
+  CollectionImportReview,
+  CollectionReviewRow,
+  SyncResultData,
+} from '@/types/processing';
 import type { CollectionComparison } from './intelligentSyncService';
 
-// ⭐ PACK-C — Tests synthétiques de la promotion contrôlée.
-// Aucune donnée bancaire réelle, aucun accès Supabase : le moteur de sync est
-// une simulation en mémoire qui reproduit la sémantique d'idempotence existante
-// SELECT-then-INSERT/UPDATE sur la clé (excel_filename, excel_source_row).
+const allowPromotionGate = () => ({ allowed: true });
 
-// ⭐ 0Z_AM : les tests de LOGIQUE de promotion injectent une garde de cible
-// autorisante (équivalent staging). La garde par défaut — canonique et
-// fail-closed hors cible autorisée — est couverte par
-// uploadRuntimeGuard.synthetic.test.ts.
-const allowMutationGate = () => ({ allowed: true });
-
-function syntheticCollection(sourceRow: number, overrides: Partial<CollectionReport> = {}): CollectionReport {
+function syntheticCollection(
+  sourceRow: number,
+  overrides: Partial<CollectionReport> = {},
+): CollectionReport {
   return {
     reportDate: '2026-06-05',
     clientCode: `CLIENT_SYN_${sourceRow}`,
@@ -40,7 +40,7 @@ function syntheticCollection(sourceRow: number, overrides: Partial<CollectionRep
 
 function syntheticReview(
   rows: Array<{ sourceRow: number; selected: boolean }>,
-  overrides: Partial<CollectionImportReview> = {}
+  overrides: Partial<CollectionImportReview> = {},
 ): CollectionImportReview {
   const acceptedRows: CollectionReviewRow[] = rows.map(({ sourceRow, selected }) => {
     const collection = syntheticCollection(sourceRow);
@@ -50,7 +50,6 @@ function syntheticReview(
       selected,
     };
   });
-
   return {
     reviewReady: true,
     files: ['COLLECTION_REPORT_SYNTHETIC.xlsx'],
@@ -65,357 +64,132 @@ function syntheticReview(
       file_level_rejections: 0,
       warnings: 0,
     },
-    preparedAt: '2026-07-05T00:00:00.000Z',
+    preparedAt: '2026-09-01T00:00:00.000Z',
     ...overrides,
   };
 }
 
-function createFakeSyncEngine(options: { failOnSyncCall?: number } = {}) {
-  // "Base" synthétique en mémoire, indexée sur la clé d'idempotence existante.
-  const store = new Map<string, CollectionReport>();
-  const calls = { analyze: 0, sync: 0 };
-
-  const engine: CollectionSyncEngine = {
-    async analyze(collections) {
-      calls.analyze++;
-      return collections.map(collection => ({
-        excelRow: collection,
-        status: 'NEW',
-        missingFields: [],
-        enrichmentOpportunities: [],
-        collectionKey: buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!),
-      })) as unknown as CollectionComparison[];
-    },
-    async sync(comparisons) {
-      calls.sync++;
-      if (options.failOnSyncCall === calls.sync) {
-        throw new Error('timeout synthétique du lot');
-      }
-
-      let new_collections = 0;
-      let idempotent_updates = 0;
-      for (const comparison of comparisons) {
-        const collection = comparison.excelRow as CollectionReport;
-        const key = buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!);
-        // Sémantique upsertNewCollection : SELECT par traçabilité puis
-        // UPDATE idempotent si trouvé, INSERT sinon. Jamais de doublon.
-        if (store.has(key)) {
-          store.set(key, collection);
-          idempotent_updates++;
-        } else {
-          store.set(key, collection);
-          new_collections++;
-        }
-      }
-
-      return {
-        new_collections,
-        idempotent_updates,
-        enriched_collections: 0,
-        incomplete_not_enriched: 0,
-        ignored_collections: 0,
-        errors: [],
-      };
+function syncResult(newRows: number, updatedRows: number): SyncResultData {
+  return {
+    new_collections: newRows,
+    idempotent_updates: updatedRows,
+    enriched_collections: 0,
+    incomplete_not_enriched: 0,
+    ignored_collections: 0,
+    errors: [],
+    summary: {
+      total_processed: newRows + updatedRows,
+      enrichments: {
+        date_of_validity_added: 0,
+        bank_commissions_added: 0,
+        references_updated: 0,
+        statuses_updated: 0,
+      },
     },
   };
+}
 
+function createFakeAtomicEngine(options: { fail?: boolean } = {}) {
+  const store = new Map<string, CollectionReport>();
+  const calls = { promote: 0 };
+  const engine: CollectionAtomicPromotionEngine = {
+    async promote(collections) {
+      calls.promote++;
+      const next = new Map(store);
+      let inserted = 0;
+      let updated = 0;
+      for (const collection of collections) {
+        const key = buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!);
+        if (next.has(key)) updated++;
+        else inserted++;
+        next.set(key, collection);
+      }
+      if (options.fail) throw new Error('transaction synthétique annulée');
+      store.clear();
+      for (const [key, value] of next) store.set(key, value);
+      return syncResult(inserted, updated);
+    },
+  };
   return { engine, store, calls };
 }
 
-// --- Cas 5 : promotion sans validation impossible ----------------------------
-
-test('promotion sans review prête : refusée, aucun appel au moteur de sync', async () => {
-  const { engine, store, calls } = createFakeSyncEngine();
-
-  assert.equal(assertPromotionAllowed(null).allowed, false);
-  assert.equal(assertPromotionAllowed(undefined).allowed, false);
-
-  const notReady = syntheticReview([{ sourceRow: 2, selected: true }], { reviewReady: false });
-  assert.equal(assertPromotionAllowed(notReady).allowed, false);
-  await assert.rejects(promoteValidatedCollections(notReady, engine, allowMutationGate), /review n'est pas prête/i);
-
-  assert.equal(calls.analyze, 0);
-  assert.equal(calls.sync, 0);
+test('promotion sans review prête : refusée avant la RPC atomique', async () => {
+  const { engine, store, calls } = createFakeAtomicEngine();
+  const review = syntheticReview([{ sourceRow: 2, selected: true }], { reviewReady: false });
+  await assert.rejects(
+    promoteValidatedCollections(review, engine, allowPromotionGate),
+    /review n'est pas prête/i,
+  );
+  assert.equal(calls.promote, 0);
   assert.equal(store.size, 0);
 });
 
-test('promotion avec zéro ligne validée : refusée, aucune écriture', async () => {
-  const { engine, store, calls } = createFakeSyncEngine();
-  const review = syntheticReview([
-    { sourceRow: 2, selected: false },
-    { sourceRow: 3, selected: false },
-  ]);
-
-  const gate = assertPromotionAllowed(review);
-  assert.equal(gate.allowed, false);
-  assert.match(gate.reason ?? '', /Aucune ligne validée/);
-
-  await assert.rejects(promoteValidatedCollections(review, engine, allowMutationGate), /Aucune ligne validée/);
-  assert.equal(calls.analyze, 0);
-  assert.equal(calls.sync, 0);
-  assert.equal(store.size, 0);
+test('zéro ligne acceptée ou sélectionnée : promotion refusée', async () => {
+  const { engine, calls } = createFakeAtomicEngine();
+  const empty = syntheticReview([]);
+  const unselected = syntheticReview([{ sourceRow: 2, selected: false }]);
+  assert.equal(assertPromotionAllowed(empty).allowed, false);
+  assert.equal(assertPromotionAllowed(unselected).allowed, false);
+  await assert.rejects(promoteValidatedCollections(empty, engine, allowPromotionGate));
+  await assert.rejects(promoteValidatedCollections(unselected, engine, allowPromotionGate));
+  assert.equal(calls.promote, 0);
 });
 
-test('promotion avec zéro ligne acceptée (fichier entièrement rejeté) : refusée', async () => {
-  const { engine, calls } = createFakeSyncEngine();
-  const review = syntheticReview([], {
-    fileLevelErrors: [
-      { file: 'COLLECTION_REPORT_SYNTHETIC.xlsx', message: 'Headers obligatoires manquants: BANK NAME.' },
-    ],
-  });
-
-  const gate = assertPromotionAllowed(review);
-  assert.equal(gate.allowed, false);
-  assert.match(gate.reason ?? '', /Aucune ligne acceptée/);
-
-  await assert.rejects(promoteValidatedCollections(review, engine, allowMutationGate));
-  assert.equal(calls.sync, 0);
-});
-
-// --- Cas 6 : promotion des lignes validées uniquement ------------------------
-
-test('promotion des lignes validées uniquement : les lignes non cochées ne sont jamais écrites', async () => {
-  const { engine, store, calls } = createFakeSyncEngine();
+test('une seule RPC reçoit exclusivement les lignes explicitement sélectionnées', async () => {
+  const { engine, store, calls } = createFakeAtomicEngine();
   const review = syntheticReview([
     { sourceRow: 2, selected: true },
     { sourceRow: 3, selected: false },
     { sourceRow: 4, selected: true },
   ]);
-
-  const validated = getValidatedCollections(review);
-  assert.equal(validated.length, 2);
-  assert.deepEqual(validated.map(c => c.excelSourceRow), [2, 4]);
-
-  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
-
+  assert.deepEqual(getValidatedCollections(review).map(row => row.excelSourceRow), [2, 4]);
+  const promotion = await promoteValidatedCollections(review, engine, allowPromotionGate);
+  assert.equal(calls.promote, 1);
   assert.equal(promotion.promoted, true);
   assert.equal(promotion.validatedCount, 2);
   assert.equal(promotion.syncResult.new_collections, 2);
-  assert.equal(promotion.syncResult.summary.total_processed, 2);
-  assert.equal(calls.analyze, 1);
-  assert.equal(calls.sync, 1);
-
   assert.equal(store.size, 2);
-  assert.equal(store.has(buildCollectionRowId('COLLECTION_REPORT_SYNTHETIC.xlsx', 2)), true);
   assert.equal(store.has(buildCollectionRowId('COLLECTION_REPORT_SYNTHETIC.xlsx', 3)), false);
-  assert.equal(store.has(buildCollectionRowId('COLLECTION_REPORT_SYNTHETIC.xlsx', 4)), true);
 });
 
-// --- Cas 7 : réimport même fichier/ligne → idempotent, pas de doublon --------
-
-test('réimport du même fichier/ligne : update idempotent via (excel_filename, excel_source_row), aucun doublon', async () => {
-  const { engine, store } = createFakeSyncEngine();
+test('rejeu de la même traçabilité reste idempotent sans doublon', async () => {
+  const { engine, store } = createFakeAtomicEngine();
   const review = syntheticReview([
     { sourceRow: 2, selected: true },
     { sourceRow: 3, selected: true },
   ]);
-
-  const firstRun = await promoteValidatedCollections(review, engine, allowMutationGate);
-  assert.equal(firstRun.syncResult.new_collections, 2);
-  assert.equal(firstRun.syncResult.idempotent_updates, 0);
-  assert.equal(store.size, 2);
-
-  const secondRun = await promoteValidatedCollections(review, engine, allowMutationGate);
-  assert.equal(secondRun.syncResult.new_collections, 0);
-  assert.equal(secondRun.syncResult.idempotent_updates, 2);
-  // Pas de doublon : la "base" synthétique contient toujours exactement 2 lignes.
+  const first = await promoteValidatedCollections(review, engine, allowPromotionGate);
+  const second = await promoteValidatedCollections(review, engine, allowPromotionGate);
+  assert.equal(first.syncResult.new_collections, 2);
+  assert.equal(second.syncResult.idempotent_updates, 2);
   assert.equal(store.size, 2);
 });
 
-// --- Cas 8 : erreurs sync visibles, jamais masquées --------------------------
-
-test('échec d\'un lot : erreur visible dans syncResult.errors, les autres lots continuent', async () => {
-  // 120 lignes validées → 3 lots de 50/50/20 ; le lot 2 échoue.
-  const { engine, store, calls } = createFakeSyncEngine({ failOnSyncCall: 2 });
-  const rows = Array.from({ length: 120 }, (_, index) => ({
-    sourceRow: index + 2,
-    selected: true,
-  }));
-  const review = syntheticReview(rows);
-
-  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
-
-  assert.equal(promotion.promoted, true);
-  assert.equal(promotion.validatedCount, 120);
-  assert.equal(calls.sync, 3);
-
-  // Lots 1 et 3 écrits (50 + 20), lot 2 en erreur visible.
-  assert.equal(store.size, 70);
-  assert.equal(promotion.syncResult.new_collections, 70);
-  assert.equal(promotion.syncResult.errors.length, 1);
-  assert.match(promotion.syncResult.errors[0].error, /Erreur lot 2/);
-  assert.match(promotion.syncResult.errors[0].error, /timeout synthétique/);
-});
-
-test('les erreurs collection remontées par le moteur restent visibles après agrégation', async () => {
-  const failingEngine: CollectionSyncEngine = {
-    async analyze(collections) {
-      return collections.map(collection => ({
-        excelRow: collection,
-        status: 'NEW',
-        missingFields: [],
-        enrichmentOpportunities: [],
-        collectionKey: 'SYN',
-      })) as unknown as CollectionComparison[];
-    },
-    async sync() {
-      return {
-        new_collections: 1,
-        idempotent_updates: 0,
-        enriched_collections: 0,
-        incomplete_not_enriched: 0,
-        ignored_collections: 0,
-        errors: [
-          { collection: { clientCode: 'CLIENT_SYN_2' }, error: 'Erreur insertion synthétique' },
-        ],
-      };
-    },
-  };
-
-  const review = syntheticReview([
-    { sourceRow: 2, selected: true },
-    { sourceRow: 3, selected: true },
-  ]);
-
-  const promotion = await promoteValidatedCollections(review, failingEngine, allowMutationGate);
-
-  assert.equal(promotion.syncResult.errors.length, 1);
-  assert.equal(promotion.syncResult.errors[0].collection.clientCode, 'CLIENT_SYN_2');
-  assert.equal(promotion.syncResult.errors[0].error, 'Erreur insertion synthétique');
-});
-
-// ---------------------------------------------------------------------------
-// ⭐ DAILY-INGESTION-0C — garde-fou de décalage massif des lignes Collection
-// ---------------------------------------------------------------------------
-
-// Moteur simulé avec une "base" préexistante : analyze restitue existingRecord
-// pour chaque trace Excel déjà connue, comme le fait intelligentSyncService.
-function createFakeSyncEngineWithExistingBase(existingRecords: CollectionReport[]) {
-  const store = new Map<string, CollectionReport>();
-  for (const record of existingRecords) {
-    store.set(buildCollectionRowId(record.excelFilename!, record.excelSourceRow!), record);
-  }
-  const calls = { analyze: 0, sync: 0 };
-
-  const engine: CollectionSyncEngine = {
-    async analyze(collections) {
-      calls.analyze++;
-      return collections.map(collection => {
-        const key = buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!);
-        const existing = store.get(key);
-        return {
-          excelRow: collection,
-          existingRecord: existing,
-          status: existing ? 'EXISTS_COMPLETE' : 'NEW',
-          missingFields: [],
-          enrichmentOpportunities: [],
-          collectionKey: key,
-        };
-      }) as unknown as CollectionComparison[];
-    },
-    async sync(comparisons) {
-      calls.sync++;
-      let new_collections = 0;
-      let idempotent_updates = 0;
-      for (const comparison of comparisons) {
-        const collection = comparison.excelRow as CollectionReport;
-        const key = buildCollectionRowId(collection.excelFilename!, collection.excelSourceRow!);
-        if (store.has(key)) {
-          store.set(key, collection);
-          idempotent_updates++;
-        } else {
-          store.set(key, collection);
-          new_collections++;
-        }
-      }
-      return {
-        new_collections,
-        idempotent_updates,
-        enriched_collections: 0,
-        incomplete_not_enriched: 0,
-        ignored_collections: 0,
-        errors: [],
-      };
-    },
-  };
-
-  return { engine, store, calls };
-}
-
-test('0C décalage massif : insertion au milieu simulée -> promotion bloquée, sync jamais appelé', async () => {
-  // Base existante : lignes 1..10 telles qu'importées initialement.
-  // Fichier réexporté : une ligne insérée au milieu a décalé toutes les
-  // lignes -> à chaque excel_source_row N correspond désormais le contenu de
-  // l'ancienne ligne N-1 (identité stable différente sur chaque trace).
-  const existing = Array.from({ length: 10 }, (_, index) => syntheticCollection(index + 1));
+test('échec de la RPC atomique : aucune ligne du lot n’est conservée', async () => {
+  const { engine, store, calls } = createFakeAtomicEngine({ fail: true });
   const review = syntheticReview(
-    Array.from({ length: 10 }, (_, index) => ({ sourceRow: index + 1, selected: true }))
+    Array.from({ length: 120 }, (_, index) => ({ sourceRow: index + 2, selected: true })),
   );
-  review.acceptedRows = review.acceptedRows.map((row, index) => ({
-    ...row,
-    collection: {
-      ...syntheticCollection(index), // contenu de la ligne précédente
-      excelSourceRow: index + 1,     // ...sous la trace de la ligne courante
-      excelFilename: 'COLLECTION_REPORT_SYNTHETIC.xlsx',
-    },
-  }));
-
-  const { engine, store, calls } = createFakeSyncEngineWithExistingBase(existing);
-  const snapshot = new Map(store);
-
   await assert.rejects(
-    promoteValidatedCollections(review, engine, allowMutationGate),
-    /Promotion bloquée : possible décalage massif des lignes Collection/
+    promoteValidatedCollections(review, engine, allowPromotionGate),
+    /transaction synthétique annulée/,
   );
-
-  assert.equal(calls.sync, 0, 'sync must never run when the shift guard fires');
-  assert.deepEqual([...store.entries()], [...snapshot.entries()], 'no write may occur');
+  assert.equal(calls.promote, 1);
+  assert.equal(store.size, 0);
 });
 
-test('0C décalage : réimport strictement identique -> aucune fausse alerte, idempotence préservée', async () => {
-  const existing = Array.from({ length: 10 }, (_, index) => syntheticCollection(index + 1));
-  const review = syntheticReview(
-    Array.from({ length: 10 }, (_, index) => ({ sourceRow: index + 1, selected: true }))
-  );
-
-  const { engine, calls } = createFakeSyncEngineWithExistingBase(existing);
-  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
-
-  assert.equal(calls.sync, 1);
-  assert.equal(promotion.syncResult.idempotent_updates, 10);
-  assert.equal(promotion.syncResult.errors.length, 0);
+test('clé de commande : même payload = même UUID, payload différent = UUID différent', async () => {
+  const first = await createCollectionImportCommandKey([{ trace: 'A', amount: 100 }]);
+  const replay = await createCollectionImportCommandKey([{ trace: 'A', amount: 100 }]);
+  const changed = await createCollectionImportCommandKey([{ trace: 'A', amount: 101 }]);
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(replay, first);
+  assert.notEqual(changed, first);
 });
-
-test('0C décalage : des enrichissements non identitaires ne déclenchent jamais le blocage', async () => {
-  // Les lignes existantes ne diffèrent que sur des champs volatils/enrichissables.
-  const existing = Array.from({ length: 10 }, (_, index) => ({
-    ...syntheticCollection(index + 1),
-    status: 'processed' as const,
-    processingStatus: 'FULLY_PROCESSED',
-    dateOfValidity: '2026-06-20',
-    creditedDate: '2026-06-21',
-    commission: 1234,
-    bankCommission: 567,
-    matchConfidence: 0.99,
-    matchMethod: 'SYNTHETIC_MATCH',
-    processedAt: '2026-06-21T10:00:00.000Z',
-  }));
-  const review = syntheticReview(
-    Array.from({ length: 10 }, (_, index) => ({ sourceRow: index + 1, selected: true }))
-  );
-
-  const { engine, calls } = createFakeSyncEngineWithExistingBase(existing);
-  const promotion = await promoteValidatedCollections(review, engine, allowMutationGate);
-
-  assert.equal(calls.sync, 1);
-  assert.equal(promotion.syncResult.errors.length, 0);
-});
-
-// --- Tests unitaires du calcul de décalage -----------------------------------
 
 function shiftComparison(
   excelRow: Partial<CollectionReport>,
-  existingRecord?: Partial<CollectionReport>
+  existingRecord?: Partial<CollectionReport>,
 ): CollectionComparison {
   return {
     excelRow,
@@ -438,7 +212,7 @@ function identityRow(seed: number): Partial<CollectionReport> {
   };
 }
 
-test('0C assessCollectionRowShift : seuil absolu (5 lignes) et seuil relatif (20 %)', () => {
+test('diagnostic de décalage : seuil absolu 5 et relatif 20 %', () => {
   const identical = (count: number, offset = 0) =>
     Array.from({ length: count }, (_, index) =>
       shiftComparison(identityRow(offset + index), identityRow(offset + index))
@@ -447,28 +221,65 @@ test('0C assessCollectionRowShift : seuil absolu (5 lignes) et seuil relatif (20
     Array.from({ length: count }, (_, index) =>
       shiftComparison(identityRow(offset + index), identityRow(offset + index + 1000))
     );
-
-  // 4 divergentes sur 30 (13 %) : sous les deux seuils -> pas de blocage.
-  const belowBoth = assessCollectionRowShift([...identical(26), ...divergent(4, 100)]);
-  assert.equal(belowBoth.comparedExistingCount, 30);
-  assert.equal(belowBoth.divergentCount, 4);
-  assert.equal(belowBoth.blocked, false);
-
-  // 5 divergentes sur 30 (17 %) : seuil absolu atteint -> blocage.
+  assert.equal(assessCollectionRowShift([...identical(26), ...divergent(4, 100)]).blocked, false);
   const absolute = assessCollectionRowShift([...identical(25), ...divergent(5, 100)]);
   assert.equal(absolute.divergentCount, COLLECTION_SHIFT_MIN_DIVERGENT_ROWS);
   assert.equal(absolute.blocked, true);
+  assert.equal(assessCollectionRowShift([...identical(8), ...divergent(2, 100)]).blocked, true);
+  assert.equal(assessCollectionRowShift([shiftComparison(identityRow(1))]).blocked, false);
+});
 
-  // 2 divergentes sur 10 (20 %) : seuil relatif atteint -> blocage.
-  const relative = assessCollectionRowShift([...identical(8), ...divergent(2, 100)]);
-  assert.equal(relative.blocked, true);
+test('contrat serveur : scope expirant, RPC atomique, audit et garde anti-contournement', () => {
+  const migration = readFileSync(
+    'supabase/migrations/20260901000000_collection_report_controlled_production_activation.sql',
+    'utf8',
+  );
 
-  // 1 divergente sur 10 (10 %) : sous les deux seuils -> pas de blocage.
-  const single = assessCollectionRowShift([...identical(9), ...divergent(1, 100)]);
-  assert.equal(single.blocked, false);
+  assert.match(migration, /CREATE SCHEMA IF NOT EXISTS collection_import_private/);
+  assert.match(migration, /promotion_scope_enabled boolean NOT NULL DEFAULT false/);
+  assert.match(migration, /enabled_until > statement_timestamp\(\) \+ interval '2 hours'/);
+  assert.match(migration, /CREATE TABLE collection_import_private\.runtime_control_events/);
+  assert.match(migration, /CREATE TABLE collection_import_private\.commands/);
+  assert.match(migration, /PRIMARY KEY \(actor_id, command_key\)/);
+  assert.match(migration, /CREATE TABLE collection_import_private\.write_contexts/);
+  assert.match(migration, /context\.transaction_id = txid_current\(\)/);
+  assert.match(migration, /context\.actor_id = auth\.uid\(\)/);
+  assert.match(migration, /CREATE TABLE collection_import_private\.row_audit/);
+  assert.match(migration, /before_row jsonb/);
+  assert.match(migration, /after_row jsonb NOT NULL/);
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/g);
+  assert.match(migration, /REVOKE ALL ON ALL TABLES IN SCHEMA collection_import_private/);
 
-  // Aucune ligne existante comparée : rien à bloquer.
-  const onlyNew = assessCollectionRowShift([shiftComparison(identityRow(1))]);
-  assert.equal(onlyNew.comparedExistingCount, 0);
-  assert.equal(onlyNew.blocked, false);
+  assert.match(migration, /CREATE FUNCTION public\.import_collection_report_atomic_v1/);
+  assert.match(migration, /SECURITY DEFINER/);
+  assert.match(migration, /COLLECTION_IMPORT_FORBIDDEN/);
+  assert.match(migration, /assert_promotion_scope_v1\(\)/);
+  assert.match(migration, /pg_advisory_xact_lock/);
+  assert.match(migration, /jsonb_array_length\(p_rows\) NOT BETWEEN 1 AND 5000/);
+  assert.match(migration, /COLLECTION_IMPORT_DUPLICATE_TRACEABILITY_IN_PAYLOAD/);
+  assert.match(migration, /COLLECTION_IMPORT_MASS_ROW_SHIFT_DETECTED/);
+  assert.match(migration, /ON CONFLICT \(excel_filename, excel_source_row\)/);
+  assert.doesNotMatch(migration, /set_config\('sodatra\.collection_import_authorized'/);
+  assert.match(migration, /COLLECTION_IMPORT_ATOMIC_RPC_REQUIRED/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.import_collection_report_atomic_v1\(uuid,jsonb\)[\s\S]*TO authenticated/);
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\.import_collection_report_atomic_v1\(uuid,jsonb\)[\s\S]*service_role/);
+});
+
+test('contrat frontend : une seule RPC mutative et verrou serveur strictement vrai', () => {
+  const atomicService = readFileSync('src/services/collectionReportAtomicImportService.ts', 'utf8');
+  const commandKeyService = readFileSync('src/services/collectionImportCommandKey.ts', 'utf8');
+  const promotionService = readFileSync('src/services/collectionImportPromotionService.ts', 'utf8');
+  const page = readFileSync('src/pages/FileUpload.tsx', 'utf8');
+
+  assert.match(atomicService, /rpc\('import_collection_report_atomic_v1'/);
+  assert.doesNotMatch(atomicService, /\.from\('collection_report'\)/);
+  assert.doesNotMatch(atomicService, /error\.message \|\|/);
+  assert.match(commandKeyService, /digest\('SHA-256'/);
+  assert.match(promotionService, /promoteCollectionReportAtomically/);
+  assert.doesNotMatch(promotionService, /processIntelligentSync/);
+  assert.doesNotMatch(promotionService, /PROMOTION_BATCH_SIZE/);
+  assert.match(page, /collectionPromotionScopeQuery\.data === true/);
+  assert.match(page, /!collectionPromotionScopeQuery\.isFetching/);
+  assert.match(page, /allowedDocumentKinds: deploymentTarget === 'production'/);
+  assert.match(page, /\['COLLECTION_REPORT'\]/);
 });

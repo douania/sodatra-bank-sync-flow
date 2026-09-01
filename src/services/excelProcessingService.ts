@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { CollectionReport } from '@/types/banking';
 import { excelMappingService } from './excelMappingService';
+import { COLLECTION_IMPORT_MAX_ROWS } from './collectionImportLimits';
 
 export interface ExcelProcessingResult {
   success: boolean;
@@ -34,7 +35,12 @@ class ExcelProcessingService {
       console.log('📊 DÉBUT TRAITEMENT EXCEL (MODE TOLÉRANT):', file.name);
       
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const workbook = XLSX.read(buffer, {
+        type: 'array',
+        // Borne la matérialisation avant sheet_to_json. La plage originale est
+        // contrôlée plus bas afin qu'une troncature ne soit jamais acceptée.
+        sheetRows: COLLECTION_IMPORT_MAX_ROWS + 2,
+      });
       
       if (!workbook.SheetNames.length) {
         return {
@@ -58,6 +64,20 @@ class ExcelProcessingService {
       }
       console.log(`📑 Feuille de données sélectionnée: ${selectedSheetName}`);
       const worksheet = workbook.Sheets[selectedSheetName];
+      const fullReference = (worksheet as XLSX.WorkSheet & { '!fullref'?: string })['!fullref']
+        ?? worksheet['!ref'];
+      if (fullReference) {
+        const fullRange = XLSX.utils.decode_range(fullReference);
+        const physicalRows = fullRange.e.r + 1;
+        if (physicalRows > COLLECTION_IMPORT_MAX_ROWS + 1) {
+          return {
+            success: false,
+            errors: [
+              `Le fichier dépasse la limite de ${COLLECTION_IMPORT_MAX_ROWS} lignes de données.`,
+            ],
+          };
+        }
+      }
       const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
       
       console.log(`📊 Données brutes extraites: ${rawData.length} lignes`);
@@ -135,8 +155,16 @@ class ExcelProcessingService {
           const isMandatoryDateError = /reportDate obligatoire/i.test(rawMsg);
           // ⭐ Lot 3B.1.ter — clientCode obligatoire absent → bloquant pour la ligne.
           const isMandatoryClientError = /clientCode manquant/i.test(rawMsg);
+          const isMandatoryAmountError = /collectionAmount obligatoire/i.test(rawMsg);
+          const isMandatoryBankError = /bankName manquant/i.test(rawMsg);
           const errorMsg = `Ligne ${rowIndex + 1}: ${rawMsg}`;
-          if (isTraceabilityError || isMandatoryDateError || isMandatoryClientError) {
+          if (
+            isTraceabilityError
+            || isMandatoryDateError
+            || isMandatoryClientError
+            || isMandatoryAmountError
+            || isMandatoryBankError
+          ) {
             console.error('❌ Erreur bloquante (ligne rejetée):', errorMsg);
             errors.push(errorMsg);
           } else {
