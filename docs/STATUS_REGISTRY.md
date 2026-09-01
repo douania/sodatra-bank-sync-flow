@@ -17,7 +17,7 @@
 
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — REVALIDATION_FINDINGS_FIXED — NEW_SHA_PENDING_REVIEW` (2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — PR_143_MERGED — STAGING_PREFLIGHT_READY — CI_HOTFIX_REVIEW_FINDINGS_FIXED` (2026-09-01 Europe/Paris)**
 
 Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
 promotion Collection Report par RPC atomique unique, scope serveur privé fermé
@@ -44,8 +44,29 @@ replay PostgreSQL 17 PASS avec fonction historique fidèle, cas NULL/UNKNOWN et
 deux concurrences réelles (relock 2 675 ms ; préimage d'audit 2 780 ms),
 conteneur supprimé, build PASS, artefact MCP
 inchangé, ESLint 180/11 et TypeScript 17 strictement identiques à la base.
-Migration candidate uniquement : aucun SQL live, merge, staging, publication ou
-production dans ce lot. Contre-review indépendante obligatoire avant merge.
+La PR #143 a été fusionnée dans `main` au commit `22f7cf9`. Le préflight
+staging read-only a confirmé la cible exacte, les 43 migrations antérieures,
+l'absence exclusive du candidat `20260901000000`, les objets/scope absents,
+les dépendances et ownership compatibles, une table Collection vide et aucun
+verrou concurrent. Aucune migration ni mutation staging n'a été exécutée.
+
+La CI post-merge `33535208111` a échoué avant le premier SQL : `pg_isready`
+avait observé le serveur temporaire d'initialisation de l'image PostgreSQL,
+puis le premier `psql` a rencontré son redémarrage final. Le hotfix dédié
+au SHA `09c0139` attendait le marqueur de fin de bootstrap et un vrai `SELECT 1`
+sur le serveur final. Quatre replays locaux complets ont réussi sur ce SHA, mais
+sa CI `33536836132` a échoué lorsque `docker logs` n'a encore renvoyé aucune
+ligne sous pwsh Linux. Le SHA `b999a83` normalise ce cas vide ; un replay local
+post-correction a réussi, puis la CI `33537123541`, job `99954049972`, a validé
+le contrat, les deux preuves de concurrence, le teardown et le build. La boucle
+est bornée à 60 tentatives et 30 secondes de sommeil cumulé, sans revendiquer
+un plafond mural. Un replay local supplémentaire après correction des findings
+de review a validé le delta final, les deux concurrences et le teardown.
+L'application staging reste bloquée jusqu'à revalidation, merge et CI verte de
+`main`.
+
+GO du hotfix : `GO_IMPLEMENT_COLLECTION_REPORT_PG17_CI_READINESS_HARDENING`,
+puis `GO_FIX_COLLECTION_REPORT_PG17_CI_READINESS_HARDENING_REVIEW_FINDINGS`.
 
 Rapport : `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
 
