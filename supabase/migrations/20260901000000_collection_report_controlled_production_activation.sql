@@ -14,10 +14,74 @@
 --
 -- The canonical idempotency key remains (excel_filename, excel_source_row).
 -- Existing historical migrations, constraints, indexes and the
--- trg_detect_collection_type trigger are intentionally left unchanged.
+-- trg_detect_collection_type wiring are left unchanged. Its historical
+-- function is hardened below so a replay cannot overwrite an enrichment.
 -- ============================================================================
 
 BEGIN;
+
+-- The historical trigger runs on every INSERT/UPDATE. Its original function
+-- unconditionally derived cheque_number and effet_echeance_date whenever
+-- collection_type was NULL/UNKNOWN. That could undo a manually acquired
+-- enrichment during an otherwise conservative replay. Preserve any existing
+-- value and derive only a missing one; trigger name/timing remain unchanged.
+CREATE OR REPLACE FUNCTION public.detect_collection_type()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.collection_type IS NOT NULL AND NEW.collection_type <> 'UNKNOWN' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.no_chq_bd IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.no_chq_bd ~ '^\d{2}[/\-]\d{2}[/\-]\d{4}$'
+     OR NEW.no_chq_bd ~ '^\d{4}[/\-]\d{2}[/\-]\d{2}$'
+  THEN
+    NEW.collection_type := 'EFFET';
+    BEGIN
+      IF NEW.no_chq_bd ~ '^\d{2}/\d{2}/\d{4}$' THEN
+        NEW.effet_echeance_date := COALESCE(
+          NEW.effet_echeance_date,
+          to_date(NEW.no_chq_bd, 'DD/MM/YYYY')
+        );
+      ELSIF NEW.no_chq_bd ~ '^\d{2}-\d{2}-\d{4}$' THEN
+        NEW.effet_echeance_date := COALESCE(
+          NEW.effet_echeance_date,
+          to_date(NEW.no_chq_bd, 'DD-MM-YYYY')
+        );
+      ELSIF NEW.no_chq_bd ~ '^\d{4}/\d{2}/\d{2}$' THEN
+        NEW.effet_echeance_date := COALESCE(
+          NEW.effet_echeance_date,
+          to_date(NEW.no_chq_bd, 'YYYY/MM/DD')
+        );
+      ELSIF NEW.no_chq_bd ~ '^\d{4}-\d{2}-\d{2}$' THEN
+        NEW.effet_echeance_date := COALESCE(
+          NEW.effet_echeance_date,
+          to_date(NEW.no_chq_bd, 'YYYY-MM-DD')
+        );
+      END IF;
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL;
+    END;
+    NEW.effet_status := COALESCE(NEW.effet_status, 'PENDING');
+  ELSIF NEW.no_chq_bd ~ '^\d+$' THEN
+    NEW.collection_type := 'CHEQUE';
+    NEW.cheque_number := COALESCE(NEW.cheque_number, NEW.no_chq_bd);
+    NEW.cheque_status := COALESCE(NEW.cheque_status, 'PENDING');
+  ELSE
+    NEW.collection_type := COALESCE(NEW.collection_type, 'UNKNOWN');
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
 
 CREATE SCHEMA IF NOT EXISTS collection_import_private;
 REVOKE ALL ON SCHEMA collection_import_private
@@ -622,6 +686,18 @@ BEGIN
     PRIMARY KEY (excel_filename, excel_source_row)
   ) ON COMMIT DROP;
   TRUNCATE pg_temp.collection_import_before_v1;
+
+  -- Lock every existing traceability row before taking its JSON preimage.
+  -- Without this separate inner join, an allowed operational UPDATE could
+  -- commit between the snapshot and the upsert, leaving a stale before_row.
+  -- The deterministic order also keeps concurrent lock acquisition stable.
+  PERFORM existing.id
+  FROM public.collection_report AS existing
+  JOIN pg_temp.collection_import_rows_v1 AS incoming
+    ON incoming.excel_filename = existing.excel_filename
+   AND incoming.excel_source_row = existing.excel_source_row
+  ORDER BY existing.excel_filename, existing.excel_source_row
+  FOR NO KEY UPDATE OF existing;
 
   INSERT INTO pg_temp.collection_import_before_v1 (
     excel_filename, excel_source_row, action, before_row

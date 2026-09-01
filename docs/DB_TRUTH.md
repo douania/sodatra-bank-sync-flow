@@ -275,14 +275,17 @@ Le lot local du 2026-09-01 ajoute la migration candidate
 encore partie de la vérité DB staging ou production.
 
 Le candidat ne change aucune colonne, contrainte ou index historique de
-`collection_report`, ni `unique_excel_traceability`, ni
-`trg_detect_collection_type`. Il ajoute :
+`collection_report`, ni `unique_excel_traceability`, ni le câblage du trigger
+`trg_detect_collection_type`. Il redéfinit toutefois sa fonction active
+`detect_collection_type()` de façon conservatrice : une valeur effet/chèque
+déjà enrichie n'est jamais écrasée par une nouvelle dérivation. Il ajoute :
 
 - un schéma privé de scope expirant, commandes, capacité transactionnelle et
   audit avant/après ;
 - un RPC atomique d'import sur la clé canonique
   `(excel_filename, excel_source_row)`, normalisée avant tout usage, avec rejeu
-  conservateur et refus de toute divergence d'identité stable ;
+  conservateur, verrouillage des lignes existantes avant leur préimage d'audit
+  et refus de toute divergence d'identité stable ;
 - un trigger bloquant les INSERT directs et les UPDATE directs de l'identité
   stable hors capacité privée créée par le RPC.
 

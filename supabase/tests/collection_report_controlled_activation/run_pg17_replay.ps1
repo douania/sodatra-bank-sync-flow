@@ -94,6 +94,102 @@ WHERE singleton = true;
     Remove-Job -Job $holder -Force -ErrorAction SilentlyContinue
   }
 
+  # Concurrence réelle d'audit : un enrichissement autorisé non commité ne doit
+  # pas être dépassé par la capture de préimage. L'import attend le verrou,
+  # puis row_audit doit contenir la valeur effectivement commitée par le holder.
+  Invoke-SqlCommand @"
+UPDATE collection_import_private.runtime_control
+SET promotion_scope_enabled = true,
+    enabled_until = statement_timestamp() + interval '30 minutes',
+    change_reason = 'Open synthetic audit preimage qualification window'
+WHERE singleton = true;
+"@ | Out-Null
+
+  $auditHolder = Start-Job -ScriptBlock {
+    param($dockerPath, $containerName)
+    & $dockerPath exec $containerName psql -v ON_ERROR_STOP=1 -U postgres -d postgres -c @"
+BEGIN;
+SET LOCAL request.jwt.claim.sub='00000000-0000-0000-0000-000000000002';
+SET LOCAL ROLE authenticated;
+UPDATE public.collection_report
+SET remarques = 'CONCURRENT-AUDIT-VALUE'
+WHERE excel_filename = 'COLLECTION-SYNTH.xlsx' AND excel_source_row = 2;
+SELECT pg_sleep(3) /* COLLECTION_AUDIT_HOLDER */;
+COMMIT;
+"@
+    if ($LASTEXITCODE -ne 0) { throw 'audit preimage lock holder failed' }
+  } -ArgumentList $dockerExe, $container
+
+  try {
+    $auditHolderActive = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+      $activeCount = Invoke-SqlCommand @"
+SELECT count(*)
+FROM pg_stat_activity
+WHERE pid <> pg_backend_pid()
+  AND state = 'active'
+  AND query LIKE '%COLLECTION_AUDIT_HOLDER%';
+"@
+      if ([int]$activeCount -gt 0) { $auditHolderActive = $true; break }
+      Start-Sleep -Milliseconds 100
+    }
+    if (-not $auditHolderActive) { throw 'audit preimage lock holder did not become active' }
+
+    Start-Sleep -Milliseconds 250
+    $auditStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    Invoke-SqlCommand @"
+BEGIN;
+SET LOCAL request.jwt.claim.sub='00000000-0000-0000-0000-000000000002';
+SET LOCAL ROLE authenticated;
+SELECT public.import_collection_report_atomic_v1(
+  '10000000-0000-4000-8000-000000000023',
+  '[{
+    "report_date":"2026-09-01","client_code":"CLIENT-A","collection_amount":1000,
+    "bank_name":"SYNTH BANK","status":"pending","collection_type":"UNKNOWN",
+    "effet_echeance_date":null,"effet_status":null,"cheque_number":null,"cheque_status":null,
+    "excel_filename":"COLLECTION-SYNTH.xlsx","excel_source_row":2,"date_of_validity":null,
+    "facture_no":"FA-1","no_chq_bd":null,"bank_name_display":null,"depo_ref":null,
+    "nj":null,"taux":null,"interet":null,"commission":null,"tob":null,
+    "frais_escompte":null,"bank_commission":null,"sg_or_fa_no":null,"d_n_amount":null,
+    "income":null,"date_of_impay":null,"reglement_impaye":null,"remarques":null
+  }]'::jsonb
+);
+COMMIT;
+"@ | Out-Null
+    $auditStopwatch.Stop()
+
+    if ($auditStopwatch.ElapsedMilliseconds -lt 1500) {
+      throw "Atomic import did not wait for the concurrent enrichment lock ($($auditStopwatch.ElapsedMilliseconds) ms)"
+    }
+    Wait-Job -Job $auditHolder -Timeout 10 | Out-Null
+    if ($auditHolder.State -ne 'Completed') { throw "audit preimage lock holder state: $($auditHolder.State)" }
+    Receive-Job -Job $auditHolder | Out-Null
+
+    $auditedPreimage = Invoke-SqlCommand @"
+SELECT count(*)
+FROM collection_import_private.row_audit
+WHERE actor_id = '00000000-0000-0000-0000-000000000002'
+  AND command_key = '10000000-0000-4000-8000-000000000023'
+  AND excel_filename = 'COLLECTION-SYNTH.xlsx'
+  AND excel_source_row = 2
+  AND before_row->>'remarques' = 'CONCURRENT-AUDIT-VALUE'
+  AND after_row->>'remarques' = 'CONCURRENT-AUDIT-VALUE';
+"@
+    if ([int]$auditedPreimage -ne 1) { throw 'concurrent enrichment was not captured exactly in row audit' }
+    Write-Output "COLLECTION_AUDIT_PREIMAGE_CONCURRENCY_PASS ($($auditStopwatch.ElapsedMilliseconds) ms)"
+  }
+  finally {
+    Remove-Job -Job $auditHolder -Force -ErrorAction SilentlyContinue
+  }
+
+  Invoke-SqlCommand @"
+UPDATE collection_import_private.runtime_control
+SET promotion_scope_enabled = false,
+    enabled_until = NULL,
+    change_reason = 'Relock synthetic audit preimage qualification window'
+WHERE singleton = true;
+"@ | Out-Null
+
   Write-Output 'ALL_COLLECTION_REPORT_CONTROLLED_ACTIVATION_PG17_PASS'
 }
 finally {

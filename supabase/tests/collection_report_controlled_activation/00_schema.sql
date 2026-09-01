@@ -85,8 +85,11 @@ ALTER TABLE public.collection_report
 CREATE FUNCTION public.detect_collection_type()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = public, pg_temp
+SET search_path = public
 AS $$
+DECLARE
+  is_date boolean;
+  is_number boolean;
 BEGIN
   IF NEW.collection_type IS NOT NULL AND NEW.collection_type <> 'UNKNOWN' THEN
     RETURN NEW;
@@ -94,17 +97,38 @@ BEGIN
   IF NEW.no_chq_bd IS NULL THEN
     RETURN NEW;
   END IF;
-  IF NEW.no_chq_bd ~ '^\d{2}[/\-]\d{2}[/\-]\d{4}$'
-     OR NEW.no_chq_bd ~ '^\d{4}[/\-]\d{2}[/\-]\d{2}$'
-  THEN
+
+  is_date := NEW.no_chq_bd ~ '^\d{2}[/\-]\d{2}[/\-]\d{4}$'
+    OR NEW.no_chq_bd ~ '^\d{4}[/\-]\d{2}[/\-]\d{2}$';
+  is_number := NEW.no_chq_bd ~ '^\d+$';
+
+  IF is_date THEN
     NEW.collection_type := 'EFFET';
-    NEW.effet_status := COALESCE(NEW.effet_status, 'PENDING');
-  ELSIF NEW.no_chq_bd ~ '^\d+$' THEN
+    BEGIN
+      IF NEW.no_chq_bd ~ '^\d{2}/\d{2}/\d{4}$' THEN
+        NEW.effet_echeance_date := to_date(NEW.no_chq_bd, 'DD/MM/YYYY');
+      ELSIF NEW.no_chq_bd ~ '^\d{2}-\d{2}-\d{4}$' THEN
+        NEW.effet_echeance_date := to_date(NEW.no_chq_bd, 'DD-MM-YYYY');
+      ELSIF NEW.no_chq_bd ~ '^\d{4}/\d{2}/\d{2}$' THEN
+        NEW.effet_echeance_date := to_date(NEW.no_chq_bd, 'YYYY/MM/DD');
+      ELSIF NEW.no_chq_bd ~ '^\d{4}-\d{2}-\d{2}$' THEN
+        NEW.effet_echeance_date := to_date(NEW.no_chq_bd, 'YYYY-MM-DD');
+      END IF;
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL;
+    END;
+    IF NEW.effet_status IS NULL THEN
+      NEW.effet_status := 'PENDING';
+    END IF;
+  ELSIF is_number THEN
     NEW.collection_type := 'CHEQUE';
-    NEW.cheque_number := COALESCE(NEW.cheque_number, NEW.no_chq_bd);
-    NEW.cheque_status := COALESCE(NEW.cheque_status, 'PENDING');
+    NEW.cheque_number := NEW.no_chq_bd;
+    IF NEW.cheque_status IS NULL THEN
+      NEW.cheque_status := 'PENDING';
+    END IF;
   ELSE
-    NEW.collection_type := COALESCE(NEW.collection_type, 'UNKNOWN');
+    NEW.collection_type := 'UNKNOWN';
   END IF;
   RETURN NEW;
 END;

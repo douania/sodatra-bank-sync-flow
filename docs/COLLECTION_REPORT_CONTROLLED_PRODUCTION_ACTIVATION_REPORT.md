@@ -5,8 +5,8 @@
 - GO : `GO_IMPLEMENT_COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_ATOMIC_INGEST_SERVER_SCOPE_AND_FAIL_CLOSED_VALIDATION`.
 - Base vérifiée : `8102e8ab40f03ee079bd45a33b3425d94db3e518` (`origin/main`).
 - Branche : `codex/collection-report-controlled-production-activation`.
-- Statut : correctifs de contre-review intégrés, prêts pour revalidation
-  indépendante du nouveau SHA.
+- Statut : findings de la première revalidation corrigés, nouveau SHA à
+  publier puis à revalider indépendamment.
 - Autorisé dans ce lot : code, migration candidate, tests, documentation,
   commit/push et PR brouillon.
 - Non autorisé et non effectué : merge, SQL live, application de migration,
@@ -80,8 +80,12 @@ promotion du pack :
 - upsert canonique sur `(excel_filename, excel_source_row)` ;
 - rejeu conservateur : les états opérationnels acquis sont préservés et seules
   les lacunes d'enrichissement peuvent être complétées ;
-- audit privé avant/après pour chaque clé traitée, avec comptage SQL réel et
-  rollback si le nombre d'audits diffère du nombre de lignes ;
+- la fonction historique `detect_collection_type()` est redéfinie sans changer
+  le câblage du trigger : elle dérive seulement les informations effet/chèque
+  encore absentes et ne remplace aucun enrichissement existant ;
+- audit privé avant/après pour chaque clé traitée, avec verrou déterministe des
+  lignes existantes avant préimage, comptage SQL réel et rollback si le nombre
+  d'audits diffère du nombre de lignes ;
 - rollback automatique de tout le lot en cas d'erreur.
 
 Un trigger interdit tout `INSERT` direct et toute modification directe des
@@ -92,8 +96,9 @@ RPC. Le schéma privé est sans `USAGE` pour `authenticated`, `anon` et
 `service_role`, avec RLS active et aucun policy d'accès.
 
 La migration ne change ni les migrations historiques, ni les contraintes ou
-index canoniques, ni `unique_excel_traceability`, ni
-`trg_detect_collection_type`/`detect_collection_type()`.
+index canoniques, ni `unique_excel_traceability`, ni le trigger
+`trg_detect_collection_type`. Elle remplace uniquement le corps de
+`detect_collection_type()` par sa variante conservatrice forward-only.
 
 ## Contre-review indépendante et réconciliation
 
@@ -117,15 +122,33 @@ application de la migration ; `/upload` utilise l'unique RPC atomique. Leur
 éventuelle migration UX hors `/upload` relève d'un lot dédié et ne justifie pas
 de rouvrir une voie d'écriture non atomique.
 
+La revalidation indépendante du SHA `7cc5a8e` a confirmé la fermeture du P0 et
+des deux P1, puis identifié deux P2 matériels. Ils sont corrigés dans le présent
+delta :
+
+- le shim démarre avec le corps historique exact du trigger, puis vérifie que
+  la migration le remplace par une dérivation conservatrice ; deux lignes
+  synthétiques historiques `NULL/UNKNOWN` prouvent la conservation d'un numéro
+  de chèque et d'une échéance déjà enrichis ;
+- le RPC verrouille désormais les lignes existantes par ordre déterministe
+  avant leur préimage. Un test PostgreSQL à deux sessions prouve qu'un
+  enrichissement concurrent est attendu puis capturé exactement dans
+  `before_row` et `after_row`.
+
+Le finding proposé sur le runner PowerShell a été retiré après confrontation à
+la CI réelle du SHA : la borne de 1 500 ms est minimale et l'étape PostgreSQL 17
+avait effectivement réussi à 2 740 ms sur `ubuntu-latest`.
+
 ## Validation locale
 
 | Vérification | Résultat |
 |---|---|
 | Suites import ciblées | 70 tests : 68 PASS, 0 FAIL, 2 SKIP documentés pour le harness Supabase/Vite sous Node 24 ; CI Node 20 |
 | Test réel de la borne XLSX | 5 001 lignes rejetées entièrement, 0 ligne acceptée |
-| Replay PostgreSQL 17 jetable | PASS ; conteneur supprimé |
-| Contrat SQL | scope fermé/ouvert/expirant, rôle de lecture, insert/update directs bloqués, GUC forgé bloqué, atomicité, SHA-256, rejeu conservateur, clé trim, audit réel, divergence unitaire, relock |
-| Concurrence scope | PASS ; un relock concurrent a attendu la transaction détentrice du verrou partagé (2 486 ms sur fenêtre synthétique de 3 s) |
+| Replay PostgreSQL 17 jetable | PASS ; fonction historique fidèle remplacée, cas chèque/effet `NULL/UNKNOWN` conservateurs, conteneur supprimé |
+| Contrat SQL | scope fermé/ouvert/expirant, rôle de lecture, insert/update directs bloqués, GUC forgé bloqué, atomicité, SHA-256, rejeu conservateur, trigger conservateur, clé trim, audit réel, divergence unitaire, relock |
+| Concurrence scope | PASS ; un relock concurrent a attendu 2 675 ms sur fenêtre synthétique de 3 s |
+| Concurrence préimage audit | PASS ; l'import a attendu 2 780 ms puis l'audit a capturé exactement l'enrichissement concurrent commité |
 | Build Vite production | PASS ; warnings de chunk/imports mixtes préexistants |
 | Artefact MCP | SHA-256 inchangé avant/après build |
 | ESLint | 180 erreurs / 11 warnings, multiensemble strictement identique à `origin/main` (même SHA-256 des 191 diagnostics) |
@@ -162,13 +185,14 @@ secret, JWT réel ou environnement Supabase n'a été lu pendant les tests du lo
   commande déjà commitée n'est pas exposée en libre-service ; l'audit privé
   avant/après fournit la preuve nécessaire à un futur lot de compensation
   contrôlée si le besoin opérationnel est confirmé.
-- Le trigger laisse possibles les enrichissements opérationnels existants qui
+- Le trigger de garde laisse possibles les enrichissements opérationnels existants qui
   ne modifient pas les champs d'identité stable ; leurs contrôles RLS actuels
-  restent autoritatifs et devront être requalifiés en staging. Les INSERT
+  restent autoritatifs. Le verrou de préimage les sérialise désormais avec
+  l'import atomique ; cette interaction devra être requalifiée en staging. Les INSERT
   Collection des surfaces legacy sont intentionnellement fail-closed et doivent
   être redirigés vers `/upload` plutôt que réautorisés.
 - `DELETE`/`TRUNCATE`, politique de rétention de l'audit et compensation après
   commit ne font pas partie de cet ingest atomique ; ils exigent des lots de
   gouvernance distincts.
 
-Verdict CTO local : **`PASS_WITH_RESERVES — FIXES_READY_FOR_INDEPENDENT_REVALIDATION`**.
+Verdict CTO local : **`PASS_WITH_RESERVES — REVALIDATION_FINDINGS_FIXED — NEW_SHA_PENDING_REVIEW`**.

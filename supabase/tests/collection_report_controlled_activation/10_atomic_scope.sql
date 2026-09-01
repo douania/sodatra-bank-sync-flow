@@ -263,6 +263,103 @@ SELECT test.assert((SELECT count(*) = 2 FROM public.collection_report), 'trimmed
 SELECT test.assert((:'trimmed_result'::jsonb->>'inserted_rows')::integer = 0, 'trimmed trace was misclassified as insert');
 SELECT test.assert((:'trimmed_result'::jsonb->>'audit_rows')::integer = 1, 'trimmed trace audit count mismatch');
 
+-- Le shim reproduit d'abord la fonction historique destructive. La migration
+-- candidate doit la remplacer par une dérivation conservatrice, sans changer
+-- le trigger. Deux lignes historiques NULL/UNKNOWN exercent les deux branches.
+SELECT test.assert(
+  regexp_replace(
+    pg_get_functiondef('public.detect_collection_type()'::regprocedure),
+    '\s+',
+    ' ',
+    'g'
+  ) LIKE '%NEW.cheque_number := COALESCE(NEW.cheque_number, NEW.no_chq_bd)%',
+  'candidate migration did not harden cheque derivation'
+);
+SELECT test.assert(
+  regexp_replace(
+    pg_get_functiondef('public.detect_collection_type()'::regprocedure),
+    '\s+',
+    ' ',
+    'g'
+  ) LIKE '%NEW.effet_echeance_date := COALESCE(%',
+  'candidate migration did not harden effet date derivation'
+);
+
+ALTER TABLE public.collection_report DISABLE TRIGGER USER;
+INSERT INTO public.collection_report (
+  report_date, client_code, collection_amount, bank_name, status,
+  collection_type, effet_echeance_date, effet_status, cheque_number, cheque_status,
+  excel_filename, excel_source_row, facture_no, no_chq_bd
+) VALUES
+  (
+    '2026-09-01', 'HIST-CHEQUE', 3000, 'SYNTH BANK', 'processed',
+    'UNKNOWN', NULL, NULL, 'MANUAL-CHEQUE', 'CLEARED',
+    'HIST-CHEQUE.xlsx', 2, 'HIST-FA-C', '123456'
+  ),
+  (
+    '2026-09-01', 'HIST-EFFET', 4000, 'SYNTH BANK', 'processed',
+    NULL, '2026-10-01', 'PAID', NULL, NULL,
+    'HIST-EFFET.xlsx', 2, 'HIST-FA-E', '15/09/2026'
+  );
+ALTER TABLE public.collection_report ENABLE TRIGGER USER;
+
+SET ROLE authenticated;
+SELECT public.import_collection_report_atomic_v1(
+  '10000000-0000-4000-8000-000000000022',
+  '[
+    {
+      "report_date":"2026-09-01","client_code":"HIST-CHEQUE","collection_amount":3000,
+      "bank_name":"SYNTH BANK","status":"pending","collection_type":"UNKNOWN",
+      "effet_echeance_date":null,"effet_status":null,"cheque_number":null,"cheque_status":null,
+      "excel_filename":"HIST-CHEQUE.xlsx","excel_source_row":2,"date_of_validity":null,
+      "facture_no":"HIST-FA-C","no_chq_bd":"123456","bank_name_display":null,"depo_ref":null,
+      "nj":null,"taux":null,"interet":null,"commission":null,"tob":null,
+      "frais_escompte":null,"bank_commission":null,"sg_or_fa_no":null,"d_n_amount":null,
+      "income":null,"date_of_impay":null,"reglement_impaye":null,"remarques":null
+    },
+    {
+      "report_date":"2026-09-01","client_code":"HIST-EFFET","collection_amount":4000,
+      "bank_name":"SYNTH BANK","status":"pending","collection_type":null,
+      "effet_echeance_date":null,"effet_status":null,"cheque_number":null,"cheque_status":null,
+      "excel_filename":"HIST-EFFET.xlsx","excel_source_row":2,"date_of_validity":null,
+      "facture_no":"HIST-FA-E","no_chq_bd":"15/09/2026","bank_name_display":null,"depo_ref":null,
+      "nj":null,"taux":null,"interet":null,"commission":null,"tob":null,
+      "frais_escompte":null,"bank_commission":null,"sg_or_fa_no":null,"d_n_amount":null,
+      "income":null,"date_of_impay":null,"reglement_impaye":null,"remarques":null
+    }
+  ]'::jsonb
+) AS result \gset historical_
+RESET ROLE;
+
+SELECT test.assert(
+  (SELECT collection_type = 'CHEQUE'
+          AND cheque_number = 'MANUAL-CHEQUE'
+          AND cheque_status = 'CLEARED'
+   FROM public.collection_report
+   WHERE excel_filename = 'HIST-CHEQUE.xlsx' AND excel_source_row = 2),
+  'conservative trigger overwrote historical cheque enrichment'
+);
+SELECT test.assert(
+  (SELECT collection_type = 'EFFET'
+          AND effet_echeance_date = '2026-10-01'
+          AND effet_status = 'PAID'
+   FROM public.collection_report
+   WHERE excel_filename = 'HIST-EFFET.xlsx' AND excel_source_row = 2),
+  'conservative trigger overwrote historical effet enrichment'
+);
+SELECT test.assert(
+  (:'historical_result'::jsonb->>'audit_rows')::integer = 2,
+  'historical conservative replay audit count mismatch'
+);
+SELECT test.assert(
+  (SELECT before_row->>'collection_type' = 'UNKNOWN'
+          AND before_row->>'cheque_number' = 'MANUAL-CHEQUE'
+   FROM collection_import_private.row_audit
+   WHERE command_key = '10000000-0000-4000-8000-000000000022'
+     AND excel_filename = 'HIST-CHEQUE.xlsx'),
+  'historical cheque preimage was not captured'
+);
+
 SET ROLE authenticated;
 DO $$ BEGIN
   BEGIN

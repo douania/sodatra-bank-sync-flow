@@ -17,14 +17,16 @@
 
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — FIXES_READY_FOR_INDEPENDENT_REVALIDATION` (2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — REVALIDATION_FINDINGS_FIXED — NEW_SHA_PENDING_REVIEW` (2026-09-01 Europe/Paris)**
 
 Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
 promotion Collection Report par RPC atomique unique, scope serveur privé fermé
 par défaut et expirant, idempotence acteur/commande déterministe sur le payload
 exact avec SHA-256 serveur, audit avant/après compté réellement, rejeu
 conservateur, normalisation de la clé Excel, verrou partagé du scope et
-validation fail-closed. Toute divergence d'identité stable est refusée. Les insertions
+validation fail-closed. La fonction historique de détection effet/chèque est
+redéfinie de façon conservatrice et toute préimage d'audit existante est prise
+sous verrou de ligne. Toute divergence d'identité stable est refusée. Les insertions
 directes et changements directs d'identité stable sont bloqués ; la capacité
 d'écriture interne est privée et liée à la transaction, donc non falsifiable
 par paramètre de session. Bornes Collection : 10 fichiers, 15 Mo par fichier et
@@ -32,10 +34,14 @@ par paramètre de session. Bornes Collection : 10 fichiers, 15 Mo par fichier et
 En production, seul Collection Report peut atteindre la review locale ;
 tous les autres chemins `/upload` restent fermés.
 
-La contre-review du SHA `631ce3f` avait relevé 1 P0 et 2 P1 ; les trois sont
-réconciliés et attendent une revalidation indépendante du nouveau SHA.
+La contre-review du SHA `631ce3f` avait relevé 1 P0 et 2 P1, corrigés au SHA
+`7cc5a8e`. Sa revalidation a ensuite conservé deux P2 matériels : shim du
+trigger non fidèle et préimage d'audit non verrouillée. Les deux correctifs sont
+maintenant intégrés localement et attendent une nouvelle revalidation du SHA à
+publier.
 Validation locale : 68 PASS / 0 FAIL / 2 SKIP documentés sur 70 tests ciblés,
-replay PostgreSQL 17 PASS avec concurrence réelle (relock bloqué 2 486 ms) et
+replay PostgreSQL 17 PASS avec fonction historique fidèle, cas NULL/UNKNOWN et
+deux concurrences réelles (relock 2 675 ms ; préimage d'audit 2 780 ms),
 conteneur supprimé, build PASS, artefact MCP
 inchangé, ESLint 180/11 et TypeScript 17 strictement identiques à la base.
 Migration candidate uniquement : aucun SQL live, merge, staging, publication ou
