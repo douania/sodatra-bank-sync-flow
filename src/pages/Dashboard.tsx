@@ -102,7 +102,13 @@ const LegacyDashboard = () => {
       }
     } catch (error) {
       console.error('❌ Erreur chargement dashboard:', error);
-      setError(error instanceof Error ? error.message : 'Erreur inconnue');
+      const { getHistoricalDashboardCollectionUserErrorMessage } = await import(
+        '@/services/historicalDashboardCollectionRead'
+      );
+      setError(
+        getHistoricalDashboardCollectionUserErrorMessage(error)
+        ?? (error instanceof Error ? error.message : 'Erreur inconnue'),
+      );
     } finally {
       setLoading(false);
     }

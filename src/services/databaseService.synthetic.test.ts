@@ -23,7 +23,10 @@ import {
 } from './financialAtomicPersistence';
 import {
   buildHistoricalDashboardCollectionSnapshot,
+  getHistoricalDashboardCollectionUserErrorMessage,
+  HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED,
   HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT,
+  HISTORICAL_DASHBOARD_COLLECTION_USER_ERROR_MESSAGE,
 } from './historicalDashboardCollectionRead';
 
 const databaseServiceModule = Promise.resolve({
@@ -275,13 +278,32 @@ test('le snapshot refuse tout compteur absent, invalide ou inférieur aux lignes
   );
 });
 
+test('le dashboard traduit l’échec technique Collection Report en message utilisateur sûr', () => {
+  assert.equal(
+    getHistoricalDashboardCollectionUserErrorMessage(
+      new Error(HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED),
+    ),
+    HISTORICAL_DASHBOARD_COLLECTION_USER_ERROR_MESSAGE,
+  );
+  assert.equal(
+    getHistoricalDashboardCollectionUserErrorMessage(new Error('OTHER_DASHBOARD_FAILURE')),
+    null,
+  );
+  assert.equal(getHistoricalDashboardCollectionUserErrorMessage('unexpected'), null);
+});
+
 test('le contrat runtime demande un count exact et le dashboard n’utilise plus array.length comme total', () => {
   const serviceSource = readFileSync(new URL('./databaseService.ts', import.meta.url), 'utf8');
   const dashboardSource = readFileSync(new URL('../pages/Dashboard.tsx', import.meta.url), 'utf8');
 
   assert.match(serviceSource, /\.select\('\*', \{ count: 'exact' \}\)/);
   assert.match(serviceSource, /\.limit\(HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT\)/);
+  assert.match(
+    serviceSource,
+    /throw new Error\('HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED'\)/,
+  );
   assert.match(dashboardSource, /collectionSnapshot\.totalCount/);
   assert.match(dashboardSource, /collections au total/);
+  assert.match(dashboardSource, /getHistoricalDashboardCollectionUserErrorMessage\(error\)/);
   assert.doesNotMatch(dashboardSource, /\{collectionReports\.length\} collections(?:\s|<)/);
 });
