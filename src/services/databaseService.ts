@@ -715,6 +715,30 @@ export class DatabaseService {
       }))
     };
   }
+
+  async getHistoricalDashboardCollectionSnapshot(): Promise<
+    import('./historicalDashboardCollectionRead').HistoricalDashboardCollectionSnapshot
+  > {
+    try {
+      const {
+        buildHistoricalDashboardCollectionSnapshot,
+        HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT,
+      } = await import('./historicalDashboardCollectionRead');
+      const { data, count, error } = await supabase
+        .from('collection_report')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .limit(HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT);
+
+      if (error) throw error;
+
+      const reports = (data || []).map(this.mapDbToCollectionReport);
+      return buildHistoricalDashboardCollectionSnapshot(reports, count);
+    } catch (error) {
+      console.error('Error fetching historical dashboard collections:', error);
+      throw new Error('HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED');
+    }
+  }
 }
 
 export const databaseService = new DatabaseService();
