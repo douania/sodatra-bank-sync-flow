@@ -19,6 +19,7 @@ const LegacyDashboard = () => {
   const [fundPosition, setFundPosition] = useState<FundPosition | null>(null);
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<any>(null);
+  const [collectionTotalCount, setCollectionTotalCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showZeroPositions, setShowZeroPositions] = useState(() => {
@@ -45,14 +46,15 @@ const LegacyDashboard = () => {
         throw new Error('Impossible de se connecter à la base de données');
       }
 
-      // Récupérer toutes les données en parallèle
-      const [reports, collections, position] = await Promise.all([
+      // Récupérer en parallèle les rapports, le total Collection exact avec son échantillon borné et la position.
+      const [reports, collectionSnapshot, position] = await Promise.all([
         databaseService.getLatestBankReports(),
-        databaseService.getCollectionReports(),
+        databaseService.getHistoricalDashboardCollectionSnapshot(),
         databaseService.getLatestFundPosition()
       ]);
+      const collections = collectionSnapshot.reports;
       
-      console.log(`📊 Données récupérées: ${reports.length} rapports bancaires, ${collections.length} collections, Fund Position: ${position ? 'Oui' : 'Non'}`);
+      console.log(`📊 Données récupérées: ${reports.length} rapports bancaires, ${collectionSnapshot.totalCount} collections au total (${collectionSnapshot.loadedCount} chargées), Fund Position: ${position ? 'Oui' : 'Non'}`);
       
       // ⭐ AMÉLIORATION: Ne plus filtrer complètement les rapports à zéro
       const processedBankReports = reports.filter((report, index, self) => {
@@ -64,6 +66,7 @@ const LegacyDashboard = () => {
       
       setBankReports(processedBankReports);
       setCollectionReports(collections);
+      setCollectionTotalCount(collectionSnapshot.totalCount);
       setFundPosition(position);
       
       // Calculer les métriques du dashboard avec tous les rapports
@@ -99,7 +102,13 @@ const LegacyDashboard = () => {
       }
     } catch (error) {
       console.error('❌ Erreur chargement dashboard:', error);
-      setError(error instanceof Error ? error.message : 'Erreur inconnue');
+      const { getHistoricalDashboardCollectionUserErrorMessage } = await import(
+        '@/services/historicalDashboardCollectionRead'
+      );
+      setError(
+        getHistoricalDashboardCollectionUserErrorMessage(error)
+        ?? (error instanceof Error ? error.message : 'Erreur inconnue'),
+      );
     } finally {
       setLoading(false);
     }
@@ -194,7 +203,7 @@ const LegacyDashboard = () => {
     );
   }
 
-  if (bankReports.length === 0 && collectionReports.length === 0) {
+  if (bankReports.length === 0 && collectionTotalCount === 0) {
     return (
       <div className="flex items-center justify-center h-96">
         <Card className="w-96">
@@ -228,7 +237,10 @@ const LegacyDashboard = () => {
           </Button>
           <div className="text-sm text-gray-500">
             Consultation du {new Date().toLocaleDateString('fr-FR')} (pas la date des relevés) •
-            {bankReports.length} banques • {collectionReports.length} collections
+            {bankReports.length} banques • {collectionTotalCount?.toLocaleString('fr-FR')} collections au total
+            {collectionTotalCount !== null && collectionReports.length < collectionTotalCount && (
+              <> • analyses Collection Report sur {collectionReports.length.toLocaleString('fr-FR')} lignes récentes</>
+            )}
           </div>
         </div>
       </div>

@@ -14,12 +14,20 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import type { FundPosition } from '@/types/banking';
+import type { CollectionReport, FundPosition } from '@/types/banking';
 import {
   buildFundPositionInsertPayloads,
   sanitizeFundPositionAmount,
 } from './financialAtomicPersistence';
+import {
+  buildHistoricalDashboardCollectionSnapshot,
+  getHistoricalDashboardCollectionUserErrorMessage,
+  HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED,
+  HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT,
+  HISTORICAL_DASHBOARD_COLLECTION_USER_ERROR_MESSAGE,
+} from './historicalDashboardCollectionRead';
 
 const databaseServiceModule = Promise.resolve({
   buildFundPositionInsertPayloads,
@@ -225,4 +233,77 @@ test('détails et holds absents : tableaux vides, aucune fabrication', async () 
   const { detailRows, holdRows } = buildFundPositionInsertPayloads(syntheticFundPosition());
   assert.deepEqual(detailRows, []);
   assert.deepEqual(holdRows, []);
+});
+
+// ---------------------------------------------------------------------------
+// Dashboard historique — total exact distinct de l'échantillon chargé
+// ---------------------------------------------------------------------------
+
+test('le snapshot conserve le total exact au-delà de la limite de lignes chargées', () => {
+  const reports = Array.from(
+    { length: HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT },
+    (_, index) => ({ id: `synthetic-${index}` }) as CollectionReport,
+  );
+
+  const snapshot = buildHistoricalDashboardCollectionSnapshot(reports, 1_250);
+
+  assert.equal(snapshot.totalCount, 1_250);
+  assert.equal(snapshot.loadedCount, HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT);
+  assert.equal(snapshot.isPartial, true);
+  assert.equal(snapshot.reports, reports);
+});
+
+test('le snapshot marque une lecture complète lorsque total et lignes correspondent', () => {
+  const reports = [{ id: 'synthetic-1' }, { id: 'synthetic-2' }] as CollectionReport[];
+  const snapshot = buildHistoricalDashboardCollectionSnapshot(reports, reports.length);
+
+  assert.equal(snapshot.totalCount, 2);
+  assert.equal(snapshot.loadedCount, 2);
+  assert.equal(snapshot.isPartial, false);
+});
+
+test('le snapshot refuse tout compteur absent, invalide ou inférieur aux lignes chargées', () => {
+  const reports = [{ id: 'synthetic-1' }] as CollectionReport[];
+
+  for (const invalidCount of [null, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => buildHistoricalDashboardCollectionSnapshot(reports, invalidCount),
+      /HISTORICAL_DASHBOARD_COLLECTION_COUNT_INVALID/,
+    );
+  }
+
+  assert.throws(
+    () => buildHistoricalDashboardCollectionSnapshot(reports, 0),
+    /HISTORICAL_DASHBOARD_COLLECTION_COUNT_INVALID/,
+  );
+});
+
+test('le dashboard traduit l’échec technique Collection Report en message utilisateur sûr', () => {
+  assert.equal(
+    getHistoricalDashboardCollectionUserErrorMessage(
+      new Error(HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED),
+    ),
+    HISTORICAL_DASHBOARD_COLLECTION_USER_ERROR_MESSAGE,
+  );
+  assert.equal(
+    getHistoricalDashboardCollectionUserErrorMessage(new Error('OTHER_DASHBOARD_FAILURE')),
+    null,
+  );
+  assert.equal(getHistoricalDashboardCollectionUserErrorMessage('unexpected'), null);
+});
+
+test('le contrat runtime demande un count exact et le dashboard n’utilise plus array.length comme total', () => {
+  const serviceSource = readFileSync(new URL('./databaseService.ts', import.meta.url), 'utf8');
+  const dashboardSource = readFileSync(new URL('../pages/Dashboard.tsx', import.meta.url), 'utf8');
+
+  assert.match(serviceSource, /\.select\('\*', \{ count: 'exact' \}\)/);
+  assert.match(serviceSource, /\.limit\(HISTORICAL_DASHBOARD_COLLECTION_SAMPLE_LIMIT\)/);
+  assert.match(
+    serviceSource,
+    /throw new Error\('HISTORICAL_DASHBOARD_COLLECTION_READ_FAILED'\)/,
+  );
+  assert.match(dashboardSource, /collectionSnapshot\.totalCount/);
+  assert.match(dashboardSource, /collections au total/);
+  assert.match(dashboardSource, /getHistoricalDashboardCollectionUserErrorMessage\(error\)/);
+  assert.doesNotMatch(dashboardSource, /\{collectionReports\.length\} collections(?:\s|<)/);
 });
