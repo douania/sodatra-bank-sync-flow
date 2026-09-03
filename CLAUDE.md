@@ -63,7 +63,7 @@ git rev-parse HEAD
 git rev-parse origin/main
 ```
 
-Vérifier : bon repo, HEAD attendu, working tree propre.
+Vérifier : bon repo, HEAD attendu, working tree propre. **Sur un checkout monté depuis un pont Linux (autocrlf), un `git status --short` massif peut être du bruit de fin de ligne pur : vérifier avec `git diff --ignore-cr-at-eol --stat` (dernière ligne = total réel) avant de conclure à un working tree non propre.**
 
 ## 4. Stop conditions permanentes
 
@@ -71,7 +71,7 @@ STOP immédiat + rapport BLOCKED si :
 
 - mauvais repo ;
 - mauvais HEAD / origin/main différent du HEAD attendu ;
-- working tree non propre ;
+- working tree non propre (après exclusion du bruit CRLF, voir §3) ;
 - fichier nécessaire hors périmètre du lot ;
 - fichier interdit nécessaire ;
 - package.json / lockfile nécessaire sans GO ;
@@ -175,3 +175,27 @@ Ce fichier porte les règles permanentes. Le reste vit ailleurs, sans copie :
 | Baselines lint/typecheck/tests | `docs/BASELINES.md` |
 | Seuil ESLint exécutable | `.github/workflows/ci.yml` |
 | Templates de prompts, formats rapport/verdict | `docs/ops/OPS-CLAUDE-CODE-AUTOMATION-1.md` |
+| File d'attente d'arbitrage CTO (mode autopilot) | `docs/CTO_GO_QUEUE.md` |
+
+## 9. Escalade automatique (mode autopilot planifié)
+
+En tâche planifiée (sans utilisateur présent), Claude Code peut exécuter un pack déjà couvert par
+un GO existant, jusqu'à : diagnostic, patch, tests, commit local sur une branche dédiée. Comme en
+session interactive, **jamais de merge**, et depuis l'environnement planifié, **jamais de push ni
+d'ouverture de PR** (aucun identifiant Git n'y est disponible) — la branche reste locale et son
+push est signalé dans le résumé de fin de passage pour que l'utilisateur ou une session Codex avec
+accès natif l'ouvre en PR.
+
+Si le travail restant nécessite un nouveau verdict CTO (nouveau périmètre, GO d'environnement,
+ambiguïté métier, ou toute stop condition du §4) : ne pas rester bloqué en attente d'une réponse
+synchrone. Consigner une entrée `PENDING` dans `docs/CTO_GO_QUEUE.md`, committer uniquement ce
+fichier (jamais le code du pack), puis passer au pack sûr suivant s'il y en a un, ou terminer
+proprement.
+
+Garde-fous supplémentaires propres au mode autopilot :
+- Ne jamais committer un fichier modifié dans les 15 dernières minutes (risque d'édition en cours
+  par un autre agent ou par l'utilisateur).
+- Un passage planifié qui ne trouve rien de sûr à faire et aucune entrée `GO` à traiter se termine
+  sans rien committer — ce n'est pas un échec.
+- Les garde-fous données bancaires réelles (§2) et Lovable/MCP (§7, §7bis) s'appliquent sans
+  exception au mode autopilot.

@@ -3,6 +3,10 @@
 Pointeur mince, volontairement sans règles propres. Tout agent (Claude Code,
 Codex, reviewer indépendant, etc.) lit dans cet ordre :
 
+0. **`docs/CTO_GO_QUEUE.md`** — file d'attente d'arbitrage CTO (mode
+   autopilot planifié : lots exécutés automatiquement par Claude Code en
+   session planifiée, en attente de verdict). **À vérifier en tout premier** ;
+   traiter les entrées `PENDING` avant tout nouveau travail.
 1. **`CLAUDE.md`** — règles permanentes non négociables : préflight, stop
    conditions, sécurité, périmètres. Elles s'appliquent à tout agent, pas
    seulement à Claude Code.
