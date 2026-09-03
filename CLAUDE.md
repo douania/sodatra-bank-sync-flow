@@ -199,3 +199,36 @@ Garde-fous supplémentaires propres au mode autopilot :
   sans rien committer — ce n'est pas un échec.
 - Les garde-fous données bancaires réelles (§2) et Lovable/MCP (§7, §7bis) s'appliquent sans
   exception au mode autopilot.
+
+## 10. Consultation directe Codex (canal miroir, à privilégier sur la file d'attente)
+
+Codex peut déjà invoquer le CLI `claude` en local (sous-processus non interactif, lecture seule,
+session Claude Code déjà authentifiée sur la machine de l'utilisateur) pour obtenir un contre-avis
+sans passer par l'utilisateur — confirmé directement par Codex le 2026-09-03. Le canal symétrique
+existe : toute session Claude Code disposant d'un accès à l'ordinateur de l'utilisateur (outils
+`computer_*`/`device_*`) peut consulter Codex en direct de la même façon, au lieu d'attendre une
+réponse asynchrone dans `docs/CTO_GO_QUEUE.md`. C'est le canal à privilégier chaque fois qu'il est
+disponible, y compris en session interactive normale — pas seulement en mode autopilot planifié.
+Rappel : ce canal sert à obtenir un verdict CTO, jamais à contourner le §1 (aucun merge sans verdict
+explicite, aucune PR ouverte sans revue).
+
+Procédure :
+1. Vérifier que l'app ChatGPT/Codex est accessible (accès outil `computer_*` déjà accordé, sinon le
+   demander explicitement avec une raison précise).
+2. Prendre une capture d'écran avant toute action. Si un brouillon non envoyé existe dans la zone de
+   saisie, ne jamais y toucher, ne jamais l'écraser : ouvrir un nouveau chat dédié à la place.
+3. Ouvrir un nouveau chat (se détacher de tout projet si une erreur d'association apparaît), poser
+   une question unique, précise et bornée : repo, branche, HEAD, l'ambiguïté ou la décision exacte
+   requise, et demander explicitement le format de verdict CTO.
+4. Attendre la réponse sans marteler l'interface (vérifier toutes les 20-30 s).
+5. Agir sur un GO clair (jusqu'au stade branche locale prête, jamais au-delà — §1) ; s'arrêter et
+   rapporter sur un NO-GO ou une ambiguïté persistante.
+6. Consigner l'échange (question + verdict, horodatage) dans `docs/CTO_GO_QUEUE.md` avec le statut
+   `TRAITÉ` — ce fichier reste la trace d'audit unique même quand la décision a été obtenue en
+   direct plutôt qu'en asynchrone.
+7. Économiser le quota Codex : question unique et bornée, pas d'aller-retour exploratoire, effort
+   raisonnable.
+
+Si aucun accès à l'ordinateur n'est disponible (session Claude Code sans pont device), revenir à
+l'escalade asynchrone standard : consigner une entrée `PENDING` dans `docs/CTO_GO_QUEUE.md` et
+continuer sur le pack sûr suivant.
