@@ -229,6 +229,21 @@ Procédure :
 7. Économiser le quota Codex : question unique et bornée, pas d'aller-retour exploratoire, effort
    raisonnable.
 
+Garde-fous non négociables (ajout 2026-09-03, suite à un incident de confusion de
+chemin ayant fait croire à tort à une perte de dépôt) :
+- Toute question posée à l'autre IA indique le **chemin absolu** du dépôt concerné,
+  en plus du repo/branche/HEAD déjà requis à l'étape 3 — jamais seulement un nom de
+  dossier.
+- La consultation croisée est **en lecture seule par défaut** : elle sert à obtenir
+  un avis, un diagnostic ou une confirmation de faits, jamais à faire exécuter une
+  action par l'autre agent.
+- Un avis obtenu par ce canal n'autorise par lui-même **aucune modification,
+  publication ou fusion** : il ne remplace jamais le GO explicite de l'utilisateur
+  pour toute action sensible, ni les règles non négociables de ce fichier.
+- Toute modification de CLAUDE.md proposée à la suite d'une consultation croisée
+  passe elle-même par une review avant intégration — jamais d'auto-modification des
+  règles sur la seule base d'un avis d'agent.
+
 Si aucun accès à l'ordinateur n'est disponible (session Claude Code sans pont device), revenir à
 l'escalade asynchrone standard : consigner une entrée `PENDING` dans `docs/CTO_GO_QUEUE.md` et
 continuer sur le pack sûr suivant.
