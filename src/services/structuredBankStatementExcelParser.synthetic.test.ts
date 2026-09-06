@@ -223,15 +223,178 @@ test('fails closed when a numeric amount cannot round-trip through safe integer 
 
 test('refuses malformed or precision-unsafe textual amounts', () => {
   for (const unsafeAmount of ['1-000', '12,34.56', '100 debit', '90071992547409.91']) {
+    for (const bookType of ['xls', 'xlsx'] as const) {
+      const workbook = bicisWorkbook();
+      // PACK 0 / GO_FIX : cellule de texte réelle (t:'s'), pas un objet cellule
+      // numérique portant une chaîne. La forme incohérente est couverte par le
+      // scénario DEF-19 dédié plus bas.
+      const cell = workbook.Sheets[workbook.SheetNames[0]].D9;
+      cell.t = 's';
+      cell.v = unsafeAmount;
+      delete cell.w;
+      const result = parseStructuredBankStatementExcel(workbookBytes(workbook, bookType), {
+        sourceFileName: 'SYNTHETIC BICIS ONLINE.xls',
+        expectedBank: 'BICIS',
+      });
+
+      assert.equal(result.validation.status, 'invalid', `${unsafeAmount} (${bookType})`);
+      assert.match(result.errors.join(' '), /non-zero signed amount|container signature/i);
+      // Le document est refusé fail-closed ; la ligne portant le montant
+      // textuel malformé (D9, index 8) ne produit jamais de ligne financière.
+      assert.ok(
+        result.lines.every((line) => line.sourceRowIndex !== 8),
+        `${unsafeAmount} (${bookType}): the malformed row must not yield a financial line`,
+      );
+      assert.ok(!result.lines.some((line) => line.signedAmount === 36), `${unsafeAmount} (${bookType})`);
+    }
+  }
+});
+
+// --- PACK 0 / GO_FIX_PACK_0 — DEF-19 : cellules d'erreur Excel -----------------
+
+type ExcelErrorCode = { code: number; label: string };
+const EXCEL_ERROR_CODES: readonly ExcelErrorCode[] = [
+  { code: 0, label: '#NULL!' },
+  { code: 7, label: '#DIV/0!' },
+  { code: 15, label: '#VALUE!' },
+  { code: 23, label: '#REF!' },
+  { code: 29, label: '#NAME?' },
+  { code: 36, label: '#NUM!' },
+  { code: 42, label: '#N/A' },
+];
+
+function setErrorCell(workbook: XLSX.WorkBook, address: string, error: ExcelErrorCode): void {
+  workbook.Sheets[workbook.SheetNames[0]][address] = { t: 'e', v: error.code, w: error.label };
+}
+
+function assertRefusedForErrorCell(
+  result: ReturnType<typeof parseStructuredBankStatementExcel>,
+  address: string,
+  label: string,
+): void {
+  assert.equal(result.validation.status, 'invalid', label);
+  assert.equal(result.lines.length, 0, `${label}: an error cell must never yield a financial line`);
+  assert.match(result.errors.join(' '), /error cell/i, label);
+  assert.match(result.errors.join(' '), new RegExp(address), `${label}: the refusal names the cell`);
+  assert.notEqual(result.validation.status, 'needs_review', label);
+}
+
+test('refuses every Excel error code in the BICIS amount column before any extraction (XLS)', () => {
+  for (const error of EXCEL_ERROR_CODES) {
     const workbook = bicisWorkbook();
-    workbook.Sheets[workbook.SheetNames[0]].D9.v = unsafeAmount;
+    setErrorCell(workbook, 'D9', error);
     const result = parseStructuredBankStatementExcel(workbookBytes(workbook, 'xls'), {
       sourceFileName: 'SYNTHETIC BICIS ONLINE.xls',
       expectedBank: 'BICIS',
     });
+    assertRefusedForErrorCell(result, 'D9', `BICIS amount ${error.label}`);
+  }
+});
 
-    assert.equal(result.validation.status, 'invalid');
-    assert.match(result.errors.join(' '), /non-zero signed amount/i);
+test('refuses error cells in signed amount, balance and date columns (ATB/BICIS, XLS)', () => {
+  const cases: Array<{ name: string; workbook: () => XLSX.WorkBook; file: string; bank: 'ATB' | 'BICIS'; address: string; error: ExcelErrorCode }> = [
+    { name: 'BICIS balance', workbook: bicisWorkbook, file: 'SYNTHETIC BICIS ONLINE.xls', bank: 'BICIS', address: 'F9', error: EXCEL_ERROR_CODES[1] },
+    { name: 'BICIS operation date', workbook: bicisWorkbook, file: 'SYNTHETIC BICIS ONLINE.xls', bank: 'BICIS', address: 'A9', error: EXCEL_ERROR_CODES[2] },
+    { name: 'BICIS value date', workbook: bicisWorkbook, file: 'SYNTHETIC BICIS ONLINE.xls', bank: 'BICIS', address: 'B10', error: EXCEL_ERROR_CODES[5] },
+    { name: 'ATB amount', workbook: atbWorkbook, file: 'SYNTHETIC ATB ONLINE.xls', bank: 'ATB', address: 'D8', error: EXCEL_ERROR_CODES[5] },
+    { name: 'ATB balance', workbook: atbWorkbook, file: 'SYNTHETIC ATB ONLINE.xls', bank: 'ATB', address: 'E9', error: EXCEL_ERROR_CODES[1] },
+  ];
+  for (const testCase of cases) {
+    const workbook = testCase.workbook();
+    setErrorCell(workbook, testCase.address, testCase.error);
+    const result = parseStructuredBankStatementExcel(workbookBytes(workbook, 'xls'), {
+      sourceFileName: testCase.file,
+      expectedBank: testCase.bank,
+    });
+    assertRefusedForErrorCell(result, testCase.address, `${testCase.name} ${testCase.error.label}`);
+  }
+});
+
+test('refuses error cells in split debit/credit and balance columns (BIS XLS, BRIDGE XLSX)', () => {
+  const bisCases = [
+    { address: 'K12', error: EXCEL_ERROR_CODES[5] },   // débit
+    { address: 'M13', error: EXCEL_ERROR_CODES[1] },   // crédit
+    { address: 'O12', error: EXCEL_ERROR_CODES[2] },   // solde
+    { address: 'B13', error: EXCEL_ERROR_CODES[6] },   // date opération
+  ];
+  for (const bisCase of bisCases) {
+    const workbook = bisWorkbook();
+    setErrorCell(workbook, bisCase.address, bisCase.error);
+    const result = parseStructuredBankStatementExcel(workbookBytes(workbook, 'xls'), {
+      sourceFileName: 'SYNTHETIC BIS ONLINE.xls',
+      expectedBank: 'BIS',
+    });
+    assertRefusedForErrorCell(result, bisCase.address, `BIS ${bisCase.address} ${bisCase.error.label}`);
+  }
+
+  const bridgeCases = [
+    { address: 'E2', error: EXCEL_ERROR_CODES[5] },    // débit
+    { address: 'F3', error: EXCEL_ERROR_CODES[1] },    // crédit
+    { address: 'G3', error: EXCEL_ERROR_CODES[3] },    // solde courant
+    { address: 'A2', error: EXCEL_ERROR_CODES[4] },    // date opération
+  ];
+  for (const bridgeCase of bridgeCases) {
+    const workbook = bridgeWorkbook();
+    setErrorCell(workbook, bridgeCase.address, bridgeCase.error);
+    const result = parseStructuredBankStatementExcel(workbookBytes(workbook, 'xlsx'), {
+      sourceFileName: 'SYNTHETIC BRIDGE ONLINE.xlsx',
+      expectedBank: 'BRIDGE',
+    });
+    assertRefusedForErrorCell(result, bridgeCase.address, `BRIDGE ${bridgeCase.address} ${bridgeCase.error.label}`);
+  }
+});
+
+test('legitimate numeric values equal to Excel error codes remain accepted unchanged', () => {
+  for (const legitimate of [36, 7, 42]) {
+    const workbook = bicisWorkbook();
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const amount = sheet.D9;
+    amount.t = 'n';
+    amount.v = legitimate;
+    delete amount.w;
+    // La chaîne de soldes suit le montant légitime : 900 + montant.
+    sheet.F9 = { t: 'n', v: 900 + legitimate };
+    const result = parseStructuredBankStatementExcel(workbookBytes(workbook, 'xls'), {
+      sourceFileName: 'SYNTHETIC BICIS ONLINE.xls',
+      expectedBank: 'BICIS',
+    });
+    assert.equal(result.validation.status, 'valid', `numeric ${legitimate}: ${result.errors.join(' ')} ${result.warnings.join(' ')}`);
+    assert.deepEqual(result.lines.map((line) => line.signedAmount), [-100, legitimate]);
+    assert.deepEqual(result.lines.map((line) => line.balance), [900, 900 + legitimate]);
+  }
+
+  const bis = bisWorkbook();
+  const bisSheet = bis.Sheets[bis.SheetNames[0]];
+  bisSheet.M12 = { t: 'n', v: 36 };
+  bisSheet.O12 = { t: 's', v: '936 Créditeur' };
+  const bisResult = parseStructuredBankStatementExcel(workbookBytes(bis, 'xls'), {
+    sourceFileName: 'SYNTHETIC BIS ONLINE.xls',
+    expectedBank: 'BIS',
+  });
+  assert.equal(bisResult.validation.status, 'valid', `${bisResult.errors.join(' ')} ${bisResult.warnings.join(' ')}`);
+  assert.deepEqual(bisResult.lines.map((line) => line.signedAmount), [-100, 36]);
+});
+
+test('DEF-19 discovery scenario: an inconsistent numeric cell carrying a string never becomes a financial line', () => {
+  // Sonde ayant révélé le défaut : `xlsx@0.18.5` écrivait cette cellule
+  // incohérente en NaN, `xlsx@0.20.3` en cellule d'erreur #NUM! ; le parser
+  // lisait alors le code d'erreur comme montant 36 et produisait `needs_review`.
+  for (const unsafeAmount of ['1-000', '12,34.56', '100 debit']) {
+    for (const bookType of ['xls', 'xlsx'] as const) {
+      const workbook = bicisWorkbook();
+      workbook.Sheets[workbook.SheetNames[0]].D9.v = unsafeAmount; // t reste 'n' volontairement
+      const result = parseStructuredBankStatementExcel(workbookBytes(workbook, bookType), {
+        sourceFileName: 'SYNTHETIC BICIS ONLINE.xls',
+        expectedBank: 'BICIS',
+      });
+      assert.equal(result.validation.status, 'invalid', `${unsafeAmount} (${bookType})`);
+      assert.notEqual(result.validation.status, 'needs_review');
+      assert.equal(result.lines.length, 0, `${unsafeAmount} (${bookType}): no financial line`);
+      assert.ok(
+        !result.lines.some((line) => line.signedAmount === 36),
+        `${unsafeAmount} (${bookType}): the error code must never be read as an amount`,
+      );
+    }
   }
 });
 

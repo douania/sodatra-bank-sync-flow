@@ -320,10 +320,12 @@ ATB/BICIS/BIS/BRIDGE, détection documentaire, export relu) ; `npm audit` de la
 branche : `xlsx` absent des avis (31 avis préexistants restants, hors périmètre).
 **Reste dû** : compatibilité du build Lovable avec une dépendance par URL, à
 vérifier sur le candidat exact sous `GO_APPLY_STAGING_PACK_0_PUBLISH_BUILD`
-avant merge ; sans cette preuve, le correctif n'est pas déployable. Correction
-de la fixture de `structuredBankStatementExcelParser.synthetic.test.ts`
-(cellule incohérente `t:'n'` avec chaîne, écrite en `#NUM!` par 0.20.3) sous
-`GO_FIX_PACK_0` ; voir DEF-19 pour la faiblesse parser préexistante révélée.
+avant merge ; sans cette preuve, le correctif n'est pas déployable.
+**Complément `GO_FIX_PACK_0` (2026-09-06)** : la mise à niveau a révélé
+DEF-19 (cellule d'erreur Excel lue comme montant par le parser Daily) ; le
+parser refuse désormais toute cellule d'erreur au précontrôle et la fixture du
+test construit une vraie cellule texte. `xlsx@0.20.3`, son URL et son intégrité
+sont inchangés.
 
 ---
 

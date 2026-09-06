@@ -32,8 +32,12 @@ function gitStub(answers: Record<string, string | null>) {
   };
 }
 
+// L'état de l'arbre est lu avec les fichiers non suivis inclus (les fichiers
+// ignorés — dépendances, sorties de build — restent exclus par git).
+const STATUS_ARGS = 'status --porcelain --untracked-files=all';
+
 test('checkout propre : provenance connue, corroborée, SHA du checkout construit', () => {
-  const git = gitStub({ 'rev-parse HEAD': CHECKOUT_SHA, 'status --porcelain --untracked-files=no': '' });
+  const git = gitStub({ 'rev-parse HEAD': CHECKOUT_SHA, [STATUS_ARGS]: '' });
   const provenance = collectBuildProvenance({ runGit: git.runGit, env: {}, now: NOW });
   assert.equal(provenance.status, 'known');
   assert.equal(provenance.commitSha, CHECKOUT_SHA);
@@ -41,27 +45,62 @@ test('checkout propre : provenance connue, corroborée, SHA du checkout construi
   assert.equal(provenance.source, 'git-checkout');
   assert.equal(provenance.corroborated, true);
   assert.equal(provenance.workingTreeModified, false);
+  assert.equal(provenance.workingTreeState, 'clean');
   assert.equal(provenance.collectedAt, '2026-09-06T10:00:00.000Z');
   assert.equal(isBuildProvenanceQualifiable(provenance), true);
   assert.equal(buildProvenanceLabel(provenance), `Version : ${CHECKOUT_SHA.slice(0, 7)}`);
+  // L'arbre est lu avec les fichiers non suivis, jamais en les ignorant.
+  assert.ok(git.calls.includes(STATUS_ARGS), 'working tree must be read with untracked files included');
+  assert.ok(!git.calls.some((call) => call.includes('--untracked-files=no')));
 });
 
 test('arbre local modifié : distingué explicitement et non qualifiable', () => {
   const git = gitStub({
     'rev-parse HEAD': CHECKOUT_SHA,
-    'status --porcelain --untracked-files=no': ' M src/pages/QualityControl.tsx',
+    [STATUS_ARGS]: ' M src/pages/QualityControl.tsx',
   });
   const provenance = collectBuildProvenance({ runGit: git.runGit, env: {}, now: NOW });
   assert.equal(provenance.status, 'modified');
   assert.equal(provenance.commitSha, CHECKOUT_SHA);
   assert.equal(provenance.workingTreeModified, true);
+  assert.equal(provenance.workingTreeState, 'modified');
   assert.equal(isBuildProvenanceQualifiable(provenance), false);
   assert.match(buildProvenanceLabel(provenance), /arbre modifié/);
 });
 
+test('fichier source non suivi : le commit ne décrit pas tout le code construit, non qualifiable', () => {
+  const git = gitStub({
+    'rev-parse HEAD': CHECKOUT_SHA,
+    [STATUS_ARGS]: '?? src/services/newService.ts',
+  });
+  const provenance = collectBuildProvenance({ runGit: git.runGit, env: {}, now: NOW });
+  assert.equal(provenance.status, 'modified');
+  assert.equal(provenance.commitSha, CHECKOUT_SHA);
+  assert.equal(provenance.workingTreeModified, true);
+  assert.equal(provenance.workingTreeState, 'untracked');
+  assert.equal(isBuildProvenanceQualifiable(provenance), false);
+  assert.match(buildProvenanceLabel(provenance), /non suivis/);
+  // Le chemin du fichier n'est jamais embarqué dans la provenance.
+  assert.doesNotMatch(JSON.stringify(provenance), /newService/);
+});
+
+test('HEAD lisible mais état de l’arbre non vérifiable : incertitude explicite, jamais « arbre propre », non qualifiable', () => {
+  const git = gitStub({ 'rev-parse HEAD': CHECKOUT_SHA });
+  const provenance = collectBuildProvenance({ runGit: git.runGit, env: {}, now: NOW });
+  assert.equal(provenance.status, 'unverified');
+  assert.equal(provenance.commitSha, CHECKOUT_SHA);
+  assert.equal(provenance.shortSha, CHECKOUT_SHA.slice(0, 7));
+  assert.equal(provenance.workingTreeState, 'unverifiable');
+  assert.equal(provenance.corroborated, false);
+  assert.equal(isBuildProvenanceQualifiable(provenance), false);
+  assert.match(buildProvenanceLabel(provenance), /non vérifiable/);
+  assert.doesNotMatch(provenance.reason, /arbre propre/i);
+  assert.match(provenance.reason, /non vérifiable/i);
+});
+
 test('variable de plateforme confrontée au checkout : accord confirmé, désaccord = conflit sans SHA', () => {
   const agreeing = collectBuildProvenance({
-    runGit: gitStub({ 'rev-parse HEAD': CHECKOUT_SHA, 'status --porcelain --untracked-files=no': '' }).runGit,
+    runGit: gitStub({ 'rev-parse HEAD': CHECKOUT_SHA, [STATUS_ARGS]: '' }).runGit,
     env: { GITHUB_SHA: CHECKOUT_SHA.toUpperCase() },
     now: NOW,
   });
@@ -70,7 +109,7 @@ test('variable de plateforme confrontée au checkout : accord confirmé, désacc
   assert.match(agreeing.reason, /GITHUB_SHA/);
 
   const conflicting = collectBuildProvenance({
-    runGit: gitStub({ 'rev-parse HEAD': CHECKOUT_SHA, 'status --porcelain --untracked-files=no': '' }).runGit,
+    runGit: gitStub({ 'rev-parse HEAD': CHECKOUT_SHA, [STATUS_ARGS]: '' }).runGit,
     env: { SODATRA_BUILD_COMMIT_SHA: OTHER_SHA },
     now: NOW,
   });
@@ -141,6 +180,23 @@ test('la valeur injectée est validée défensivement : toute forme invalide ret
   const conflict = resolveBuildProvenance(JSON.stringify({ status: 'conflict', commitSha: CHECKOUT_SHA, source: 'git-checkout' }));
   assert.equal(conflict.commitSha, null);
   assert.equal(conflict.corroborated, false);
+
+  // Une provenance « non vérifiable » injectée reste non qualifiable et garde
+  // son SHA pour l'affichage.
+  const unverified = resolveBuildProvenance(JSON.stringify({
+    status: 'unverified', commitSha: CHECKOUT_SHA, source: 'git-checkout', corroborated: true, workingTreeState: 'unverifiable',
+  }));
+  assert.equal(unverified.status, 'unverified');
+  assert.equal(unverified.shortSha, CHECKOUT_SHA.slice(0, 7));
+  assert.equal(unverified.corroborated, false);
+  assert.equal(isBuildProvenanceQualifiable(unverified), false);
+
+  // Une provenance « known » injectée avec un arbre non propre ne peut pas
+  // se déclarer qualifiable par simple étiquetage.
+  const knownButUntracked = resolveBuildProvenance(JSON.stringify({
+    status: 'known', commitSha: CHECKOUT_SHA, source: 'git-checkout', corroborated: true, workingTreeState: 'untracked',
+  }));
+  assert.equal(isBuildProvenanceQualifiable(knownButUntracked), false);
 });
 
 test('hors build Vite (runtime de test) : provenance inconnue, sans exception', () => {

@@ -183,25 +183,32 @@ appliqué).
 hors liste blanche Pack 0) n'est plus monté ; une variante lecture seule de
 l'analyse des doublons peut être rétablie dans un pack ultérieur.
 
-### DEF-19 : Cellule d'erreur Excel interprétée comme montant (parser Daily v2)
+### DEF-19 : Cellule d'erreur Excel interprétée comme montant (parser Daily v2) — `FIXED_LOCAL` (Pack 0 / `GO_FIX_PACK_0`, 2026-09-06)
 
-**Fichier** : `src/services/structuredBankStatementExcelParser.ts` (hors liste
-blanche Pack 0, non modifié).
+**Fichiers** : `src/services/structuredBankStatementExcelParser.ts`,
+`src/services/structuredBankStatementExcelParser.synthetic.test.ts` (liste
+blanche étendue par `GO_FIX_PACK_0`).
 **Constat (Pack 0, 2026-09-06)** : une cellule d'erreur Excel (`t:'e'`, par
-exemple `#NUM!`, code 36) dans la colonne montant d'un relevé XLS est lue comme
-le montant numérique 36 et produit `needs_review` au lieu de `invalid`. Défaut
-préexistant, indépendant de la version de `xlsx` (reproduit avec 0.18.5 et
-0.20.3 sur le même fichier). Révélé par la fixture du test
-`structuredBankStatementExcelParser.synthetic.test.ts` (« refuses malformed or
-precision-unsafe textual amounts »), qui construit une cellule incohérente
-(`t:'n'` avec une chaîne) désormais écrite en cellule d'erreur par `xlsx@0.20.3`.
-**Risque** : montant fictif accepté en revue si un export bancaire contient
-une cellule d'erreur.
-**Action** : (1) corriger la fixture du test (cellule `t:'s'`) sous
-`GO_FIX_PACK_0` ; (2) faire refuser explicitement toute cellule `t:'e'` dans les
-colonnes montant/solde du parser dans Pack 2 (relevés multi-banques), avec
-test dédié.
-**Lot probable** : Pack 0 (fixture) puis Pack 2 (parser).
+exemple `#NUM!`, code 36) dans la colonne montant d'un relevé XLS était lue
+comme le montant numérique 36 et produisait `needs_review` au lieu de
+`invalid`. Défaut préexistant, indépendant de la version de `xlsx` (reproduit
+avec 0.18.5 et 0.20.3 sur le même fichier). Révélé par la fixture du test
+« refuses malformed or precision-unsafe textual amounts », qui construisait une
+cellule incohérente (`t:'n'` avec une chaîne) écrite en cellule d'erreur par
+`xlsx@0.20.3`.
+**Correction (GO_FIX_PACK_0)** : le précontrôle du classeur refuse toute
+cellule de type erreur (adresses et libellés nommés dans la raison) avant
+toute conversion en date, montant ou solde ; document `invalid`, aucune ligne
+financière. Une cellule numérique légitime valant 36, 7 ou 42 reste acceptée
+(type `n`, pas `e`). La fixture construit désormais une vraie cellule texte ;
+la sonde d'origine est conservée comme scénario de non-régression distinct.
+**Preuves** : avant correction, 6 nouveaux tests en échec sur 20 (dont la
+fixture corrigée) ; après correction, 20/20 — codes `#NULL!`, `#DIV/0!`,
+`#VALUE!`, `#REF!`, `#NAME?`, `#NUM!`, `#N/A` ; colonnes montant signé, débit
+et crédit séparés, solde, dates ; conteneurs XLS (ATB, BICIS, BIS) et XLSX
+(BRIDGE).
+**Reste dû** : aucune règle monétaire, profil ou idempotence modifiés ; la
+qualification sur fichiers réels reste due (Pack 2).
 
 ### DEF-12 : Documentation utilisateur
 

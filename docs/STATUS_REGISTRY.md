@@ -17,12 +17,32 @@
 
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR — ONE_STOP_CONDITION — EXTERNAL_VALIDATIONS_PENDING` (2026-09-06 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_146 — GO_FIX_APPLIED — EXTERNAL_VALIDATIONS_PENDING` (2026-09-06 Europe/Paris)**
 
-Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` du
-2026-09-06 (arbitrage CTO D-0-1 à D-0-5, D-COL-1 à D-COL-6). Base vérifiée
-`3c69e7d15d5981105637f84f06150bcfe3b4f7e8` (`origin/main`), branche
-`codex/pack-0-critical-blockers-governance`, exécutant unique Claude Code.
+Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
+`GO_FIX_PACK_0` du 2026-09-06 (arbitrage CTO D-0-1 à D-0-5, D-COL-1 à
+D-COL-6). Base vérifiée `3c69e7d15d5981105637f84f06150bcfe3b4f7e8`
+(`origin/main`), branche `codex/pack-0-critical-blockers-governance`, draft
+PR #146, exécutant unique Claude Code.
+
+Correctifs `GO_FIX_PACK_0` (liste blanche étendue à
+`structuredBankStatementExcelParser.ts` et à son test, pour le seul contrôle
+du type erreur) :
+
+- **DEF-19 corrigé dans Pack 0** : le précontrôle du parser Daily refuse toute
+  cellule d'erreur Excel (`#NUM!`, `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`,
+  `#N/A`, `#NULL!`) avant toute conversion en date, montant ou solde ; le
+  document est `invalid` avec la raison et les adresses ; aucune ligne
+  financière n'est produite. Les valeurs numériques légitimes égales aux codes
+  d'erreur (36, 7, 42) restent acceptées. La fixture « textual amounts »
+  construit une vraie cellule texte ; la sonde d'origine est conservée comme
+  scénario de non-régression. Preuves : avant 14/20, après 20/20.
+- **Provenance** : un HEAD lisible avec un état d'arbre non vérifiable donne
+  `unverified` (« arbre non vérifiable », non qualifiable, jamais « arbre
+  propre ») ; les fichiers source non suivis (non ignorés) sont lus
+  (`--untracked-files=all`) et rendent la provenance `modified` / « fichiers
+  non suivis », non qualifiable ; seuls un checkout propre et vérifié restent
+  qualifiables. Aucun chemin n'est embarqué. Preuves : avant 6/11, après 11/11.
 
 Livré localement :
 
@@ -67,18 +87,16 @@ Mesures (Node 20.20.2, npm 10.8.2, versions du lockfile, baseline `origin/main`
 sauf `test:structured-excel` (14/15, voir stop condition) ; build production
 PASS, artefact MCP inchangé, hygiène des logs 4/4.
 
-**Stop condition consignée** : `test:structured-excel` échoue sur « refuses
-malformed or precision-unsafe textual amounts ». Sonde croisée : les fichiers
-écrits par 0.18.5 sont lus à l'identique par 0.20.3 et toute cellule texte
-correcte reste refusée (`invalid`) ; la fixture du test construit une cellule
-**incohérente** (`t:'n'` avec une chaîne) que 0.18.5 écrivait en NaN et que
-0.20.3 écrit en cellule d'erreur `#NUM!`. Le parser Daily traite alors la
-cellule d'erreur comme le montant numérique 36 (`needs_review`), défaut
-**préexistant et indépendant de la version** (DEF-19). La correction du test
-(cellule `t:'s'`) touche
-`src/services/structuredBankStatementExcelParser.synthetic.test.ts`, **hors
-liste blanche** : non modifié, `GO_FIX_PACK_0` requis. Tant que ce fichier n'est
-pas corrigé, la CI de la draft PR reste rouge sur cette étape.
+**Stop condition (levée par `GO_FIX_PACK_0`)** : `test:structured-excel`
+échouait sur « refuses malformed or precision-unsafe textual amounts ». Sonde
+croisée : les fichiers écrits par 0.18.5 sont lus à l'identique par 0.20.3 et
+toute cellule texte correcte reste refusée (`invalid`) ; la fixture du test
+construisait une cellule **incohérente** (`t:'n'` avec une chaîne) que 0.18.5
+écrivait en NaN et que 0.20.3 écrit en cellule d'erreur `#NUM!`. Le parser
+Daily traitait alors la cellule d'erreur comme le montant numérique 36
+(`needs_review`), défaut **préexistant et indépendant de la version**
+(DEF-19). Le CTO a refusé le report au Pack 2 : parser et fixture sont
+corrigés dans ce pack (voir ci-dessus).
 
 Non exécuté / non autorisé ici : replay PostgreSQL 17 local (`NOT_RUN` si le
 moteur Docker n'a pas démarré, voir rapport de PR ; la CI de la PR l'exécute),
@@ -95,7 +113,7 @@ distinctes.
 |---|---|---|---|---|---|
 | Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable (lecture publique, 2026-09-05) — **non corroboré par un tampon de build** : `NOT_VERIFIABLE` | Dernier rapport validé : déploiement `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle `index-BZ9uZmBU.js` (2026-09-01) ; bundle public observé `index-CG4jm_34.js` (2026-09-05) → écart non réconcilié | « ledger 40 » (2026-09-01) — nombre seul, schéma non identifié : `NOT_VERIFIABLE` | 4 verrous `false` (2026-09-01) : `NOT_VERIFIABLE` | aucune vérification par Pack 0 ; `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` requis |
 | Staging `gbbsqcscryygqlmqncyv` | `d73c50df…` selon Lovable (2026-09-05), commit inconnu de `origin/main` : `NOT_VERIFIABLE` | bundle public observé `index-DiuNvuzv.js` (2026-09-05) | « ledger 43 » (2026-09-01), candidat `20260901000000` absent : `NOT_VERIFIABLE` | `false` (2026-09-01) : `NOT_VERIFIABLE` | `GO_VALIDATE_STAGING_PACK_0` requis |
-| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) | build local `index-C98AXMwH.js` (non publié) | n/a | n/a | 2026-09-06 · `GO_IMPLEMENT_PACK_0` |
+| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable | build local `index-C98AXMwH.js` (non publié) | n/a | n/a | 2026-09-06 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` |
 
 Règle : une ligne n'est mise à jour que sous le GO d'environnement qui a
 produit l'observation ; les états anciens restent datés et marqués
