@@ -299,6 +299,34 @@ anon exige un GO sécurité séparé.
 
 ---
 
+## P1 — Dépendances
+
+### SEC-12 : `xlsx` vulnérable (CVE-2023-30533, CVE-2024-22363)
+
+**État** : `FIXED_LOCAL — PACK 0 — LOVABLE_BUILD_VALIDATION_PENDING` (2026-09-06)
+**Contexte** : `xlsx@0.18.5` (registre npm, dernière version publiée là-bas)
+était utilisé par 8 lecteurs Excel du dépôt ; un seul (`structuredBankStatementExcelParser`)
+pré-validait l'archive ZIP. Avis éditeur : pollution de prototype (< 0.19.3) et
+ReDoS (< 0.20.2). `npm audit` sur `origin/main` @ `3c69e7d` : 1 avis `high` sur
+`xlsx`.
+**Décision CTO D-0-2** : remplacement par le tarball officiel versionné
+`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`, référencé par URL exacte
+dans `package.json` et verrouillé avec son intégrité dans `package-lock.json`
+(lockfile canonique unique ; `bun.lock` et `bun.lockb` supprimés). Aucun repli
+vers 0.18.5 avec simple prévalidation d'archive.
+**Preuve locale** : `test:xlsx-characterization` (résultats métier identiques
+avant/après sur Collection Report XLSX/XLS, Internal Book, profils Daily
+ATB/BICIS/BIS/BRIDGE, détection documentaire, export relu) ; `npm audit` de la
+branche : `xlsx` absent des avis (31 avis préexistants restants, hors périmètre).
+**Reste dû** : compatibilité du build Lovable avec une dépendance par URL, à
+vérifier sur le candidat exact sous `GO_APPLY_STAGING_PACK_0_PUBLISH_BUILD`
+avant merge ; sans cette preuve, le correctif n'est pas déployable. Correction
+de la fixture de `structuredBankStatementExcelParser.synthetic.test.ts`
+(cellule incohérente `t:'n'` avec chaîne, écrite en `#NUM!` par 0.20.3) sous
+`GO_FIX_PACK_0` ; voir DEF-19 pour la faiblesse parser préexistante révélée.
+
+---
+
 ## P2 — Souhaitable / Différé
 
 ### SEC-08 : Supabase URL et anon key hardcodées

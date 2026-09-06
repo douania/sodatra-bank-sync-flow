@@ -17,3 +17,9 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/**
+ * PACK 0 — provenance du build injectée par `vite.config.ts` (`define`).
+ * Chaîne JSON sérialisée d'un `BuildProvenance` ; absente hors build Vite.
+ */
+declare const __SODATRA_BUILD_PROVENANCE__: string | undefined;

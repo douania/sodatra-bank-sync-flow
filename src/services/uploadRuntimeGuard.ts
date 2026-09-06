@@ -83,3 +83,83 @@ export function isUploadMutationAllowed(capability: UploadMutationCapability): b
  * une garde explicite, le défaut reste la garde canonique fail-closed.
  */
 export type UploadMutationGate = () => { allowed: boolean };
+
+/**
+ * PACK 0 — isolation des surfaces d'écriture Collection legacy.
+ *
+ * Les composants historiques de `/reconciliation` (synchronisation Excel
+ * directe et marquage manuel effet/chèque) écrivaient dans `collection_report`
+ * sans passer par le contrat atomique de `/upload`. Décision CTO D-COL-1 /
+ * Pack 0 : ces actions sont neutralisées **sur toutes les cibles**, y compris
+ * staging, sans dépendre de la cible ni du verrou serveur. Cette garde est une
+ * barrière d'interface : elle ne révoque aucun accès serveur (Auth, rôles,
+ * RLS, grants), qui restent à fermer côté serveur avant l'activation du
+ * nouveau contrat Collections.
+ */
+export type LegacyCollectionMutationAction = 'legacy_sync' | 'legacy_mark_processed';
+
+export const LEGACY_COLLECTION_WRITE_PATH_ISOLATED_MESSAGE =
+  "Écritures Collection legacy isolées (Pack 0) : la synchronisation directe et le marquage manuel sont désactivés sur toutes les cibles. Seule la consultation reste disponible ; le chemin d'écriture autorisé est la promotion atomique de /upload.";
+
+export interface LegacyCollectionMutationVerdict {
+  allowed: false;
+  action: LegacyCollectionMutationAction;
+  reason: string;
+}
+
+/**
+ * Pure et testable : quelle que soit la cible (staging, production, inconnue)
+ * et quelle que soit l'action, le verdict est un refus. La cible est acceptée
+ * en paramètre uniquement pour rendre l'invariance vérifiable.
+ */
+export function validateLegacyCollectionMutationTarget(
+  _input: DailyV2RuntimeTargetInput,
+  action: LegacyCollectionMutationAction,
+): LegacyCollectionMutationVerdict {
+  return {
+    allowed: false,
+    action: action === 'legacy_mark_processed' ? 'legacy_mark_processed' : 'legacy_sync',
+    reason: LEGACY_COLLECTION_WRITE_PATH_ISOLATED_MESSAGE,
+  };
+}
+
+/** Verdict sur la cible courante : refus fail-closed, jamais de levée. */
+export function currentLegacyCollectionMutationVerdict(
+  action: LegacyCollectionMutationAction,
+): LegacyCollectionMutationVerdict {
+  return validateLegacyCollectionMutationTarget({}, action);
+}
+
+/**
+ * Garde d'appel : lève avant tout accès service. Utilisée par les handlers
+ * legacy neutralisés afin qu'un déclenchement résiduel (bouton, raccourci,
+ * appel programmatique) reste sans effet.
+ */
+export function assertLegacyCollectionMutationAllowed(
+  action: LegacyCollectionMutationAction,
+): never {
+  throw new Error(currentLegacyCollectionMutationVerdict(action).reason);
+}
+
+export type LegacyCollectionMutationOutcome<T> =
+  | { outcome: 'refused'; action: LegacyCollectionMutationAction; reason: string }
+  | { outcome: 'executed'; action: LegacyCollectionMutationAction; result: T };
+
+/**
+ * Seul point d'exécution subsistant pour une mutation Collection legacy
+ * (synchronisation Excel directe, marquage manuel effet/chèque). Le verdict
+ * est évalué AVANT tout appel au service injecté ; comme il refuse sur toutes
+ * les cibles, `run` n'est jamais invoqué. Les composants `/reconciliation`
+ * n'exposent plus aucun déclencheur ; cette fonction fige le contrat pour les
+ * tests et pour tout appel programmatique résiduel.
+ */
+export async function executeLegacyCollectionMutation<T>(
+  action: LegacyCollectionMutationAction,
+  run: () => Promise<T>,
+): Promise<LegacyCollectionMutationOutcome<T>> {
+  const verdict = currentLegacyCollectionMutationVerdict(action);
+  if (!verdict.allowed) {
+    return { outcome: 'refused', action: verdict.action, reason: verdict.reason };
+  }
+  return { outcome: 'executed', action, result: await run() };
+}

@@ -22,6 +22,11 @@
     "test:financial-write-lockdown": "tsx --test src/services/financialWritePathLockdown.synthetic.test.ts",
     "test:import-preflight": "tsx --test src/services/importPreflightService.synthetic.test.ts src/services/operationalImportReadiness.synthetic.test.ts src/services/documentDetectionService.synthetic.test.ts src/services/collectionImportReviewService.synthetic.test.ts src/services/collectionImportPromotionService.synthetic.test.ts src/services/internalBookRuntimeProcessingService.test.ts",
     "test:multi-bank-reports": "tsx --test src/services/bankIdentity.synthetic.test.ts src/services/bankReportExtractionContract.synthetic.test.ts src/services/pdfTextLineReconstruction.synthetic.test.ts src/services/multiBankReportExtraction.synthetic.test.ts src/services/fundPositionExtraction.synthetic.test.ts src/services/bdkUniversalReadOnlyContract.synthetic.test.ts src/services/universalBankParserReadOnly.synthetic.test.ts",
+    "test:quality-control": "tsx --test src/services/qualityControlEngine.synthetic.test.ts",
+    "test:legacy-isolation": "tsx --test src/services/legacyCollectionIsolation.synthetic.test.tsx",
+    "test:xlsx-characterization": "tsx --test src/services/xlsxUpgrade.characterization.test.ts",
+    "test:build-provenance": "tsx --test src/config/buildProvenance.synthetic.test.ts",
+    "test:internal-book": "tsx --test src/services/internalBookExcelParser.characterization.test.ts src/services/internalBookExcelParser.synthetic.test.ts src/services/internalBookExcelParser.validationReport.test.ts src/services/internalBookFileDetection.test.ts src/services/internalBookImportOrchestrator.test.ts src/services/internalBookImportResult.test.ts src/services/internalBookImportSelector.test.ts src/services/internalBookProcessingResultAdapter.test.ts src/services/internalBookRuntimeProcessingService.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -81,7 +86,7 @@
     "tailwind-merge": "^2.5.2",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.3",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.1.12"
   },
   "devDependencies": {

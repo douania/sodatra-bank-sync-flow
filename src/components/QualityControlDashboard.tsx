@@ -1,56 +1,75 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { 
-  Shield, 
-  AlertTriangle, 
-  CheckCircle, 
-  XCircle, 
-  Eye, 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Shield,
+  AlertTriangle,
+  XCircle,
+  Eye,
   TrendingUp,
   BarChart3,
   Brain,
-  Clock
+  Clock,
+  Info,
 } from 'lucide-react';
 import { QualityReport, QualityError } from '@/types/qualityControl';
 
+// PACK 0 — tableau de bord consultatif : aucune action de validation, de rejet
+// ou de modification. Les anomalies sont présentées « à examiner » ; le
+// rapport n'atteste jamais une conformité.
+
 interface QualityControlDashboardProps {
   report: QualityReport | null;
-  onValidateError: (errorId: string) => void;
-  onRejectError: (errorId: string, reason: string) => void;
-  onModifyCorrection: (errorId: string, correction: any) => void;
+  onReset?: () => void;
 }
 
-const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
-  report,
-  onValidateError,
-  onRejectError,
-  onModifyCorrection
-}) => {
-  const [selectedError, setSelectedError] = useState<QualityError | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-
+const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({ report, onReset }) => {
   if (!report) {
     return (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <Shield className="h-6 w-6" />
-            <span>Contrôle Qualité</span>
+            <span>Contrôle Qualité (consultatif)</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="text-center text-gray-500">
-            Aucun rapport de qualité disponible. Lancez une analyse pour commencer.
+            Aucun rapport disponible. Lancez une analyse consultative pour commencer.
           </div>
         </CardContent>
       </Card>
     );
   }
+
+  const evaluable = report.evaluation.status === 'EVALUABLE';
+
+  const renderEvaluationBanner = () => (
+    evaluable ? (
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertTitle>Analyse consultative</AlertTitle>
+        <AlertDescription>
+          {report.evaluation.reason} Lignes Excel : {report.evaluation.excel_rows} ; rapports bancaires lus :{' '}
+          {report.evaluation.bank_reports} ; crédits explicites retenus comme preuve : {report.evaluation.credit_evidence}.
+          Aucune correction n'est appliquée ni enregistrée depuis cet écran.
+        </AlertDescription>
+      </Alert>
+    ) : (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Contrôle non évaluable</AlertTitle>
+        <AlertDescription>
+          {report.evaluation.reason} Lignes Excel : {report.evaluation.excel_rows} ; rapports bancaires lus :{' '}
+          {report.evaluation.bank_reports} ; crédits explicites disponibles : {report.evaluation.credit_evidence}.
+          Aucune anomalie n'est comptée et aucune conformité n'est attestée.
+        </AlertDescription>
+      </Alert>
+    )
+  );
 
   const renderQualitySummary = () => (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -60,7 +79,7 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
             <BarChart3 className="h-4 w-4 text-blue-600" />
             <div>
               <div className="text-2xl font-bold">{report.summary.total_collections_analyzed}</div>
-              <div className="text-sm text-gray-600">Collections analysées</div>
+              <div className="text-sm text-gray-600">Lignes Excel lues</div>
             </div>
           </div>
         </CardContent>
@@ -71,8 +90,8 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
           <div className="flex items-center space-x-2">
             <AlertTriangle className="h-4 w-4 text-red-600" />
             <div>
-              <div className="text-2xl font-bold text-red-600">{report.summary.errors_detected}</div>
-              <div className="text-sm text-gray-600">Erreurs détectées</div>
+              <div className="text-2xl font-bold text-red-600">{evaluable ? report.summary.errors_detected : '—'}</div>
+              <div className="text-sm text-gray-600">Anomalies potentielles</div>
             </div>
           </div>
         </CardContent>
@@ -83,8 +102,8 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
           <div className="flex items-center space-x-2">
             <TrendingUp className="h-4 w-4 text-yellow-600" />
             <div>
-              <div className="text-2xl font-bold text-yellow-600">{report.summary.error_rate}%</div>
-              <div className="text-sm text-gray-600">Taux d'erreur</div>
+              <div className="text-2xl font-bold text-yellow-600">{evaluable ? `${report.summary.error_rate}%` : '—'}</div>
+              <div className="text-sm text-gray-600">Taux d'anomalies potentielles</div>
             </div>
           </div>
         </CardContent>
@@ -95,8 +114,10 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
           <div className="flex items-center space-x-2">
             <Brain className="h-4 w-4 text-green-600" />
             <div>
-              <div className="text-2xl font-bold text-green-600">{report.summary.confidence_score}%</div>
-              <div className="text-sm text-gray-600">Score de confiance</div>
+              <div className="text-2xl font-bold text-green-600">
+                {report.summary.confidence_score === null ? '—' : `${report.summary.confidence_score}%`}
+              </div>
+              <div className="text-sm text-gray-600">Confiance moyenne des anomalies</div>
             </div>
           </div>
         </CardContent>
@@ -107,21 +128,21 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
   const renderErrorsByType = () => (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>Répartition des Erreurs</CardTitle>
+        <CardTitle>Répartition des anomalies potentielles</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="flex items-center space-x-2">
             <Badge variant="destructive" className="w-3 h-3 p-0 rounded-full"></Badge>
-            <span className="text-sm">Erreurs de saisie: {report.errors_by_type.saisie_errors}</span>
+            <span className="text-sm">Saisie : {report.errors_by_type.saisie_errors}</span>
           </div>
           <div className="flex items-center space-x-2">
             <Badge variant="secondary" className="w-3 h-3 p-0 rounded-full bg-orange-500"></Badge>
-            <span className="text-sm">Omissions: {report.errors_by_type.omissions}</span>
+            <span className="text-sm">Omissions : {report.errors_by_type.omissions}</span>
           </div>
           <div className="flex items-center space-x-2">
             <Badge variant="outline" className="w-3 h-3 p-0 rounded-full bg-yellow-500"></Badge>
-            <span className="text-sm">Incohérences: {report.errors_by_type.incohérences}</span>
+            <span className="text-sm">Incohérences : {report.errors_by_type.incohérences}</span>
           </div>
         </div>
       </CardContent>
@@ -143,9 +164,9 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
 
   const getErrorTypeLabel = (error: QualityError) => {
     const labels = {
-      'SAISIE_ERROR': 'Erreur de saisie',
-      'OMISSION_ERROR': 'Omission',
-      'INCOHÉRENCE_ERROR': 'Incohérence'
+      'SAISIE_ERROR': 'Anomalie de saisie',
+      'OMISSION_ERROR': 'Omission possible',
+      'INCOHÉRENCE_ERROR': 'Incohérence possible'
     };
     return labels[error.type] || error.type;
   };
@@ -166,6 +187,7 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
             <Badge variant="outline" className={getConfidenceColor(error.confidence)}>
               {Math.round(error.confidence * 100)}% confiance
             </Badge>
+            <Badge variant="secondary">À examiner</Badge>
           </div>
           <div className="flex items-center space-x-2">
             <Clock className="h-4 w-4 text-gray-400" />
@@ -177,17 +199,15 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {/* Description de l'erreur */}
           <Alert>
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>{error.error_description}</AlertDescription>
           </Alert>
 
-          {/* Comparaison des données */}
           {error.collection_excel && error.bank_transaction && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-red-50 p-3 rounded">
-                <h4 className="font-semibold text-red-800 mb-2">📊 Données Excel</h4>
+                <h4 className="font-semibold text-red-800 mb-2">Données Excel</h4>
                 <div className="text-sm space-y-1">
                   <div>Client: {error.collection_excel.clientCode}</div>
                   <div>Montant: {error.collection_excel.collectionAmount?.toLocaleString()} FCFA</div>
@@ -196,7 +216,7 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
                 </div>
               </div>
               <div className="bg-green-50 p-3 rounded">
-                <h4 className="font-semibold text-green-800 mb-2">🏦 Données Bancaires</h4>
+                <h4 className="font-semibold text-green-800 mb-2">Crédit bancaire rapproché</h4>
                 <div className="text-sm space-y-1">
                   <div>Description: {error.bank_transaction.description}</div>
                   <div>Montant: {error.bank_transaction.amount?.toLocaleString()} FCFA</div>
@@ -207,10 +227,9 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
             </div>
           )}
 
-          {/* Correction suggérée */}
           {error.suggested_correction && (
             <div className="bg-blue-50 p-3 rounded">
-              <h4 className="font-semibold text-blue-800 mb-2">💡 Correction suggérée</h4>
+              <h4 className="font-semibold text-blue-800 mb-2">Piste de correction (non appliquée)</h4>
               <div className="text-sm">
                 {Object.entries(error.suggested_correction).map(([key, value]) => (
                   <div key={key}>
@@ -221,9 +240,8 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
             </div>
           )}
 
-          {/* Raisonnement de l'IA */}
           <div className="bg-gray-50 p-3 rounded">
-            <h4 className="font-semibold text-gray-800 mb-2">🤖 Raisonnement IA</h4>
+            <h4 className="font-semibold text-gray-800 mb-2">Raisonnement</h4>
             <ul className="text-sm space-y-1">
               {error.reasoning.map((reason, index) => (
                 <li key={index} className="flex items-start space-x-2">
@@ -233,50 +251,6 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
               ))}
             </ul>
           </div>
-
-          {/* Actions de validation */}
-          {error.status === 'PENDING' && (
-            <div className="flex space-x-2 pt-2">
-              <Button 
-                onClick={() => onValidateError(error.id)}
-                className="bg-green-600 hover:bg-green-700"
-                size="sm"
-              >
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Valider la correction
-              </Button>
-              <Button 
-                onClick={() => setSelectedError(error)}
-                variant="outline"
-                size="sm"
-              >
-                <XCircle className="h-4 w-4 mr-2" />
-                Rejeter
-              </Button>
-              <Button 
-                onClick={() => onModifyCorrection(error.id, error.suggested_correction)}
-                variant="outline"
-                size="sm"
-              >
-                <Eye className="h-4 w-4 mr-2" />
-                Modifier
-              </Button>
-            </div>
-          )}
-
-          {error.status === 'VALIDATED' && (
-            <Badge className="bg-green-100 text-green-800">
-              <CheckCircle className="h-3 w-3 mr-1" />
-              Correction validée
-            </Badge>
-          )}
-
-          {error.status === 'REJECTED' && (
-            <Badge className="bg-red-100 text-red-800">
-              <XCircle className="h-3 w-3 mr-1" />
-              Suggestion rejetée
-            </Badge>
-          )}
         </div>
       </CardContent>
     </Card>
@@ -287,101 +261,43 @@ const QualityControlDashboard: React.FC<QualityControlDashboardProps> = ({
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900 flex items-center space-x-2">
           <Shield className="h-8 w-8" />
-          <span>Contrôle Qualité Intelligent</span>
+          <span>Contrôle Qualité (consultatif)</span>
         </h1>
-        <Badge variant="outline" className="text-lg px-3 py-1">
-          Rapport du {new Date(report.analysis_date).toLocaleDateString()}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-lg px-3 py-1">
+            Rapport du {new Date(report.analysis_date).toLocaleDateString()}
+          </Badge>
+          {onReset && (
+            <Button variant="outline" size="sm" onClick={onReset}>
+              Nouvelle analyse
+            </Button>
+          )}
+        </div>
       </div>
 
+      {renderEvaluationBanner()}
       {renderQualitySummary()}
-      {renderErrorsByType()}
+      {evaluable && renderErrorsByType()}
 
-      <Tabs defaultValue="pending" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="pending">
-            En attente ({report.pending_validations.length})
-          </TabsTrigger>
-          <TabsTrigger value="validated">
-            Validées ({report.validated_corrections.length})
-          </TabsTrigger>
-          <TabsTrigger value="rejected">
-            Rejetées ({report.rejected_suggestions.length})
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="pending" className="space-y-4">
-          {report.pending_validations.length === 0 ? (
+      {evaluable && (
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">Anomalies potentielles à examiner ({report.errors.length})</h2>
+          {report.errors.length === 0 ? (
             <Card>
               <CardContent className="p-6 text-center">
-                <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-4" />
-                <div className="text-lg font-semibold text-green-800">
-                  Aucune erreur en attente !
+                <Info className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+                <div className="text-lg font-semibold text-gray-800">
+                  Aucune anomalie potentielle détectée sur les preuves disponibles.
                 </div>
                 <div className="text-gray-600">
-                  Toutes les erreurs détectées ont été traitées.
+                  Ce résultat n'est pas une attestation de conformité : il ne porte que sur les crédits bancaires
+                  explicites lus lors de cette analyse.
                 </div>
               </CardContent>
             </Card>
           ) : (
-            report.pending_validations.map(renderErrorCard)
+            report.errors.map(renderErrorCard)
           )}
-        </TabsContent>
-
-        <TabsContent value="validated" className="space-y-4">
-          {report.validated_corrections.map(renderErrorCard)}
-        </TabsContent>
-
-        <TabsContent value="rejected" className="space-y-4">
-          {report.rejected_suggestions.map(renderErrorCard)}
-        </TabsContent>
-      </Tabs>
-
-      {/* Modal de rejet */}
-      {selectedError && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>Rejeter la suggestion</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Raison du rejet:
-                  </label>
-                  <textarea
-                    value={rejectReason}
-                    onChange={(e) => setRejectReason(e.target.value)}
-                    className="w-full p-2 border rounded"
-                    rows={3}
-                    placeholder="Expliquez pourquoi vous rejetez cette suggestion..."
-                  />
-                </div>
-                <div className="flex space-x-2">
-                  <Button 
-                    onClick={() => {
-                      onRejectError(selectedError.id, rejectReason);
-                      setSelectedError(null);
-                      setRejectReason('');
-                    }}
-                    className="bg-red-600 hover:bg-red-700"
-                  >
-                    Confirmer le rejet
-                  </Button>
-                  <Button 
-                    onClick={() => {
-                      setSelectedError(null);
-                      setRejectReason('');
-                    }}
-                    variant="outline"
-                  >
-                    Annuler
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       )}
     </div>

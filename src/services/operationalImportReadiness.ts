@@ -47,8 +47,9 @@ export const OPERATIONAL_IMPORT_FORMAT_READINESS: readonly OperationalImportRead
     label: 'Internal Book',
     route: '/upload',
     formats: ['XLSX', 'XLS'],
-    qualification: 'PRODUCTION_CANDIDATE',
-    evidence: 'Détection structurelle, sélection, orchestration et adaptation couvertes synthétiquement.',
+    qualification: 'BLOCKED',
+    evidence: 'Détection et parsing diagnostiques locaux uniquement ; aucune persistance n’existe.',
+    limitation: 'Import opérationnel bloqué (Pack 0) tant qu’aucun contrat de persistance n’est livré et qualifié.',
   },
   {
     id: 'bdk-bank-report',
@@ -118,7 +119,18 @@ export function qualifyOperationalImportDocument(
     };
   }
 
-  if (kind === 'COLLECTION_REPORT' || kind === 'INTERNAL_BOOK') {
+  // PACK 0 : Internal Book est parsé localement à des fins diagnostiques, mais
+  // aucune persistance n'existe. L'étiquette « candidat production » était
+  // trompeuse ; l'import opérationnel reste bloqué jusqu'à un contrat livré.
+  if (kind === 'INTERNAL_BOOK') {
+    return {
+      qualification: 'BLOCKED',
+      productionEligible: false,
+      reason: 'Internal Book : parsing diagnostique local uniquement, aucune persistance n’existe.',
+    };
+  }
+
+  if (kind === 'COLLECTION_REPORT') {
     return {
       qualification: 'PRODUCTION_CANDIDATE',
       productionEligible: true,

@@ -86,6 +86,8 @@ Règle :
 - utiliser `VITE_SUPABASE_PUBLISHABLE_KEY` ;
 - ne jamais committer de surcharge locale : `.env.local` et `.env.*.local`
   restent ignorés ;
+- aucune valeur d'environnement, de clé ou de provenance de build n'est
+  journalisée en console (le build production supprime les `console.*`) ;
 - migration ou rotation manuelle requise sur décision CTO lorsqu'une clé legacy
   doit être retirée, ou si une clé est compromise, **sauf** le cas explicitement
   prévu ci-dessous du versionnement intentionnel de la clé frontend publishable
@@ -227,6 +229,25 @@ Tout patch doit :
 - expliquer pourquoi le problème existe ;
 - expliquer comment le correctif le résout ;
 - inclure tests attendus.
+
+Protection de `main` — cible approuvée (D-0-3, 2026-09-06 ; **réglage externe
+non exécuté par un lot, GO distinct requis**) :
+- PR obligatoire vers `main`, check `Lint and build` requis ;
+- suppression et force-push interdits ; règles applicables aux administrateurs ;
+- aucun bypass permanent pour Lovable : ses changements passent par une branche
+  compatible avec le circuit de PR, ou son écriture automatique vers GitHub est
+  désactivée ; aucun push direct privilégié vers `main` ;
+- zéro approbation GitHub imposée tant qu'il n'existe qu'un seul approbateur
+  humain, revue CTO et `GO_MERGE_PR_<N>` conservés ;
+- visibilité cible du dépôt : **privé**, après vérification des conséquences sur
+  protections, intégrations et accès.
+Constat au 2026-09-05 : `protected: false`, aucun ruleset, commits directs et
+commits automatiques Lovable présents dans l'historique de `main`.
+
+Provenance du build (D-0-4) : le SHA affiché est celui du checkout réellement
+construit (`src/config/buildProvenance.ts`, injecté par `vite.config.ts`) ;
+`unknown`, `modified` et `conflict` sont acceptables en développement mais
+n'autorisent aucune qualification staging/production.
 
 ## 12. FROZEN sécurité
 

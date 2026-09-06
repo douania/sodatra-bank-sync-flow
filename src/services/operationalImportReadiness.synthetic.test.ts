@@ -49,15 +49,21 @@ test('la lecture de rôles frontend ne contient aucune capacité privilégiée',
   assert.doesNotMatch(roleService, /service_role|sb_secret|rpc\(/i);
 });
 
-test('seuls Collection Report et Internal Book sont candidats production', () => {
+test('seul Collection Report est candidat production ; Internal Book est bloqué faute de persistance', () => {
   assert.equal(
     qualifyOperationalImportDocument('COLLECTION_REPORT', 'Collection Report.xlsx', 'Collection Report').productionEligible,
     true,
   );
-  assert.equal(
-    qualifyOperationalImportDocument('INTERNAL_BOOK', 'synthetic-BDK-internal-book.xlsx', 'Internal Book').productionEligible,
-    true,
-  );
+  const internalBook = qualifyOperationalImportDocument('INTERNAL_BOOK', 'synthetic-BDK-internal-book.xlsx', 'Internal Book');
+  assert.equal(internalBook.qualification, 'BLOCKED');
+  assert.equal(internalBook.productionEligible, false);
+  assert.match(internalBook.reason, /aucune persistance/);
+  const matrixEntry = OPERATIONAL_IMPORT_FORMAT_READINESS.find(entry => entry.id === 'internal-book');
+  assert.equal(matrixEntry?.qualification, 'BLOCKED');
+  assert.match(matrixEntry?.limitation ?? '', /Pack 0/);
+  // Le parsing diagnostique local reste disponible : le service runtime n'est
+  // pas retiré, seule la qualification d'import opérationnel change.
+  assert.equal(existsSync('src/services/internalBookRuntimeProcessingService.ts'), true);
   assert.equal(
     qualifyOperationalImportDocument('BANK_REPORT', 'Releve BDK.pdf', 'Rapport bancaire BDK').productionEligible,
     false,
@@ -77,12 +83,17 @@ test('seuls Collection Report et Internal Book sont candidats production', () =>
   );
 });
 
-test('le précontrôle production accepte les candidats et bloque tous les rapports bancaires pilotes', () => {
+test('le précontrôle production accepte le candidat Collection et bloque Internal Book et les rapports pilotes', () => {
   const qualified = buildImportPreflight([
     file('Collection Report.xlsx'),
-    file('synthetic-BDK-internal-book.xlsx'),
   ], { deploymentTarget: 'production' });
   assert.equal(qualified.canProcess, true);
+
+  const internalBook = buildImportPreflight([
+    file('synthetic-BDK-internal-book.xlsx'),
+  ], { deploymentTarget: 'production' });
+  assert.equal(internalBook.canProcess, false);
+  assert.ok(internalBook.entries[0].issues.some(issue => issue.code === 'NOT_PRODUCTION_QUALIFIED'));
 
   const pilot = buildImportPreflight([
     file('Fund Position.xlsx'),

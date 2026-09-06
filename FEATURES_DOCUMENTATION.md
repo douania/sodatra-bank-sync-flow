@@ -1,3 +1,7 @@
+> **DOCUMENT OBSOLÈTE (Bolt/Lovable, 2025) — conservé pour l'historique uniquement.**
+> Il ne décrit pas l'état courant de l'application (statut CTO : prototype avancé, non production-ready) et n'est pas une référence.
+> Références canoniques : `AGENTS.md`, `CLAUDE.md`, `docs/MASTER_CONTEXT.md`, `docs/STATUS_REGISTRY.md`, `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md`.
+
 
 # Documentation des Fonctionnalités SODATRA
 

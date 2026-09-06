@@ -2,13 +2,22 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Upload, Brain, Shield, CheckCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Upload, Brain, Shield, CheckCircle, Info } from 'lucide-react';
 import { qualityControlEngine } from '@/services/qualityControlEngine';
 import { QualityReport } from '@/types/qualityControl';
 import QualityControlDashboard from '@/components/QualityControlDashboard';
 import { excelProcessingService } from '@/services/excelProcessingService';
 import { databaseService } from '@/services/databaseService';
 import { toast } from '@/components/ui/sonner';
+
+// PACK 0 — écran consultatif : aucune correction n'est validée, rejetée ni
+// persistée depuis cette page. Le rapport compare un Collection Report Excel
+// aux crédits bancaires explicites disponibles ; sans preuve exploitable, le
+// contrôle est déclaré non évaluable, jamais conforme.
+export const QUALITY_CONTROL_CONSULTATIVE_NOTICE =
+  "Écran consultatif : aucune correction n'est appliquée ni enregistrée depuis cette page. " +
+  "Seuls les crédits bancaires explicites servent de preuve ; un dépôt non crédité n'est jamais une preuve d'encaissement.";
 
 const QualityControl = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -32,109 +41,38 @@ const QualityControl = () => {
     setIsAnalyzing(true);
 
     try {
-      console.log('🔍 DÉBUT ANALYSE QUALITÉ COMPLÈTE');
-      
-      // 1. Traiter le fichier Excel
-      toast.info('📊 Traitement du fichier Excel...');
+      // 1. Traiter le fichier Excel (parser FROZEN, inchangé)
+      toast.info('Traitement du fichier Excel…');
       const excelResult = await excelProcessingService.processCollectionReportExcel(selectedFile);
-      
+
       if (!excelResult.success || !excelResult.data) {
         throw new Error('Erreur traitement Excel: ' + (excelResult.errors?.join(', ') || 'Erreur inconnue'));
       }
 
-      console.log(`📊 ${excelResult.data.length} collections extraites du fichier Excel`);
-
-      // 2. Récupérer les relevés bancaires de la base
-      toast.info('🏦 Récupération des relevés bancaires...');
+      // 2. Récupérer les rapports bancaires disponibles (lecture seule)
+      toast.info('Récupération des preuves bancaires…');
       const bankReports = await databaseService.getAllBankReports();
-      
-      console.log(`🏦 ${bankReports.length} relevés bancaires récupérés`);
 
-      // 3. Lancer l'analyse qualité
-      toast.info('🤖 Analyse intelligente en cours...');
+      // 3. Analyse consultative
+      toast.info('Comparaison consultative en cours…');
       const report = await qualityControlEngine.analyzeQuality(excelResult.data, bankReports);
-      
+
       setQualityReport(report);
 
-      // 4. Afficher les résultats
-      if (report.summary.errors_detected === 0) {
-        toast.success('🎉 Aucune erreur détectée ! Données parfaitement conformes.');
+      // 4. Restitution : jamais de verdict absolu de conformité.
+      if (report.evaluation.status === 'NOT_EVALUABLE') {
+        toast.warning(report.evaluation.reason);
       } else {
-        toast.warning(`⚠️ ${report.summary.errors_detected} erreur(s) détectée(s) (${report.summary.error_rate}% du total)`);
+        toast.info(
+          `Analyse consultative terminée : ${report.summary.errors_detected} anomalie(s) potentielle(s) à examiner.`,
+        );
       }
 
-      console.log('✅ ANALYSE QUALITÉ TERMINÉE:', {
-        collections_analysées: report.summary.total_collections_analyzed,
-        erreurs_détectées: report.summary.errors_detected,
-        taux_erreur: report.summary.error_rate + '%',
-        score_confiance: report.summary.confidence_score + '%'
-      });
-
     } catch (error) {
-      console.error('❌ Erreur analyse qualité:', error);
+      console.error('Erreur analyse qualité:', error);
       toast.error('Erreur lors de l\'analyse: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
     } finally {
       setIsAnalyzing(false);
-    }
-  };
-
-  const handleValidateError = async (errorId: string) => {
-    try {
-      await qualityControlEngine.validateError(errorId);
-      
-      // Mettre à jour le rapport localement
-      if (qualityReport) {
-        const updatedErrors = qualityReport.errors.map(error => 
-          error.id === errorId ? { ...error, status: 'VALIDATED' as const } : error
-        );
-        
-        setQualityReport({
-          ...qualityReport,
-          errors: updatedErrors,
-          pending_validations: updatedErrors.filter(e => e.status === 'PENDING'),
-          validated_corrections: updatedErrors.filter(e => e.status === 'VALIDATED')
-        });
-      }
-      
-      toast.success('✅ Correction validée et appliquée');
-    } catch (error) {
-      console.error('Erreur validation:', error);
-      toast.error('Erreur lors de la validation');
-    }
-  };
-
-  const handleRejectError = async (errorId: string, reason: string) => {
-    try {
-      await qualityControlEngine.rejectError(errorId, reason);
-      
-      // Mettre à jour le rapport localement
-      if (qualityReport) {
-        const updatedErrors = qualityReport.errors.map(error => 
-          error.id === errorId ? { ...error, status: 'REJECTED' as const } : error
-        );
-        
-        setQualityReport({
-          ...qualityReport,
-          errors: updatedErrors,
-          pending_validations: updatedErrors.filter(e => e.status === 'PENDING'),
-          rejected_suggestions: updatedErrors.filter(e => e.status === 'REJECTED')
-        });
-      }
-      
-      toast.success('❌ Suggestion rejetée');
-    } catch (error) {
-      console.error('Erreur rejet:', error);
-      toast.error('Erreur lors du rejet');
-    }
-  };
-
-  const handleModifyCorrection = async (errorId: string, correction: any) => {
-    try {
-      await qualityControlEngine.applyCorrection(errorId, correction);
-      toast.success('✏️ Correction modifiée et appliquée');
-    } catch (error) {
-      console.error('Erreur modification:', error);
-      toast.error('Erreur lors de la modification');
     }
   };
 
@@ -142,9 +80,7 @@ const QualityControl = () => {
     return (
       <QualityControlDashboard
         report={qualityReport}
-        onValidateError={handleValidateError}
-        onRejectError={handleRejectError}
-        onModifyCorrection={handleModifyCorrection}
+        onReset={() => setQualityReport(null)}
       />
     );
   }
@@ -154,24 +90,30 @@ const QualityControl = () => {
       <div className="text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-4 flex items-center justify-center space-x-2">
           <Shield className="h-8 w-8 text-blue-600" />
-          <span>Contrôle Qualité Intelligent</span>
+          <span>Contrôle Qualité (consultatif)</span>
         </h1>
         <p className="mt-2 text-gray-600 max-w-2xl mx-auto">
-          Analysez la qualité de vos données Excel en les comparant avec les relevés bancaires. 
-          Notre IA détecte automatiquement les erreurs, omissions et incohérences.
+          Compare les lignes d'un Collection Report Excel aux crédits bancaires explicites disponibles en base
+          et signale des anomalies potentielles à examiner. Aucune donnée n'est modifiée.
         </p>
       </div>
+
+      <Alert className="max-w-2xl mx-auto">
+        <Info className="h-4 w-4" />
+        <AlertTitle>Contrôle consultatif</AlertTitle>
+        <AlertDescription>{QUALITY_CONTROL_CONSULTATIVE_NOTICE}</AlertDescription>
+      </Alert>
 
       <Card className="max-w-2xl mx-auto">
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <Brain className="h-6 w-6" />
-            <span>Analyse Intelligente</span>
+            <span>Analyse consultative</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-6">
-            
+
             {/* Sélection du fichier */}
             <div>
               <label className="block text-sm font-medium mb-2">
@@ -193,28 +135,28 @@ const QualityControl = () => {
 
             {/* Description du processus */}
             <div className="bg-blue-50 p-4 rounded-lg">
-              <h3 className="font-semibold text-blue-800 mb-2">🤖 Processus d'Analyse</h3>
+              <h3 className="font-semibold text-blue-800 mb-2">Processus d'analyse</h3>
               <ul className="text-sm text-blue-700 space-y-1">
                 <li>• <strong>Étape 1:</strong> Extraction des données du fichier Excel</li>
-                <li>• <strong>Étape 2:</strong> Récupération des relevés bancaires</li>
-                <li>• <strong>Étape 3:</strong> Comparaison intelligente des données</li>
-                <li>• <strong>Étape 4:</strong> Détection d'erreurs, omissions et incohérences</li>
-                <li>• <strong>Étape 5:</strong> Génération du rapport de qualité</li>
+                <li>• <strong>Étape 2:</strong> Lecture des rapports bancaires disponibles</li>
+                <li>• <strong>Étape 3:</strong> Comparaison aux crédits bancaires explicites uniquement</li>
+                <li>• <strong>Étape 4:</strong> Signalement d'anomalies potentielles (saisie, omission, incohérence)</li>
+                <li>• <strong>Étape 5:</strong> Rapport consultatif, ou « contrôle non évaluable » sans preuve exploitable</li>
               </ul>
             </div>
 
-            {/* Types d'erreurs détectées */}
+            {/* Types d'anomalies signalées */}
             <div className="bg-yellow-50 p-4 rounded-lg">
-              <h3 className="font-semibold text-yellow-800 mb-2">🔍 Types d'Erreurs Détectées</h3>
+              <h3 className="font-semibold text-yellow-800 mb-2">Types d'anomalies signalées</h3>
               <div className="text-sm text-yellow-700 space-y-2">
                 <div>
-                  <strong>🔴 Erreurs de saisie:</strong> Montants, dates, banques incorrects
+                  <strong>Saisie :</strong> montants, dates ou banques divergents d'un crédit rapproché
                 </div>
                 <div>
-                  <strong>🟡 Omissions:</strong> Collections manquantes dans Excel
+                  <strong>Omission :</strong> crédit bancaire sans ligne Excel correspondante
                 </div>
                 <div>
-                  <strong>🟠 Incohérences:</strong> Dates de validité, statuts incorrects
+                  <strong>Incohérence :</strong> date de validité absente malgré un crédit rapproché
                 </div>
               </div>
             </div>
@@ -234,7 +176,7 @@ const QualityControl = () => {
               ) : (
                 <>
                   <Upload className="h-5 w-5 mr-2" />
-                  Lancer l'Analyse Qualité
+                  Lancer l'analyse consultative
                 </>
               )}
             </Button>

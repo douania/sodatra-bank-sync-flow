@@ -15,9 +15,103 @@
 
 ---
 
+## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
+
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR — ONE_STOP_CONDITION — EXTERNAL_VALIDATIONS_PENDING` (2026-09-06 Europe/Paris)**
+
+Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` du
+2026-09-06 (arbitrage CTO D-0-1 à D-0-5, D-COL-1 à D-COL-6). Base vérifiée
+`3c69e7d15d5981105637f84f06150bcfe3b4f7e8` (`origin/main`), branche
+`codex/pack-0-critical-blockers-governance`, exécutant unique Claude Code.
+
+Livré localement :
+
+- **Contrôle qualité consultatif** : aucune correction validée/rejetée/persistée
+  (les méthodes refusent par `QualityControlNotImplementedError`), aucun verdict
+  de conformité ni score artificiel de 100 % ; seuls les crédits bancaires
+  explicites sont des preuves, les dépôts non crédités n'en sont jamais ; sans
+  preuve exploitable : « contrôle non évaluable — données absentes ou
+  indisponibles ». Mapping camelCase/snake_case corrigé. Le moteur n'importe
+  plus le client Supabase.
+- **Isolation des écritures Collection legacy** (`/reconciliation`) : la
+  synchronisation Excel directe, le marquage manuel effet/chèque et l'onglet de
+  suppression de doublons sont neutralisés **sur toutes les cibles** ; seul
+  point d'exécution subsistant, `executeLegacyCollectionMutation` refuse avant
+  tout appel service. Consultation conservée. `intelligentSyncService.ts`
+  (Lot 3 FROZEN) inchangé. **Limite** : barrière d'interface uniquement, les
+  accès serveur (policies `collection_report_insert/update`) restent à fermer
+  avant activation du nouveau contrat Collections.
+- **Internal Book** : `BLOCKED` pour l'import opérationnel (parsing
+  diagnostique local conservé, aucune persistance) ; l'étiquette « candidat
+  production » est retirée.
+- **`xlsx@0.20.3`** depuis le tarball éditeur (`package.json` par URL exacte,
+  `package-lock.json` avec intégrité `sha512-oLDq3jw7…`), `bun.lock`/`bun.lockb`
+  supprimés ; diff du lockfile limité à `xlsx` et à ses 8 dépendances
+  transitives retirées ; `npm audit` : `xlsx` absent des avis (31 avis
+  préexistants restants, hors périmètre). Caractérisation
+  `test:xlsx-characterization` : résultats métier identiques avant/après.
+- **Provenance du build** : `src/config/buildProvenance.ts` + `define` Vite ;
+  libellé « Version : … » dans la zone de session Daily v2 ; états `known`,
+  `modified`, `conflict`, `unknown` ; aucune journalisation console.
+- **CI** : ratchet ESLint aligné sur la mesure reproductible (180 / 11 / 191),
+  nouvelle étape « Pack 0 contracts » ; scripts `test:quality-control`,
+  `test:legacy-isolation`, `test:xlsx-characterization`,
+  `test:build-provenance`, `test:internal-book`.
+- **Docs** : états courants actualisés (`MASTER_CONTEXT`, `DEFERRED_BACKLOG`
+  DEF-11/17/18/19, `DB_TRUTH` datation, `BASELINES`, `SECURITY_BACKLOG` SEC-12,
+  `SECURITY_CONTRACT` §6/§11), bannière obsolète sur les documents Bolt.
+
+Mesures (Node 20.20.2, npm 10.8.2, versions du lockfile, baseline `origin/main`
+@ `3c69e7d`) : TypeScript 16 → 16 (diff exact vide) ; ESLint 180/11 → 178/11
+(0 nouvel item, 2 disparus) ; matrice CI Node + suites Pack 0 : toutes vertes
+sauf `test:structured-excel` (14/15, voir stop condition) ; build production
+PASS, artefact MCP inchangé, hygiène des logs 4/4.
+
+**Stop condition consignée** : `test:structured-excel` échoue sur « refuses
+malformed or precision-unsafe textual amounts ». Sonde croisée : les fichiers
+écrits par 0.18.5 sont lus à l'identique par 0.20.3 et toute cellule texte
+correcte reste refusée (`invalid`) ; la fixture du test construit une cellule
+**incohérente** (`t:'n'` avec une chaîne) que 0.18.5 écrivait en NaN et que
+0.20.3 écrit en cellule d'erreur `#NUM!`. Le parser Daily traite alors la
+cellule d'erreur comme le montant numérique 36 (`needs_review`), défaut
+**préexistant et indépendant de la version** (DEF-19). La correction du test
+(cellule `t:'s'`) touche
+`src/services/structuredBankStatementExcelParser.synthetic.test.ts`, **hors
+liste blanche** : non modifié, `GO_FIX_PACK_0` requis. Tant que ce fichier n'est
+pas corrigé, la CI de la draft PR reste rouge sur cette étape.
+
+Non exécuté / non autorisé ici : replay PostgreSQL 17 local (`NOT_RUN` si le
+moteur Docker n'a pas démarré, voir rapport de PR ; la CI de la PR l'exécute),
+compatibilité Lovable de la dépendance par URL (`GO_APPLY_STAGING_PACK_0_PUBLISH_BUILD`),
+ruleset GitHub `main`, mode d'écriture Lovable et visibilité privée
+(`GO_GITHUB_PACK_0_*`), fermeture de #118, préflights read-only staging/production
+(`GO_VALIDATE_STAGING_PACK_0`, `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`),
+publication du durcissement. Le pack n'est clos qu'après ces validations
+distinctes.
+
+### Provenance par environnement (D-0-4)
+
+| Environnement | Commit source (provenance de l'information) | Déploiement / bundle observé | Migrations réellement constatées | Verrous | Date · GO |
+|---|---|---|---|---|---|
+| Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable (lecture publique, 2026-09-05) — **non corroboré par un tampon de build** : `NOT_VERIFIABLE` | Dernier rapport validé : déploiement `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle `index-BZ9uZmBU.js` (2026-09-01) ; bundle public observé `index-CG4jm_34.js` (2026-09-05) → écart non réconcilié | « ledger 40 » (2026-09-01) — nombre seul, schéma non identifié : `NOT_VERIFIABLE` | 4 verrous `false` (2026-09-01) : `NOT_VERIFIABLE` | aucune vérification par Pack 0 ; `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` requis |
+| Staging `gbbsqcscryygqlmqncyv` | `d73c50df…` selon Lovable (2026-09-05), commit inconnu de `origin/main` : `NOT_VERIFIABLE` | bundle public observé `index-DiuNvuzv.js` (2026-09-05) | « ledger 43 » (2026-09-01), candidat `20260901000000` absent : `NOT_VERIFIABLE` | `false` (2026-09-01) : `NOT_VERIFIABLE` | `GO_VALIDATE_STAGING_PACK_0` requis |
+| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) | build local `index-C98AXMwH.js` (non publié) | n/a | n/a | 2026-09-06 · `GO_IMPLEMENT_PACK_0` |
+
+Règle : une ligne n'est mise à jour que sous le GO d'environnement qui a
+produit l'observation ; les états anciens restent datés et marqués
+`NOT_VERIFIABLE` tant qu'ils ne sont pas revérifiés.
+
+---
+
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — PR_143_MERGED — STAGING_PREFLIGHT_READY — CI_HOTFIX_REVIEW_FINDINGS_FIXED` (2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — PR_143_AND_144_MERGED — MAIN_CI_GREEN — STAGING_PREFLIGHT_READY — MIGRATION_NOT_APPLIED` (mise à jour 2026-09-06 ; entrée initiale 2026-09-01 Europe/Paris)**
+
+Note Pack 0 (2026-09-06) : la PR #144 (hotfix CI PG17) est fusionnée et la CI
+de `main` est verte depuis le run du 2026-09-03 ; la migration candidate
+`20260901000000` n'est appliquée sur aucun environnement. L'application
+staging attend `GO_APPLY_STAGING_<PACK>` (Pack 1). Le texte historique
+ci-dessous est conservé tel quel.
 
 Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
 promotion Collection Report par RPC atomique unique, scope serveur privé fermé

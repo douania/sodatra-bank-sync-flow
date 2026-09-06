@@ -1,10 +1,10 @@
 
-import { supabase } from '@/integrations/supabase/client';
-import { 
-  QualityError, 
-  QualityReport, 
-  SaisieError, 
-  OmissionError, 
+import {
+  QualityError,
+  QualityReport,
+  QualityEvaluation,
+  SaisieError,
+  OmissionError,
   IncohérenceError,
   BankTransaction,
   BankMatchResult,
@@ -12,91 +12,120 @@ import {
   SuggestedCollection
 } from '@/types/qualityControl';
 
+/**
+ * PACK 0 — contrôle qualité consultatif.
+ *
+ * - Le moteur ne persiste rien : les méthodes de correction refusent
+ *   explicitement (`QualityControlNotImplementedError`).
+ * - Seuls les crédits bancaires explicites constituent une preuve
+ *   d'encaissement. Les dépôts non crédités (`depositsNotCleared`) ne sont
+ *   jamais utilisés comme preuve : ils sont, par définition, non encaissés.
+ * - Sans ligne Excel ou sans preuve de crédit exploitable, le rapport est
+ *   `NOT_EVALUABLE` : aucune anomalie n'est comptée, aucun score n'est
+ *   fabriqué. L'écran ne peut pas distinguer une base vide d'une erreur de
+ *   lecture masquée par le service de données ; il ne prétend pas le faire.
+ */
+export const QUALITY_CONTROL_NOT_EVALUABLE_MESSAGE =
+  'Contrôle non évaluable — données absentes ou indisponibles.';
+
+export class QualityControlNotImplementedError extends Error {
+  readonly action: string;
+
+  constructor(action: string) {
+    super(`QUALITY_CONTROL_CORRECTION_NOT_IMPLEMENTED:${action}`);
+    this.name = 'QualityControlNotImplementedError';
+    this.action = action;
+  }
+}
+
 export class QualityControlEngine {
-  
+
   async analyzeQuality(
-    excelData: any[], 
+    excelData: any[],
     bankStatements: any[]
   ): Promise<QualityReport> {
-    
-    console.log('🔍 DÉBUT ANALYSE QUALITÉ - Excel:', excelData.length, 'Relevés bancaires:', bankStatements.length);
-    
+    const rows = Array.isArray(excelData) ? excelData : [];
+    const statements = Array.isArray(bankStatements) ? bankStatements : [];
     const errors: QualityError[] = [];
     const reportId = this.generateReportId();
-    
-    // Extraire toutes les transactions bancaires de crédit
-    const allBankTransactions = this.extractCreditTransactions(bankStatements);
-    console.log('🏦 Transactions de crédit extraites:', allBankTransactions.length);
-    
+
+    // Seules les preuves de crédit explicites sont retenues.
+    const allBankTransactions = this.extractCreditTransactions(statements);
+    const evaluation = this.evaluateAvailability(rows, statements, allBankTransactions);
+
+    if (evaluation.status === 'NOT_EVALUABLE') {
+      return this.generateQualityReport(reportId, errors, rows.length, evaluation);
+    }
+
     // 1️⃣ DÉTECTER LES ERREURS DE SAISIE
-    console.log('🔍 Phase 1: Détection erreurs de saisie...');
-    const saisieErrors = await this.detectSaisieErrors(excelData, allBankTransactions);
+    const saisieErrors = await this.detectSaisieErrors(rows, allBankTransactions);
     errors.push(...saisieErrors);
-    console.log(`⚠️ ${saisieErrors.length} erreurs de saisie détectées`);
-    
+
     // 2️⃣ DÉTECTER LES OMISSIONS
-    console.log('🔍 Phase 2: Détection omissions...');
-    const omissionErrors = await this.detectOmissions(excelData, allBankTransactions);
+    const omissionErrors = await this.detectOmissions(rows, allBankTransactions);
     errors.push(...omissionErrors);
-    console.log(`⚠️ ${omissionErrors.length} omissions détectées`);
-    
+
     // 3️⃣ DÉTECTER LES INCOHÉRENCES
-    console.log('🔍 Phase 3: Détection incohérences...');
-    const incohérenceErrors = await this.detectIncohérences(excelData, allBankTransactions);
+    const incohérenceErrors = await this.detectIncohérences(rows, allBankTransactions);
     errors.push(...incohérenceErrors);
-    console.log(`⚠️ ${incohérenceErrors.length} incohérences détectées`);
-    
-    // 4️⃣ GÉNÉRER LE RAPPORT
-    const report = this.generateQualityReport(reportId, errors, excelData.length);
-    
-    console.log('📊 RAPPORT QUALITÉ GÉNÉRÉ:', {
-      total_analyzed: report.summary.total_collections_analyzed,
-      errors_detected: report.summary.errors_detected,
-      error_rate: report.summary.error_rate + '%',
-      confidence: report.summary.confidence_score + '%'
-    });
-    
-    return report;
+
+    // 4️⃣ GÉNÉRER LE RAPPORT (consultatif)
+    return this.generateQualityReport(reportId, errors, rows.length, evaluation);
   }
-  
+
+  private evaluateAvailability(
+    rows: readonly unknown[],
+    statements: readonly unknown[],
+    creditEvidence: readonly BankTransaction[],
+  ): QualityEvaluation {
+    const base = {
+      excel_rows: rows.length,
+      bank_reports: statements.length,
+      credit_evidence: creditEvidence.length,
+    };
+    if (rows.length === 0 || creditEvidence.length === 0) {
+      return { status: 'NOT_EVALUABLE', reason: QUALITY_CONTROL_NOT_EVALUABLE_MESSAGE, ...base };
+    }
+    return {
+      status: 'EVALUABLE',
+      reason: 'Comparaison consultative des lignes Excel aux crédits bancaires explicites disponibles.',
+      ...base,
+    };
+  }
+
+  /**
+   * Extrait les seules preuves de crédit explicites. Les champs sont acceptés
+   * en camelCase (mapping applicatif) comme en snake_case (lignes brutes),
+   * afin qu'une divergence de nommage ne dégrade plus silencieusement la
+   * comparaison. `depositsNotCleared` est volontairement ignoré.
+   */
   private extractCreditTransactions(bankStatements: any[]): BankTransaction[] {
     const transactions: BankTransaction[] = [];
-    
+
     for (const statement of bankStatements) {
-      // Traiter les dépôts non débités (source principale)
-      if (statement.depositsNotCleared) {
-        for (const deposit of statement.depositsNotCleared) {
-          transactions.push({
-            id: deposit.id,
-            date: deposit.date_depot || deposit.date_valeur,
-            description: deposit.reference || `Dépôt ${deposit.type_reglement}`,
-            amount: deposit.montant,
-            bank: statement.bank,
-            reference: deposit.reference,
-            client_code: deposit.client_code,
-            type: 'CREDIT'
-          });
-        }
-      }
-      
-      // Ajouter d'autres sources de transactions si disponibles
-      if (statement.transactions) {
-        for (const transaction of statement.transactions) {
-          if (transaction.amount > 0) { // Seulement les crédits
-            transactions.push({
-              id: transaction.id,
-              date: transaction.date,
-              description: transaction.description,
-              amount: transaction.amount,
-              bank: statement.bank,
-              reference: transaction.reference,
-              type: 'CREDIT'
-            });
-          }
-        }
+      if (!statement || !Array.isArray(statement.transactions)) continue;
+      const statementBank = statement.bank ?? statement.bank_name ?? statement.bankName ?? '';
+
+      for (const transaction of statement.transactions) {
+        if (!transaction) continue;
+        const amount = Number(transaction.amount ?? transaction.montant);
+        const explicitType = typeof transaction.type === 'string' ? transaction.type.toUpperCase() : undefined;
+        const isCredit = explicitType ? explicitType === 'CREDIT' : Number.isFinite(amount) && amount > 0;
+        if (!isCredit || !Number.isFinite(amount) || amount <= 0) continue;
+
+        transactions.push({
+          id: transaction.id,
+          date: transaction.date ?? transaction.dateValeur ?? transaction.date_valeur ?? transaction.dateOperation ?? transaction.date_operation ?? '',
+          description: String(transaction.description ?? transaction.libelle ?? transaction.reference ?? ''),
+          amount,
+          bank: String(transaction.bank ?? statementBank ?? ''),
+          reference: transaction.reference,
+          client_code: transaction.client_code ?? transaction.clientCode,
+          type: 'CREDIT'
+        });
       }
     }
-    
+
     return transactions;
   }
   
@@ -456,23 +485,33 @@ export class QualityControlEngine {
     return feeKeywords.some(keyword => description.includes(keyword));
   }
   
-  private generateQualityReport(reportId: string, errors: QualityError[], totalAnalyzed: number): QualityReport {
+  private generateQualityReport(
+    reportId: string,
+    errors: QualityError[],
+    totalAnalyzed: number,
+    evaluation: QualityEvaluation,
+  ): QualityReport {
     const saisieErrors = errors.filter(e => e.type === 'SAISIE_ERROR').length;
     const omissions = errors.filter(e => e.type === 'OMISSION_ERROR').length;
     const incohérences = errors.filter(e => e.type === 'INCOHÉRENCE_ERROR').length;
-    
-    const avgConfidence = errors.length > 0 
-      ? errors.reduce((sum, e) => sum + e.confidence, 0) / errors.length 
-      : 1.0;
-    
+
+    // Aucun score artificiel : sans anomalie fondée, il n'y a pas de confiance
+    // à afficher. Le score n'existe que comme moyenne des anomalies détectées.
+    const confidenceScore = evaluation.status === 'EVALUABLE' && errors.length > 0
+      ? Math.round((errors.reduce((sum, e) => sum + e.confidence, 0) / errors.length) * 100 * 100) / 100
+      : null;
+
     return {
       id: reportId,
       analysis_date: new Date().toISOString(),
+      evaluation,
       summary: {
         total_collections_analyzed: totalAnalyzed,
         errors_detected: errors.length,
-        error_rate: totalAnalyzed > 0 ? Math.round((errors.length / totalAnalyzed) * 100 * 100) / 100 : 0,
-        confidence_score: Math.round(avgConfidence * 100 * 100) / 100
+        error_rate: evaluation.status === 'EVALUABLE' && totalAnalyzed > 0
+          ? Math.round((errors.length / totalAnalyzed) * 100 * 100) / 100
+          : 0,
+        confidence_score: confidenceScore
       },
       errors_by_type: {
         saisie_errors: saisieErrors,
@@ -494,20 +533,18 @@ export class QualityControlEngine {
     return `QE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
   
-  // Méthodes pour la validation des erreurs
-  async validateError(errorId: string): Promise<void> {
-    console.log(`✅ Validation erreur: ${errorId}`);
-    // Logique de validation à implémenter
+  // PACK 0 — aucune correction n'est implémentée ni persistée. Les appels
+  // refusent explicitement au lieu de simuler un succès.
+  async validateError(_errorId: string): Promise<never> {
+    throw new QualityControlNotImplementedError('validate');
   }
-  
-  async rejectError(errorId: string, reason: string): Promise<void> {
-    console.log(`❌ Rejet erreur: ${errorId}, raison: ${reason}`);
-    // Logique de rejet à implémenter
+
+  async rejectError(_errorId: string, _reason: string): Promise<never> {
+    throw new QualityControlNotImplementedError('reject');
   }
-  
-  async applyCorrection(errorId: string, correction: any): Promise<void> {
-    console.log(`🔧 Application correction: ${errorId}`, correction);
-    // Logique d'application des corrections à implémenter
+
+  async applyCorrection(_errorId: string, _correction: any): Promise<never> {
+    throw new QualityControlNotImplementedError('apply');
   }
 }
 

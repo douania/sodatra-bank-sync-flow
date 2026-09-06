@@ -146,9 +146,62 @@ atomiques constituent le chemin d'écriture exclusif. DEF-16 est `CLOSED`.
 
 ### DEF-11 : Tests automatisés
 
-**Problème** : Aucun test unitaire ou d'intégration.
-**Risque** : Régressions non détectées à chaque modification.
-**Lot probable** : Post Lot 4
+**Problème (historique, 2026-05)** : Aucun test unitaire ou d'intégration.
+**État au 2026-09-06 (Pack 0)** : la CI exécute des suites synthétiques Node
+(`test:*` de `package.json`), des rejeux SQL PostgreSQL 17 jetables et un
+contrat d'hygiène des logs ; aucun taux de couverture n'est mesuré et aucun E2E
+sur fichier bancaire réel n'est automatisé. Le sujet reste ouvert sous cette
+forme précise, pas sous la forme « aucun test ».
+**Risque** : Régressions non détectées sur les parcours non couverts (réels, navigateur, multi-rôles).
+**Lot probable** : transversal, par pack (Pack 2 à Pack 6)
+
+### DEF-17 : Contrôle qualité consultatif (Pack 0)
+
+**Fichiers** : `src/pages/QualityControl.tsx`, `src/services/qualityControlEngine.ts`, `src/components/QualityControlDashboard.tsx`.
+**Décision** : `LEGACY_TO_RETIRE_OR_ISOLATE` (D-0-1). Depuis Pack 0, l'écran est
+consultatif : aucune correction validée/rejetée/persistée, aucun verdict de
+conformité, « contrôle non évaluable » sans preuve de crédit explicite ; les
+dépôts non crédités ne sont plus utilisés comme preuve d'encaissement. Le
+modèle `bank_reports` actuel ne porte aucune ligne de crédit explicite : le
+contrôle y est donc non évaluable par construction.
+**Reste dû** : la capacité de contrôle qualité V1 dans les parcours métier
+(Pack 1/2), avec des preuves de crédit Daily canonical comme source.
+
+### DEF-18 : Surfaces d'écriture Collection legacy (Pack 0)
+
+**Fichiers** : `src/components/IntelligentSyncManager.tsx`, `src/components/CollectionsManager.tsx`, `src/pages/Reconciliation.tsx`, `src/services/uploadRuntimeGuard.ts`.
+**Décision** : neutralisation frontend sur toutes les cibles (synchronisation
+Excel directe, marquage manuel effet/chèque, suppression de doublons non montée).
+`intelligentSyncService.ts` (pipeline Excel Lot 3 FROZEN) n'est pas modifié.
+**Limite explicite** : cette neutralisation est une barrière d'interface. Les
+policies `collection_report_insert/update` (migration `20260430150428`) laissent
+admin/manager écrire directement depuis tout client authentifié. La fermeture
+serveur est obligatoire avant activation du nouveau contrat Collections (Pack 1 ;
+le trigger de garde de `20260901000000` bloque les INSERT directs une fois
+appliqué).
+**Reste dû** : `src/components/DuplicateAnalyzer.tsx` (suppression de doublons,
+hors liste blanche Pack 0) n'est plus monté ; une variante lecture seule de
+l'analyse des doublons peut être rétablie dans un pack ultérieur.
+
+### DEF-19 : Cellule d'erreur Excel interprétée comme montant (parser Daily v2)
+
+**Fichier** : `src/services/structuredBankStatementExcelParser.ts` (hors liste
+blanche Pack 0, non modifié).
+**Constat (Pack 0, 2026-09-06)** : une cellule d'erreur Excel (`t:'e'`, par
+exemple `#NUM!`, code 36) dans la colonne montant d'un relevé XLS est lue comme
+le montant numérique 36 et produit `needs_review` au lieu de `invalid`. Défaut
+préexistant, indépendant de la version de `xlsx` (reproduit avec 0.18.5 et
+0.20.3 sur le même fichier). Révélé par la fixture du test
+`structuredBankStatementExcelParser.synthetic.test.ts` (« refuses malformed or
+precision-unsafe textual amounts »), qui construit une cellule incohérente
+(`t:'n'` avec une chaîne) désormais écrite en cellule d'erreur par `xlsx@0.20.3`.
+**Risque** : montant fictif accepté en revue si un export bancaire contient
+une cellule d'erreur.
+**Action** : (1) corriger la fixture du test (cellule `t:'s'`) sous
+`GO_FIX_PACK_0` ; (2) faire refuser explicitement toute cellule `t:'e'` dans les
+colonnes montant/solde du parser dans Pack 2 (relevés multi-banques), avec
+test dédié.
+**Lot probable** : Pack 0 (fixture) puis Pack 2 (parser).
 
 ### DEF-12 : Documentation utilisateur
 
