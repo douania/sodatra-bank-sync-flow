@@ -37,6 +37,17 @@ du type erreur) :
   d'erreur (36, 7, 42) restent acceptées. La fixture « textual amounts »
   construit une vraie cellule texte ; la sonde d'origine est conservée comme
   scénario de non-régression. Preuves : avant 14/20, après 20/20.
+  Correction ciblée des preuves (second `GO_FIX_PACK_0`, 2026-09-06) : les
+  scénarios « textual amounts » et « DEF-19 discovery » exercent chaque profil
+  avec son conteneur autorisé — BICIS en XLS (montant signé) et BRIDGE en XLSX
+  (crédit et débit séparés) — sans renommage de conteneur ; l'assertion exige
+  l'erreur de la cause testée (montant invalide, ou cellule d'erreur Excel
+  nommée) et exclut tout refus amont (`container signature`) ; un témoin
+  valide, même profil et même conteneur, prouve l'atteinte de l'analyse
+  métier (2 lignes) ; la cellule réellement soumise est relue après
+  sérialisation (texte `s` pour les montants malformés, erreur `e` pour la
+  sonde incohérente avec le `xlsx` verrouillé). Suite Excel : 20/20 sous
+  Node 20.20.2.
 - **Provenance** : un HEAD lisible avec un état d'arbre non vérifiable donne
   `unverified` (« arbre non vérifiable », non qualifiable, jamais « arbre
   propre ») ; les fichiers source non suivis (non ignorés) sont lus

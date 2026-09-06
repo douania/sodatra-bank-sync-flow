@@ -221,31 +221,105 @@ test('fails closed when a numeric amount cannot round-trip through safe integer 
   assert.match(result.errors.join(' '), /non-zero signed amount/i);
 });
 
-test('refuses malformed or precision-unsafe textual amounts', () => {
-  for (const unsafeAmount of ['1-000', '12,34.56', '100 debit', '90071992547409.91']) {
-    for (const bookType of ['xls', 'xlsx'] as const) {
-      const workbook = bicisWorkbook();
-      // PACK 0 / GO_FIX : cellule de texte réelle (t:'s'), pas un objet cellule
-      // numérique portant une chaîne. La forme incohérente est couverte par le
-      // scénario DEF-19 dédié plus bas.
-      const cell = workbook.Sheets[workbook.SheetNames[0]].D9;
-      cell.t = 's';
-      cell.v = unsafeAmount;
-      delete cell.w;
-      const result = parseStructuredBankStatementExcel(workbookBytes(workbook, bookType), {
-        sourceFileName: 'SYNTHETIC BICIS ONLINE.xls',
-        expectedBank: 'BICIS',
-      });
+// Scénarios « montant textuel malformé » et « sonde DEF-19 » : chaque profil
+// est exercé avec son conteneur autorisé (BICIS → XLS, BRIDGE → XLSX), jamais
+// en renommant un conteneur. Un témoin valide, même profil et même conteneur,
+// prouve que le scénario atteint l'analyse métier et non un refus amont.
+interface AmountScenario {
+  name: string;
+  container: BookType;
+  file: string;
+  bank: 'BICIS' | 'BRIDGE';
+  workbook: () => XLSX.WorkBook;
+  /** Cellule de montant visée. */
+  address: string;
+  /** Index de ligne (0-based) de cette cellule dans la feuille. */
+  rowIndex: number;
+  /** Erreur attendue quand la cellule porte un montant textuel malformé. */
+  malformedError: RegExp;
+}
 
-      assert.equal(result.validation.status, 'invalid', `${unsafeAmount} (${bookType})`);
-      assert.match(result.errors.join(' '), /non-zero signed amount|container signature/i);
-      // Le document est refusé fail-closed ; la ligne portant le montant
-      // textuel malformé (D9, index 8) ne produit jamais de ligne financière.
+const AMOUNT_SCENARIOS: readonly AmountScenario[] = [
+  {
+    name: 'BICIS signed amount, XLS container',
+    container: 'xls',
+    file: 'SYNTHETIC BICIS ONLINE.xls',
+    bank: 'BICIS',
+    workbook: bicisWorkbook,
+    address: 'D9',
+    rowIndex: 8,
+    malformedError: /requires one non-zero signed amount/i,
+  },
+  {
+    name: 'BRIDGE split credit, XLSX container',
+    container: 'xlsx',
+    file: 'SYNTHETIC BRIDGE ONLINE.xlsx',
+    bank: 'BRIDGE',
+    workbook: bridgeWorkbook,
+    address: 'F3',
+    rowIndex: 2,
+    malformedError: /invalid debit or credit amount/i,
+  },
+  {
+    name: 'BRIDGE split debit, XLSX container',
+    container: 'xlsx',
+    file: 'SYNTHETIC BRIDGE ONLINE.xlsx',
+    bank: 'BRIDGE',
+    workbook: bridgeWorkbook,
+    address: 'E2',
+    rowIndex: 1,
+    malformedError: /invalid debit or credit amount/i,
+  },
+];
+
+const MALFORMED_TEXT_AMOUNTS = ['1-000', '12,34.56', '100 debit', '90071992547409.91'] as const;
+
+/** Type et valeur de la cellule réellement soumise au parser, après sérialisation puis relecture. */
+function rereadCell(bytes: ArrayBuffer, address: string): { t?: string; v?: unknown; w?: string } | undefined {
+  const workbook = XLSX.read(bytes, { type: 'array', raw: true });
+  const cell = workbook.Sheets[workbook.SheetNames[0]][address] as XLSX.CellObject | undefined;
+  return cell ? { t: cell.t, v: cell.v, w: cell.w } : undefined;
+}
+
+function assertWitnessReachesBusinessAnalysis(scenario: AmountScenario): void {
+  const witness = parseStructuredBankStatementExcel(workbookBytes(scenario.workbook(), scenario.container), {
+    sourceFileName: scenario.file,
+    expectedBank: scenario.bank,
+  });
+  assert.notEqual(witness.validation.status, 'invalid', `${scenario.name}: witness must not be refused (${witness.errors.join(' ')})`);
+  assert.notEqual(witness.validation.status, 'unsupported', `${scenario.name}: witness must match its profile`);
+  assert.equal(witness.bankHint, scenario.bank, `${scenario.name}: witness must resolve the expected profile`);
+  assert.equal(witness.lines.length, 2, `${scenario.name}: witness must yield both synthetic lines`);
+}
+
+test('refuses malformed or precision-unsafe textual amounts', () => {
+  for (const scenario of AMOUNT_SCENARIOS) {
+    assertWitnessReachesBusinessAnalysis(scenario);
+
+    for (const unsafeAmount of MALFORMED_TEXT_AMOUNTS) {
+      const label = `${scenario.name} / ${unsafeAmount}`;
+      const workbook = scenario.workbook();
+      // Cellule de texte réelle (t:'s'). La forme incohérente (t:'n' portant une
+      // chaîne) est couverte par le scénario DEF-19 dédié plus bas.
+      workbook.Sheets[workbook.SheetNames[0]][scenario.address] = { t: 's', v: unsafeAmount };
+      const bytes = workbookBytes(workbook, scenario.container);
+
+      const submitted = rereadCell(bytes, scenario.address);
+      assert.equal(submitted?.t, 's', `${label}: a real text cell must reach the parser (observed ${submitted?.t})`);
+      assert.equal(submitted?.v, unsafeAmount, `${label}: the text must survive serialization unchanged`);
+
+      const result = parseStructuredBankStatementExcel(bytes, {
+        sourceFileName: scenario.file,
+        expectedBank: scenario.bank,
+      });
+      assert.equal(result.validation.status, 'invalid', label);
+      assert.match(result.errors.join(' '), scenario.malformedError, label);
+      assert.doesNotMatch(result.errors.join(' '), /container signature|error cell/i, `${label}: refusal must come from the amount, not from an upstream gate`);
       assert.ok(
-        result.lines.every((line) => line.sourceRowIndex !== 8),
-        `${unsafeAmount} (${bookType}): the malformed row must not yield a financial line`,
+        result.lines.every((line) => line.sourceRowIndex !== scenario.rowIndex),
+        `${label}: the malformed row must not yield a financial line`,
       );
-      assert.ok(!result.lines.some((line) => line.signedAmount === 36), `${unsafeAmount} (${bookType})`);
+      assert.ok(!result.lines.some((line) => line.signedAmount === 36), label);
     }
   }
 });
@@ -377,22 +451,39 @@ test('legitimate numeric values equal to Excel error codes remain accepted uncha
 
 test('DEF-19 discovery scenario: an inconsistent numeric cell carrying a string never becomes a financial line', () => {
   // Sonde ayant révélé le défaut : `xlsx@0.18.5` écrivait cette cellule
-  // incohérente en NaN, `xlsx@0.20.3` en cellule d'erreur #NUM! ; le parser
-  // lisait alors le code d'erreur comme montant 36 et produisait `needs_review`.
-  for (const unsafeAmount of ['1-000', '12,34.56', '100 debit']) {
-    for (const bookType of ['xls', 'xlsx'] as const) {
-      const workbook = bicisWorkbook();
-      workbook.Sheets[workbook.SheetNames[0]].D9.v = unsafeAmount; // t reste 'n' volontairement
-      const result = parseStructuredBankStatementExcel(workbookBytes(workbook, bookType), {
-        sourceFileName: 'SYNTHETIC BICIS ONLINE.xls',
-        expectedBank: 'BICIS',
+  // incohérente (t:'n' portant une chaîne) en NaN, `xlsx@0.20.3` en cellule
+  // d'erreur #NUM! ; le parser lisait alors le code d'erreur comme montant 36
+  // et produisait `needs_review`. Le type réellement obtenu après
+  // sérialisation/relecture est vérifié pour connaître le cas soumis au parser.
+  for (const scenario of AMOUNT_SCENARIOS) {
+    assertWitnessReachesBusinessAnalysis(scenario);
+
+    for (const unsafeAmount of ['1-000', '12,34.56', '100 debit'] as const) {
+      const label = `${scenario.name} / ${unsafeAmount}`;
+      const workbook = scenario.workbook();
+      workbook.Sheets[workbook.SheetNames[0]][scenario.address] = { t: 'n', v: unsafeAmount as unknown as number };
+      const bytes = workbookBytes(workbook, scenario.container);
+
+      const submitted = rereadCell(bytes, scenario.address);
+      assert.equal(
+        submitted?.t,
+        'e',
+        `${label}: with the pinned xlsx, the inconsistent cell must be serialized as an Excel error cell (observed ${submitted?.t}, ${String(submitted?.w)})`,
+      );
+
+      const result = parseStructuredBankStatementExcel(bytes, {
+        sourceFileName: scenario.file,
+        expectedBank: scenario.bank,
       });
-      assert.equal(result.validation.status, 'invalid', `${unsafeAmount} (${bookType})`);
-      assert.notEqual(result.validation.status, 'needs_review');
-      assert.equal(result.lines.length, 0, `${unsafeAmount} (${bookType}): no financial line`);
+      assert.equal(result.validation.status, 'invalid', label);
+      assert.notEqual(result.validation.status, 'needs_review', label);
+      assert.match(result.errors.join(' '), /error cell/i, `${label}: refusal must name the Excel error cell`);
+      assert.match(result.errors.join(' '), new RegExp(scenario.address), `${label}: refusal must name the cell`);
+      assert.doesNotMatch(result.errors.join(' '), /container signature/i, label);
+      assert.equal(result.lines.length, 0, `${label}: no financial line`);
       assert.ok(
         !result.lines.some((line) => line.signedAmount === 36),
-        `${unsafeAmount} (${bookType}): the error code must never be read as an amount`,
+        `${label}: the error code must never be read as an amount`,
       );
     }
   }
