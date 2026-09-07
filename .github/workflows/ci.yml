@@ -148,5 +148,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      # PACK 0 (D-0-4, GO_FIX_PACK_0 provenance) — blocking proof on a REAL Vite
+      # build: a clean detached worktree of the checkout actually built here
+      # (on pull_request, the PR test-merge commit — never a substituted SHA)
+      # is compiled and the provenance embedded in the produced bundle must be
+      # known / git-checkout / corroborated / clean and carry that HEAD; the
+      # build must leave the source tree untouched. Also proves that only the
+      # Vite config temp file is ignored while real untracked sources and
+      # tracked modifications are still detected.
+      - name: Build provenance from a clean checkout (real Vite build)
+        run: npx tsx --test src/config/buildProvenance.build.test.ts
+
       - name: Production log hygiene contract
         run: npx tsx --test src/config/productionLogHygiene.synthetic.test.ts

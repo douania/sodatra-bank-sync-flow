@@ -17,11 +17,11 @@
 
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_146 — GO_FIX_APPLIED — EXTERNAL_VALIDATIONS_PENDING` (2026-09-06 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_146 — GO_FIX_APPLIED — EXTERNAL_VALIDATIONS_PENDING` (2026-09-07 Europe/Paris)**
 
 Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
-`GO_FIX_PACK_0` du 2026-09-06 (arbitrage CTO D-0-1 à D-0-5, D-COL-1 à
-D-COL-6). Base vérifiée `3c69e7d15d5981105637f84f06150bcfe3b4f7e8`
+`GO_FIX_PACK_0` du 2026-09-06 et `GO_FIX_PACK_0` « provenance réelle du
+build » du 2026-09-07 (arbitrage CTO D-0-1 à D-0-5, D-COL-1 à D-COL-6). Base vérifiée `3c69e7d15d5981105637f84f06150bcfe3b4f7e8`
 (`origin/main`), branche `codex/pack-0-critical-blockers-governance`, draft
 PR #146, exécutant unique Claude Code.
 
@@ -54,6 +54,25 @@ du type erreur) :
   (`--untracked-files=all`) et rendent la provenance `modified` / « fichiers
   non suivis », non qualifiable ; seuls un checkout propre et vérifié restent
   qualifiables. Aucun chemin n'est embarqué. Preuves : avant 6/11, après 11/11.
+- **Provenance réelle du build (`GO_FIX_PACK_0` du 2026-09-07)** : sur un
+  arbre pourtant propre, la provenance embarquée était `modified` / « fichiers
+  non suivis » parce que Vite écrit `vite.config.ts.timestamp-*.mjs` pendant le
+  chargement de la configuration et que `git status --untracked-files=all` le
+  voyait (faux positif, découvert par `GO_PREPARE_PACK_0_LOVABLE_SYNC`).
+  Correction limitée à `.gitignore` : règle ancrée
+  `/vite.config.ts.timestamp-*.mjs` (aucun autre `.mjs`, fichier non suivi ni
+  lockfile ignoré ; collecteur inchangé, états `modified`, `unverified`,
+  `conflict`, `unknown` préservés pour leurs causes réelles). Preuve sur build
+  réel : `src/config/buildProvenance.build.test.ts` compile avec Vite un
+  worktree détaché propre du HEAD construit (hors checkout de travail) et lit
+  la provenance embarquée dans le bundle (`known`, `git-checkout`, corroborée,
+  arbre propre, SHA = HEAD construit, arbre intact après build) ; témoins :
+  temporaire Vite ignoré à la racine seulement, source non suivie et
+  modification suivie toujours détectées, lecture git en échec = `unverified`.
+  Étape CI bloquante « Build provenance from a clean checkout (real Vite
+  build) » sur le checkout effectivement construit (commit de merge de test de
+  la PR). Preuves : sur `1b191c7` 4/7 (provenance `modified`, temporaire non
+  ignoré) ; sur le commit corrigé 7/7 (voir rapport de PR).
 
 Livré localement :
 
@@ -124,7 +143,7 @@ distinctes.
 |---|---|---|---|---|---|
 | Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable (lecture publique, 2026-09-05) — **non corroboré par un tampon de build** : `NOT_VERIFIABLE` | Dernier rapport validé : déploiement `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle `index-BZ9uZmBU.js` (2026-09-01) ; bundle public observé `index-CG4jm_34.js` (2026-09-05) → écart non réconcilié | « ledger 40 » (2026-09-01) — nombre seul, schéma non identifié : `NOT_VERIFIABLE` | 4 verrous `false` (2026-09-01) : `NOT_VERIFIABLE` | aucune vérification par Pack 0 ; `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` requis |
 | Staging `gbbsqcscryygqlmqncyv` | `d73c50df…` selon Lovable (2026-09-05), commit inconnu de `origin/main` : `NOT_VERIFIABLE` | bundle public observé `index-DiuNvuzv.js` (2026-09-05) | « ledger 43 » (2026-09-01), candidat `20260901000000` absent : `NOT_VERIFIABLE` | `false` (2026-09-01) : `NOT_VERIFIABLE` | `GO_VALIDATE_STAGING_PACK_0` requis |
-| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable | build local `index-C98AXMwH.js` (non publié) | n/a | n/a | 2026-09-06 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` |
+| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable ; depuis le `GO_FIX_PACK_0` du 2026-09-07, un build réel d'un checkout propre embarque `known` / corroborée / arbre propre avec le SHA construit (faux positif du temporaire Vite éliminé), preuve `buildProvenance.build.test.ts` en CI | build local `index-DjSKQLTx.js` (non publié) | n/a | n/a | 2026-09-07 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` ×3 |
 
 Règle : une ligne n'est mise à jour que sous le GO d'environnement qui a
 produit l'observation ; les états anciens restent datés et marqués

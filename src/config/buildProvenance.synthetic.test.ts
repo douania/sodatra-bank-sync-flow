@@ -216,3 +216,25 @@ test('contrat build : vite.config injecte la collecte git du checkout construit 
   assert.doesNotMatch(readFileSync('src/config/buildProvenance.ts', 'utf8'), /console\.(log|info|warn|error|debug|table)\(/);
   assert.doesNotMatch(viteConfig, /console\.(log|info|warn|error|debug|table)\(/);
 });
+
+// GO_FIX_PACK_0 (provenance réelle) : Vite écrit `vite.config.ts.timestamp-*.mjs`
+// pendant le chargement de la configuration ; lu comme fichier source non suivi,
+// il rendait toute provenance `modified` sur un arbre pourtant propre. Seul ce
+// temporaire, ancré à la racine, est ignoré ; la preuve sur build réel vit dans
+// `buildProvenance.build.test.ts`.
+test('contrat dépôt : seul le temporaire de configuration Vite est ignoré, ancré à la racine', () => {
+  const rules = readFileSync('.gitignore', 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+  assert.ok(rules.includes('/vite.config.ts.timestamp-*.mjs'), 'the anchored Vite temp-file rule must exist');
+  for (const forbidden of [
+    '*.mjs', '**/*.mjs', '*.timestamp*', '*timestamp*', 'vite.config.ts.timestamp-*.mjs',
+    'package-lock.json', 'bun.lock', 'bun.lockb', 'src', 'src/', 'tests', 'tests/', 'supabase', '*.ts',
+  ]) {
+    assert.ok(!rules.includes(forbidden), `.gitignore must not contain the broad rule ${forbidden}`);
+  }
+  const timestampRules = rules.filter((rule) => /timestamp/.test(rule));
+  assert.deepEqual(timestampRules, ['/vite.config.ts.timestamp-*.mjs']);
+  assert.ok(!rules.some((rule) => /\.mjs$/.test(rule) && rule !== '/vite.config.ts.timestamp-*.mjs'));
+});
