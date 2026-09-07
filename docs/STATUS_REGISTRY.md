@@ -73,6 +73,31 @@ du type erreur) :
   build) » sur le checkout effectivement construit (commit de merge de test de
   la PR). Preuves : sur `1b191c7` 4/7 (provenance `modified`, temporaire non
   ignoré) ; sur le commit corrigé 7/7 (voir rapport de PR).
+- **Typage Node (`GO_FIX_PACK_0` du 2026-09-07, second)** : `vite.config.ts`
+  importe `src/config/buildProvenance.ts` depuis le projet Node
+  (`tsconfig.node.json`), qui n'inclut pas `src/vite-env.d.ts` ; `tsc -b`
+  (typecheck du preview Lovable) signalait 2 × TS2304 sur
+  `__SODATRA_BUILD_PROVENANCE__`. Correction : déclaration ambiante locale au
+  module dans `buildProvenance.ts` (aucun code émis, comportement inchangé) ;
+  gate CI bloquant « TypeScript (Node project, zero errors) » ;
+  `docs/BASELINES.md` §3 précise les commandes couvertes. Mesures : projet
+  Node 0 erreur ; projet application 16 = baseline `3c69e7d` (diff exact
+  vide) ; `tsc -b` 16 (contre 18 sur `afba03a`).
+- **Synchronisation staging (`GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC`,
+  2026-09-07)** : candidat `afba03a` transféré vers le projet Lovable staging
+  `8c508b94-…` ; commit Lovable final `ebde2ade` ; inventaire exhaustif
+  `sha256sum` relu par le canal fichier : 498/499 fichiers du périmètre
+  canonique identiques, `types.ts` régénéré par le connecteur (§7bis, schéma
+  seul), `bun.lock` régénéré par Bun 1.3.3 = migration exacte de
+  `package-lock.json`, `bun.lockb` supprimé, `.env` staging intact. Incident :
+  la plateforme Lovable injecte automatiquement « fix typecheck errors » dans
+  le tour de l'agent, qui a modifié 11 fichiers (version intermédiaire
+  `e6524fb`), annulés par restauration octet à octet ; tout tour agent doit
+  porter une règle explicite de refus. Typecheck sandbox : 16 = baseline,
+  `tsc -b` 18 (les 2 TS2304 ci-dessus). Preview servi (`index-B3nNwgJx.js`)
+  non qualifié : provenance `unknown` (harness sans checkout git lisible) ;
+  build shell de la sandbox `known` / corroboré sur `ebde2ade`. DB non
+  vérifiée.
 
 Livré localement :
 
@@ -142,8 +167,8 @@ distinctes.
 | Environnement | Commit source (provenance de l'information) | Déploiement / bundle observé | Migrations réellement constatées | Verrous | Date · GO |
 |---|---|---|---|---|---|
 | Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable (lecture publique, 2026-09-05) — **non corroboré par un tampon de build** : `NOT_VERIFIABLE` | Dernier rapport validé : déploiement `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle `index-BZ9uZmBU.js` (2026-09-01) ; bundle public observé `index-CG4jm_34.js` (2026-09-05) → écart non réconcilié | « ledger 40 » (2026-09-01) — nombre seul, schéma non identifié : `NOT_VERIFIABLE` | 4 verrous `false` (2026-09-01) : `NOT_VERIFIABLE` | aucune vérification par Pack 0 ; `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` requis |
-| Staging `gbbsqcscryygqlmqncyv` | `d73c50df…` selon Lovable (2026-09-05), commit inconnu de `origin/main` : `NOT_VERIFIABLE` | bundle public observé `index-DiuNvuzv.js` (2026-09-05) | « ledger 43 » (2026-09-01), candidat `20260901000000` absent : `NOT_VERIFIABLE` | `false` (2026-09-01) : `NOT_VERIFIABLE` | `GO_VALIDATE_STAGING_PACK_0` requis |
-| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable ; depuis le `GO_FIX_PACK_0` du 2026-09-07, un build réel d'un checkout propre embarque `known` / corroborée / arbre propre avec le SHA construit (faux positif du temporaire Vite éliminé), preuve `buildProvenance.build.test.ts` en CI | build local `index-DjSKQLTx.js` (non publié) | n/a | n/a | 2026-09-07 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` ×3 |
+| Staging `gbbsqcscryygqlmqncyv` | commit Lovable `ebde2ade…` = candidat GitHub `afba03a` par égalité d'empreintes (498/499, `types.ts` régénéré §7bis), 2026-09-07 ; provenance du preview servi `unknown` (harness sans git) : preview `NOT_QUALIFIED` ; build shell sandbox `known` sur `ebde2ade` | preview `index-B3nNwgJx.js` (2026-09-07, non publié) ; site publié inchangé | « ledger 43 » (2026-09-01), candidat `20260901000000` transféré comme fichier, non appliqué : `NOT_VERIFIABLE` | `false` (2026-09-01) : `NOT_VERIFIABLE` | 2026-09-07 · `GO_VALIDATE_STAGING_PACK_0`, `GO_PREPARE_PACK_0_LOVABLE_SYNC`, `GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC` |
+| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable ; depuis le `GO_FIX_PACK_0` du 2026-09-07, un build réel d'un checkout propre embarque `known` / corroborée / arbre propre avec le SHA construit (faux positif du temporaire Vite éliminé), preuve `buildProvenance.build.test.ts` en CI | build local `index-DjSKQLTx.js` (non publié) | n/a | n/a | 2026-09-07 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` ×4 |
 
 Règle : une ligne n'est mise à jour que sous le GO d'environnement qui a
 produit l'observation ; les états anciens restent datés et marqués

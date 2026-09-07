@@ -145,6 +145,14 @@ jobs:
         shell: pwsh
         run: ./supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1
 
+      # PACK 0 (GO_FIX_PACK_0 Node typing) — blocking: the Node project
+      # (vite.config.ts and the modules it imports, e.g. the build provenance
+      # collector) must typecheck with zero errors. The application project
+      # keeps its measured baseline (docs/BASELINES.md §3); `tsc -b`, used by
+      # the Lovable preview typecheck, is the sum of both.
+      - name: TypeScript (Node project, zero errors)
+        run: npx tsc -p tsconfig.node.json --noEmit
+
       - name: Build
         run: npm run build
 

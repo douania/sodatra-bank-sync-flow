@@ -32,6 +32,15 @@
  * d'environnement ni chemin de fichier n'est embarqué ou journalisé.
  */
 
+/**
+ * Déclaration ambiante locale au module. `vite.config.ts` importe ce module
+ * depuis le projet Node (`tsconfig.node.json`), qui n'inclut pas
+ * `src/vite-env.d.ts` ; sans elle, `tsc -b` signale TS2304 sur la lecture du
+ * global injecté par `define`. Aucun code émis, aucun changement de
+ * comportement : la valeur reste `undefined` hors build Vite.
+ */
+declare const __SODATRA_BUILD_PROVENANCE__: string | undefined;
+
 export type BuildProvenanceStatus = 'known' | 'modified' | 'unverified' | 'conflict' | 'unknown';
 export type BuildProvenanceSource = 'git-checkout' | 'platform-env' | 'none';
 export type BuildWorkingTreeState = 'clean' | 'modified' | 'untracked' | 'unverifiable' | 'not-applicable';
