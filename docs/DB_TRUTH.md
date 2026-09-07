@@ -2,6 +2,14 @@
 
 > Source : DB-INVENTORY-1 (REPORT_ONLY, 2026-05-05) + DB-FREEZE-1 (PLAN_REVIEW, 2026-05-05).
 > Statut : DB-FREEZE-1A CLOSED. Aucune migration créée. Aucun SQL exécuté.
+>
+> **Datation (Pack 0, 2026-09-06)** : ce document juxtapose des observations
+> datées de mai (§2, §4), juillet (§8) et septembre 2026 (§9). Chaque chiffre
+> vaut à sa date d'observation et n'est pas une mesure courante. Tout état non
+> revérifié par un préflight read-only autorisé est `NOT_VERIFIABLE` ; le
+> nombre de migrations d'un ledger ne suffit jamais à identifier le schéma
+> appliqué. Le registre par environnement vit dans `docs/STATUS_REGISTRY.md`
+> (section « Provenance par environnement »).
 
 ---
 

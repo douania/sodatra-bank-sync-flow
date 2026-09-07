@@ -3,13 +3,31 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createDailyV2SessionLifetime } from './dailyV2SessionLifetime';
 import { createDailyV2SessionScope } from './dailyV2SessionScope';
-import { dailyV2RuntimeLockPresentation, dailyV2SessionLabel } from './dailyV2SessionPresentation';
+import { dailyV2BuildVersionLabel, dailyV2RuntimeLockPresentation, dailyV2SessionLabel } from './dailyV2SessionPresentation';
 import { classifyDailyV2AccessState } from '../dailyV2AccessState';
+import { resolveBuildProvenance, unknownBuildProvenance } from '@/config/buildProvenance';
 
 test('session label distinguishes initial loading, connected and disconnected without identities', () => {
   assert.equal(dailyV2SessionLabel(true, true), 'Session : vérification…');
   assert.equal(dailyV2SessionLabel(false, true), 'Session : connectée');
   assert.equal(dailyV2SessionLabel(false, false), 'Session : connexion requise');
+});
+
+test('build version label distinguishes known, modified, conflicting and unknown provenance', () => {
+  const sha = 'c'.repeat(40);
+  const known = resolveBuildProvenance(JSON.stringify({ status: 'known', commitSha: sha, source: 'git-checkout', corroborated: true }));
+  const modified = resolveBuildProvenance(JSON.stringify({ status: 'modified', commitSha: sha, source: 'git-checkout', corroborated: true }));
+  const conflict = resolveBuildProvenance(JSON.stringify({ status: 'conflict', source: 'git-checkout' }));
+  assert.equal(dailyV2BuildVersionLabel(known), `Version : ${sha.slice(0, 7)}`);
+  assert.match(dailyV2BuildVersionLabel(modified), /arbre modifié/);
+  assert.match(dailyV2BuildVersionLabel(conflict), /incohérente/);
+  assert.equal(dailyV2BuildVersionLabel(unknownBuildProvenance()), 'Version : inconnue');
+  // La page affiche ce libellé dans la zone de session existante, sans toucher
+  // au fichier de frontière de session ni au cycle de vie.
+  const page = readFileSync('src/pages/DailyStatementV2.tsx', 'utf8');
+  assert.match(page, /dailyV2BuildVersionLabel\(currentBuildProvenance\(\)\)/);
+  const boundary = readFileSync('src/features/daily-v2/session/DailyV2SessionBoundary.tsx', 'utf8');
+  assert.doesNotMatch(boundary, /buildProvenance|BuildVersion/);
 });
 
 test('page access ignores retained roles during loading, refresh, error or logout', () => {

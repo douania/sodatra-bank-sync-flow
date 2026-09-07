@@ -7,6 +7,8 @@
 
 - Une baseline se **mesure** sur `origin/main` au moment du lot ; elle ne se
   présume pas depuis un ancien rapport.
+- Baseline et branche se mesurent **avec les versions du lockfile** (`npm ci`)
+  et **la même version Node/npm** ; le rapport cite ces versions.
 - Critère d'acceptation d'un lot : **zéro nouvelle erreur** (lint, typecheck)
   et **zéro test cassé** imputables au lot.
 - La dette préexistante est documentée, jamais corrigée hors périmètre.
@@ -20,6 +22,11 @@
   là-bas ; ce document ne le recopie pas.
 - Localement : `npm run lint` reste indicatif (dette historique connue) ; la
   comparaison fine se fait item par item avec la procédure §5.
+- Instantané Pack 0 (2026-09-06) : **180 erreurs / 11 warnings / 191 total**
+  mesurés sur `origin/main` @ `3c69e7d` avec les versions du lockfile
+  (`npm ci`, Node 20.20.2, npm 10.8.2, ESLint 9.13.0). Le ratchet CI a été
+  aligné sur cette mesure (précédent plafond 212 / 11 / 223). La branche Pack 0
+  mesure 178 / 11 (0 nouvel item, 2 disparus).
 
 ## 3. Typecheck
 
@@ -31,9 +38,26 @@
 - Instantané indicatif : 19 erreurs historiques mesurées sur `origin/main`
   @ `710110e` (2026-07-11), aucune dans les fichiers Daily v2. À re-mesurer,
   ne pas citer comme seuil.
+- Instantané Pack 0 (2026-09-06) : **16 diagnostics** sur `origin/main`
+  @ `3c69e7d` avec TypeScript 5.6.3 (lockfile) ; branche Pack 0 : 16, diff
+  exact vide. Une mesure faite avec des dépendances divergentes du lockfile
+  (ex. TypeScript 5.9.x installé hors `npm ci`) n'est pas comparable.
 - Piège connu de la configuration (strict désactivé) : le narrowing
   `!result.success` vers la variante d'échec d'une union discriminée ne
   fonctionne pas ; utiliser des type guards explicites dans le nouveau code.
+- **Projet Node** (`tsconfig.node.json` : `vite.config.ts` et les modules
+  qu'il importe, dont `src/config/buildProvenance.ts`) : commande
+  `npx tsc -p tsconfig.node.json --noEmit`, exigence **zéro erreur**, gate CI
+  bloquant « TypeScript (Node project) » depuis le `GO_FIX_PACK_0` du
+  2026-09-07. Ce projet n'inclut pas `src/vite-env.d.ts` : un global injecté
+  par `define` doit être déclaré localement dans le module qui le lit.
+- **Couverture de `tsc -b`** (référencé par `tsconfig.json` ; c'est la
+  commande du typecheck de preview Lovable) = projet application + projet
+  Node. Son total attendu est donc la baseline application (16 sur
+  `origin/main` @ `3c69e7d`) + 0 ; les deux TS2304 observés sur `afba03a`
+  (`__SODATRA_BUILD_PROVENANCE__` lu depuis le projet Node) ne sont pas une
+  dette tolérée et sont corrigés dans Pack 0. `tsc -b` écrit
+  `tsconfig.*.tsbuildinfo` : à ne jamais committer.
 
 ## 4. Tests
 

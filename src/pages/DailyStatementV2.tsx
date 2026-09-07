@@ -80,7 +80,8 @@ import { DailyV2AdminControlsGate } from '@/features/daily-v2/DailyV2AdminContro
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
 import { DailyV2SessionBoundary } from '@/features/daily-v2/session/DailyV2SessionBoundary';
 import { useDailyV2ScopedMutation as useMutation, useDailyV2SessionScope } from '@/features/daily-v2/session/dailyV2SessionScope';
-import { dailyV2RuntimeLockPresentation, dailyV2SessionLabel } from '@/features/daily-v2/session/dailyV2SessionPresentation';
+import { dailyV2BuildVersionLabel, dailyV2RuntimeLockPresentation, dailyV2SessionLabel } from '@/features/daily-v2/session/dailyV2SessionPresentation';
+import { currentBuildProvenance } from '@/config/buildProvenance';
 import { DailyV2ExpiredViewError } from '@/features/daily-v2/session/dailyV2SessionLifetime';
 import { DailyV2AccessFeedback } from '@/features/daily-v2/session/DailyV2AccessFeedback';
 import {
@@ -544,6 +545,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
         <Badge variant="outline">Cible : {targetLabel}</Badge>
         <Badge variant="secondary">Rôles vérifiés : {roles.join(', ')}</Badge>
         <Badge variant="secondary">Verrou serveur : {runtimeLockLabel}</Badge>
+        <Badge variant="outline">{dailyV2BuildVersionLabel(currentBuildProvenance())}</Badge>
       </div>
       <p className="text-xs text-muted-foreground">Une nouvelle vérification des droits efface les données, fichiers et décisions en cours, notamment au retour dans l’onglet ou à la reconnexion réseau si les droits en cache ont plus de cinq minutes. Après interruption d’une action, consultez son état avant de la relancer : fermer la vue n’annule pas une opération déjà reçue par le serveur.</p>
 

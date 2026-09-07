@@ -146,9 +146,69 @@ atomiques constituent le chemin d'écriture exclusif. DEF-16 est `CLOSED`.
 
 ### DEF-11 : Tests automatisés
 
-**Problème** : Aucun test unitaire ou d'intégration.
-**Risque** : Régressions non détectées à chaque modification.
-**Lot probable** : Post Lot 4
+**Problème (historique, 2026-05)** : Aucun test unitaire ou d'intégration.
+**État au 2026-09-06 (Pack 0)** : la CI exécute des suites synthétiques Node
+(`test:*` de `package.json`), des rejeux SQL PostgreSQL 17 jetables et un
+contrat d'hygiène des logs ; aucun taux de couverture n'est mesuré et aucun E2E
+sur fichier bancaire réel n'est automatisé. Le sujet reste ouvert sous cette
+forme précise, pas sous la forme « aucun test ».
+**Risque** : Régressions non détectées sur les parcours non couverts (réels, navigateur, multi-rôles).
+**Lot probable** : transversal, par pack (Pack 2 à Pack 6)
+
+### DEF-17 : Contrôle qualité consultatif (Pack 0)
+
+**Fichiers** : `src/pages/QualityControl.tsx`, `src/services/qualityControlEngine.ts`, `src/components/QualityControlDashboard.tsx`.
+**Décision** : `LEGACY_TO_RETIRE_OR_ISOLATE` (D-0-1). Depuis Pack 0, l'écran est
+consultatif : aucune correction validée/rejetée/persistée, aucun verdict de
+conformité, « contrôle non évaluable » sans preuve de crédit explicite ; les
+dépôts non crédités ne sont plus utilisés comme preuve d'encaissement. Le
+modèle `bank_reports` actuel ne porte aucune ligne de crédit explicite : le
+contrôle y est donc non évaluable par construction.
+**Reste dû** : la capacité de contrôle qualité V1 dans les parcours métier
+(Pack 1/2), avec des preuves de crédit Daily canonical comme source.
+
+### DEF-18 : Surfaces d'écriture Collection legacy (Pack 0)
+
+**Fichiers** : `src/components/IntelligentSyncManager.tsx`, `src/components/CollectionsManager.tsx`, `src/pages/Reconciliation.tsx`, `src/services/uploadRuntimeGuard.ts`.
+**Décision** : neutralisation frontend sur toutes les cibles (synchronisation
+Excel directe, marquage manuel effet/chèque, suppression de doublons non montée).
+`intelligentSyncService.ts` (pipeline Excel Lot 3 FROZEN) n'est pas modifié.
+**Limite explicite** : cette neutralisation est une barrière d'interface. Les
+policies `collection_report_insert/update` (migration `20260430150428`) laissent
+admin/manager écrire directement depuis tout client authentifié. La fermeture
+serveur est obligatoire avant activation du nouveau contrat Collections (Pack 1 ;
+le trigger de garde de `20260901000000` bloque les INSERT directs une fois
+appliqué).
+**Reste dû** : `src/components/DuplicateAnalyzer.tsx` (suppression de doublons,
+hors liste blanche Pack 0) n'est plus monté ; une variante lecture seule de
+l'analyse des doublons peut être rétablie dans un pack ultérieur.
+
+### DEF-19 : Cellule d'erreur Excel interprétée comme montant (parser Daily v2) — `FIXED_LOCAL` (Pack 0 / `GO_FIX_PACK_0`, 2026-09-06)
+
+**Fichiers** : `src/services/structuredBankStatementExcelParser.ts`,
+`src/services/structuredBankStatementExcelParser.synthetic.test.ts` (liste
+blanche étendue par `GO_FIX_PACK_0`).
+**Constat (Pack 0, 2026-09-06)** : une cellule d'erreur Excel (`t:'e'`, par
+exemple `#NUM!`, code 36) dans la colonne montant d'un relevé XLS était lue
+comme le montant numérique 36 et produisait `needs_review` au lieu de
+`invalid`. Défaut préexistant, indépendant de la version de `xlsx` (reproduit
+avec 0.18.5 et 0.20.3 sur le même fichier). Révélé par la fixture du test
+« refuses malformed or precision-unsafe textual amounts », qui construisait une
+cellule incohérente (`t:'n'` avec une chaîne) écrite en cellule d'erreur par
+`xlsx@0.20.3`.
+**Correction (GO_FIX_PACK_0)** : le précontrôle du classeur refuse toute
+cellule de type erreur (adresses et libellés nommés dans la raison) avant
+toute conversion en date, montant ou solde ; document `invalid`, aucune ligne
+financière. Une cellule numérique légitime valant 36, 7 ou 42 reste acceptée
+(type `n`, pas `e`). La fixture construit désormais une vraie cellule texte ;
+la sonde d'origine est conservée comme scénario de non-régression distinct.
+**Preuves** : avant correction, 6 nouveaux tests en échec sur 20 (dont la
+fixture corrigée) ; après correction, 20/20 — codes `#NULL!`, `#DIV/0!`,
+`#VALUE!`, `#REF!`, `#NAME?`, `#NUM!`, `#N/A` ; colonnes montant signé, débit
+et crédit séparés, solde, dates ; conteneurs XLS (ATB, BICIS, BIS) et XLSX
+(BRIDGE).
+**Reste dû** : aucune règle monétaire, profil ou idempotence modifiés ; la
+qualification sur fichiers réels reste due (Pack 2).
 
 ### DEF-12 : Documentation utilisateur
 

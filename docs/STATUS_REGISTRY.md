@@ -15,9 +15,287 @@
 
 ---
 
+## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
+
+**Statut : `DRAFT_PR_146 — GO_FIX_APPLIED (b0efb04) — STAGING_DB_READ_ONLY_VERIFIED — PRODUCTION_READ_ONLY_PREFLIGHT_DONE — PRE_MERGE_FINALIZATION` (finalisation pré-merge du 2026-09-07 Europe/Paris)**
+
+Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
+`GO_FIX_PACK_0` du 2026-09-06 et `GO_FIX_PACK_0` « provenance réelle du
+build » du 2026-09-07 (arbitrage CTO D-0-1 à D-0-5, D-COL-1 à D-COL-6). Base vérifiée `3c69e7d15d5981105637f84f06150bcfe3b4f7e8`
+(`origin/main`), branche `codex/pack-0-critical-blockers-governance`, draft
+PR #146, exécutant unique Claude Code.
+
+Correctifs `GO_FIX_PACK_0` (liste blanche étendue à
+`structuredBankStatementExcelParser.ts` et à son test, pour le seul contrôle
+du type erreur) :
+
+- **DEF-19 corrigé dans Pack 0** : le précontrôle du parser Daily refuse toute
+  cellule d'erreur Excel (`#NUM!`, `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`,
+  `#N/A`, `#NULL!`) avant toute conversion en date, montant ou solde ; le
+  document est `invalid` avec la raison et les adresses ; aucune ligne
+  financière n'est produite. Les valeurs numériques légitimes égales aux codes
+  d'erreur (36, 7, 42) restent acceptées. La fixture « textual amounts »
+  construit une vraie cellule texte ; la sonde d'origine est conservée comme
+  scénario de non-régression. Preuves : avant 14/20, après 20/20.
+  Correction ciblée des preuves (second `GO_FIX_PACK_0`, 2026-09-06) : les
+  scénarios « textual amounts » et « DEF-19 discovery » exercent chaque profil
+  avec son conteneur autorisé — BICIS en XLS (montant signé) et BRIDGE en XLSX
+  (crédit et débit séparés) — sans renommage de conteneur ; l'assertion exige
+  l'erreur de la cause testée (montant invalide, ou cellule d'erreur Excel
+  nommée) et exclut tout refus amont (`container signature`) ; un témoin
+  valide, même profil et même conteneur, prouve l'atteinte de l'analyse
+  métier (2 lignes) ; la cellule réellement soumise est relue après
+  sérialisation (texte `s` pour les montants malformés, erreur `e` pour la
+  sonde incohérente avec le `xlsx` verrouillé). Suite Excel : 20/20 sous
+  Node 20.20.2.
+- **Provenance** : un HEAD lisible avec un état d'arbre non vérifiable donne
+  `unverified` (« arbre non vérifiable », non qualifiable, jamais « arbre
+  propre ») ; les fichiers source non suivis (non ignorés) sont lus
+  (`--untracked-files=all`) et rendent la provenance `modified` / « fichiers
+  non suivis », non qualifiable ; seuls un checkout propre et vérifié restent
+  qualifiables. Aucun chemin n'est embarqué. Preuves : avant 6/11, après 11/11.
+- **Provenance réelle du build (`GO_FIX_PACK_0` du 2026-09-07)** : sur un
+  arbre pourtant propre, la provenance embarquée était `modified` / « fichiers
+  non suivis » parce que Vite écrit `vite.config.ts.timestamp-*.mjs` pendant le
+  chargement de la configuration et que `git status --untracked-files=all` le
+  voyait (faux positif, découvert par `GO_PREPARE_PACK_0_LOVABLE_SYNC`).
+  Correction limitée à `.gitignore` : règle ancrée
+  `/vite.config.ts.timestamp-*.mjs` (aucun autre `.mjs`, fichier non suivi ni
+  lockfile ignoré ; collecteur inchangé, états `modified`, `unverified`,
+  `conflict`, `unknown` préservés pour leurs causes réelles). Preuve sur build
+  réel : `src/config/buildProvenance.build.test.ts` compile avec Vite un
+  worktree détaché propre du HEAD construit (hors checkout de travail) et lit
+  la provenance embarquée dans le bundle (`known`, `git-checkout`, corroborée,
+  arbre propre, SHA = HEAD construit, arbre intact après build) ; témoins :
+  temporaire Vite ignoré à la racine seulement, source non suivie et
+  modification suivie toujours détectées, lecture git en échec = `unverified`.
+  Étape CI bloquante « Build provenance from a clean checkout (real Vite
+  build) » sur le checkout effectivement construit (commit de merge de test de
+  la PR). Preuves : sur `1b191c7` 4/7 (provenance `modified`, temporaire non
+  ignoré) ; sur le commit corrigé 7/7 (voir rapport de PR).
+- **Typage Node (`GO_FIX_PACK_0` du 2026-09-07, second)** : `vite.config.ts`
+  importe `src/config/buildProvenance.ts` depuis le projet Node
+  (`tsconfig.node.json`), qui n'inclut pas `src/vite-env.d.ts` ; `tsc -b`
+  (typecheck du preview Lovable) signalait 2 × TS2304 sur
+  `__SODATRA_BUILD_PROVENANCE__`. Correction : déclaration ambiante locale au
+  module dans `buildProvenance.ts` (aucun code émis, comportement inchangé) ;
+  gate CI bloquant « TypeScript (Node project, zero errors) » ;
+  `docs/BASELINES.md` §3 précise les commandes couvertes. Mesures : projet
+  Node 0 erreur ; projet application 16 = baseline `3c69e7d` (diff exact
+  vide) ; `tsc -b` 16 (contre 18 sur `afba03a`). Commit `b0efb04`, **validé
+  par le CTO** dans la décision de consolidation du 2026-09-07.
+- **Synchronisation staging (`GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC`,
+  2026-09-07)** : candidat `afba03a` transféré vers le projet Lovable staging
+  `8c508b94-…` ; commit Lovable final `ebde2ade` ; inventaire exhaustif
+  `sha256sum` relu par le canal fichier : 498/499 fichiers du périmètre
+  canonique identiques, `types.ts` régénéré par le connecteur (§7bis, schéma
+  seul), `bun.lock` régénéré par Bun 1.3.3 = migration exacte de
+  `package-lock.json`, `bun.lockb` supprimé, `.env` staging intact. Incident :
+  la plateforme Lovable injecte automatiquement « fix typecheck errors » dans
+  le tour de l'agent, qui a modifié 11 fichiers (version intermédiaire
+  `e6524fb`), annulés par restauration octet à octet ; tout tour agent doit
+  porter une règle explicite de refus. Typecheck sandbox : 16 = baseline,
+  `tsc -b` 18 (les 2 TS2304 ci-dessus). Preview servi (`index-B3nNwgJx.js`)
+  non qualifié : provenance `unknown` (harness sans checkout git lisible) ;
+  build shell de la sandbox `known` / corroboré sur `ebde2ade`. DB non
+  vérifiée par cette synchronisation (voir le contrôle ci-dessous).
+- **Contrôle DB staging read-only (`GO_READ_STAGING_PACK_0_DB`, 2026-09-07,
+  accepté par le CTO)** : cible exclusive `gbbsqcscryygqlmqncyv` (projet
+  Supabase « sodatra-bank-sync-flow-staging-clean », associé au projet Lovable
+  `8c508b94-…`), lue par l'éditeur SQL du tableau de bord Supabase sur une
+  session déjà authentifiée, en SELECT catalogue uniquement (le canal Lovable
+  `query_database` refuse ce projet : base connectée, non gérée par Lovable).
+  Ledger 44 entrées ; `20260829000000`, `20260829120000` et `20260901000000`
+  présentes sous leur nom de fichier, la migration Collection **appliquée sur
+  staging le 2026-09-01 18:10 UTC**. Définitions effectives comparées aux
+  fichiers du repo : 22/22 fonctions (signature, SECURITY DEFINER/INVOKER,
+  `search_path`, propriétaire, ACL, corps au MD5 identique en variante CRLF,
+  la migration ayant été appliquée depuis un checkout Windows), 8/8 triggers
+  actifs, schémas privés sans USAGE pour PUBLIC/anon/authenticated/
+  service_role, 7 tables privées avec RLS, 0 policy, ACL `postgres` seul,
+  19 contraintes conformes ; aucun écart de schéma. Verrous observés fermés :
+  Daily v2 maître et scopes `daily`/`admin`/`backfill` à `false` depuis le
+  2026-08-30 09:19 UTC (aucune colonne d'échéance sur ce verrou) ; Collection
+  `promotion_scope_enabled=false`, `enabled_until` NULL, 0 événement de scope,
+  0 commande, 0 audit dans les tables privées ; `collection_report` sans ligne
+  vivante estimée (`n_live_tup` = 0, estimation catalogue, pas une preuve de
+  table vide). **Limites statistiques** : les compteurs `pg_stat_user_tables`
+  (insertions/mises à jour sans ligne vivante sur les tables Collection
+  privées) incluent des transactions annulées et restent des estimations ;
+  aucune ligne métier n'a été lue ; l'historique d'activation ou d'import
+  antérieur à ces lectures n'est pas établi par elles.
+  **Production non vérifiée** par ce contrôle (`NOT_VERIFIABLE`, préflight
+  dédié requis). **Chemin DELETE legacy explicitement conservé** sur
+  `collection_report` (policy `Only admins can delete collections`, grants DML
+  `authenticated`/`service_role`), hors périmètre des trois migrations ;
+  INSERT direct et UPDATE d'identité stable y sont bloqués par le trigger
+  `collection_report_atomic_write_guard_v1`. Conséquence pour les tests
+  métier : les RPC Daily v2 et Collection observées lèvent fail-closed tant
+  qu'un GO d'ouverture de scope distinct n'est pas donné ; cette fermeture ne
+  couvre ni le chemin DELETE legacy, ni les grants DML restants, ni les tables
+  hors périmètre des trois migrations. Effet de bord : deux extraits SQL
+  privés créés par l'autosave du tableau de bord (métadonnées d'interface,
+  aucun objet DB). Aucune correction DB, réapplication de migration, ouverture
+  de scope ni synchronisation Lovable.
+- **Préflight production read-only (`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`,
+  2026-09-07, 11:40–12:00 UTC)** : cible `leakcdbbawzysfqyqsnr` (projet
+  Supabase « sodatra-accounting ») liée au projet Lovable production
+  `e52d9fce-f1b4-46f8-900c-c559a6eb2115` (« sodatra-bank-sync-flow »,
+  synchronisé GitHub, dernier commit `3c69e7d` = `origin/main`, dernière
+  édition 2026-09-03 17:33 UTC, publié sur
+  `https://sodatra-bank-sync-flow.lovable.app`). Liaison prouvée hors
+  `config.toml` : le bundle servi `index-CG4jm_34.js` (2 444 749 octets, CSS
+  `index-C45PNpy-.css`) ne référence que `leakcdbbawzysfqyqsnr.supabase.co`
+  et le trafic REST du site publié part vers cet hôte. Lectures SQL catalogue
+  par l'éditeur du tableau de bord (session déjà authentifiée, SELECT
+  uniquement) : PostgreSQL 17.4, ledger 41 ; `20260829000000`,
+  `20260829120000` et `20260901000000` appliquées avec les mêmes empreintes de
+  fonctions, triggers, tables privées et ACL qu'en staging (22/22, 8/8, 7
+  tables, conformes au repo) ; absentes en production, comme attendu, les
+  trois migrations `collection_remittances_core` du pilote staging. Verrous :
+  Daily v2 maître et scopes `false` depuis le 2026-08-30 18:17 UTC (12
+  événements, raison « ORA last day promotion after UI resync ended - relock
+  2026-08-30 ») ; Collection `promotion_scope_enabled=false`, `enabled_until`
+  NULL depuis le 2026-09-02 16:31 UTC. **Pilote signalé** : la raison du
+  verrou Collection indique « Pilot Collection Report 2026-08-24 two-row
+  promotion completed and relocked 2026-09-02 16:31:51+00 » ; les tables
+  privées comptent 2 événements de scope, 1 commande et 2 lignes d'audit, et
+  `collection_report` ≈ 2 lignes vivantes estimées. Aucun GO ni rapport ne
+  trace cette activation dans ce registre : observation consignée sans
+  autorisation rétroactive, à qualifier par le CTO. **Dérive `nj`** :
+  `collection_report.nj` est `numeric` en production, `integer` en staging et
+  dans la baseline `20250625000000` ; sans effet sur le Pack 0 (aucune
+  migration), à consigner dans `DB_TRUTH` sous GO distinct. **503** : pendant
+  le chargement du site publié dans un navigateur déjà connecté, deux
+  requêtes HEAD `daily_statement_units_canonical?select=id` (comptage) ont
+  reçu 503 tandis que les GET équivalents ont réussi ; cause non diagnostiquée
+  (`NOT_VERIFIABLE`), à surveiller au smoke post-publication. **Bundle non
+  réconcilié** : le bundle servi diffère du dernier déploiement validé
+  (`index-BZ9uZmBU.js`, 2026-09-01) sans identifiant de déploiement lisible
+  par le canal MCP ; un build npm local de `3c69e7d` reproduit la même CSS
+  mais un JS `index-BLSYqovY.js` différent (chaîne de build Lovable/Bun
+  distincte) : le commit du bundle servi reste `NOT_VERIFIABLE` par empreinte
+  et n'embarque aucun marqueur de provenance (build antérieur au Pack 0).
+  GitHub au 2026-09-07 : dépôt **public**, `main` sans protection ni ruleset,
+  un seul collaborateur (admin), `gpt-engineer-app[bot]` auteur de 332 commits
+  historiques sur `main` (synchronisation bidirectionnelle Lovable active) ;
+  plan du compte non lisible (`NOT_VERIFIABLE`). Projet Lovable production :
+  visibilité **publique**. Aucune écriture, migration, activation, publication,
+  changement GitHub ni extraction de secret ; aucune ligne métier lue.
+  Effets de bord : l'ouverture du site publié dans le navigateur connecté de
+  l'utilisateur a déclenché les lectures normales de l'application (rôles,
+  unités canonical) — côté application, URL seules observées ; deux extraits
+  SQL privés créés par l'autosave sur le projet production.
+
+Livré localement :
+
+- **Contrôle qualité consultatif** : aucune correction validée/rejetée/persistée
+  (les méthodes refusent par `QualityControlNotImplementedError`), aucun verdict
+  de conformité ni score artificiel de 100 % ; seuls les crédits bancaires
+  explicites sont des preuves, les dépôts non crédités n'en sont jamais ; sans
+  preuve exploitable : « contrôle non évaluable — données absentes ou
+  indisponibles ». Mapping camelCase/snake_case corrigé. Le moteur n'importe
+  plus le client Supabase.
+- **Isolation des écritures Collection legacy** (`/reconciliation`) : la
+  synchronisation Excel directe, le marquage manuel effet/chèque et l'onglet de
+  suppression de doublons sont neutralisés **sur toutes les cibles** ; seul
+  point d'exécution subsistant, `executeLegacyCollectionMutation` refuse avant
+  tout appel service. Consultation conservée. `intelligentSyncService.ts`
+  (Lot 3 FROZEN) inchangé. **Limite** : barrière d'interface uniquement, les
+  accès serveur (policies `collection_report_insert/update`) restent à fermer
+  avant activation du nouveau contrat Collections.
+- **Internal Book** : `BLOCKED` pour l'import opérationnel (parsing
+  diagnostique local conservé, aucune persistance) ; l'étiquette « candidat
+  production » est retirée.
+- **`xlsx@0.20.3`** depuis le tarball éditeur (`package.json` par URL exacte,
+  `package-lock.json` avec intégrité `sha512-oLDq3jw7…`), `bun.lock`/`bun.lockb`
+  supprimés ; diff du lockfile limité à `xlsx` et à ses 8 dépendances
+  transitives retirées ; `npm audit` : `xlsx` absent des avis (31 avis
+  préexistants restants, hors périmètre). Caractérisation
+  `test:xlsx-characterization` : résultats métier identiques avant/après.
+- **Provenance du build** : `src/config/buildProvenance.ts` + `define` Vite ;
+  libellé « Version : … » dans la zone de session Daily v2 ; états `known`,
+  `modified`, `conflict`, `unknown` ; aucune journalisation console.
+- **CI** : ratchet ESLint aligné sur la mesure reproductible (180 / 11 / 191),
+  nouvelle étape « Pack 0 contracts » ; scripts `test:quality-control`,
+  `test:legacy-isolation`, `test:xlsx-characterization`,
+  `test:build-provenance`, `test:internal-book`.
+- **Docs** : états courants actualisés (`MASTER_CONTEXT`, `DEFERRED_BACKLOG`
+  DEF-11/17/18/19, `DB_TRUTH` datation, `BASELINES`, `SECURITY_BACKLOG` SEC-12,
+  `SECURITY_CONTRACT` §6/§11), bannière obsolète sur les documents Bolt.
+
+Mesures (Node 20.20.2, npm 10.8.2, versions du lockfile, baseline `origin/main`
+@ `3c69e7d`) : TypeScript 16 → 16 (diff exact vide) ; ESLint 180/11 → 178/11
+(0 nouvel item, 2 disparus) ; matrice CI Node + suites Pack 0 : toutes vertes
+sauf `test:structured-excel` (14/15, voir stop condition) ; build production
+PASS, artefact MCP inchangé, hygiène des logs 4/4.
+
+**Stop condition (levée par `GO_FIX_PACK_0`)** : `test:structured-excel`
+échouait sur « refuses malformed or precision-unsafe textual amounts ». Sonde
+croisée : les fichiers écrits par 0.18.5 sont lus à l'identique par 0.20.3 et
+toute cellule texte correcte reste refusée (`invalid`) ; la fixture du test
+construisait une cellule **incohérente** (`t:'n'` avec une chaîne) que 0.18.5
+écrivait en NaN et que 0.20.3 écrit en cellule d'erreur `#NUM!`. Le parser
+Daily traitait alors la cellule d'erreur comme le montant numérique 36
+(`needs_review`), défaut **préexistant et indépendant de la version**
+(DEF-19). Le CTO a refusé le report au Pack 2 : parser et fixture sont
+corrigés dans ce pack (voir ci-dessus).
+
+Non exécuté / non autorisé ici : replay PostgreSQL 17 local (`NOT_RUN` si le
+moteur Docker n'a pas démarré, voir rapport de PR ; la CI de la PR l'exécute),
+compatibilité Lovable de la dépendance par URL (`GO_APPLY_STAGING_PACK_0_PUBLISH_BUILD`),
+ruleset GitHub `main`, mode d'écriture Lovable et visibilité privée
+(`GO_GITHUB_PACK_0_*`), fermeture de #118, publication du durcissement,
+contre-review indépendante et `GO_MERGE_PR_146`. Le contrôle DB staging
+read-only (`GO_READ_STAGING_PACK_0_DB`) et le préflight production read-only
+(`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) sont faits (voir ci-dessus). Le
+pack n'est clos qu'après ces validations distinctes.
+
+### Provenance par environnement (D-0-4)
+
+| Environnement | Commit source (provenance de l'information) | Déploiement / bundle observé | Migrations réellement constatées | Verrous | Date · GO |
+|---|---|---|---|---|---|
+| Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable `e52d9fce-…` (2026-09-07) ; bundle servi sans marqueur de provenance ; build npm local de `3c69e7d` = même CSS, JS différent : commit servi **`NOT_VERIFIABLE` par empreinte** | bundle servi `index-CG4jm_34.js` + `index-C45PNpy-.css` (2026-09-07), ne référençant que `leakcdbbawzysfqyqsnr` ; dernier déploiement validé `e3088376-…` / `index-BZ9uZmBU.js` (2026-09-01) → écart non réconcilié, identifiant du déploiement courant `NOT_VERIFIABLE` | ledger 41 (2026-09-07) : `20260829000000`, `20260829120000`, `20260901000000` appliquées, définitions conformes au repo ; état « ledger 40 » du 2026-09-01 remplacé | Daily v2 : maître + 3 scopes `false` (depuis 2026-08-30 18:17 UTC) ; Collection : `false`, `enabled_until` NULL (depuis 2026-09-02 16:31 UTC, pilote deux lignes signalé par la raison du verrou, sans GO tracé) — observés 2026-09-07 | 2026-09-07 · `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` (lecture seule, aucune mutation) |
+| Staging `gbbsqcscryygqlmqncyv` | commit Lovable `ebde2ade…` = candidat GitHub `afba03a` par égalité d'empreintes (498/499, `types.ts` régénéré §7bis), 2026-09-07 ; provenance du preview servi `unknown` (harness sans git) : preview `NOT_QUALIFIED` ; build shell sandbox `known` sur `ebde2ade` | preview `index-B3nNwgJx.js` (2026-09-07, non publié) ; site publié inchangé | ledger 44 (2026-09-07, `GO_READ_STAGING_PACK_0_DB`) : `20260829000000`, `20260829120000` et `20260901000000` appliquées, définitions effectives conformes au repo (`20260901000000` appliquée le 2026-09-01 18:10 UTC ; état antérieur « ledger 43, candidat non appliqué » du 2026-09-01 remplacé par cette observation) | Daily v2 : maître + `daily`/`admin`/`backfill` `false` (depuis 2026-08-30 09:19 UTC) ; Collection : `promotion_scope_enabled=false`, `enabled_until` NULL — observés le 2026-09-07 | 2026-09-07 · `GO_VALIDATE_STAGING_PACK_0`, `GO_PREPARE_PACK_0_LOVABLE_SYNC`, `GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC`, `GO_READ_STAGING_PACK_0_DB` |
+| Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable ; depuis le `GO_FIX_PACK_0` du 2026-09-07, un build réel d'un checkout propre embarque `known` / corroborée / arbre propre avec le SHA construit (faux positif du temporaire Vite éliminé), preuve `buildProvenance.build.test.ts` en CI | build local `index-DjSKQLTx.js` (non publié) | n/a | n/a | 2026-09-07 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` ×4 |
+
+Règle : une ligne n'est mise à jour que sous le GO d'environnement qui a
+produit l'observation ; les états anciens restent datés et marqués
+`NOT_VERIFIABLE` tant qu'ils ne sont pas revérifiés.
+
+---
+
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — PR_143_MERGED — STAGING_PREFLIGHT_READY — CI_HOTFIX_REVIEW_FINDINGS_FIXED` (2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — PR_143_AND_144_MERGED — MAIN_CI_GREEN — MIGRATION_APPLIED_STAGING_AND_PRODUCTION_OBSERVED — SCOPES_CLOSED — PRODUCTION_PILOT_SIGNALED_UNTRACED` (mise à jour 2026-09-07 ; entrée initiale 2026-09-01 Europe/Paris)**
+
+Note contrôle staging (2026-09-07, `GO_READ_STAGING_PACK_0_DB`) : la migration
+`20260901000000` est observée appliquée sur staging `gbbsqcscryygqlmqncyv`
+(ledger 44, application 2026-09-01 18:10 UTC, définitions effectives conformes
+au fichier), scope de promotion fermé (`enabled_until` NULL), 0 événement de
+scope et 0 commande dans les tables privées, `collection_report` sans ligne
+vivante estimée ; l'historique d'activation antérieur n'est pas établi par
+ces lectures. Le GO qui a appliqué cette migration sur staging n'est pas tracé
+dans ce registre.
+
+Note préflight production (2026-09-07,
+`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) : la même migration est observée
+appliquée en production `leakcdbbawzysfqyqsnr` (ledger 41, définitions
+conformes), scope fermé depuis le 2026-09-02 16:31 UTC. La raison du verrou
+signale un pilote « two-row promotion » du 2026-08-24 complété puis
+reverrouillé le 2026-09-02 (2 événements de scope, 1 commande, 2 lignes
+d'audit privées, ≈ 2 lignes vivantes estimées dans `collection_report`).
+Aucun GO d'application ni d'activation production n'est tracé dans ce
+registre : le fait est consigné sans autorisation rétroactive et attend la
+qualification du CTO. Dérive constatée : `collection_report.nj` `numeric` en
+production contre `integer` en staging et dans la baseline. La note du
+2026-09-06 et le texte historique ci-dessous sont conservés tels quels.
+
+Note Pack 0 (2026-09-06) : la PR #144 (hotfix CI PG17) est fusionnée et la CI
+de `main` est verte depuis le run du 2026-09-03 ; la migration candidate
+`20260901000000` n'est appliquée sur aucun environnement. L'application
+staging attend `GO_APPLY_STAGING_<PACK>` (Pack 1). Le texte historique
+ci-dessous est conservé tel quel.
 
 Pack local construit depuis `origin/main` `8102e8ab40f03ee079bd45a33b3425d94db3e518` :
 promotion Collection Report par RPC atomique unique, scope serveur privé fermé

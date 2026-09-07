@@ -35,9 +35,13 @@ jobs:
         run: npm run lint
 
       # OPS-LINT-RATCHET-1: lint stays advisory above, but ESLint debt must not
-      # grow past the baseline audited in OPS-ESLINT-BASELINE-1 (212 errors,
-      # 11 warnings, 223 total). Fails only if errors > 212 or total > 223, so
-      # turning an error into a warning still passes.
+      # grow past the measured baseline. PACK 0 re-measured it on origin/main
+      # 3c69e7d with the lockfile versions (Node 20.20.2, npm 10.8.2,
+      # `npm ci` + `npx eslint . -f json`): 180 errors, 11 warnings, 191 total
+      # (previous audited ceiling: 212 / 11 / 223). Fails only if errors > 180
+      # or total > 191, so turning an error into a warning still passes.
+      # Re-measure with docs/BASELINES.md §5 before changing these numbers;
+      # never raise them to hide a regression.
       - name: ESLint ratchet
         run: |
           set +e
@@ -55,9 +59,9 @@ jobs:
           const fs = require('fs');
 
           const baseline = {
-            errors: 212,
+            errors: 180,
             warnings: 11,
-            total: 223,
+            total: 191,
           };
 
           const reportPath = process.env.RUNNER_TEMP + '/eslint-report.json';
@@ -125,12 +129,43 @@ jobs:
           npm run test:import-preflight
           npm run test:multi-bank-reports
 
+      # PACK 0 — critical blockers and governance: consultative quality
+      # control, legacy Collection write-path isolation, xlsx upgrade
+      # characterization (business results identical before/after), build
+      # provenance, and the Internal Book diagnostic parsers.
+      - name: Pack 0 contracts (quality control, legacy isolation, xlsx, provenance, Internal Book)
+        run: |
+          npm run test:quality-control
+          npm run test:legacy-isolation
+          npm run test:xlsx-characterization
+          npm run test:build-provenance
+          npm run test:internal-book
+
       - name: Collection Report atomic activation contract (PostgreSQL 17)
         shell: pwsh
         run: ./supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1
 
+      # PACK 0 (GO_FIX_PACK_0 Node typing) — blocking: the Node project
+      # (vite.config.ts and the modules it imports, e.g. the build provenance
+      # collector) must typecheck with zero errors. The application project
+      # keeps its measured baseline (docs/BASELINES.md §3); `tsc -b`, used by
+      # the Lovable preview typecheck, is the sum of both.
+      - name: TypeScript (Node project, zero errors)
+        run: npx tsc -p tsconfig.node.json --noEmit
+
       - name: Build
         run: npm run build
+
+      # PACK 0 (D-0-4, GO_FIX_PACK_0 provenance) — blocking proof on a REAL Vite
+      # build: a clean detached worktree of the checkout actually built here
+      # (on pull_request, the PR test-merge commit — never a substituted SHA)
+      # is compiled and the provenance embedded in the produced bundle must be
+      # known / git-checkout / corroborated / clean and carry that HEAD; the
+      # build must leave the source tree untouched. Also proves that only the
+      # Vite config temp file is ignored while real untracked sources and
+      # tracked modifications are still detected.
+      - name: Build provenance from a clean checkout (real Vite build)
+        run: npx tsx --test src/config/buildProvenance.build.test.ts
 
       - name: Production log hygiene contract
         run: npx tsx --test src/config/productionLogHygiene.synthetic.test.ts

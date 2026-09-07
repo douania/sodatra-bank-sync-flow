@@ -30,6 +30,30 @@ Il n'y a aucune connexion API directe aux banques. Toute donnée provient d'impo
 
 Statut : prototype avancé / non encore production-ready.
 
+Programme directeur (arbitrage CTO du 2026-09-06) : `SBSF-COMPLETE-OPERATIONAL-V1`,
+sept packs dans l'ordre **Pack 0 → Pack 2 → Pack 1 → Pack 3 → Pack 4 → Pack 5 →
+Pack 6**. Le catalogue contractuel V1 distingue le périmètre (`REQUIRED_V1`,
+`OPTIONAL_POST_V1`, `EXPERIMENTAL`, `LEGACY_TO_RETIRE_OR_ISOLATE`) de la maturité
+prouvée ; `REQUIRED_V1` ne prouve aucune disponibilité actuelle. Collections Core
+devient la référence opérationnelle finale des Collections avec bascule contrôlée
+(D-COL-1) ; le registre de comptes Daily v2 est l'identité canonique de compte
+(D-COL-3) ; BRIDGE est `OPTIONAL_POST_V1`, Internal Book `OPTIONAL_POST_V1` sans
+promesse de persistance, Daily PDF `EXPERIMENTAL`. Le Pack 0 (blocages critiques
+et gouvernance) est implémenté en draft PR #146 ; le CTO a accepté le
+2026-09-07 le contrôle DB staging read-only des migrations `20260829000000`,
+`20260829120000` et `20260901000000` (`GO_READ_STAGING_PACK_0_DB` : définitions
+effectives conformes au repo, verrous Daily v2 et Collection fermés) et le
+correctif TypeScript Node `b0efb04`. Le préflight production read-only du
+même jour (`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) a confirmé la liaison
+effective du projet Lovable production à `leakcdbbawzysfqyqsnr`, les mêmes
+définitions DB, les verrous fermés, et relevé sans les qualifier un pilote
+Collection production signalé par la raison du verrou, une dérive de type sur
+`collection_report.nj`, deux réponses 503 et un bundle servi non réconcilié.
+Sa clôture attend encore les validations distinctes : contre-review
+indépendante, compatibilité Lovable de `xlsx@0.20.3`, provenance du build
+servi, protections GitHub actives et publication du durcissement. Voir
+`docs/STATUS_REGISTRY.md` (entrée `PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE`).
+
 Le premier pilote réel ORABANK Daily v2 est toutefois validé avec réserves en production
 (dépôt, promotion et reporting), puis reverrouillé. Cette réussite bornée ne
 qualifie pas encore l'application entière ni le dashboard Direction.
@@ -98,12 +122,12 @@ Pas d'API bancaire directe.
 | Module | Route | Statut |
 |---|---|---|
 | Dashboard principal | `/dashboard` | Daily v2 canonical par défaut en production ; smoke authentifié ORABANK validé avec réserves ; vue historique séparée, aucun total de soldes par devise ni ouverture d'écriture |
-| Import opérationnel | `/upload` | Pipeline global unique ; fondation locale d'activation contrôlée Collection Report prête pour contre-review, migration non appliquée ; Internal Book candidat production ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
+| Import opérationnel | `/upload` | Pipeline global unique ; contrat d'activation contrôlée Collection Report fusionné (PR #143/#144, CI verte), migration `20260901000000` observée **appliquée sur staging et en production** aux contrôles read-only du 2026-09-07 (scope de promotion fermé des deux côtés, `enabled_until` NULL, insertions directes dans `collection_report` refusées par trigger, chemin DELETE legacy et grants DML conservés) ; en production, la raison du verrou signale un pilote de deux lignes promu puis reverrouillé le 2026-09-02, sans GO tracé, consigné sans autorisation rétroactive ; Internal Book `BLOCKED` pour l'import opérationnel (parsing diagnostique local seulement, aucune persistance — Pack 0) ; rapports bancaires et Fund Position pilotes staging fail-closed ; production toujours désactivée |
 | Alias upload bulk | `/upload-bulk` | Compatibilité : redirection vers `/upload`, aucun pipeline distinct |
 | Document Understanding | `/document-understanding` | Analyse locale strictement read-only ; aucune sauvegarde ; les banques non qualifiées sont refusées explicitement |
-| Quality Control | `/quality-control` | Actif |
-| Reconciliation | `/reconciliation` | Hybride allégé : sync/collections actifs, moteur fictif supprimé |
-| Daily v2 | `/daily-statements` | Runtime et scopes serveur publiés/appliqués ; premier pilote réel ORABANK validé avec réserves jusqu'au reporting, puis reverrouillé ; profils CSV BDK/ORA et Excel ONLINE ATB/BICIS/BIS/BRIDGE éligibles, sans qualification production générale de ces profils |
+| Quality Control | `/quality-control` | `LEGACY_TO_RETIRE_OR_ISOLATE` — **consultatif** depuis Pack 0 : aucune correction validée ni persistée ; seuls les crédits bancaires explicites servent de preuve ; sans preuve exploitable, « contrôle non évaluable ». La capacité de contrôle qualité V1 reste due dans les parcours métier |
+| Reconciliation | `/reconciliation` | `LEGACY_TO_RETIRE_OR_ISOLATE` — **consultation seule** depuis Pack 0 : synchronisation Excel directe, marquage manuel effet/chèque et suppression de doublons neutralisés sur toutes les cibles (barrière d'interface, accès serveur non révoqués) |
+| Daily v2 | `/daily-statements` | Runtime et scopes serveur publiés/appliqués ; verrous staging et production observés fermés le 2026-09-07 (maître et scopes `daily`/`admin`/`backfill` à `false` ; `GO_READ_STAGING_PACK_0_DB`, `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) ; premier pilote réel ORABANK validé avec réserves jusqu'au reporting, puis reverrouillé ; profils CSV BDK/ORA et Excel ONLINE ATB/BICIS/BIS/BRIDGE éligibles, sans qualification production générale de ces profils |
 
 ## Modules supprimés / retirés
 
@@ -134,14 +158,24 @@ et au moins un détail bancaire exploitable. Ces familles restent
 `STAGING_PILOT` jusqu'à qualification sur fichiers réels anonymisés ; aucune
 preuve synthétique ne vaut promotion production.
 
-Le pack local `COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION` prépare une
+Le pack `COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION` (fusionné via PR #143,
+hotfix CI PR #144, CI de `main` verte) prépare une
 promotion atomique sous scope serveur privé, fermé par défaut et expirant, avec
 validation stricte, idempotence acteur/commande SHA-256, rejeu conservateur,
 fonction de détection effet/chèque conservatrice, audit avant/après capturé
 sous verrou de ligne et refus de toute divergence d'identité sous verrou de
 scope transactionnel. Il ne constitue pas une activation : la
 migration candidate `20260901000000_collection_report_controlled_production_activation.sql`
-n'est appliquée à aucun environnement et le runtime production reste fermé.
+n'était appliquée à aucun environnement à la fusion. Les contrôles read-only
+du 2026-09-07 l'ont observée appliquée sur staging (ledger 44, application
+2026-09-01 18:10 UTC) et en production (ledger 41), avec des définitions
+effectives conformes au fichier et le scope de promotion fermé des deux côtés.
+En production, la raison du verrou signale un pilote « two-row promotion »
+complété puis reverrouillé le 2026-09-02 16:31 UTC ; aucun GO d'application
+ni d'activation n'est tracé, le fait est consigné sans autorisation
+rétroactive. Dérive de schéma constatée : `collection_report.nj` `numeric` en
+production, `integer` en staging et dans la baseline. L'historique d'import
+antérieur à ces lectures n'est pas établi par elles.
 Voir `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
 
 Le flux `/daily-statements` est séparé de ces deux pipelines :
@@ -209,7 +243,9 @@ Ouverts / suivis :
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
 - DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
-- tests automatisés ;
+- PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE : `DRAFT_PR_146 — STAGING_DB_READ_ONLY_VERIFIED — PRODUCTION_READ_ONLY_PREFLIGHT_DONE — NODE_TYPECHECK_FIXED — PRE_MERGE_FINALIZATION` (contrôle qualité consultatif, isolation des écritures legacy, `xlsx@0.20.3`, provenance du build, ratchet ESLint resserré, Internal Book bloqué ; contrôle DB staging, préflight production read-only et correctif Node `b0efb04` acceptés ou consignés le 2026-09-07) ; restent dus sous GO distincts : contre-review indépendante, ruleset GitHub `main`, mode d'écriture Lovable, visibilités (dépôt, projet Lovable, site publié), validation staging du build, publication ;
+- fermeture serveur des chemins d'écriture Collection legacy (Auth/rôles/RLS/grants) avant activation du nouveau contrat Collections — la neutralisation Pack 0 est une barrière d'interface uniquement ; sur staging (observation du 2026-09-07), le trigger `collection_report_atomic_write_guard_v1` bloque déjà INSERT direct et UPDATE d'identité stable, mais la policy legacy `Only admins can delete collections` et les grants DML `authenticated`/`service_role` sur `collection_report` restent en place : le chemin DELETE legacy est explicitement conservé ;
+- tests automatisés (couverture mesurée, E2E réels) ;
 - documentation utilisateur.
 
 ## Règle de travail

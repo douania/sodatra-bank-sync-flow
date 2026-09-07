@@ -1,3 +1,13 @@
+import { buildProvenanceLabel, type BuildProvenance } from '@/config/buildProvenance';
+
+/**
+ * PACK 0 (D-0-4) — libellé de version affiché dans la zone de session.
+ * Il ne change ni les droits, ni les verrous, ni la durée de session.
+ */
+export function dailyV2BuildVersionLabel(provenance: BuildProvenance): string {
+  return buildProvenanceLabel(provenance);
+}
+
 export function dailyV2SessionLabel(loading: boolean, connected: boolean): string {
   return loading ? 'Session : vérification…' : connected ? 'Session : connectée' : 'Session : connexion requise';
 }

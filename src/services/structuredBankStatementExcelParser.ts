@@ -171,6 +171,18 @@ export function parseStructuredBankStatementExcel(
     if (worksheetContainsFormula(sheet)) {
       errors.push(`Worksheet ${index + 1} contains formulas; formula-bearing bank exports are refused.`);
     }
+    // PACK 0 / DEF-19 : une cellule d'erreur Excel (#NUM!, #DIV/0!, #N/A…)
+    // porte un code interne numérique (ex. 36) que la lecture brute exposerait
+    // comme montant, solde ou date. Refus explicite ici, avant toute
+    // conversion métier ; une cellule numérique légitime valant 36 reste
+    // distincte (type 'n', pas 'e').
+    const errorCells = worksheetErrorCells(sheet);
+    if (errorCells.length > 0) {
+      errors.push(
+        `Worksheet ${index + 1} contains Excel error cell(s) ${errorCells.join(', ')}; ` +
+        'error-bearing bank exports are refused before any date, amount or balance extraction.',
+      );
+    }
   }
   if (nonEmptySheetCount > 1) {
     errors.push('Multiple non-empty worksheets are refused on the one-account statement path.');
@@ -417,6 +429,31 @@ function worksheetContainsFormula(sheet: XLSX.WorkSheet): boolean {
   return Object.entries(sheet).some(
     ([address, cell]) => !address.startsWith('!') && Boolean((cell as XLSX.CellObject | undefined)?.f),
   );
+}
+
+const MAX_REPORTED_ERROR_CELLS = 5;
+
+/**
+ * Adresses des cellules de type erreur (`t === 'e'`), avec leur libellé Excel
+ * quand il est disponible. Seul le type de cellule est examiné : la valeur
+ * numérique interne du code d'erreur n'est jamais interprétée.
+ */
+function worksheetErrorCells(sheet: XLSX.WorkSheet): string[] {
+  const found: string[] = [];
+  let overflow = 0;
+  for (const [address, cell] of Object.entries(sheet)) {
+    if (address.startsWith('!')) continue;
+    const typed = cell as XLSX.CellObject | undefined;
+    if (typed?.t !== 'e') continue;
+    if (found.length >= MAX_REPORTED_ERROR_CELLS) {
+      overflow += 1;
+      continue;
+    }
+    const label = typeof typed.w === 'string' && typed.w.trim() ? typed.w.trim() : 'error';
+    found.push(`${address} (${label})`);
+  }
+  if (overflow > 0) found.push(`+${overflow} more`);
+  return found;
 }
 
 function countDistinctAccountIdentifiers(

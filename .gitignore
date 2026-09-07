@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# PACK 0 (D-0-4) : temporaire de configuration Vite, ecrit puis supprime
+# pendant le chargement de vite.config.ts. Sans cette regle il passe pour un
+# fichier source non suivi et fausse la provenance du build (faux positif).
+# Regle ancree a la racine : aucun autre .mjs, fichier non suivi ou lockfile
+# n'est ignore.
+/vite.config.ts.timestamp-*.mjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

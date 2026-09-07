@@ -42,14 +42,31 @@ export interface BankTransaction {
   type: 'CREDIT' | 'DEBIT';
 }
 
+/**
+ * PACK 0 — le contrôle qualité est consultatif. Il n'est évaluable que si des
+ * lignes Excel ET des preuves de crédit bancaire explicites sont disponibles.
+ * Un dépôt non crédité n'est jamais une preuve d'encaissement.
+ */
+export type QualityEvaluationStatus = 'EVALUABLE' | 'NOT_EVALUABLE';
+
+export interface QualityEvaluation {
+  status: QualityEvaluationStatus;
+  reason: string;
+  excel_rows: number;
+  bank_reports: number;
+  credit_evidence: number;
+}
+
 export interface QualityReport {
   id: string;
   analysis_date: string;
+  evaluation: QualityEvaluation;
   summary: {
     total_collections_analyzed: number;
     errors_detected: number;
     error_rate: number;
-    confidence_score: number;
+    /** null quand aucun score n'est fondé (non évaluable ou aucune anomalie). */
+    confidence_score: number | null;
   };
   errors_by_type: {
     saisie_errors: number;
