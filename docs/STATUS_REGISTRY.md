@@ -17,7 +17,7 @@
 
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_146 — GO_FIX_APPLIED — EXTERNAL_VALIDATIONS_PENDING` (2026-09-07 Europe/Paris)**
+**Statut : `DRAFT_PR_146 — GO_FIX_APPLIED (b0efb04) — STAGING_DB_READ_ONLY_VERIFIED — EXTERNAL_VALIDATIONS_PENDING` (consolidation de clôture du 2026-09-07 Europe/Paris)**
 
 Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
 `GO_FIX_PACK_0` du 2026-09-06 et `GO_FIX_PACK_0` « provenance réelle du
@@ -82,7 +82,8 @@ du type erreur) :
   gate CI bloquant « TypeScript (Node project, zero errors) » ;
   `docs/BASELINES.md` §3 précise les commandes couvertes. Mesures : projet
   Node 0 erreur ; projet application 16 = baseline `3c69e7d` (diff exact
-  vide) ; `tsc -b` 16 (contre 18 sur `afba03a`).
+  vide) ; `tsc -b` 16 (contre 18 sur `afba03a`). Commit `b0efb04`, **validé
+  par le CTO** dans la décision de consolidation du 2026-09-07.
 - **Synchronisation staging (`GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC`,
   2026-09-07)** : candidat `afba03a` transféré vers le projet Lovable staging
   `8c508b94-…` ; commit Lovable final `ebde2ade` ; inventaire exhaustif
@@ -97,7 +98,40 @@ du type erreur) :
   `tsc -b` 18 (les 2 TS2304 ci-dessus). Preview servi (`index-B3nNwgJx.js`)
   non qualifié : provenance `unknown` (harness sans checkout git lisible) ;
   build shell de la sandbox `known` / corroboré sur `ebde2ade`. DB non
-  vérifiée.
+  vérifiée par cette synchronisation (voir le contrôle ci-dessous).
+- **Contrôle DB staging read-only (`GO_READ_STAGING_PACK_0_DB`, 2026-09-07,
+  accepté par le CTO)** : cible exclusive `gbbsqcscryygqlmqncyv` (projet
+  Supabase « sodatra-bank-sync-flow-staging-clean », associé au projet Lovable
+  `8c508b94-…`), lue par l'éditeur SQL du tableau de bord Supabase sur une
+  session déjà authentifiée, en SELECT catalogue uniquement (le canal Lovable
+  `query_database` refuse ce projet : base connectée, non gérée par Lovable).
+  Ledger 44 entrées ; `20260829000000`, `20260829120000` et `20260901000000`
+  présentes sous leur nom de fichier, la migration Collection **appliquée sur
+  staging le 2026-09-01 18:10 UTC**. Définitions effectives comparées aux
+  fichiers du repo : 22/22 fonctions (signature, SECURITY DEFINER/INVOKER,
+  `search_path`, propriétaire, ACL, corps au MD5 identique en variante CRLF,
+  la migration ayant été appliquée depuis un checkout Windows), 8/8 triggers
+  actifs, schémas privés sans USAGE pour PUBLIC/anon/authenticated/
+  service_role, 7 tables privées avec RLS, 0 policy, ACL `postgres` seul,
+  19 contraintes conformes ; aucun écart de schéma. Verrous observés fermés :
+  Daily v2 maître et scopes `daily`/`admin`/`backfill` à `false` depuis le
+  2026-08-30 09:19 UTC (aucune colonne d'échéance sur ce verrou) ; Collection
+  `promotion_scope_enabled=false`, `enabled_until` NULL, 0 événement, 0
+  commande, 0 audit, `collection_report` vide. **Limites statistiques** : les
+  compteurs `pg_stat_user_tables` (insertions/mises à jour sans ligne vivante
+  sur les tables Collection privées) incluent des transactions annulées et
+  restent des estimations catalogue ; aucune ligne métier n'a été lue.
+  **Production non vérifiée** par ce contrôle (`NOT_VERIFIABLE`, préflight
+  dédié requis). **Chemin DELETE legacy explicitement conservé** sur
+  `collection_report` (policy `Only admins can delete collections`, grants DML
+  `authenticated`/`service_role`), hors périmètre des trois migrations ;
+  INSERT direct et UPDATE d'identité stable y sont bloqués par le trigger
+  `collection_report_atomic_write_guard_v1`. Conséquence pour les tests
+  métier : toute mutation Daily v2 ou Collection sur staging est refusée
+  fail-closed tant qu'un GO d'ouverture de scope distinct n'est pas donné.
+  Effet de bord : deux extraits SQL privés créés par l'autosave du tableau de
+  bord (métadonnées d'interface, aucun objet DB). Aucune correction DB,
+  réapplication de migration, ouverture de scope ni synchronisation Lovable.
 
 Livré localement :
 
@@ -157,17 +191,17 @@ Non exécuté / non autorisé ici : replay PostgreSQL 17 local (`NOT_RUN` si le
 moteur Docker n'a pas démarré, voir rapport de PR ; la CI de la PR l'exécute),
 compatibilité Lovable de la dépendance par URL (`GO_APPLY_STAGING_PACK_0_PUBLISH_BUILD`),
 ruleset GitHub `main`, mode d'écriture Lovable et visibilité privée
-(`GO_GITHUB_PACK_0_*`), fermeture de #118, préflights read-only staging/production
-(`GO_VALIDATE_STAGING_PACK_0`, `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`),
-publication du durcissement. Le pack n'est clos qu'après ces validations
-distinctes.
+(`GO_GITHUB_PACK_0_*`), fermeture de #118, préflight read-only production
+(`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`), publication du durcissement. Le
+contrôle DB staging read-only est fait (`GO_READ_STAGING_PACK_0_DB`, voir
+ci-dessus). Le pack n'est clos qu'après ces validations distinctes.
 
 ### Provenance par environnement (D-0-4)
 
 | Environnement | Commit source (provenance de l'information) | Déploiement / bundle observé | Migrations réellement constatées | Verrous | Date · GO |
 |---|---|---|---|---|---|
-| Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable (lecture publique, 2026-09-05) — **non corroboré par un tampon de build** : `NOT_VERIFIABLE` | Dernier rapport validé : déploiement `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle `index-BZ9uZmBU.js` (2026-09-01) ; bundle public observé `index-CG4jm_34.js` (2026-09-05) → écart non réconcilié | « ledger 40 » (2026-09-01) — nombre seul, schéma non identifié : `NOT_VERIFIABLE` | 4 verrous `false` (2026-09-01) : `NOT_VERIFIABLE` | aucune vérification par Pack 0 ; `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` requis |
-| Staging `gbbsqcscryygqlmqncyv` | commit Lovable `ebde2ade…` = candidat GitHub `afba03a` par égalité d'empreintes (498/499, `types.ts` régénéré §7bis), 2026-09-07 ; provenance du preview servi `unknown` (harness sans git) : preview `NOT_QUALIFIED` ; build shell sandbox `known` sur `ebde2ade` | preview `index-B3nNwgJx.js` (2026-09-07, non publié) ; site publié inchangé | « ledger 43 » (2026-09-01), candidat `20260901000000` transféré comme fichier, non appliqué : `NOT_VERIFIABLE` | `false` (2026-09-01) : `NOT_VERIFIABLE` | 2026-09-07 · `GO_VALIDATE_STAGING_PACK_0`, `GO_PREPARE_PACK_0_LOVABLE_SYNC`, `GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC` |
+| Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable (lecture publique, 2026-09-05) — **non corroboré par un tampon de build** : `NOT_VERIFIABLE` | Dernier rapport validé : déploiement `e3088376-c757-4477-aa96-8dcb67ecea9e`, bundle `index-BZ9uZmBU.js` (2026-09-01) ; bundle public observé `index-CG4jm_34.js` (2026-09-05) → écart non réconcilié | « ledger 40 » (2026-09-01) — nombre seul, schéma non identifié : `NOT_VERIFIABLE` ; non vérifiée par le contrôle staging du 2026-09-07 | 4 verrous `false` (2026-09-01) : `NOT_VERIFIABLE` | aucune vérification par Pack 0 ; `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` requis |
+| Staging `gbbsqcscryygqlmqncyv` | commit Lovable `ebde2ade…` = candidat GitHub `afba03a` par égalité d'empreintes (498/499, `types.ts` régénéré §7bis), 2026-09-07 ; provenance du preview servi `unknown` (harness sans git) : preview `NOT_QUALIFIED` ; build shell sandbox `known` sur `ebde2ade` | preview `index-B3nNwgJx.js` (2026-09-07, non publié) ; site publié inchangé | ledger 44 (2026-09-07, `GO_READ_STAGING_PACK_0_DB`) : `20260829000000`, `20260829120000` et `20260901000000` appliquées, définitions effectives conformes au repo (`20260901000000` appliquée le 2026-09-01 18:10 UTC ; état antérieur « ledger 43, candidat non appliqué » du 2026-09-01 remplacé par cette observation) | Daily v2 : maître + `daily`/`admin`/`backfill` `false` (depuis 2026-08-30 09:19 UTC) ; Collection : `promotion_scope_enabled=false`, `enabled_until` NULL — observés le 2026-09-07 | 2026-09-07 · `GO_VALIDATE_STAGING_PACK_0`, `GO_PREPARE_PACK_0_LOVABLE_SYNC`, `GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC`, `GO_READ_STAGING_PACK_0_DB` |
 | Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable ; depuis le `GO_FIX_PACK_0` du 2026-09-07, un build réel d'un checkout propre embarque `known` / corroborée / arbre propre avec le SHA construit (faux positif du temporaire Vite éliminé), preuve `buildProvenance.build.test.ts` en CI | build local `index-DjSKQLTx.js` (non publié) | n/a | n/a | 2026-09-07 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` ×4 |
 
 Règle : une ligne n'est mise à jour que sous le GO d'environnement qui a
@@ -178,7 +212,16 @@ produit l'observation ; les états anciens restent datés et marqués
 
 ## COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
 
-**Statut : `IN_PROGRESS — PR_143_AND_144_MERGED — MAIN_CI_GREEN — STAGING_PREFLIGHT_READY — MIGRATION_NOT_APPLIED` (mise à jour 2026-09-06 ; entrée initiale 2026-09-01 Europe/Paris)**
+**Statut : `IN_PROGRESS — PR_143_AND_144_MERGED — MAIN_CI_GREEN — MIGRATION_APPLIED_STAGING_OBSERVED — SCOPE_CLOSED — PRODUCTION_NOT_VERIFIED` (mise à jour 2026-09-07 ; entrée initiale 2026-09-01 Europe/Paris)**
+
+Note contrôle staging (2026-09-07, `GO_READ_STAGING_PACK_0_DB`) : la migration
+`20260901000000` est observée appliquée sur staging `gbbsqcscryygqlmqncyv`
+(ledger 44, application 2026-09-01 18:10 UTC, définitions effectives conformes
+au fichier), scope de promotion fermé (`enabled_until` NULL), aucune activation
+ni import validé, `collection_report` vide ; la production n'a pas été
+vérifiée. Le GO qui a appliqué cette migration sur staging n'est pas tracé
+dans ce registre. La note du 2026-09-06 et le texte historique ci-dessous sont
+conservés tels quels.
 
 Note Pack 0 (2026-09-06) : la PR #144 (hotfix CI PG17) est fusionnée et la CI
 de `main` est verte depuis le run du 2026-09-03 ; la migration candidate
