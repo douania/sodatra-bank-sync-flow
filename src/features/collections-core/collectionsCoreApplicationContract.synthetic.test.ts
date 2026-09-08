@@ -20,7 +20,7 @@ test('la navigation Core reste cachée tant que la garde partagée ne l’autori
 
 test('la saisie utilise une seule RPC atomique', async () => {
   const service = await read('./collectionsCoreService.ts');
-  for (const rpc of ['create_collection_entry_v1','validate_collection_remittance_v1','propose_collection_match_v1','confirm_collection_match_v1','export_collection_register_v1']) {
+  for (const rpc of ['create_collection_entry_v1','validate_collection_remittance_v1','propose_collection_match_v2','confirm_collection_match_v2','export_collection_register_v1']) {
     assert.match(service, new RegExp(rpc));
   }
   assert.doesNotMatch(service, /create_collection_remittance_v1|add_collection_remittance_item_v1|allocate_collection_invoice_v1|runtime_control|service_role/);
@@ -46,7 +46,7 @@ test('le parcours simplifié ne rattache pas les débits de frais séparés', as
   const page = await read('../../pages/CollectionsCore.tsx');
   assert.match(page, /Crédit au nominal/);
   assert.match(page, /Crédit net après retenue bancaire/);
-  assert.match(page, /Les débits de frais séparés restent dans le relevé bancaire/);
+  assert.match(page, /Les débits de frais séparés restent dans Daily v2/);
   assert.doesNotMatch(page, /value="FEES_SEPARATE"/);
 });
 
@@ -55,12 +55,18 @@ test('aucun paiement ni écriture comptable n’est présenté comme exécuté',
   assert.match(page, /sans exécuter de paiement ni passer d’écriture comptable/);
 });
 
-test('bloque toutes les fonctions de phase B avant leur accès réseau en staging', async () => {
+test('la phase B utilise seulement les RPC bornées et jamais les tables Daily v2 ou de propositions', async () => {
   const service = await read('./collectionsCoreService.ts');
   const page = await read('../../pages/CollectionsCore.tsx');
-  assert.equal((service.match(/assertReady\('phase_b'\)/g) ?? []).length, 4);
-  assert.match(service, /listActiveCreditLines[\s\S]*?assertReady\('phase_b'\)[\s\S]*?daily_statement_lines_canonical/);
-  assert.match(page, /Phase A uniquement[\s\S]*Daily v2 reste NOT_RUN/);
+  assert.equal((service.match(/assertReady\('phase_b_propose'\)/g) ?? []).length, 2);
+  assert.equal((service.match(/assertReady\('phase_b_review'\)/g) ?? []).length, 2);
+  assert.equal((service.match(/assertReady\('phase_b'\)/g) ?? []).length, 0);
+  assert.match(service, /listCollectionMatchCandidates[\s\S]*?list_collection_match_candidates_v1/);
+  assert.match(service, /listPendingMatchProposals[\s\S]*?list_collection_match_reviews_v1/);
+  assert.doesNotMatch(service, /\.from\('daily_statement_lines_canonical'\)|\.from\('collection_match_proposals'\)|\.from\('collection_bank_line_allocations'\)/);
+  assert.match(page, /Choisissez d’abord la remise/);
+  assert.match(page, /Compte de dépôt imposé/);
+  assert.match(page, /Proposer pour contrôle humain/);
 });
 
 test('le panneau staging expose seulement préparer et fermer pour G', async () => {

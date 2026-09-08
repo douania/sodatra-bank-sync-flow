@@ -93,6 +93,17 @@ function commandKey(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 const assignmentRowsSchema = z.array(
   z.object({
     id: z.string().uuid(),
@@ -104,6 +115,7 @@ const assignmentRowsSchema = z.array(
     created_at: z.string(),
     revoked_at: z.string().nullable(),
     revoked_by: z.string().uuid().nullable(),
+    capability_scope: z.record(z.string(), z.unknown()).nullable().optional(),
   }),
 );
 
@@ -118,13 +130,14 @@ function mapAssignmentRows(data: unknown): CollectionsCorePilotAssignment[] {
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
     revokedBy: row.revoked_by,
+    capabilityScope: row.capability_scope ?? null,
   }));
 }
 
 async function readPilotAssignments(userIds: string[]): Promise<CollectionsCorePilotAssignment[]> {
   const { data, error } = await coreSupabase
     .from('collection_domain_assignments')
-    .select('id,user_id,capability,is_active,granted_by,reason,created_at,revoked_at,revoked_by')
+    .select('id,user_id,capability,is_active,granted_by,reason,created_at,revoked_at,revoked_by,capability_scope')
     .in('user_id', userIds)
     .order('created_at');
   if (error) throw safeError(error, 'Lecture des habilitations du pilote impossible.');
@@ -134,7 +147,7 @@ async function readPilotAssignments(userIds: string[]): Promise<CollectionsCoreP
 async function readCampaignAssignments(manifest: CollectionsCorePilotManifest) {
   const { data, error } = await coreSupabase
     .from('collection_domain_assignments')
-    .select('id,user_id,capability,is_active,granted_by,reason,created_at,revoked_at,revoked_by')
+    .select('id,user_id,capability,is_active,granted_by,reason,created_at,revoked_at,revoked_by,capability_scope')
     .like('reason', `${manifest.campaignId}:%`)
     .order('created_at');
   if (error) throw safeError(error, 'Lecture du registre de campagne impossible.');
@@ -172,13 +185,15 @@ async function mutatePilotCapability(input: {
   capability: string;
   active: boolean;
   reason: string;
+  scope?: Record<string, unknown> | null;
 }) {
-  const { data, error } = await coreSupabase.rpc('grant_collection_capability_v1', {
+  const { data, error } = await coreSupabase.rpc('grant_collection_capability_v2', {
     p_command_key: input.commandKey,
     p_user_id: input.userId,
     p_capability: input.capability,
     p_active: input.active,
     p_reason: input.reason,
+    p_scope: input.active ? (input.scope ?? null) : null,
   });
   if (error) throw safeError(error, 'Mutation auditée des habilitations du pilote refusée.');
   return z.object({ assignment_id: z.string().uuid() }).parse(data).assignment_id;
@@ -281,8 +296,9 @@ export async function prepareCollectionsCoreStagingPilot(): Promise<CollectionsC
     if (unexpectedCampaignRows.length) {
       throw new CollectionsCoreServiceError('La campagne contient une habilitation inattendue.');
     }
-    const allowedOperatorCapabilities = new Set(['ENTRY']);
-    const allowedControllerCapabilities = new Set(['VALIDATE_REMITTANCE', 'AUDIT']);
+    const specs = collectionsCorePilotCapabilitySpecs(manifest);
+    const allowedOperatorCapabilities = new Set<string>(specs.filter((row) => row.actor === 'A').map((row) => row.capability));
+    const allowedControllerCapabilities = new Set<string>(specs.filter((row) => row.actor === 'B').map((row) => row.capability));
     if (
       activeCapabilities(beforeBusinessMutation, manifest.operatorUserId).some(
         (capability) => !allowedOperatorCapabilities.has(capability),
@@ -295,24 +311,31 @@ export async function prepareCollectionsCoreStagingPilot(): Promise<CollectionsC
     }
 
     for (const spec of collectionsCorePilotCapabilitySpecs(manifest)) {
-      const alreadyActive = beforeBusinessMutation.some(
+      const activeAssignment = beforeBusinessMutation.find(
         (row) => row.userId === spec.userId && row.capability === spec.capability && row.isActive,
       );
-      if (!alreadyActive) {
+      if (activeAssignment && canonicalJson(activeAssignment.capabilityScope) !== canonicalJson(spec.scope)) {
+        throw new CollectionsCoreServiceError('Le scope actif ne correspond pas à l’allowlist scellée du pilote.');
+      }
+      if (!activeAssignment) {
         await mutatePilotCapability({
           commandKey: collectionsCorePilotGrantCommandKey(manifest, spec),
           userId: spec.userId,
           capability: spec.capability,
           active: true,
           reason: collectionsCorePilotGrantReason(manifest, spec),
+          scope: spec.scope,
         });
       }
     }
     const prepared = await inspectCollectionsCorePilotAdministration();
     if (
-      JSON.stringify(prepared.operatorActiveCapabilities) !== JSON.stringify(['ENTRY']) ||
-      JSON.stringify(prepared.controllerActiveCapabilities) !==
-        JSON.stringify(['AUDIT', 'VALIDATE_REMITTANCE']) ||
+      JSON.stringify(prepared.operatorActiveCapabilities) !== JSON.stringify(
+        [...allowedOperatorCapabilities].sort(),
+      ) ||
+      JSON.stringify(prepared.controllerActiveCapabilities) !== JSON.stringify(
+        [...allowedControllerCapabilities].sort(),
+      ) ||
       !prepared.grantorManageAccessActive
     ) {
       throw new CollectionsCoreServiceError('La matrice de capacités exacte du pilote n’a pas été obtenue.');
@@ -427,11 +450,12 @@ export async function getCollectionCapabilities(): Promise<Record<CollectionCapa
   const ready = await assertReady('capabilities');
   if (ready.environment === 'staging') {
     const actor = collectionsCorePilotActor(ready.manifest!, ready.userId);
+    const phaseB = Boolean(ready.manifest!.dataset.phaseB);
     return {
-      ENTRY: actor === 'A',
-      VALIDATE_REMITTANCE: actor === 'B',
-      PROPOSE_MATCH: false,
-      CONFIRM_MATCH: false,
+      ENTRY: !phaseB && actor === 'A',
+      VALIDATE_REMITTANCE: !phaseB && actor === 'B',
+      PROPOSE_MATCH: phaseB && actor === 'A',
+      CONFIRM_MATCH: phaseB && actor === 'B',
       AUDIT: actor === 'B',
     };
   }
@@ -444,7 +468,10 @@ export async function getCollectionCapabilities(): Promise<Record<CollectionCapa
   ];
   const values = await Promise.all(
     capabilities.map(async (capability) => {
-      const { data, error } = await coreSupabase.rpc('collection_current_actor_has_capability', {
+      const helper = capability === 'PROPOSE_MATCH' || capability === 'CONFIRM_MATCH'
+        ? 'collection_current_actor_has_phase_b_capability'
+        : 'collection_current_actor_has_capability';
+      const { data, error } = await coreSupabase.rpc(helper, {
         p_capability: capability,
       });
       if (error) throw safeError(error, 'Vérification des habilitations impossible.');
@@ -519,8 +546,9 @@ export async function createCollectionEntry(command: {
 
 export async function listRemittanceWorkItems(
   statuses: string[],
+  action: CollectionsCorePilotAction = 'validation',
 ): Promise<RemittanceWorkItem[]> {
-  const ready = await assertReady('validation');
+  const ready = await assertReady(action);
   const { data, error } = await coreSupabase
     .from('collection_bank_remittance_items')
     .select(
@@ -576,17 +604,18 @@ export async function listRemittanceWorkItems(
     clientBank: row.collection_receipts.client_bank,
     instrumentReference: row.collection_instruments?.instrument_reference ?? null,
   }));
-  return ready.environment === 'staging'
-    ? mapped.filter(
-        (row) =>
-          row.remittanceCreatedBy === ready.manifest!.operatorUserId &&
-          row.clientName === ready.manifest!.dataset.entry.clientName &&
-          row.amount === ready.manifest!.dataset.entry.amount &&
-          row.currency === ready.manifest!.dataset.entry.currency &&
-          row.depositAccountId === ready.manifest!.dataset.entry.depositAccountId &&
-          row.depositDate === ready.manifest!.dataset.entry.depositDate,
-      )
-    : mapped;
+  if (ready.environment !== 'staging') return mapped;
+  const phaseB = ready.manifest!.dataset.phaseB;
+  if (phaseB) return mapped.filter((row) => row.itemId === phaseB.remittanceItemId);
+  return mapped.filter(
+    (row) =>
+      row.remittanceCreatedBy === ready.manifest!.operatorUserId &&
+      row.clientName === ready.manifest!.dataset.entry.clientName &&
+      row.amount === ready.manifest!.dataset.entry.amount &&
+      row.currency === ready.manifest!.dataset.entry.currency &&
+      row.depositAccountId === ready.manifest!.dataset.entry.depositAccountId &&
+      row.depositDate === ready.manifest!.dataset.entry.depositDate,
+  );
 }
 
 export async function validateCollectionRemittance(remittanceId: string, reason: string): Promise<void> {
@@ -612,57 +641,94 @@ export async function validateCollectionRemittance(remittanceId: string, reason:
   if (error) throw safeError(error, 'Validation de la remise refusée.');
 }
 
-export async function listActiveCreditLines(): Promise<CreditLine[]> {
-  await assertReady('phase_b');
-  const { data, error } = await coreSupabase
-    .from('daily_statement_lines_canonical')
-    .select(
-      'id,accounting_date,description_sanitized,signed_amount,currency,' +
-        'daily_statement_units_canonical!inner(account_registry_id,status)',
-    )
-    .eq('is_active', true)
-    .eq('direction', 'credit')
-    .eq('daily_statement_units_canonical.status', 'ingested')
-    .order('accounting_date', { ascending: false })
-    .limit(300);
+export async function listCollectionMatchCandidates(input: {
+  itemId: string;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<CreditLine[]> {
+  const ready = await assertReady('phase_b_propose');
+  if (ready.environment === 'staging') {
+    const expected = ready.manifest!.dataset.phaseB!;
+    if (input.itemId !== expected.remittanceItemId || input.dateFrom !== expected.dateFrom || input.dateTo !== expected.dateTo) {
+      throw new CollectionsCoreServiceError('La recherche ne correspond pas à l’allowlist Phase B scellée.', 'PILOT_PHASE_B_SCOPE_REJECTED');
+    }
+  }
+  const { data, error } = await coreSupabase.rpc('list_collection_match_candidates_v1', {
+    p_remittance_item_id: input.itemId,
+    p_date_from: input.dateFrom,
+    p_date_to: input.dateTo,
+    p_limit: 50,
+  });
   if (error) throw safeError(error, 'Lecture des crédits bancaires impossible.');
-  return z
+  const rows = z
     .array(
       z.object({
-        id: z.string().uuid(),
+        daily_line_id: z.string().uuid(),
+        canonical_unit_id: z.string().uuid(),
+        daily_line_hash: z.string().regex(/^[0-9a-f]{64}$/),
+        account_registry_id: z.string().uuid(),
         accounting_date: z.string(),
+        value_date: z.string().nullable(),
         description_sanitized: z.string(),
-        signed_amount: z.coerce.number(),
+        credit_amount: z.coerce.number(),
+        unallocated_credit_amount: z.coerce.number(),
         currency: z.string(),
-        daily_statement_units_canonical: z.object({
-          account_registry_id: z.string().uuid(),
-          status: z.string(),
-        }),
+        source_attempt_id: z.string().uuid(),
+        source_raw_text_hash: z.string().regex(/^[0-9a-f]{64}$/),
+        reference_signal: z.string(),
+        reason_codes: z.array(z.string()),
       }),
     )
-    .parse(data ?? [])
-    .map((row) => ({
-      id: row.id,
+    .parse(data ?? []);
+  if (ready.environment === 'staging') {
+    const expected = ready.manifest!.dataset.phaseB!;
+    const row = rows[0];
+    if (rows.length !== 1 || row.daily_line_id !== expected.dailyLineId || row.canonical_unit_id !== expected.canonicalUnitId ||
+        row.daily_line_hash !== expected.dailyLineHash || row.account_registry_id !== expected.accountRegistryId ||
+        row.accounting_date !== expected.accountingDate || row.credit_amount !== expected.creditAmount ||
+        row.currency !== expected.currency || row.source_attempt_id !== expected.sourceAttemptId ||
+        row.source_raw_text_hash !== expected.sourceRawTextHash) {
+      throw new CollectionsCoreServiceError('Le snapshot bancaire retourné diverge du manifeste Phase B.', 'PILOT_PHASE_B_SNAPSHOT_REJECTED');
+    }
+  }
+  return rows.map((row) => ({
+      id: row.daily_line_id,
+      canonicalUnitId: row.canonical_unit_id,
+      dailyLineHash: row.daily_line_hash,
       accountingDate: row.accounting_date,
+      valueDate: row.value_date,
       description: row.description_sanitized,
-      amount: Math.abs(row.signed_amount),
+      amount: row.credit_amount,
+      unallocatedAmount: row.unallocated_credit_amount,
       currency: row.currency,
-      accountId: row.daily_statement_units_canonical.account_registry_id,
+      accountId: row.account_registry_id,
+      sourceAttemptId: row.source_attempt_id,
+      sourceRawTextHash: row.source_raw_text_hash,
+      referenceSignal: row.reference_signal,
+      reasonCodes: row.reason_codes,
     }));
 }
 
 export async function proposeCollectionMatch(input: {
   itemId: string;
-  creditLineId: string;
+  creditLine: CreditLine;
   creditConsumedAmount: number;
   settledGrossAmount: number;
   evidenceBasis: EvidenceBasis;
   reason: string;
 }): Promise<void> {
-  await assertReady('phase_b');
+  const ready = await assertReady('phase_b_propose');
+  if (ready.environment === 'staging') {
+    const expected = ready.manifest!.dataset.phaseB!;
+    if (input.itemId !== expected.remittanceItemId || input.creditLine.id !== expected.dailyLineId ||
+        input.evidenceBasis !== expected.evidenceBasis || input.creditConsumedAmount !== expected.creditAmount ||
+        input.settledGrossAmount !== expected.settledGrossAmount || input.reason !== expected.proposalReason) {
+      throw new CollectionsCoreServiceError('La proposition diverge du manifeste Phase B.', 'PILOT_PHASE_B_COMMAND_REJECTED');
+    }
+  }
   const payload = buildMatchPayload(input);
-  const { error } = await coreSupabase.rpc('propose_collection_match_v1', {
-    p_command_key: commandKey('match-proposal'),
+  const { error } = await coreSupabase.rpc('propose_collection_match_v2', {
+    p_command_key: ready.environment === 'staging' ? ready.manifest!.dataset.phaseB!.proposalCommandKey : commandKey('match-proposal'),
     p_action: 'CREATE',
     p_proposal_id: null,
     p_payload: payload,
@@ -671,39 +737,50 @@ export async function proposeCollectionMatch(input: {
 }
 
 export async function listPendingMatchProposals(): Promise<MatchProposal[]> {
-  await assertReady('phase_b');
-  const { data, error } = await coreSupabase
-    .from('collection_match_proposals')
-    .select(
-      'id,created_at,proposed_by,credit_daily_line_id,proposed_credit_consumed_amount,' +
-        'proposed_fee_consumed_amount,evidence_basis,reason',
-    )
-    .eq('status', 'PENDING')
-    .order('created_at', { ascending: false });
+  await assertReady('phase_b_review');
+  const { data, error } = await coreSupabase.rpc('list_collection_match_reviews_v1', { p_limit: 50 });
   if (error) throw safeError(error, 'Lecture des rapprochements en attente impossible.');
   return z
     .array(
       z.object({
-        id: z.string().uuid(),
+        proposal_id: z.string().uuid(),
         created_at: z.string(),
         proposed_by: z.string().uuid(),
-        credit_daily_line_id: z.string().uuid(),
-        proposed_credit_consumed_amount: z.coerce.number(),
-        proposed_fee_consumed_amount: z.coerce.number(),
+        remittance_item_id: z.string().uuid(),
+        client_name: z.string(),
+        deposit_account_id: z.string().uuid(),
+        account_safe_alias: z.string(),
+        nominal_amount: z.coerce.number(),
+        credit_amount: z.coerce.number(),
+        observed_fee_amount: z.coerce.number(),
         evidence_basis: z.string(),
-        reason: z.string(),
+        proposal_reason: z.string(),
+        accounting_date: z.string(),
+        description_sanitized: z.string(),
+        reference_signal: z.string(),
+        reason_codes: z.array(z.string()),
+        evidence_available: z.boolean(),
       }),
     )
     .parse(data ?? [])
     .map((row) => ({
-      id: row.id,
+      id: row.proposal_id,
       createdAt: row.created_at,
       proposedBy: row.proposed_by,
-      creditDailyLineId: row.credit_daily_line_id,
-      creditAmount: row.proposed_credit_consumed_amount,
-      feeAmount: row.proposed_fee_consumed_amount,
+      remittanceItemId: row.remittance_item_id,
+      clientName: row.client_name,
+      depositAccountId: row.deposit_account_id,
+      accountAlias: row.account_safe_alias,
+      nominalAmount: row.nominal_amount,
+      creditAmount: row.credit_amount,
+      feeAmount: row.observed_fee_amount,
       evidenceBasis: row.evidence_basis,
-      reason: row.reason,
+      reason: row.proposal_reason,
+      accountingDate: row.accounting_date,
+      description: row.description_sanitized,
+      referenceSignal: row.reference_signal,
+      reasonCodes: row.reason_codes,
+      evidenceAvailable: row.evidence_available,
     }));
 }
 
@@ -712,9 +789,12 @@ export async function decideCollectionMatch(
   decision: 'CONFIRM' | 'REJECT',
   reason: string,
 ): Promise<void> {
-  await assertReady('phase_b');
-  const { error } = await coreSupabase.rpc('confirm_collection_match_v1', {
-    p_command_key: commandKey('match-decision'),
+  const ready = await assertReady('phase_b_review');
+  if (ready.environment === 'staging' && reason !== ready.manifest!.dataset.phaseB!.confirmationReason) {
+    throw new CollectionsCoreServiceError('La décision diverge du manifeste Phase B.', 'PILOT_PHASE_B_COMMAND_REJECTED');
+  }
+  const { error } = await coreSupabase.rpc('confirm_collection_match_v2', {
+    p_command_key: ready.environment === 'staging' ? ready.manifest!.dataset.phaseB!.confirmationCommandKey : commandKey('match-decision'),
     p_proposal_id: proposalId,
     p_decision: decision,
     p_reason: reason.trim(),
