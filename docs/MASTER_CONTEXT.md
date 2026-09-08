@@ -39,20 +39,21 @@ devient la référence opérationnelle finale des Collections avec bascule contr
 (D-COL-1) ; le registre de comptes Daily v2 est l'identité canonique de compte
 (D-COL-3) ; BRIDGE est `OPTIONAL_POST_V1`, Internal Book `OPTIONAL_POST_V1` sans
 promesse de persistance, Daily PDF `EXPERIMENTAL`. Le Pack 0 (blocages critiques
-et gouvernance) est implémenté en draft PR #146 ; le CTO a accepté le
-2026-09-07 le contrôle DB staging read-only des migrations `20260829000000`,
-`20260829120000` et `20260901000000` (`GO_READ_STAGING_PACK_0_DB` : définitions
-effectives conformes au repo, verrous Daily v2 et Collection fermés) et le
-correctif TypeScript Node `b0efb04`. Le préflight production read-only du
-même jour (`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) a confirmé la liaison
-effective du projet Lovable production à `leakcdbbawzysfqyqsnr`, les mêmes
-définitions DB, les verrous fermés, et relevé sans les qualifier un pilote
-Collection production signalé par la raison du verrou, une dérive de type sur
-`collection_report.nj`, deux réponses 503 et un bundle servi non réconcilié.
-Sa clôture attend encore les validations distinctes : contre-review
-indépendante, compatibilité Lovable de `xlsx@0.20.3`, provenance du build
-servi, protections GitHub actives et publication du durcissement. Voir
-`docs/STATUS_REGISTRY.md` (entrée `PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE`).
+et gouvernance) est **fusionné** (PR #146 → `main` = `a22ab60f`, 2026-09-07,
+sous ruleset `protect-main` sans bypass, contre-review Codex favorable) et
+**livré en production** le 2026-09-08 (`GO_PRODUCTION_PACK_0_PUBLISH`) : le
+site publié sert un bundle dont la provenance embarquée est `known`, égale à
+`a22ab60f`, CSS et chunks identiques au build local, un seul ref Supabase
+`leakcdbbawzysfqyqsnr` ; verdict CTO `DELIVERED_WITH_PLATFORM_ATTESTATION`,
+avec une réserve (génération du rapport Daily v2 non exercée au smoke). Les
+contrôles DB read-only staging et production du 2026-09-07 avaient confirmé
+les définitions des migrations `20260829000000`, `20260829120000` et
+`20260901000000` et les verrous fermés ; le pilote Collection production
+signalé et la dérive `collection_report.nj` sont reportés au Pack 1. Le Pack 0
+n'est pas encore déclaré clos : restent le mode d'écriture Lovable, les
+visibilités (dépôt, projet Lovable, site publié), la fermeture de #118 et le
+rejeu manuel du smoke reporting. Voir `docs/STATUS_REGISTRY.md` (entrée
+`PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE`).
 
 Le premier pilote réel ORABANK Daily v2 est toutefois validé avec réserves en production
 (dépôt, promotion et reporting), puis reverrouillé. Cette réussite bornée ne
@@ -243,7 +244,7 @@ Ouverts / suivis :
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
 - DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
-- PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE : `DRAFT_PR_146 — STAGING_DB_READ_ONLY_VERIFIED — PRODUCTION_READ_ONLY_PREFLIGHT_DONE — NODE_TYPECHECK_FIXED — PRE_MERGE_FINALIZATION` (contrôle qualité consultatif, isolation des écritures legacy, `xlsx@0.20.3`, provenance du build, ratchet ESLint resserré, Internal Book bloqué ; contrôle DB staging, préflight production read-only et correctif Node `b0efb04` acceptés ou consignés le 2026-09-07) ; restent dus sous GO distincts : contre-review indépendante, ruleset GitHub `main`, mode d'écriture Lovable, visibilités (dépôt, projet Lovable, site publié), validation staging du build, publication ;
+- PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE : `MERGED (a22ab60f) — DELIVERED_WITH_PLATFORM_ATTESTATION (2026-09-08) — GOVERNANCE_ITEMS_OPEN` (contrôle qualité consultatif, isolation des écritures legacy, `xlsx@0.20.3`, provenance du build `known` sur le site publié, ratchet ESLint resserré, Internal Book bloqué ; ruleset `protect-main` actif) ; restent dus sous GO distincts : mode d'écriture Lovable, visibilités (dépôt, projet Lovable, site publié), fermeture de #118, rejeu manuel du smoke reporting Daily v2 ; reportés au Pack 1 : pilote Collection production signalé, dérive `collection_report.nj` ;
 - fermeture serveur des chemins d'écriture Collection legacy (Auth/rôles/RLS/grants) avant activation du nouveau contrat Collections — la neutralisation Pack 0 est une barrière d'interface uniquement ; sur staging (observation du 2026-09-07), le trigger `collection_report_atomic_write_guard_v1` bloque déjà INSERT direct et UPDATE d'identité stable, mais la policy legacy `Only admins can delete collections` et les grants DML `authenticated`/`service_role` sur `collection_report` restent en place : le chemin DELETE legacy est explicitement conservé ;
 - tests automatisés (couverture mesurée, E2E réels) ;
 - documentation utilisateur.

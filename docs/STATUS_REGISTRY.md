@@ -17,7 +17,16 @@
 
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
-**Statut : `DRAFT_PR_146 — GO_FIX_APPLIED (b0efb04) — STAGING_DB_READ_ONLY_VERIFIED — PRODUCTION_READ_ONLY_PREFLIGHT_DONE — PRE_MERGE_FINALIZATION` (finalisation pré-merge du 2026-09-07 Europe/Paris)**
+**Statut : `MERGED (a22ab60f) — MAIN_CI_GREEN — DELIVERED_WITH_PLATFORM_ATTESTATION (2026-09-08) — GOVERNANCE_ITEMS_OPEN` (livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**
+
+Livraison production (résumé daté, détail dans la section « Merge et livraison »
+ci-dessous) : PR #146 fusionnée le 2026-09-07 17:37 UTC en `a22ab60f` sous
+`GO_MERGE_PR_146` ; site publié le 2026-09-08 09:42 UTC sous
+`GO_PRODUCTION_PACK_0_PUBLISH` avec provenance embarquée `known` égale au
+candidat. Le Pack 0 n'est pas déclaré clos : restent les sujets de gouvernance
+listés ci-dessous. Le pilote Collection production signalé et la dérive
+`collection_report.nj` sont **reportés au Pack 1** par décision CTO et ne
+relancent pas l'audit de cette livraison.
 
 Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
 `GO_FIX_PACK_0` du 2026-09-06 et `GO_FIX_PACK_0` « provenance réelle du
@@ -241,21 +250,95 @@ Daily traitait alors la cellule d'erreur comme le montant numérique 36
 (DEF-19). Le CTO a refusé le report au Pack 2 : parser et fixture sont
 corrigés dans ce pack (voir ci-dessus).
 
-Non exécuté / non autorisé ici : replay PostgreSQL 17 local (`NOT_RUN` si le
-moteur Docker n'a pas démarré, voir rapport de PR ; la CI de la PR l'exécute),
-compatibilité Lovable de la dépendance par URL (`GO_APPLY_STAGING_PACK_0_PUBLISH_BUILD`),
-ruleset GitHub `main`, mode d'écriture Lovable et visibilité privée
-(`GO_GITHUB_PACK_0_*`), fermeture de #118, publication du durcissement,
-contre-review indépendante et `GO_MERGE_PR_146`. Le contrôle DB staging
-read-only (`GO_READ_STAGING_PACK_0_DB`) et le préflight production read-only
-(`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) sont faits (voir ci-dessus). Le
-pack n'est clos qu'après ces validations distinctes.
+Non exécuté dans l'implémentation (traité ensuite, voir la section suivante) :
+replay PostgreSQL 17 local (`NOT_RUN` si le moteur Docker n'a pas démarré, la
+CI l'exécute), compatibilité Lovable de la dépendance par URL, ruleset GitHub
+`main`, contre-review, merge, publication. Le contrôle DB staging read-only
+(`GO_READ_STAGING_PACK_0_DB`) et le préflight production read-only
+(`GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) sont consignés ci-dessus.
+
+### Merge et livraison (2026-09-07 → 2026-09-08)
+
+- **Protection de `main`** (appliquée et vérifiée par le CTO le 2026-09-07,
+  relue par API) : ruleset `protect-main` 22463898, actif sur `refs/heads/main`
+  uniquement, règles `deletion`, `non_fast_forward`, `pull_request`
+  (0 approbation) et `required_status_checks` (`Lint and build`, app 15368,
+  branche à jour), **aucun bypass**. Conséquence : tout push direct, y compris
+  de l'app Lovable, est refusé sur `main` ; toute modification passe par PR.
+- **Contre-review indépendante** : verdict Codex favorable sur `d214023`
+  (rapporté par le CTO dans `GO_MERGE_PR_146`).
+- **Merge** (`GO_MERGE_PR_146`, 2026-09-07 17:37:02 UTC) : head autorisé
+  `d214023` revérifié (base `3c69e7d`, check requis réussi, ruleset actif),
+  PR passée de draft à prête, fusion par commit de merge avec correspondance
+  stricte du head, sans option administrateur ; `main` = `a22ab60f` (parents
+  `3c69e7d`, `d214023`) ; CI post-merge run 34148347141 SUCCESS ; branche du
+  pack conservée. Le projet Lovable production a reçu `a22ab60f` par
+  synchronisation native à 17:37:10 UTC (pas une publication).
+- **Préparation de la livraison** (2026-09-07/08, lecture seule) : ancien site
+  figé par empreintes SHA-256 complètes (`index-CG4jm_34.js`,
+  `index-C45PNpy-.css`, `pdf.worker-BgryrOlp.mjs`, deux chunks de services,
+  `index.html`) ; revert local du merge validé (arbre du revert identique à
+  l'arbre de `3c69e7d`, build réussi, CSS octet pour octet celle servie).
+  Le retour arrière retenu est une PR de revert, puis une republication
+  autorisée séparément. Restore Lovable n'est pas utilisé : il peut également
+  redéployer les fonctions Edge, et son interaction avec le ruleset n'a pas été
+  vérifiée.
+- **Publication** (`GO_PRODUCTION_PACK_0_PUBLISH`, 2026-09-08) : préconditions
+  revérifiées (`main` et Lovable sur `a22ab60f`, aucune édition Lovable depuis
+  le merge, CI verte, verrous fermés à 09:41 UTC) ; une seule publication via le
+  canal Lovable (`deployment_id 530a1d14-c0cc-4531-99fa-855cd6e5ffcf`),
+  nouveau site servi à 09:42:26 UTC, aucune autre action (le plan Lovable en
+  attente du 30 juillet n'a pas été approuvé).
+- **Preuves du site servi** (téléchargement anonyme, revérifié indépendamment
+  par le CTO) : `index.html` `aa882c1f…` ; `index-9ap3uj9j.js` `c89bb93a…`
+  (2 511 610 o, même taille que le build local) ; `index-D0V1isdC.css`
+  `e7b9a274…` **identique au build local de `a22ab60f`** ;
+  `pdf.worker-BgryrOlp.mjs` `bf246e57…` et
+  `historicalDashboardCollectionRead-DflQaXcr.js` `8bd32b95…` identiques au
+  build local ; chunks `batchProcessingService-D1x50Oq4.js`,
+  `extractionService-C2pbeOHO.js` présents ; un seul ref Supabase
+  `leakcdbbawzysfqyqsnr` ; **objet de provenance embarqué `status=known`,
+  `commitSha=a22ab60f…`, `source=git-checkout`, `corroborated=true`, arbre
+  propre, collecté le 2026-09-07 17:38 UTC** (le build de publication Lovable
+  dispose d'un checkout git, contrairement au harness preview qui donne
+  `unknown`). Badge « Published » non lisible dans l'historique Lovable par le
+  canal navigateur (`NOT_VERIFIABLE`, sans effet sur l'identification).
+- **Smoke production** (session existante, lectures seules, aucune mutation) :
+  `/daily-statements` badges « Verrou serveur : lecture seule », « Cible :
+  production · pilote contrôlé », « Version : a22ab60 », bannière « Pilote
+  production verrouillé », REST 200 ; `/dashboard` canonical rendu ;
+  `/quality-control` consultatif sans action de correction ; `/reconciliation`
+  consultation seule, marquage désactivé ; `/upload` Internal Book « Bloqué ».
+  **Réserve CTO** : génération du rapport Daily v2 `NOT_RUN` (formulaire non
+  déclenché par l'automatisation). HEAD de comptage du dashboard : le lecteur
+  réseau de l'outil affichait 503 ; journaux API Gateway 09:44–10:10 UTC :
+  14 requêtes toutes 200/206 dont ces HEAD en 200, dashboard fail-closed rendu ;
+  comportement identique avant/après la livraison, **origine non établie**
+  (les journaux favorables ne prouvent pas que l'affichage était à tort).
+  Verrous après smoke (10:12 UTC) : inchangés, fermés.
+- **Verdict** : `DELIVERED_WITH_PLATFORM_ATTESTATION`, renforcé par une
+  provenance `known` égale au candidat ; livraison validée par le CTO le
+  2026-09-08 avec réserve sur le smoke reporting. Aucune nouvelle publication
+  ni correction applicative demandée.
+
+Sujets de gouvernance encore ouverts (GO distincts, aucun lancé) : mode
+d'écriture Lovable du projet production ; visibilités du dépôt GitHub
+(public, plan du compte non lu), du projet Lovable (public) et du site publié
+(à conserver accessible) ; fermeture de #118 ; smoke reporting Daily v2 à
+rejouer manuellement. Reportés au Pack 1 : pilote Collection production
+signalé, dérive `collection_report.nj`.
+
+Compatibilité de build Lovable de `xlsx@0.20.3` (dépendance par URL de
+tarball) : **constatée** sur le build de publication du 2026-09-08
+(installation et build réussis, bundle servi) et documentée ici ; elle ne
+figure plus parmi les validations dues. Cela ne vaut pas qualification métier
+exhaustive des parseurs Excel.
 
 ### Provenance par environnement (D-0-4)
 
 | Environnement | Commit source (provenance de l'information) | Déploiement / bundle observé | Migrations réellement constatées | Verrous | Date · GO |
 |---|---|---|---|---|---|
-| Production `leakcdbbawzysfqyqsnr` | `3c69e7d` selon les métadonnées du projet Lovable `e52d9fce-…` (2026-09-07) ; bundle servi sans marqueur de provenance ; build npm local de `3c69e7d` = même CSS, JS différent : commit servi **`NOT_VERIFIABLE` par empreinte** | bundle servi `index-CG4jm_34.js` + `index-C45PNpy-.css` (2026-09-07), ne référençant que `leakcdbbawzysfqyqsnr` ; dernier déploiement validé `e3088376-…` / `index-BZ9uZmBU.js` (2026-09-01) → écart non réconcilié, identifiant du déploiement courant `NOT_VERIFIABLE` | ledger 41 (2026-09-07) : `20260829000000`, `20260829120000`, `20260901000000` appliquées, définitions conformes au repo ; état « ledger 40 » du 2026-09-01 remplacé | Daily v2 : maître + 3 scopes `false` (depuis 2026-08-30 18:17 UTC) ; Collection : `false`, `enabled_until` NULL (depuis 2026-09-02 16:31 UTC, pilote deux lignes signalé par la raison du verrou, sans GO tracé) — observés 2026-09-07 | 2026-09-07 · `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT` (lecture seule, aucune mutation) |
+| Production `leakcdbbawzysfqyqsnr` | **`a22ab60f`** par provenance embarquée dans le bundle servi (`status=known`, `git-checkout`, corroborée, arbre propre, collectée 2026-09-07 17:38 UTC) et métadonnées Lovable `e52d9fce-…` (`latest_commit_sha=a22ab60f`) — 2026-09-08 ; état antérieur (`3c69e7d` non prouvable par empreinte, bundle `index-CG4jm_34.js`) remplacé et archivé par empreintes | déploiement Lovable `530a1d14-c0cc-4531-99fa-855cd6e5ffcf` (2026-09-08 09:42 UTC) ; bundle servi `index-9ap3uj9j.js` (`c89bb93a…`) + `index-D0V1isdC.css` (`e7b9a274…`, = build local), chunks `pdf.worker-BgryrOlp.mjs`, `historicalDashboardCollectionRead-DflQaXcr.js` (= build local), `batchProcessingService-D1x50Oq4.js`, `extractionService-C2pbeOHO.js` ; un seul ref Supabase | ledger 41 (2026-09-07) : `20260829000000`, `20260829120000`, `20260901000000` appliquées, définitions conformes au repo ; aucune migration dans le Pack 0 | Daily v2 : maître + 3 scopes `false` (depuis 2026-08-30 18:17 UTC) ; Collection : `false`, `enabled_until` NULL (depuis 2026-09-02 16:31 UTC, pilote signalé reporté au Pack 1) — revérifiés 2026-09-08 09:41 et 10:12 UTC | 2026-09-08 · `GO_MERGE_PR_146`, `GO_PRODUCTION_PACK_0_PUBLISH` (préflight read-only du 2026-09-07 : `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) |
 | Staging `gbbsqcscryygqlmqncyv` | commit Lovable `ebde2ade…` = candidat GitHub `afba03a` par égalité d'empreintes (498/499, `types.ts` régénéré §7bis), 2026-09-07 ; provenance du preview servi `unknown` (harness sans git) : preview `NOT_QUALIFIED` ; build shell sandbox `known` sur `ebde2ade` | preview `index-B3nNwgJx.js` (2026-09-07, non publié) ; site publié inchangé | ledger 44 (2026-09-07, `GO_READ_STAGING_PACK_0_DB`) : `20260829000000`, `20260829120000` et `20260901000000` appliquées, définitions effectives conformes au repo (`20260901000000` appliquée le 2026-09-01 18:10 UTC ; état antérieur « ledger 43, candidat non appliqué » du 2026-09-01 remplacé par cette observation) | Daily v2 : maître + `daily`/`admin`/`backfill` `false` (depuis 2026-08-30 09:19 UTC) ; Collection : `promotion_scope_enabled=false`, `enabled_until` NULL — observés le 2026-09-07 | 2026-09-07 · `GO_VALIDATE_STAGING_PACK_0`, `GO_PREPARE_PACK_0_LOVABLE_SYNC`, `GO_APPLY_STAGING_PACK_0_RUNTIME_SYNC`, `GO_READ_STAGING_PACK_0_DB` |
 | Local (branche Pack 0) | `3c69e7d` par checkout git, état `modified` pendant l'implémentation (tampon `__SODATRA_BUILD_PROVENANCE__`) ; depuis `GO_FIX_PACK_0`, un arbre non vérifiable ou des fichiers non suivis rendent la provenance non qualifiable ; depuis le `GO_FIX_PACK_0` du 2026-09-07, un build réel d'un checkout propre embarque `known` / corroborée / arbre propre avec le SHA construit (faux positif du temporaire Vite éliminé), preuve `buildProvenance.build.test.ts` en CI | build local `index-DjSKQLTx.js` (non publié) | n/a | n/a | 2026-09-07 · `GO_IMPLEMENT_PACK_0`, `GO_FIX_PACK_0` ×4 |
 
