@@ -17,16 +17,18 @@
 
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
-**Statut : `MERGED (a22ab60f) — MAIN_CI_GREEN — DELIVERED_WITH_PLATFORM_ATTESTATION (2026-09-08) — GOVERNANCE_ITEMS_OPEN` (livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**
+**Statut : `CLOSED — DELIVERED_WITH_PLATFORM_ATTESTATION — FOLLOW_UPS_OPEN` (clôture consignée le 2026-09-08 sous `GO_IMPLEMENT_PACK_0_CLOSURE_DOCS` ; livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**
 
-Livraison production (résumé daté, détail dans la section « Merge et livraison »
-ci-dessous) : PR #146 fusionnée le 2026-09-07 17:37 UTC en `a22ab60f` sous
-`GO_MERGE_PR_146` ; site publié le 2026-09-08 09:42 UTC sous
-`GO_PRODUCTION_PACK_0_PUBLISH` avec provenance embarquée `known` égale au
-candidat. Le Pack 0 n'est pas déclaré clos : restent les sujets de gouvernance
-listés ci-dessous. Le pilote Collection production signalé et la dérive
-`collection_report.nj` sont **reportés au Pack 1** par décision CTO et ne
-relancent pas l'audit de cette livraison.
+Clôture : le Pack 0 est clos sur son objet (blocages critiques et gouvernance
+livrés). PR #146 fusionnée le 2026-09-07 17:37 UTC en `a22ab60f` sous
+`GO_MERGE_PR_146` ; **production livrée sur `a22ab60f`** le 2026-09-08 09:42 UTC
+sous `GO_PRODUCTION_PACK_0_PUBLISH`, provenance embarquée `known` égale au
+candidat (détail dans la section « Merge et livraison » ci-dessous). Quatre
+suivis restent ouverts, tracés dans « Suivis ouverts après clôture » avec
+responsable et critère de résolution ; aucun n'est déclaré résolu sans preuve.
+Le pilote Collection production signalé et la dérive `collection_report.nj`
+sont **maintenus au Pack 1** par décision CTO et ne relancent pas l'audit de
+cette livraison.
 
 Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
 `GO_FIX_PACK_0` du 2026-09-06 et `GO_FIX_PACK_0` « provenance réelle du
@@ -321,12 +323,23 @@ CI l'exécute), compatibilité Lovable de la dépendance par URL, ruleset GitHub
   2026-09-08 avec réserve sur le smoke reporting. Aucune nouvelle publication
   ni correction applicative demandée.
 
-Sujets de gouvernance encore ouverts (GO distincts, aucun lancé) : mode
-d'écriture Lovable du projet production ; visibilités du dépôt GitHub
-(public, plan du compte non lu), du projet Lovable (public) et du site publié
-(à conserver accessible) ; fermeture de #118 ; smoke reporting Daily v2 à
-rejouer manuellement. Reportés au Pack 1 : pilote Collection production
-signalé, dérive `collection_report.nj`.
+### Suivis ouverts après clôture (passe du 2026-09-08, lecture seule)
+
+Aucune action de cette passe n'a été exécutée : pas de fermeture de PR, de
+changement de visibilité, d'action Lovable ni de publication. Aucun suivi n'est
+déclaré résolu sans preuve.
+
+| Suivi | État consigné | Responsable | Critère de résolution |
+|---|---|---|---|
+| Lovable — mode de travail | **Règle retenue** : aucun tour agent sur le projet production `e52d9fce-…` hors GO nominatif ; toute édition Lovable autorisée se fait sur une branche dédiée puis PR, check `Lint and build` et verdict CTO ; le projet staging `8c508b94-…` reste un remix non lié à GitHub. Repli documenté par Lovable ([Sync with GitHub](https://docs.lovable.dev/integrations/github)) : un push refusé par une branche protégée est redirigé vers une branche `lovable-sync` ; avec `protect-main` (0 bypass), aucune édition Lovable ne peut atteindre `main`. **Ce repli n'a pas été testé sur ce projet.** | CTO | Règle inscrite dans `docs/ops/OPS-WORKFLOW-V2-BANK-SYNC.md` ; test à blanc optionnel sous GO : une édition Lovable de documentation sur le projet production apparaît sur `lovable-sync` (ou la branche choisie) et non sur `main` |
+| Visibilités | **Décision reportée, aucun changement effectué.** Observé : dépôt GitHub public avec ruleset actif, plan du compte non exposé par l'API ; projet Lovable production `visibility: public` ; site publié public sous Supabase Auth (inscription désactivée). Proposition : projet Lovable en privé sans toucher au site ; dépôt non privatisé tant que le plan n'est pas confirmé Pro/Team (sur un compte Free, rulesets et protections ne s'appliquent pas aux dépôts privés ; minutes Actions facturées) ; site conservé accessible | CTO | Plan GitHub lu dans la facturation et consigné ; `get_project` renvoie `visibility: private` pour `e52d9fce-…` avec `is_published: true` et site toujours servi ; décision dépôt consignée avec sa justification |
+| PR #118 | **Fermeture proposée, non exécutée.** Draft « feat: add guarded collections and remittances workflow », ouverte le 2026-08-03, en conflit (`dirty`), 22 fichiers, head `1db82ff` non contenu dans `main`. Supplantée par les PR #119, #120 et #121 (module `collections-core`, route `/collections-remittances`, migrations `20260803000000`–`20260805000000` appliquées sur staging) ; sa migration porte le même numéro `20260803000000` qu'une migration déjà appliquée, donc inapplicable telle quelle. Seul contenu non repris : six rapports locaux 0Z1B, à valeur historique | CTO | PR fermée sans fusion avec commentaire de supersession (#119/#120/#121), branche conservée comme archive ; rapports 0Z1B archivés sous `docs/archive/` par PR docs distincte si souhaité |
+| Reporting Daily v2 (smoke) | **`NOT_RUN`.** Trois tentatives automatisées sur le site publié (session existante) n'ont pas déclenché la génération : dates acceptées, bouton « Générer le rapport » actif, aucune requête REST, aucun toast, aucun résultat ; cela n'établit pas un défaut applicatif (état React attendu par `DailyV2Reporting.tsx` non atteint par l'automatisation) | Utilisateur (ou Codex avec navigateur réel) | Saisie manuelle des dates sur `/daily-statements` › Reporting puis clic : toast « Rapport Daily v2 généré » et tableau ou message « Aucune unité canonical active… » ; dans le panneau réseau natif, `HEAD daily_statement_units_canonical?select=id` en 200 et le `GET` de reporting en 200/206. Si la saisie manuelle ne produit rien : ouvrir un défaut (triage Pack 1 ou 2) sans réouvrir la livraison |
+| 503 sur les HEAD de comptage | **Origine indéterminée.** Le lecteur réseau de l'extension a affiché 503 sur les HEAD de comptage du dashboard les 7 et 8 septembre ; les journaux API Gateway montrent ces HEAD en 200 (09:44–10:10 UTC le 2026-09-08 : 14 requêtes toutes 200/206) ; le dashboard fail-closed s'est rendu. Les journaux favorables ne prouvent pas que l'affichage était à tort | Utilisateur ou Codex, lors du smoke manuel | Reproduction avec les outils de développement natifs du navigateur sur `/dashboard`, statut réel des HEAD et en-tête `Retry-After`, corrélation API Gateway et PostgREST sur la même minute ; conclusion « artefact d'outil » ou « 503 réel côté passerelle/PostgREST » |
+
+Maintenus au Pack 1 (décision CTO) : pilote Collection production signalé par
+la raison du verrou du 2026-09-02 et dérive `collection_report.nj` (`numeric`
+en production, `integer` en staging et baseline).
 
 Compatibilité de build Lovable de `xlsx@0.20.3` (dépendance par URL de
 tarball) : **constatée** sur le build de publication du 2026-09-08

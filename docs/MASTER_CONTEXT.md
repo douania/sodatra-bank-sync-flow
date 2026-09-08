@@ -49,11 +49,15 @@ avec une réserve (génération du rapport Daily v2 non exercée au smoke). Les
 contrôles DB read-only staging et production du 2026-09-07 avaient confirmé
 les définitions des migrations `20260829000000`, `20260829120000` et
 `20260901000000` et les verrous fermés ; le pilote Collection production
-signalé et la dérive `collection_report.nj` sont reportés au Pack 1. Le Pack 0
-n'est pas encore déclaré clos : restent le mode d'écriture Lovable, les
-visibilités (dépôt, projet Lovable, site publié), la fermeture de #118 et le
-rejeu manuel du smoke reporting. Voir `docs/STATUS_REGISTRY.md` (entrée
-`PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE`).
+signalé et la dérive `collection_report.nj` sont maintenus au Pack 1. **Le
+Pack 0 est clos** (`CLOSED — DELIVERED_WITH_PLATFORM_ATTESTATION —
+FOLLOW_UPS_OPEN`, 2026-09-08) avec quatre suivis ouverts, chacun avec
+responsable et critère de résolution dans le registre : mode de travail Lovable
+par branche et PR (règle retenue, repli `lovable-sync` documenté mais non testé
+sur ce projet, aucun tour agent production hors GO), visibilités (décision
+reportée, aucun changement effectué), PR #118 (fermeture proposée, non
+exécutée), smoke reporting Daily v2 `NOT_RUN` et 503 d'origine indéterminée.
+Voir `docs/STATUS_REGISTRY.md` (entrée `PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE`).
 
 Le premier pilote réel ORABANK Daily v2 est toutefois validé avec réserves en production
 (dépôt, promotion et reporting), puis reverrouillé. Cette réussite bornée ne
@@ -244,7 +248,7 @@ Ouverts / suivis :
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;
 - DEF-14 : 125 lignes historiques `client_code = 'UNKNOWN'` ;
 - DEF-UX-COUNTERS-01 : compteur T3 enrichissements répété au réimport ;
-- PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE : `MERGED (a22ab60f) — DELIVERED_WITH_PLATFORM_ATTESTATION (2026-09-08) — GOVERNANCE_ITEMS_OPEN` (contrôle qualité consultatif, isolation des écritures legacy, `xlsx@0.20.3`, provenance du build `known` sur le site publié, ratchet ESLint resserré, Internal Book bloqué ; ruleset `protect-main` actif) ; restent dus sous GO distincts : mode d'écriture Lovable, visibilités (dépôt, projet Lovable, site publié), fermeture de #118, rejeu manuel du smoke reporting Daily v2 ; reportés au Pack 1 : pilote Collection production signalé, dérive `collection_report.nj` ;
+- PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE : `CLOSED — DELIVERED_WITH_PLATFORM_ATTESTATION — FOLLOW_UPS_OPEN` (2026-09-08 ; production sur `a22ab60f`, provenance embarquée `known` ; contrôle qualité consultatif, isolation des écritures legacy, `xlsx@0.20.3`, ratchet ESLint resserré, Internal Book bloqué ; ruleset `protect-main` actif) ; suivis ouverts avec responsable et critère dans le registre : mode de travail Lovable par branche et PR (règle retenue, repli `lovable-sync` non testé), visibilités (décision reportée), PR #118 (fermeture proposée, non exécutée), smoke reporting `NOT_RUN` et 503 d'origine indéterminée ; maintenus au Pack 1 : pilote Collection production signalé, dérive `collection_report.nj` ;
 - fermeture serveur des chemins d'écriture Collection legacy (Auth/rôles/RLS/grants) avant activation du nouveau contrat Collections — la neutralisation Pack 0 est une barrière d'interface uniquement ; sur staging (observation du 2026-09-07), le trigger `collection_report_atomic_write_guard_v1` bloque déjà INSERT direct et UPDATE d'identité stable, mais la policy legacy `Only admins can delete collections` et les grants DML `authenticated`/`service_role` sur `collection_report` restent en place : le chemin DELETE legacy est explicitement conservé ;
 - tests automatisés (couverture mesurée, E2E réels) ;
 - documentation utilisateur.
