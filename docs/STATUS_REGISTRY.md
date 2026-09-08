@@ -278,11 +278,11 @@ CI l'exécute), compatibilité Lovable de la dépendance par URL, ruleset GitHub
   figé par empreintes SHA-256 complètes (`index-CG4jm_34.js`,
   `index-C45PNpy-.css`, `pdf.worker-BgryrOlp.mjs`, deux chunks de services,
   `index.html`) ; revert local du merge validé (arbre du revert identique à
-  l'arbre de `3c69e7d`, build réussi, CSS octet pour octet celle servie) ;
-  documentation Lovable : « Restore » remet le code seul (pas la base), badge
-  « Published » sur la version en ligne, aucun rollback de déploiement séparé ;
-  chemin de retour arrière retenu : PR de revert de `a22ab60f` puis
-  republication, jamais « Restore » Lovable (refusé par le ruleset).
+  l'arbre de `3c69e7d`, build réussi, CSS octet pour octet celle servie).
+  Le retour arrière retenu est une PR de revert, puis une republication
+  autorisée séparément. Restore Lovable n'est pas utilisé : il peut également
+  redéployer les fonctions Edge, et son interaction avec le ruleset n'a pas été
+  vérifiée.
 - **Publication** (`GO_PRODUCTION_PACK_0_PUBLISH`, 2026-09-08) : préconditions
   revérifiées (`main` et Lovable sur `a22ab60f`, aucune édition Lovable depuis
   le merge, CI verte, verrous fermés à 09:41 UTC) ; une seule publication via le
@@ -324,10 +324,15 @@ CI l'exécute), compatibilité Lovable de la dépendance par URL, ruleset GitHub
 Sujets de gouvernance encore ouverts (GO distincts, aucun lancé) : mode
 d'écriture Lovable du projet production ; visibilités du dépôt GitHub
 (public, plan du compte non lu), du projet Lovable (public) et du site publié
-(à conserver accessible) ; fermeture de #118 ; compatibilité Lovable de
-`xlsx@0.20.3` désormais constatée sur le build publié, à documenter comme
-telle ; smoke reporting Daily v2 à rejouer manuellement. Reportés au Pack 1 :
-pilote Collection production signalé, dérive `collection_report.nj`.
+(à conserver accessible) ; fermeture de #118 ; smoke reporting Daily v2 à
+rejouer manuellement. Reportés au Pack 1 : pilote Collection production
+signalé, dérive `collection_report.nj`.
+
+Compatibilité de build Lovable de `xlsx@0.20.3` (dépendance par URL de
+tarball) : **constatée** sur le build de publication du 2026-09-08
+(installation et build réussis, bundle servi) et documentée ici ; elle ne
+figure plus parmi les validations dues. Cela ne vaut pas qualification métier
+exhaustive des parseurs Excel.
 
 ### Provenance par environnement (D-0-4)
 
