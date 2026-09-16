@@ -154,13 +154,34 @@ const STRUCTURAL_VOCABULARY = new Set<string>([
 const STRUCTURAL_PREFIX = /^(?:TOTAL|SOUS TOTAL|IMPAYE|UNPAID|DEFAULT|CHECK|CHEQUE|DEPOSIT|DEPOT|OPENING BALANCE|CLOSING BALANCE|SOLDE D'OUVERTURE|SOLDE DE CLOTURE|BANK FACILITY)S?\b/;
 /** Contenu monétaire ou numérique (avec ou sans devise) : jamais un libellé métier. */
 const MONETARY_CONTENT = /^[\d\s.,+()-]+\s*(?:FCFA|F ?CFA|XOF|CFA|EUR|USD|GBP|€|\$|£)?\.?$/i;
+/**
+ * Mots structurels interdits en composition (FIX_5) : en-têtes de colonnes,
+ * marqueurs d'impayé, totaux et codes de devise. Un libellé qui en contient un,
+ * à quelque position que ce soit, n'est pas un libellé métier (`DATE 09/07/2026`,
+ * `AMOUNT 1 000`, `LIMIT 1 000`, `USD 100`).
+ */
+const STRUCTURAL_TOKENS = new Set<string>([
+  'DATE', 'DESCRIPTION', 'VENDOR', 'PROVIDER', 'CLIENT', 'AMOUNT', 'MONTANT', 'LIMIT', 'LIMITE',
+  'USED', 'UTILISE', 'BALANCE', 'SOLDE', 'DISPONIBLE', 'IMPAYE', 'IMPAYES', 'UNPAID', 'DEFAULT',
+  'TOTAL', 'FCFA', 'CFA', 'XOF', 'EUR', 'USD', 'GBP',
+]);
+/** Date embarquée (`JJ/MM/AA[AA]`, `JJ-MM-AAAA`) à quelque position que ce soit. */
+const EMBEDDED_DATE = /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/;
+/**
+ * Séquence monétaire embarquée : milliers groupés (`1 000`, `1.000`, `1,000`),
+ * décimale (`12,5`), nombre d'au moins quatre chiffres, ou nombre accolé à un
+ * symbole ou code de devise (`€ 12`, `100 $`, `USD 100`, `1 000 FCFA`).
+ */
+const EMBEDDED_MONETARY = /(?<!\d)(?:\d{1,3}(?:[ \u00a0.,]\d{3})+|\d+[.,]\d+|\d{4,})(?!\d)|(?:FCFA|F ?CFA|XOF|CFA|EUR|USD|GBP|€|\$|£)\s*\d|\d\s*(?:FCFA|F ?CFA|XOF|CFA|EUR|USD|GBP|€|\$|£)/i;
 
 /**
  * Libellé métier admissible pour une facilité : texte contenant au moins une
  * lettre, qui n'est ni une date (typée, textuelle ou année courte corroborée),
  * ni un mot ou préfixe du vocabulaire structurel (titres de section, marqueurs
  * d'impayé, en-têtes de colonnes, totaux, ADD/LESS), ni un contenu monétaire
- * ou numérique (`1 000`, `1 000 FCFA`, `12,5 €`).
+ * ou numérique (`1 000`, `1 000 FCFA`, `12,5 €`), et qui ne contient en
+ * composition ni mot structurel, ni date, ni séquence monétaire embarquée
+ * (`DATE 09/07/2026`, `MONTANT 1 000 FCFA`, `Découvert 1 000 FCFA`).
  */
 export function isBusinessLabel(
   text: string,
@@ -174,6 +195,9 @@ export function isBusinessLabel(
   if (TOTAL_PREFIX.test(normalized) || FACILITY_COLUMN_HEADERS.has(normalized)) return false;
   if (STRUCTURAL_VOCABULARY.has(normalized) || STRUCTURAL_PREFIX.test(normalized)) return false;
   if (labels.facilitiesHeading.test(normalized) || labels.opening.test(normalized) || labels.closing.test(normalized)) return false;
+  if (EMBEDDED_DATE.test(text) || EMBEDDED_DATE.test(normalized)) return false;
+  if (EMBEDDED_MONETARY.test(text) || EMBEDDED_MONETARY.test(normalized)) return false;
+  if (normalized.split(/[^A-Z0-9]+/).some(token => STRUCTURAL_TOKENS.has(token))) return false;
   return true;
 }
 

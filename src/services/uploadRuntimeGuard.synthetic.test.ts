@@ -356,11 +356,20 @@ test('staging : le pipeline d\'import de la page reste strictement inchangé', (
 
 test('processFiles exige la capacité deposit avant timeout, heartbeat et tout traitement', () => {
   assert.match(processing, /from '\.\/uploadRuntimeGuard'/);
+  // Pack 2 (FIX_5) : la garde est injectable pour les tests runtime synthétiques
+  // uniquement ; le défaut reste la garde canonique et l'interface ne fournit
+  // jamais l'option.
   assert.match(
     processing,
-    /const uploadGate = currentUploadMutationVerdict\('deposit'\);\s*if \(!uploadGate\.allowed\) \{\s*results\.errors\.push\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*return results;\s*\}/,
+    /const defaultUploadMutationGate: UploadMutationGate = \(\) => currentUploadMutationVerdict\('deposit'\);/,
   );
-  const gateIndex = processing.indexOf("currentUploadMutationVerdict('deposit')");
+  assert.match(
+    processing,
+    /const uploadGate = \(options\.mutationGate \?\? defaultUploadMutationGate\)\(\);\s*if \(!uploadGate\.allowed\) \{\s*results\.errors\.push\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*return results;\s*\}/,
+  );
+  const uploadPage = readFileSync('src/pages/FileUpload.tsx', 'utf8');
+  assert.doesNotMatch(uploadPage, /mutationGate/, 'l’interface ne doit jamais injecter de garde');
+  const gateIndex = processing.indexOf('(options.mutationGate ?? defaultUploadMutationGate)()');
   const timeoutIndex = processing.indexOf('setTimeout');
   assert.ok(gateIndex >= 0 && timeoutIndex >= 0);
   assert.ok(gateIndex < timeoutIndex, 'the gate must precede the processing timeout setup');

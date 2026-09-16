@@ -1,15 +1,24 @@
 /**
- * Résumé fermé des erreurs d'extraction destiné à l'interface (Pack 2, FIX_4).
+ * Résumé fermé des erreurs d'extraction destiné à l'interface (Pack 2, FIX_4 / FIX_5).
  *
- * Quel que soit l'extracteur (grille, texte PDF, legacy), aucun message brut
- * ne franchit la frontière du pipeline `/upload` : chaque message est réduit à
- * un rang de ligne éventuel et à un motif d'un vocabulaire fermé. Tout reste
- * (ligne brute, banque de détail, chèque, date, montant) est écarté.
+ * Quel que soit l'extracteur (grille, texte PDF, legacy, Collection Report,
+ * Internal Book, persistance, exception générale), aucun message brut ne
+ * franchit la frontière du pipeline `/upload` : chaque message est réduit à un
+ * rang de ligne éventuel et à un motif d'un vocabulaire fermé. Tout reste
+ * (ligne brute, nom de fichier, feuille, banque de détail, client, chèque,
+ * date, montant, message Supabase) est écarté.
  */
 
 export type ExtractionErrorReason =
   | 'identité bancaire non corroborée'
   | 'structure de document ambiguë'
+  | 'en-têtes obligatoires absents'
+  | 'limite de lignes dépassée'
+  | 'traçabilité Excel manquante'
+  | 'date de rapport obligatoire invalide'
+  | 'code client obligatoire absent'
+  | 'banque obligatoire absente'
+  | 'montant obligatoire invalide'
   | 'date invalide ou non corroborée'
   | 'solde d’ouverture invalide'
   | 'solde de clôture invalide'
@@ -20,6 +29,9 @@ export type ExtractionErrorReason =
   | 'section ou ligne non exploitable'
   | 'montant invalide ou absent'
   | 'sélection de feuille requise'
+  | 'document non pris en charge'
+  | 'réseau ou délai dépassé'
+  | 'persistance refusée'
   | 'contrat d’extraction refusé';
 
 function normalize(message: string): string {
@@ -29,6 +41,27 @@ function normalize(message: string): string {
 export function classifyExtractionMessage(message: string): ExtractionErrorReason {
   const n = normalize(message);
   if (n.includes('ERREUR EXCEL')) return 'cellule d’erreur Excel';
+  // Collection Report (mapper et service Excel) : motifs fermés, avant les
+  // règles génériques sur FEUILLE / DATE / LIGNE / MONTANT.
+  if (n.includes('HEADERS OBLIGATOIRES') || n.includes('FEUILLE DE DONNEES') || n.includes('AUCUNE FEUILLE') || n.includes('EN-TETE ET UNE LIGNE')) {
+    return 'en-têtes obligatoires absents';
+  }
+  if (n.includes('DEPASSE LA LIMITE')) return 'limite de lignes dépassée';
+  if (n.includes('TRACABILITE')) return 'traçabilité Excel manquante';
+  if (n.includes('REPORTDATE')) return 'date de rapport obligatoire invalide';
+  if (n.includes('CLIENTCODE')) return 'code client obligatoire absent';
+  if (n.includes('BANKNAME')) return 'banque obligatoire absente';
+  if (n.includes('COLLECTIONAMOUNT')) return 'montant obligatoire invalide';
+  // Persistance et réseau (Supabase, retry) : jamais le message serveur.
+  if (n.includes('TIMEOUT') || n.includes('NETWORK') || n.includes('CONNECTION') || n.includes('ECONNRESET') || n.includes('ETIMEDOUT') || n.includes('FETCH FAILED')) {
+    return 'réseau ou délai dépassé';
+  }
+  if (n.includes('SAUVEGARDE') || n.includes('PERSIST') || n.includes('ROW-LEVEL') || n.includes('RLS') || n.includes('PERMISSION') || n.includes('DUPLICATE') || n.includes('UNIQUE') || n.includes('SUPABASE') || n.includes('RPC')) {
+    return 'persistance refusée';
+  }
+  if (n.includes('NOT AN INTERNAL BOOK') || n.includes('UNSUPPORTED') || n.includes('NON SUPPORTE') || n.includes('NON PRIS EN CHARGE') || n.includes('REQUIRES REVIEW')) {
+    return 'document non pris en charge';
+  }
   if (n.includes('FEUILLE')) return 'sélection de feuille requise';
   if (n.includes('IDENTITE BANCAIRE') || n.includes('BANQUE ABSENTE') || n.includes('BANQUE AMBIGUE') || n.includes('BANQUE INCOHERENTE')) {
     return 'identité bancaire non corroborée';
@@ -51,9 +84,9 @@ export function classifyExtractionMessage(message: string): ExtractionErrorReaso
   return 'contrat d’extraction refusé';
 }
 
-/** Rang de ligne porté par un message (« Ligne 12 … », « (ligne 12) », « n°12 »), sinon absent. */
+/** Rang de ligne porté par un message (« Ligne 12 … », « (ligne 12) », « n°12 », « row=12 »), sinon absent. */
 export function extractLineReference(message: string): number | null {
-  const match = message.match(/(?:\bLigne\b[^\d]{0,20}?|\(ligne\s+)(\d{1,6})/i);
+  const match = message.match(/(?:\bLigne\b[^\d]{0,20}?|\(ligne\s+|\brow=)(\d{1,6})/i);
   return match ? Number(match[1]) : null;
 }
 

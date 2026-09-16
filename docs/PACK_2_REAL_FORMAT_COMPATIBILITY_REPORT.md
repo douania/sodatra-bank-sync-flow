@@ -66,12 +66,34 @@ métier, jamais de réouverture générique).
 
 | # | Finding | Correction |
 |---|---|---|
-| 1 | P1 — hygiène incomplète du pipeline : les extracteurs texte (Fund Position PDF, rapports bancaires PDF) journalisaient encore des lignes brutes, des montants, des dates et des objets d'erreur, et leurs messages bruts remontaient tels quels dans `results.errors` | Assainissement de **tout le graphe d'appel** : `extractionService.ts` (helpers de date et de montant, soldes, dépôts, facilités, impayés, Fund Position) et `bankReportSectionExtractor.ts` ne journalisent plus que des compteurs et des rangs de ligne ; les messages d'erreur portent un rang (`Ligne n°N`, `(ligne N)`) et un motif, jamais la ligne, le chèque, le client ni le montant. Nouvelle frontière `src/services/extractionErrorSummary.ts` : `summarizeExtractionErrors` réduit tout message d'extracteur (grille, texte, legacy, exception) à « ligne N : motif » dans un vocabulaire fermé de treize motifs ; `fileProcessingService.ts` ne pousse plus aucun message brut. |
-| 2 | P1 — tests de source seulement, pas d'exécution : aucune preuve runtime | Nouvelle suite `sensitiveSentinelRuntime.synthetic.test.ts` (enregistrée dans `test:multi-bank-reports`) : chaque chemin est **exécuté** avec des sentinelles (client, chèque, banque de détail, montant, date invalide) — Fund Position texte, rapport bancaire texte, extracteurs tabulaires, `bankReportProcessingService.processBankReportExcel` sur un vrai `File` (sans et avec feuille choisie), résumé fermé — console capturée sur les quatre niveaux ; aucune sentinelle ne peut apparaître dans la console, les erreurs retournées ni le résumé. Vérifié adversarial : la suite échoue sur `cc7fa3c` (deux chemins texte fuient), passe après FIX_4. |
+| 1 | P1 — hygiène incomplète du pipeline : les extracteurs texte (Fund Position PDF, rapports bancaires PDF) journalisaient encore des lignes brutes, des montants, des dates et des objets d'erreur, et leurs messages bruts remontaient tels quels dans `results.errors` | Assainissement des extracteurs texte : `extractionService.ts` (helpers de date et de montant, soldes, dépôts, facilités, impayés, Fund Position) et `bankReportSectionExtractor.ts` ne journalisent plus que des compteurs et des rangs de ligne ; les messages d'erreur portent un rang (`Ligne n°N`, `(ligne N)`) et un motif, jamais la ligne, le chèque, le client ni le montant. Nouvelle frontière `src/services/extractionErrorSummary.ts` : `summarizeExtractionErrors` réduit tout message d'extracteur (grille, texte, legacy, exception) à « ligne N : motif » dans un vocabulaire fermé de treize motifs ; les pushes d'extraction bancaire et Fund Position de `fileProcessingService.ts` passent par ce résumé. **Périmètre réel de FIX_4** : les services Collection Report (`excelProcessingService`, `excelMappingService`), le retry, l'adaptateur Internal Book, la persistance et l'exception générale restaient bruts — corrigés en FIX_5 (§2.4). |
+| 2 | P1 — tests de source seulement, pas d'exécution : aucune preuve runtime | Nouvelle suite `sensitiveSentinelRuntime.synthetic.test.ts` (enregistrée dans `test:multi-bank-reports`) : chaque chemin est **exécuté** avec des sentinelles (client, chèque, banque de détail, montant, date invalide) — Fund Position texte, rapport bancaire texte, extracteurs tabulaires, `bankReportProcessingService.processBankReportExcel` sur un vrai `File` (sans et avec feuille choisie), résumé fermé — console capturée sur les quatre niveaux ; aucune sentinelle ne peut apparaître dans la console, les erreurs retournées ni le résumé. Vérifié adversarial : la suite échoue sur `cc7fa3c` (deux chemins texte fuient), passe après FIX_4. **Limite** : cette suite n'exécutait pas `processFiles` ; la preuve de bout en bout est apportée en FIX_5. |
 | 3 | P1 — validation du libellé contournable : `IMPAYE` et `1 000 FCFA` acceptés comme facilités | `isBusinessLabel` exige au moins une lettre et refuse : marqueurs d'impayé (`IMPAYE`, `IMPAYES`, `UNPAID`, `DEFAULT`), tous les titres de section des deux jeux de libellés, les en-têtes de colonnes (DATE, CH.NO, DESCRIPTION, VENDOR PROVIDER, CLIENT, TR NO/FACT.NO, AMOUNT, MONTANT, LIMIT/LIMITE, USED, BALANCE, SOLDE, DISPONIBLE, DEPOSIT/DEPOT…), les préfixes structurels (TOTAL, IMPAYE, CHECK, DEPOSIT, OPENING/CLOSING BALANCE…) et tout contenu monétaire avec ou sans devise (`1 000 FCFA`, `12,5 €`, `250 000 XOF`). Tests : dix-huit libellés déguisés refusés. |
 
 Décisions CTO reprises : DEF-25 correction à la source ou profil bancaire
 explicitement attesté ; DEF-28 correction à la source, aucune exception XFD.
+
+### 2.4 Cinquième contre-revue (commit `f1b4fd6`) et corrections FIX_5
+
+| # | Finding | Correction |
+|---|---|---|
+| 1 | P1 — le graphe `/upload` fuit toujours : `excelProcessingService.ts` journalisait nom de fichier, feuille, en-têtes, client et erreurs brutes | `excelProcessingService.ts` et `excelMappingService.ts` (mapping ligne à ligne, valeurs invalides) ne journalisent plus que des compteurs et des rangs de ligne ; `supabaseClientService.ts` (retry, heartbeat) ne journalise plus d'objet ni de message d'erreur ; le libellé d'opération du retry porte le rang du fichier, plus son nom. Preuve : le test de bout en bout (finding 4) a d'abord échoué sur le nom de fichier journalisé par le mapping, puis passe. |
+| 2 | P1 — frontière d'erreur contournée : diagnostics et retry avec noms et messages bruts, `clientCode` et erreur de synchronisation, erreurs de sauvegarde propagées, exception générale brute, Internal Book avec feuille et messages bruts | `fileProcessingService.ts` : diagnostics Excel désignent le fichier par « fichier n°N » et un motif du vocabulaire fermé ; erreurs de synchronisation Collection réduites à un compteur et un motif (jamais le code client ni le message serveur) ; erreurs de sauvegarde (rapport bancaire, Fund Position) réduites à un motif fermé ; exception générale réduite au vocabulaire fermé (progression comprise). `internalBookProcessingResultAdapter.ts` : erreurs retournées = code fermé et rang de ligne (`A_MINUS_B_MISMATCH (ligne 12)`), ni feuille ni message ; `internalBookRuntimeProcessingService.ts` : document non reconnu = message fixe. Le vocabulaire fermé compte désormais vingt-trois motifs (Collection, persistance, réseau, document non pris en charge ajoutés). |
+| 3 | P1 — `isBusinessLabel` contournable en composition (`DATE 09/07/2026`, `AMOUNT 1 000`, `MONTANT 1 000 FCFA`, `LIMIT 1 000`, `USD 100`, `Découvert 1 000 FCFA`) | Refus de tout libellé contenant, à quelque position, un mot structurel (en-têtes de colonnes, marqueurs d'impayé, TOTAL, codes de devise), une date embarquée, ou une séquence monétaire embarquée (milliers groupés, décimale, nombre d'au moins quatre chiffres, nombre accolé à un symbole ou code de devise). Tests : les six libellés du verdict et neuf variantes supplémentaires refusés ; les libellés métier simples restent acceptés. Un libellé métier réel qui contiendrait un tel mot ou nombre serait refusé (fail-closed, jamais silencieux). |
+| 4 | P2 — tests sentinelles sans exécution de `processFiles` | Nouvelle suite `uploadPipelineSentinelRuntime.synthetic.test.ts` (enregistrée dans `test:multi-bank-reports`) : `fileProcessingService.processFiles` **exécuté** sur un lot marqué (rapport bancaire, Fund Position, Collection Report, Internal Book), sur un document bloqué au précontrôle (Client Reconciliation) et sur un fichier déclenchant l'exception générale ; console (quatre niveaux), événements de progression, `results.errors` et diagnostics Excel inspectés ; aucun message brut (`.xlsx`, `file=`, `row=`) toléré. Le client Supabase est un stub qui jette au moindre accès : aucune persistance n'est atteinte. Pour démarrer hors Vite, la garde de mutation est injectée par l'option `mutationGate` (type `UploadMutationGate` existant, tests seulement) ; le défaut reste la garde canonique et `uploadRuntimeGuard.synthetic.test.ts` fige que `FileUpload.tsx` ne l'injecte jamais. |
+| 5 | P2 — documentation excessive | §2.3 et §7 reformulés sur le périmètre réel de FIX_4 ; §7 distingue les chemins exécutés à runtime de ceux couverts par contrat de source. |
+
+Non exécutés à runtime (couverts par contrat de source et vocabulaire fermé) :
+persistance Supabase (stub inerte), synchronisation Collection (aucune
+collection acceptée dans le lot marqué), chemin Client Reconciliation legacy
+(bloqué au précontrôle). Réserve soumise au CTO : la revue Collection en
+mémoire (`collectionImportReviewService`, Pack C, appelée par `FileUpload.tsx`
+hors `processFiles`) désigne encore les fichiers par leur nom dans
+`ExcelImportIssue.file` et les erreurs de promotion par code client ; hors
+périmètre FIX_5, non modifiée. `debugInfo.internalBooks` reste un canal
+d'audit (feuilles, messages), ni journalisé ni affiché par `/upload`.
+
+Aucun fichier réel touché en FIX_5 (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_5` refusé).
 
 ## 3. Règles en vigueur (déterministes, documentées)
 
@@ -174,13 +196,18 @@ Runtime : `src/services/excelSheetGrid.ts`, `src/services/bankReportGridExtracto
 `src/services/importPreflightService.ts`, `src/services/documentDetectionService.ts`,
 `src/services/operationalImportRealFileQualification.ts`,
 `scripts/qualifyOperationalImportRealFile.ts`, `src/pages/FileUpload.tsx`,
-`src/services/extractionService.ts`, `src/services/extractionErrorSummary.ts` (nouveau, FIX_4).
+`src/services/extractionService.ts`, `src/services/extractionErrorSummary.ts` (nouveau, FIX_4),
+`src/services/excelProcessingService.ts`, `src/services/excelMappingService.ts`,
+`src/services/supabaseClientService.ts`, `src/services/internalBookProcessingResultAdapter.ts`,
+`src/services/internalBookRuntimeProcessingService.ts` (journaux et erreurs, FIX_5).
 
 Tests synthétiques : `excelSheetGrid`, `bankReportGridExtractor`,
 `fundPositionGridExtractor` (nouveaux) ; `bankIdentity`,
 `bankReportExtractionContract`, `importPreflightService`,
 `operationalImportReadiness`, `multiBankReportExtraction`, `uploadRuntimeGuard`,
-`uploadErrorHygiene` (contrat de source), `sensitiveSentinelRuntime` (exécution par sentinelles, FIX_4)
+`uploadErrorHygiene` (contrat de source), `sensitiveSentinelRuntime` (exécution par sentinelles, FIX_4),
+`uploadPipelineSentinelRuntime` (exécution de `processFiles` par sentinelles, FIX_5), `uploadRuntimeGuard`
+(contrat de la garde injectable), `internalBookProcessingResultAdapter.test` (format fermé)
 (complétés ou adaptés : contrat de source `processFiles(otherFiles, { sheetSelections })`).
 
 `package.json` : scripts uniquement. Docs : ce rapport, runbook de
@@ -257,14 +284,15 @@ profil bancaire explicite sur attestation métier.
 | SQL / migration / Supabase live | non |
 | Auth / RLS | non |
 | Réseau / services tiers | non |
-| Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail, sur tout le graphe d'appel (grille, texte PDF, legacy) — prouvé par sentinelles exécutées |
+| Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail : extracteurs grille et texte, service et mapping Collection Report, retry, Internal Book, exception générale — prouvé par exécution de `processFiles` sur un lot marqué (FIX_5) ; persistance et synchronisation non exécutées à runtime (stub), couvertes par contrat de source |
 | Erreurs `/upload` | vocabulaire fermé « ligne N : motif » (`summarizeExtractionErrors`), jamais un message brut d'extracteur |
 
 ## 8. Tests et baselines (local, Node 22.23.1, dépendances du lockfile)
 
 | Commande | Résultat |
 |---|---|
-| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`) | 86/86 PASS |
+| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`, `uploadPipelineSentinelRuntime`) | 90/90 PASS |
+| `uploadPipelineSentinelRuntime` avant assainissement du mapping Collection | FAIL sur le nom de fichier journalisé — preuve adversariale |
 | `sensitiveSentinelRuntime` rejoué sur `cc7fa3c` (worktree temporaire, supprimé) | 2/5 FAIL attendus (chemins texte) — preuve adversariale |
 | `npm run test:import-preflight` | 58/58 PASS |
 | `npm run test:upload-guard` | 14/14 PASS |
@@ -272,7 +300,8 @@ profil bancaire explicite sur attestation métier.
 | `npm run test:structured-excel` | 20/20 PASS |
 | `npm run test:xlsx-characterization` | 6/6 PASS |
 | `npm run test:legacy-isolation` | 4/4 PASS |
-| `npm run test:internal-book` | 90/90 PASS |
+| `npm run test:internal-book` | 90/90 PASS (format fermé de l’adaptateur adapté) |
+| `npm run test:collections-core` / `test:structured-excel` / `test:structured-csv-all` | 27/27, 20/20, 132/132 PASS |
 | `npm run test:quality-control` | 8/8 PASS |
 | `npm run test:daily-v2-application` | 106/106 PASS |
 | `npm run build` | PASS ; `supabase/functions/mcp/index.ts` intact |

@@ -46,7 +46,7 @@ export async function processInternalBookRuntimeFile(
     return {
       detection,
       processingResult: createEmptyProcessingResult(false, [
-        `File is not an Internal Book: ${detection.reason}`,
+        'Internal Book non reconnu : forme de document insuffisante.',
       ]),
     };
   }

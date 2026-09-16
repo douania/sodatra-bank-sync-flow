@@ -17,7 +17,18 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c — GO_FIX_PACK_2_FIX_4_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c_f1b4fd6 — GO_FIX_PACK_2_FIX_5_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Cinquième contre-revue CTO sur `f1b4fd6` : `FAIL` (trois P1, deux P2).
+Corrections FIX_5 : journaux du service et du mapping Collection Report, du
+retry et du heartbeat réduits aux compteurs et rangs ; frontière fermée sur
+diagnostics Excel, synchronisation, sauvegardes, exception générale et
+Internal Book (code + rang de ligne) ; `isBusinessLabel` refuse mots
+structurels, dates et séquences monétaires en composition ; test runtime de
+bout en bout `processFiles` sur lot marqué (console, progression, erreurs,
+diagnostics) avec garde injectable tests-seulement ; documentation ramenée au
+périmètre réel. Aucun fichier réel touché (rejeu FIX_5 refusé par le CTO).
+Réserve CTO : revue Collection en mémoire (Pack C) hors périmètre.
 
 Quatrième contre-revue CTO sur `cc7fa3c` : `FAIL` (deux P1). Corrections
 FIX_4 : journaux et erreurs assainis sur tout le graphe d'appel (extracteurs

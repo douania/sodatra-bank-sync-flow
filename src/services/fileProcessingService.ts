@@ -15,6 +15,7 @@ import { aggregateBatchSyncResults } from './syncResultAggregator';
 import {
   currentUploadMutationVerdict,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
+  type UploadMutationGate,
 } from './uploadRuntimeGuard';
 import { reconstructPdfTextLines } from './pdfTextLineReconstruction';
 import {
@@ -47,7 +48,16 @@ export interface ProcessFilesOptions {
    * affiché au précontrôle ; à défaut, rang dans le lot traité.
    */
   fileOrdinals?: ReadonlyMap<File, number>;
+  /**
+   * Garde de mutation injectable (tests synthétiques uniquement, même pattern
+   * que le moteur de promotion injectable). Le défaut est la garde canonique
+   * fail-closed ; l'interface ne fournit jamais cette option.
+   */
+  mutationGate?: UploadMutationGate;
 }
+
+/** Garde canonique : /upload reste staging-only, refus fail-closed sinon. */
+const defaultUploadMutationGate: UploadMutationGate = () => currentUploadMutationVerdict('deposit');
 
 export class FileProcessingService {
   async processFiles(files: File[], options: ProcessFilesOptions = {}): Promise<ProcessingResult> {
@@ -65,7 +75,7 @@ export class FileProcessingService {
 
     // ⭐ 0Z_AM : refus fail-closed AVANT timeout, heartbeat et tout traitement —
     // la cible courante doit autoriser la capacité deposit (production = lecture seule).
-    const uploadGate = currentUploadMutationVerdict('deposit');
+    const uploadGate = (options.mutationGate ?? defaultUploadMutationGate)();
     if (!uploadGate.allowed) {
       results.errors.push(UPLOAD_READ_ONLY_TARGET_MESSAGE);
       return results;
@@ -173,33 +183,34 @@ export class FileProcessingService {
         results.data!.excelImportDiagnostics = excelImportDiagnostics;
 
         for (const collectionFile of categorizedFiles.collectionReports) {
+          const collectionOrdinal = fileOrdinal(files, collectionFile, options.fileOrdinals);
           progressService.updateStepProgress('excel_processing', 'Traitement Excel',
-            `Traitement de ${collectionFile.name}`, 25 + (50 * categorizedFiles.collectionReports.indexOf(collectionFile) / categorizedFiles.collectionReports.length));
+            `Traitement du ${collectionOrdinal}`, 25 + (50 * categorizedFiles.collectionReports.indexOf(collectionFile) / categorizedFiles.collectionReports.length));
 
           // ⭐ EXTRACTION EXCEL AVEC RETRY
           const excelResult = await SupabaseRetryService.executeWithRetry(
             () => excelProcessingService.processCollectionReportExcel(collectionFile),
             { maxRetries: 3 },
-            `Extraction Excel - ${collectionFile.name}`
+            `Extraction Excel - ${collectionOrdinal}`
           );
 
           excelImportDiagnostics.files_processed++;
           for (const message of excelResult.errors ?? []) {
-            excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message });
+            excelImportDiagnostics.excel_errors.push({ file: collectionOrdinal, message: summarizeExtractionErrors([message]) });
           }
           for (const message of excelResult.warnings ?? []) {
-            excelImportDiagnostics.excel_warnings.push({ file: collectionFile.name, message });
+            excelImportDiagnostics.excel_warnings.push({ file: collectionOrdinal, message: summarizeExtractionErrors([message]) });
           }
 
           if (excelResult.success && excelResult.data) {
             allCollections = [...allCollections, ...excelResult.data];
             excelImportDiagnostics.collections_extracted += excelResult.data.length;
           } else {
-            const errorMsg = `Erreur traitement Excel ${fileOrdinal(files, collectionFile, options.fileOrdinals)}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
+            const errorMsg = `Erreur traitement Excel ${collectionOrdinal}: ${summarizeExtractionErrors(excelResult.errors)}`;
             console.error('❌ Erreur traitement Excel d’un Collection Report');
             results.errors?.push(errorMsg);
             if (!excelResult.errors || excelResult.errors.length === 0) {
-              excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message: 'Erreur inconnue' });
+              excelImportDiagnostics.excel_errors.push({ file: collectionOrdinal, message: 'contrat d’extraction refusé' });
             }
           }
         }
@@ -275,8 +286,8 @@ export class FileProcessingService {
           
           // ⭐ AJOUTER LES ERREURS AU RÉSULTAT GLOBAL
           if (syncResult.errors.length > 0) {
-            const errorMessages = syncResult.errors.map(e => `${e.collection?.clientCode ?? 'INCONNU'}: ${e.error}`);
-            results.errors?.push(...errorMessages);
+            // Pack 2 (FIX_5) : ni code client ni message serveur dans les erreurs retournées.
+            results.errors?.push(`Synchronisation Collection : ${syncResult.errors.length} collection(s) en erreur (${summarizeExtractionErrors(syncResult.errors.map(e => e.error))}).`);
           }
         }
       } else {
@@ -303,7 +314,7 @@ export class FileProcessingService {
           for (const report of bankReports) {
             const saveResult = await databaseService.saveBankReport(report);
             if (!saveResult.success) {
-              results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
+              results.errors?.push(`Erreur sauvegarde rapport bancaire ${report.bank} : ${summarizeExtractionErrors(saveResult.error ? [saveResult.error] : undefined)}`);
             }
           }
           
@@ -330,7 +341,7 @@ export class FileProcessingService {
           results.data!.fundPosition = fundPosition;
           const saveResult = await databaseService.saveFundPosition(fundPosition);
           if (!saveResult.success) {
-            results.errors?.push(`Erreur sauvegarde Fund Position: ${saveResult.error}`);
+            results.errors?.push(`Erreur sauvegarde Fund Position : ${summarizeExtractionErrors(saveResult.error ? [saveResult.error] : undefined)}`);
           }
         }
         
@@ -381,9 +392,10 @@ export class FileProcessingService {
     } catch (error) {
       // Pack 2 : aucun objet d'erreur en console (il peut porter une ligne brute).
       console.error('❌ ERREUR CRITIQUE GÉNÉRALE');
-      progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', 
-        error instanceof Error ? error.message : 'Erreur inconnue');
-      results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
+      // Pack 2 (FIX_5) : l'exception générale est réduite au vocabulaire fermé.
+      const generalReason = summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined);
+      progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', generalReason);
+      results.errors?.push(generalReason);
       
       // ⭐ NETTOYAGE EN CAS D'ERREUR
       const { HeartbeatService } = await import('./supabaseClientService');
