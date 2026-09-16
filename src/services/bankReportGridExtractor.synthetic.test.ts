@@ -289,6 +289,10 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
     'DATE 09/07/2026', 'AMOUNT 1 000', 'MONTANT 1 000 FCFA', 'LIMIT 1 000', 'USD 100', 'Découvert 1 000 FCFA',
     'Escompte 12,5', 'Crédit 1.000.000', 'SPOT € 500', 'Avance 2500', 'Impayé client X', 'Solde disponible',
     'Total escompte', 'Facilité au 09-07-26', 'Découvert 100 $',
+    // FIX_6 : vocabulaire structurel complet en composition, et tout chiffre dans un libellé générique.
+    'LIGNE CHEQUE 100', 'FACILITE DEPOSIT', 'TYPE CHECK', 'LIGNE BANK FACILITY', 'Découvert 999', 'AMT 100',
+    'CREDIT SPOT 90 JOURS', 'Escompte de chèques', 'Facilité de caisse', 'Not yet cleared', 'Dépôts pas encore encaissés',
+    'Closing book', 'Add escompte', 'Vendor SPN', 'Ch.No 12',
   ]) {
     const disguised = englishReport('BDK');
     disguised[15] = [null, D('2026-07-09'), nonLabel, A(1_000_000_000), A(400_000_000), null, A(600_000_000)];

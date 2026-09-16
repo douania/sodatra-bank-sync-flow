@@ -543,7 +543,8 @@ export class DatabaseService {
 
       return { success: true };
     } catch (error) {
-      console.error('Error saving bank report:', error);
+      // Pack 2 (FIX_6) : aucun objet d'erreur en console (message serveur, ligne brute).
+      console.error('❌ Erreur sauvegarde rapport bancaire');
       return { success: false, error: error instanceof Error ? error.message : 'Erreur inconnue' };
     }
   }
@@ -572,7 +573,7 @@ export class DatabaseService {
 
       return { success: true };
     } catch (error) {
-      console.error('❌ Erreur critique sauvegarde Fund Position:', error);
+      console.error('❌ Erreur critique sauvegarde Fund Position');
       return { success: false, error: error instanceof Error ? error.message : 'Erreur inconnue' };
     }
   }

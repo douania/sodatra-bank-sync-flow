@@ -83,10 +83,11 @@ explicitement attesté ; DEF-28 correction à la source, aucune exception XFD.
 | 4 | P2 — tests sentinelles sans exécution de `processFiles` | Nouvelle suite `uploadPipelineSentinelRuntime.synthetic.test.ts` (enregistrée dans `test:multi-bank-reports`) : `fileProcessingService.processFiles` **exécuté** sur un lot marqué (rapport bancaire, Fund Position, Collection Report, Internal Book), sur un document bloqué au précontrôle (Client Reconciliation) et sur un fichier déclenchant l'exception générale ; console (quatre niveaux), événements de progression, `results.errors` et diagnostics Excel inspectés ; aucun message brut (`.xlsx`, `file=`, `row=`) toléré. Le client Supabase est un stub qui jette au moindre accès : aucune persistance n'est atteinte. Pour démarrer hors Vite, la garde de mutation est injectée par l'option `mutationGate` (type `UploadMutationGate` existant, tests seulement) ; le défaut reste la garde canonique et `uploadRuntimeGuard.synthetic.test.ts` fige que `FileUpload.tsx` ne l'injecte jamais. |
 | 5 | P2 — documentation excessive | §2.3 et §7 reformulés sur le périmètre réel de FIX_4 ; §7 distingue les chemins exécutés à runtime de ceux couverts par contrat de source. |
 
-Non exécutés à runtime (couverts par contrat de source et vocabulaire fermé) :
-persistance Supabase (stub inerte), synchronisation Collection (aucune
-collection acceptée dans le lot marqué), chemin Client Reconciliation legacy
-(bloqué au précontrôle). Réserve soumise au CTO : la revue Collection en
+**Limites de FIX_5 relevées par la cinquième contre-revue** : la persistance et
+la synchronisation n'étaient ni exécutées ni assainies (`databaseService`,
+`batchProcessingService`, `intelligentSyncService` journalisaient encore des
+objets et messages bruts), l'option `mutationGate` affaiblissait la garde de
+production, et `isBusinessLabel` restait contournable — corrigés en FIX_6 (§2.5). Réserve soumise au CTO : la revue Collection en
 mémoire (`collectionImportReviewService`, Pack C, appelée par `FileUpload.tsx`
 hors `processFiles`) désigne encore les fichiers par leur nom dans
 `ExcelImportIssue.file` et les erreurs de promotion par code client ; hors
@@ -94,6 +95,19 @@ périmètre FIX_5, non modifiée. `debugInfo.internalBooks` reste un canal
 d'audit (feuilles, messages), ni journalisé ni affiché par `/upload`.
 
 Aucun fichier réel touché en FIX_5 (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_5` refusé).
+
+### 2.5 Sixième contre-revue (commit `882e8b8`) et corrections FIX_6
+
+| # | Finding | Correction |
+|---|---|---|
+| 1 | P1 — régression de sécurité : option `mutationGate` dans l'API de production | Option supprimée ; `processFiles` revient à la garde canonique seule (`currentUploadMutationVerdict('deposit')`), contrat de source rétabli et renforcé dans `uploadRuntimeGuard.synthetic.test.ts` (aucune occurrence de `mutationGate` / `UploadMutationGate` tolérée). Le test runtime substitue `./uploadRuntimeGuard`, vu depuis `fileProcessingService` seulement, par un double au niveau du loader Node. |
+| 2 | P1 — erreurs brutes journalisées sur les chemins de persistance atteignables | `databaseService.saveBankReport` / `saveFundPosition` : aucun objet d'erreur en console ; `batchProcessingService` : erreur de lot réduite au vocabulaire fermé ; `intelligentSyncService` (analyse, chargement, traitement, insertion, doublon, race, traçabilité) : compteurs et rangs de ligne seulement, ni nom de fichier ni objet ni message. Les autres méthodes de `databaseService` (lectures, marquages) ne sont pas atteignables depuis `processFiles` et restent hors périmètre. |
+| 3 | P1 — `isBusinessLabel` contournable en composition | Refus de tout chiffre dans un libellé générique et de tout mot du vocabulaire structurel complet (titres de section des deux jeux de libellés mot par mot, en-têtes de colonnes, marqueurs, totaux, soldes, ADD/LESS, devises, abréviations `AMT`), cherché avant retrait du préfixe ADD/LESS. Tests : les six libellés du verdict (`LIGNE CHEQUE 100`, `FACILITE DEPOSIT`, `TYPE CHECK`, `LIGNE BANK FACILITY`, `Découvert 999`, `AMT 100`) et neuf variantes refusés ; `SPN`, `OVERDRAFT` restent acceptés. Un libellé métier réel portant un chiffre ou un tel mot serait refusé : exception par profil bancaire attesté (Pack 2B). |
+| 4 | P2 — test de bout en bout évitant les chemins critiques | `uploadPipelineSentinelRuntime` exécute désormais aussi un lot marqué **valide** (rapport BDK, Fund Position, deux collections) jusqu'à la persistance (`rpc`) et la synchronisation (`insert`), dont les doubles Supabase, injectés au niveau du loader et sans réseau, échouent avec des messages sentinelles ; preuve d'atteinte : un rapport, une Fund Position et deux collections extraits, résultat de synchronisation en erreur, trois erreurs fermées « sauvegarde » / « synchronisation ». Aucune sentinelle en console, progression, erreurs ni diagnostics. Rejoué sur `882e8b8` : échec (objets d'erreur journalisés par la persistance). |
+| 5 | P2 — journaux bruts de la page et de la revue Collection | Les quatre `console.*` de `FileUpload.tsx` (traitement, promotion) et de `collectionImportReviewService.ts` (statuts proposés, détection) ne portent plus d'objet d'erreur. L'affichage métier des noms de fichiers et codes clients dans la revue reste Pack 2B, comme arbitré. |
+| 6 | Documentation | §2.4 et §7 corrigés : la persistance n'était pas couverte en FIX_5 ; elle est désormais exécutée par doubles. |
+
+Aucun fichier réel touché en FIX_6 (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_6` refusé).
 
 ## 3. Règles en vigueur (déterministes, documentées)
 
@@ -199,7 +213,10 @@ Runtime : `src/services/excelSheetGrid.ts`, `src/services/bankReportGridExtracto
 `src/services/extractionService.ts`, `src/services/extractionErrorSummary.ts` (nouveau, FIX_4),
 `src/services/excelProcessingService.ts`, `src/services/excelMappingService.ts`,
 `src/services/supabaseClientService.ts`, `src/services/internalBookProcessingResultAdapter.ts`,
-`src/services/internalBookRuntimeProcessingService.ts` (journaux et erreurs, FIX_5).
+`src/services/internalBookRuntimeProcessingService.ts` (journaux et erreurs, FIX_5),
+`src/services/databaseService.ts` (sauvegardes), `src/services/batchProcessingService.ts`,
+`src/services/intelligentSyncService.ts`, `src/services/collectionImportReviewService.ts`,
+`src/pages/FileUpload.tsx` (journaux, FIX_6).
 
 Tests synthétiques : `excelSheetGrid`, `bankReportGridExtractor`,
 `fundPositionGridExtractor` (nouveaux) ; `bankIdentity`,
@@ -284,14 +301,16 @@ profil bancaire explicite sur attestation métier.
 | SQL / migration / Supabase live | non |
 | Auth / RLS | non |
 | Réseau / services tiers | non |
-| Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail : extracteurs grille et texte, service et mapping Collection Report, retry, Internal Book, exception générale — prouvé par exécution de `processFiles` sur un lot marqué (FIX_5) ; persistance et synchronisation non exécutées à runtime (stub), couvertes par contrat de source |
+| Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail, sans objet d'erreur : extracteurs grille et texte, service et mapping Collection Report, retry, Internal Book, persistance (`saveBankReport`, `saveFundPosition`), synchronisation par lots, exception générale, page et revue Collection — prouvé par exécution de `processFiles` sur un lot invalide et sur un lot valide dont les doubles Supabase échouent avec des sentinelles (FIX_6) |
+| Garde `/upload` | canonique seule, aucune option d'injection en production ; substitution au niveau du loader Node dans les tests uniquement |
 | Erreurs `/upload` | vocabulaire fermé « ligne N : motif » (`summarizeExtractionErrors`), jamais un message brut d'extracteur |
 
 ## 8. Tests et baselines (local, Node 22.23.1, dépendances du lockfile)
 
 | Commande | Résultat |
 |---|---|
-| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`, `uploadPipelineSentinelRuntime`) | 90/90 PASS |
+| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`, `uploadPipelineSentinelRuntime`) | 91/91 PASS |
+| `uploadPipelineSentinelRuntime` rejoué sur `882e8b8` (worktree temporaire, supprimé) | FAIL attendu sur le lot valide (persistance) — preuve adversariale |
 | `uploadPipelineSentinelRuntime` avant assainissement du mapping Collection | FAIL sur le nom de fichier journalisé — preuve adversariale |
 | `sensitiveSentinelRuntime` rejoué sur `cc7fa3c` (worktree temporaire, supprimé) | 2/5 FAIL attendus (chemins texte) — preuve adversariale |
 | `npm run test:import-preflight` | 58/58 PASS |
@@ -303,7 +322,8 @@ profil bancaire explicite sur attestation métier.
 | `npm run test:internal-book` | 90/90 PASS (format fermé de l’adaptateur adapté) |
 | `npm run test:collections-core` / `test:structured-excel` / `test:structured-csv-all` | 27/27, 20/20, 132/132 PASS |
 | `npm run test:quality-control` | 8/8 PASS |
-| `npm run test:daily-v2-application` | 106/106 PASS |
+| `npm run test:daily-v2-application` / `daily-v2-reporting` / `financial-atomic` | 106/106, 70/70, 25/25 PASS |
+| `npm run test:financial-write-lockdown` | 1/2 : échec d’environnement préexistant (chemin du dépôt local avec espaces, `scandir` sur URL encodée), fichier de test non modifié ; à confirmer en CI |
 | `npm run build` | PASS ; `supabase/functions/mcp/index.ts` intact |
 | `git diff --check` | PASS |
 

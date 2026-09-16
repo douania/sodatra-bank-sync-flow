@@ -17,7 +17,18 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c_f1b4fd6 — GO_FIX_PACK_2_FIX_5_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c_f1b4fd6_882e8b8 — GO_FIX_PACK_2_FIX_6_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Sixième contre-revue CTO sur `882e8b8` : `FAIL` (trois P1, deux P2).
+Corrections FIX_6 : option `mutationGate` retirée de l'API de production
+(garde canonique seule, substitution au niveau du loader dans les tests) ;
+journaux de persistance et de synchronisation atteignables assainis
+(`databaseService`, `batchProcessingService`, `intelligentSyncService`) ;
+`isBusinessLabel` refuse tout chiffre et tout mot du vocabulaire structurel
+complet ; test de bout en bout sur lot valide jusqu'aux doubles Supabase en
+échec sentinelle (persistance et synchronisation atteintes) ; quatre
+`console.*` bruts de la page et de la revue Collection neutralisés ; docs
+corrigées. Aucun fichier réel touché (rejeu FIX_6 refusé).
 
 Cinquième contre-revue CTO sur `f1b4fd6` : `FAIL` (trois P1, deux P2).
 Corrections FIX_5 : journaux du service et du mapping Collection Report, du

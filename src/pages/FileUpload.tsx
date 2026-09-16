@@ -383,7 +383,8 @@ const FileUpload = () => {
         }
       }
     } catch (error) {
-      console.error("Erreur lors du traitement:", error);
+      // Pack 2 (FIX_6) : aucun objet d'erreur en console.
+      console.error("Erreur lors du traitement");
       toast({
         variant: "destructive",
         title: "Erreur Critique",
@@ -462,7 +463,7 @@ const FileUpload = () => {
         });
       }
     } catch (error) {
-      console.error("Erreur lors de la promotion:", error);
+      console.error("Erreur lors de la promotion");
       toast({
         variant: "destructive",
         title: "Erreur de promotion",

@@ -161,10 +161,13 @@ const MONETARY_CONTENT = /^[\d\s.,+()-]+\s*(?:FCFA|F ?CFA|XOF|CFA|EUR|USD|GBP|�
  * `AMOUNT 1 000`, `LIMIT 1 000`, `USD 100`).
  */
 const STRUCTURAL_TOKENS = new Set<string>([
-  'DATE', 'DESCRIPTION', 'VENDOR', 'PROVIDER', 'CLIENT', 'AMOUNT', 'MONTANT', 'LIMIT', 'LIMITE',
-  'USED', 'UTILISE', 'BALANCE', 'SOLDE', 'DISPONIBLE', 'IMPAYE', 'IMPAYES', 'UNPAID', 'DEFAULT',
-  'TOTAL', 'FCFA', 'CFA', 'XOF', 'EUR', 'USD', 'GBP',
-]);
+  // FIX_6 : tout le vocabulaire structurel, mot par mot (titres de section,
+  // en-têtes de colonnes, marqueurs, totaux, soldes, devises, abréviations).
+  ...[...STRUCTURAL_VOCABULARY].flatMap(phrase => phrase.split(/[^A-Z0-9]+/)),
+  ...FACILITY_COLUMN_HEADERS,
+  'TOTAL', 'TOTAUX', 'SOUS', 'AMT', 'AMOUNTS', 'MONTANTS', 'OPENING', 'CLOSING', 'BOOK',
+  'ADD', 'LESS', 'PLUS', 'MOINS', 'FCFA', 'CFA', 'XOF', 'EUR', 'USD', 'GBP',
+].filter(Boolean));
 /** Date embarquée (`JJ/MM/AA[AA]`, `JJ-MM-AAAA`) à quelque position que ce soit. */
 const EMBEDDED_DATE = /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/;
 /**
@@ -197,7 +200,11 @@ export function isBusinessLabel(
   if (labels.facilitiesHeading.test(normalized) || labels.opening.test(normalized) || labels.closing.test(normalized)) return false;
   if (EMBEDDED_DATE.test(text) || EMBEDDED_DATE.test(normalized)) return false;
   if (EMBEDDED_MONETARY.test(text) || EMBEDDED_MONETARY.test(normalized)) return false;
-  if (normalized.split(/[^A-Z0-9]+/).some(token => STRUCTURAL_TOKENS.has(token))) return false;
+  // FIX_6 : aucun chiffre dans un libellé générique (`Découvert 999`, `AMT 100`,
+  // `CREDIT 90 JOURS`) ; une exception relèverait d'un profil bancaire attesté (Pack 2B).
+  if (/\d/.test(normalized)) return false;
+  // Les mots structurels sont cherchés AVANT retrait du préfixe ADD/LESS (`Add escompte` refusé).
+  if (normalizeLabel(text).split(/[^A-Z0-9]+/).some(token => STRUCTURAL_TOKENS.has(token))) return false;
   return true;
 }
 

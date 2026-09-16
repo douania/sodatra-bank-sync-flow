@@ -15,7 +15,6 @@ import { aggregateBatchSyncResults } from './syncResultAggregator';
 import {
   currentUploadMutationVerdict,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
-  type UploadMutationGate,
 } from './uploadRuntimeGuard';
 import { reconstructPdfTextLines } from './pdfTextLineReconstruction';
 import {
@@ -48,16 +47,7 @@ export interface ProcessFilesOptions {
    * affiché au précontrôle ; à défaut, rang dans le lot traité.
    */
   fileOrdinals?: ReadonlyMap<File, number>;
-  /**
-   * Garde de mutation injectable (tests synthétiques uniquement, même pattern
-   * que le moteur de promotion injectable). Le défaut est la garde canonique
-   * fail-closed ; l'interface ne fournit jamais cette option.
-   */
-  mutationGate?: UploadMutationGate;
 }
-
-/** Garde canonique : /upload reste staging-only, refus fail-closed sinon. */
-const defaultUploadMutationGate: UploadMutationGate = () => currentUploadMutationVerdict('deposit');
 
 export class FileProcessingService {
   async processFiles(files: File[], options: ProcessFilesOptions = {}): Promise<ProcessingResult> {
@@ -75,7 +65,7 @@ export class FileProcessingService {
 
     // ⭐ 0Z_AM : refus fail-closed AVANT timeout, heartbeat et tout traitement —
     // la cible courante doit autoriser la capacité deposit (production = lecture seule).
-    const uploadGate = (options.mutationGate ?? defaultUploadMutationGate)();
+    const uploadGate = currentUploadMutationVerdict('deposit');
     if (!uploadGate.allowed) {
       results.errors.push(UPLOAD_READ_ONLY_TARGET_MESSAGE);
       return results;
