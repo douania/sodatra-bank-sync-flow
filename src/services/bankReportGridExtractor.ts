@@ -140,11 +140,27 @@ function isFacilityColumnHeaderRow(row: readonly ExcelGridCell[]): boolean {
   return labels.length > 0 && labels.every(label => FACILITY_COLUMN_HEADERS.has(label));
 }
 
+/** Vocabulaire structurel des rapports : jamais un libellé métier (FIX_4). */
+const STRUCTURAL_VOCABULARY = new Set<string>([
+  'DATE', 'CH.NO', 'CH NO', 'CH.NO/BD', 'DESCRIPTION', 'VENDOR PROVIDER', 'VENDOR', 'CLIENT',
+  'TR NO/FACT.NO', 'AMOUNT', 'MONTANT', 'LIMIT', 'LIMITE', 'USED', 'UTILISE', 'BALANCE', 'SOLDE',
+  'DISPONIBLE', 'IMPAYE', 'IMPAYES', 'UNPAID', 'DEFAULT', 'DEFAULTED', 'CHECK', 'CHECKS', 'CHEQUE', 'CHEQUES',
+  'DEPOSIT', 'DEPOSITS', 'DEPOT', 'DEPOTS', 'FACILITY', 'FACILITE', 'FACILITES', 'BANK FACILITY',
+  ...ENGLISH_LABELS.depositsHeading, ...ENGLISH_LABELS.checksHeading, ...ENGLISH_LABELS.impayesHeading,
+  ...ENGLISH_LABELS.impayeMarker, ...ORA_LABELS.depositsHeading, ...ORA_LABELS.checksHeading,
+  ...ORA_LABELS.impayesHeading, ...ORA_LABELS.impayeMarker,
+]);
+/** Préfixes structurels : un libellé qui commence par l'un d'eux n'est pas métier. */
+const STRUCTURAL_PREFIX = /^(?:TOTAL|SOUS TOTAL|IMPAYE|UNPAID|DEFAULT|CHECK|CHEQUE|DEPOSIT|DEPOT|OPENING BALANCE|CLOSING BALANCE|SOLDE D'OUVERTURE|SOLDE DE CLOTURE|BANK FACILITY)S?\b/;
+/** Contenu monétaire ou numérique (avec ou sans devise) : jamais un libellé métier. */
+const MONETARY_CONTENT = /^[\d\s.,+()-]+\s*(?:FCFA|F ?CFA|XOF|CFA|EUR|USD|GBP|€|\$|£)?\.?$/i;
+
 /**
- * Libellé métier admissible pour une facilité : texte non vide qui n'est pas
- * une date (`JJ/MM/AAAA`, ISO ou année courte corroborée), pas un marqueur
- * structurel (TOTAL…, LIMIT/USED/BALANCE, titre de section, préfixe ADD/LESS)
- * et pas un contenu purement numérique.
+ * Libellé métier admissible pour une facilité : texte contenant au moins une
+ * lettre, qui n'est ni une date (typée, textuelle ou année courte corroborée),
+ * ni un mot ou préfixe du vocabulaire structurel (titres de section, marqueurs
+ * d'impayé, en-têtes de colonnes, totaux, ADD/LESS), ni un contenu monétaire
+ * ou numérique (`1 000`, `1 000 FCFA`, `12,5 €`).
  */
 export function isBusinessLabel(
   text: string,
@@ -152,10 +168,11 @@ export function isBusinessLabel(
   labels: Pick<BankReportLabelSet, 'facilitiesHeading' | 'opening' | 'closing'>,
 ): boolean {
   const normalized = normalizeLabel(text).replace(ADD_LESS_PREFIX, '').trim();
-  if (!normalized) return false;
+  if (!normalized || !/[A-Z]/.test(normalized)) return false;
   if (parseCorroboratedDate(text, years) !== null || /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(text.trim())) return false;
-  if (/^[\d\s.,+-]+$/.test(normalized)) return false;
+  if (MONETARY_CONTENT.test(text.trim()) || MONETARY_CONTENT.test(normalized)) return false;
   if (TOTAL_PREFIX.test(normalized) || FACILITY_COLUMN_HEADERS.has(normalized)) return false;
+  if (STRUCTURAL_VOCABULARY.has(normalized) || STRUCTURAL_PREFIX.test(normalized)) return false;
   if (labels.facilitiesHeading.test(normalized) || labels.opening.test(normalized) || labels.closing.test(normalized)) return false;
   return true;
 }

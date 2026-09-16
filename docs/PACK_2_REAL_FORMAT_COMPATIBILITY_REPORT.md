@@ -62,6 +62,17 @@ Décisions CTO reprises : DEF-25, DEF-26, DEF-27 en Pack 2B (correction à la
 source privilégiée ; profil bancaire explicite seulement sur attestation
 métier, jamais de réouverture générique).
 
+### 2.3 Quatrième contre-revue (commit `cc7fa3c`) et corrections FIX_4
+
+| # | Finding | Correction |
+|---|---|---|
+| 1 | P1 — hygiène incomplète du pipeline : les extracteurs texte (Fund Position PDF, rapports bancaires PDF) journalisaient encore des lignes brutes, des montants, des dates et des objets d'erreur, et leurs messages bruts remontaient tels quels dans `results.errors` | Assainissement de **tout le graphe d'appel** : `extractionService.ts` (helpers de date et de montant, soldes, dépôts, facilités, impayés, Fund Position) et `bankReportSectionExtractor.ts` ne journalisent plus que des compteurs et des rangs de ligne ; les messages d'erreur portent un rang (`Ligne n°N`, `(ligne N)`) et un motif, jamais la ligne, le chèque, le client ni le montant. Nouvelle frontière `src/services/extractionErrorSummary.ts` : `summarizeExtractionErrors` réduit tout message d'extracteur (grille, texte, legacy, exception) à « ligne N : motif » dans un vocabulaire fermé de treize motifs ; `fileProcessingService.ts` ne pousse plus aucun message brut. |
+| 2 | P1 — tests de source seulement, pas d'exécution : aucune preuve runtime | Nouvelle suite `sensitiveSentinelRuntime.synthetic.test.ts` (enregistrée dans `test:multi-bank-reports`) : chaque chemin est **exécuté** avec des sentinelles (client, chèque, banque de détail, montant, date invalide) — Fund Position texte, rapport bancaire texte, extracteurs tabulaires, `bankReportProcessingService.processBankReportExcel` sur un vrai `File` (sans et avec feuille choisie), résumé fermé — console capturée sur les quatre niveaux ; aucune sentinelle ne peut apparaître dans la console, les erreurs retournées ni le résumé. Vérifié adversarial : la suite échoue sur `cc7fa3c` (deux chemins texte fuient), passe après FIX_4. |
+| 3 | P1 — validation du libellé contournable : `IMPAYE` et `1 000 FCFA` acceptés comme facilités | `isBusinessLabel` exige au moins une lettre et refuse : marqueurs d'impayé (`IMPAYE`, `IMPAYES`, `UNPAID`, `DEFAULT`), tous les titres de section des deux jeux de libellés, les en-têtes de colonnes (DATE, CH.NO, DESCRIPTION, VENDOR PROVIDER, CLIENT, TR NO/FACT.NO, AMOUNT, MONTANT, LIMIT/LIMITE, USED, BALANCE, SOLDE, DISPONIBLE, DEPOSIT/DEPOT…), les préfixes structurels (TOTAL, IMPAYE, CHECK, DEPOSIT, OPENING/CLOSING BALANCE…) et tout contenu monétaire avec ou sans devise (`1 000 FCFA`, `12,5 €`, `250 000 XOF`). Tests : dix-huit libellés déguisés refusés. |
+
+Décisions CTO reprises : DEF-25 correction à la source ou profil bancaire
+explicitement attesté ; DEF-28 correction à la source, aucune exception XFD.
+
 ## 3. Règles en vigueur (déterministes, documentées)
 
 ### 3.1 Sélection explicite d'une feuille (`src/services/excelSheetGrid.ts`)
@@ -162,19 +173,29 @@ Runtime : `src/services/excelSheetGrid.ts`, `src/services/bankReportGridExtracto
 `src/services/bankReportProcessingService.ts`, `src/services/fileProcessingService.ts`,
 `src/services/importPreflightService.ts`, `src/services/documentDetectionService.ts`,
 `src/services/operationalImportRealFileQualification.ts`,
-`scripts/qualifyOperationalImportRealFile.ts`, `src/pages/FileUpload.tsx`.
+`scripts/qualifyOperationalImportRealFile.ts`, `src/pages/FileUpload.tsx`,
+`src/services/extractionService.ts`, `src/services/extractionErrorSummary.ts` (nouveau, FIX_4).
 
 Tests synthétiques : `excelSheetGrid`, `bankReportGridExtractor`,
 `fundPositionGridExtractor` (nouveaux) ; `bankIdentity`,
 `bankReportExtractionContract`, `importPreflightService`,
-`operationalImportReadiness`, `multiBankReportExtraction`, `uploadRuntimeGuard`
+`operationalImportReadiness`, `multiBankReportExtraction`, `uploadRuntimeGuard`,
+`uploadErrorHygiene` (contrat de source), `sensitiveSentinelRuntime` (exécution par sentinelles, FIX_4)
 (complétés ou adaptés : contrat de source `processFiles(otherFiles, { sheetSelections })`).
 
 `package.json` : scripts uniquement. Docs : ce rapport, runbook de
 qualification, `STATUS_REGISTRY`, `MASTER_CONTEXT`, `DEFERRED_BACKLOG`
 (DEF-20 à DEF-24).
 
-## 5. Validation locale sur fichiers réels (`…_FIX_3`, hors dépôt, sous GO)
+## 5. Validation locale sur fichiers réels (`…_FIX_3` puis `…_FIX_4`, hors dépôt, sous GO)
+
+Rejeu `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_4` (harness,
+feuille du 9 juillet ; Fund Position 7 juillet ; échantillons 60 / 150
+feuilles) : verdicts, codes d'erreur et compteurs **identiques** à FIX_3 —
+FIX_4 ne modifie ni l'acceptation ni le refus d'un document réel, seulement
+la forme des journaux et des erreurs ; le durcissement du libellé de facilité
+ne change aucun verdict (aucune facilité réelle n'était libellée par un
+marqueur ou un montant). Aucune persistance, aucune sortie brute.
 
 Harness officiel, feuille du 9 juillet 2026 (Fund Position : dernière feuille
 disponible, 7 juillet 2026) :
@@ -236,13 +257,15 @@ profil bancaire explicite sur attestation métier.
 | SQL / migration / Supabase live | non |
 | Auth / RLS | non |
 | Réseau / services tiers | non |
-| Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail |
+| Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail, sur tout le graphe d'appel (grille, texte PDF, legacy) — prouvé par sentinelles exécutées |
+| Erreurs `/upload` | vocabulaire fermé « ligne N : motif » (`summarizeExtractionErrors`), jamais un message brut d'extracteur |
 
 ## 8. Tests et baselines (local, Node 22.23.1, dépendances du lockfile)
 
 | Commande | Résultat |
 |---|---|
-| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`) | 81/81 PASS |
+| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`) | 86/86 PASS |
+| `sensitiveSentinelRuntime` rejoué sur `cc7fa3c` (worktree temporaire, supprimé) | 2/5 FAIL attendus (chemins texte) — preuve adversariale |
 | `npm run test:import-preflight` | 58/58 PASS |
 | `npm run test:upload-guard` | 14/14 PASS |
 | `npm run test:bdk-pdf` | 27/27 PASS |

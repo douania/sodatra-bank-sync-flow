@@ -106,7 +106,7 @@ class BankReportProcessingService {
       };
 
     } catch (error) {
-      console.error('❌ ERREUR CRITIQUE TRAITEMENT RAPPORT BANCAIRE:', error);
+      console.error('❌ ERREUR CRITIQUE TRAITEMENT RAPPORT BANCAIRE');
       return {
         success: false,
         errors: [`Erreur critique: ${error instanceof Error ? error.message : 'Erreur inconnue'}`]
@@ -196,7 +196,7 @@ class BankReportProcessingService {
       console.log(`📄 PDF text extracted: ${fullText.length} characters`);
       return fullText;
     } catch (error) {
-      console.error('❌ Erreur extraction PDF:', error);
+      console.error('❌ Erreur extraction PDF');
       throw new Error(`Extraction PDF refusée: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
     }
   }

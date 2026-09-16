@@ -51,10 +51,10 @@ function convertToISODate(dateStr: string): string {
     }
     
     // Fallback sur la date actuelle
-    console.log(`⚠️ Format de date non reconnu: ${dateStr}, utilisation de la date actuelle`);
+    console.log('⚠️ Format de date non reconnu, utilisation de la date actuelle');
     return new Date().toISOString().split('T')[0];
   } catch (error) {
-    console.error('❌ Erreur conversion date:', dateStr, error);
+    console.error('❌ Erreur conversion date');
     return new Date().toISOString().split('T')[0];
   }
 }
@@ -78,14 +78,13 @@ function cleanAmount(amountStr: string | undefined): number {
     const floatValue = parseFloat(cleaned) || 0;
     // Vérifier si le nombre est trop grand pour être un entier sûr
     if (floatValue > Number.MAX_SAFE_INTEGER) {
-      console.warn(`⚠️ Montant très élevé détecté: ${floatValue}, limitation à MAX_SAFE_INTEGER`);
+      console.warn('⚠️ Montant très élevé détecté, limitation à MAX_SAFE_INTEGER');
       return Number.MAX_SAFE_INTEGER;
     }
     const result = Math.floor(floatValue);
-    console.log(`💰 Montant nettoyé: "${amountStr}" -> ${result}`);
     return result;
   } catch (error) {
-    console.error('❌ Erreur nettoyage montant:', amountStr, error);
+    console.error('❌ Erreur nettoyage montant');
     return 0;
   }
 }
@@ -96,13 +95,13 @@ function extractDate(text: string): string {
   if (headerMatch && headerMatch[1]) {
     const dateStr = headerMatch[1];
     const isoDate = convertToISODate(dateStr);
-    console.log(`📅 Date extraite et convertie: ${dateStr} -> ${isoDate}`);
+    console.log("📅 Date d’en-tête extraite et convertie");
     return isoDate;
   }
   
   // Fallback sur la date actuelle au format ISO
   const fallbackDate = new Date().toISOString().split('T')[0];
-  console.log(`📅 Date fallback utilisée: ${fallbackDate}`);
+  console.log('📅 Date fallback utilisée');
   return fallbackDate;
 }
 
@@ -116,7 +115,7 @@ function extractOpeningBalance(text: string): number {
     if (match[1]) {
       const amount = cleanAmount(match[1]);
       if (amount > 0) {
-        console.log(`✅ Solde d'ouverture trouvé: ${amount}`);
+        console.log("✅ Solde d’ouverture trouvé");
         return amount;
       }
     }
@@ -129,7 +128,7 @@ function extractOpeningBalance(text: string): number {
     const amounts = simpleMatch[0].match(/[\d\s,\.]{6,}/g);
     if (amounts && amounts[0]) {
       const amount = cleanAmount(amounts[0]);
-      console.log(`✅ Solde d'ouverture trouvé (pattern simple): ${amount}`);
+      console.log("✅ Solde d’ouverture trouvé (pattern simple)");
       return amount;
     }
   }
@@ -148,7 +147,7 @@ function extractClosingBalance(text: string): number {
     if (match[1]) {
       const amount = cleanAmount(match[1]);
       if (amount > 0) {
-        console.log(`✅ Solde de clôture trouvé: ${amount}`);
+        console.log('✅ Solde de clôture trouvé');
         return amount;
       }
     }
@@ -161,7 +160,7 @@ function extractClosingBalance(text: string): number {
     const amounts = simpleMatch[0].match(/[\d\s,\.]{6,}/g);
     if (amounts && amounts[0]) {
       const amount = cleanAmount(amounts[0]);
-      console.log(`✅ Solde de clôture trouvé (pattern simple): ${amount}`);
+      console.log('✅ Solde de clôture trouvé (pattern simple)');
       return amount;
     }
   }
@@ -200,7 +199,7 @@ function extractDepositsNotCleared(text: string): DepositNotCleared[] {
     
     console.log(`✅ ${deposits.length} dépôts extraits`);
   } catch (error) {
-    console.error('❌ Erreur extraction dépôts:', error);
+    console.error('❌ Erreur extraction dépôts');
   }
   
   return deposits;
@@ -238,7 +237,7 @@ function extractBankFacilities(text: string): BankFacility[] {
     
     console.log(`✅ ${facilities.length} facilités extraites`);
   } catch (error) {
-    console.error('❌ Erreur extraction facilités:', error);
+    console.error('❌ Erreur extraction facilités');
   }
   
   return facilities;
@@ -273,7 +272,7 @@ function extractImpayes(text: string): Impaye[] {
     
     console.log(`✅ ${impayes.length} impayés extraits`);
   } catch (error) {
-    console.error('❌ Erreur extraction impayés:', error);
+    console.error('❌ Erreur extraction impayés');
   }
   
   return impayes;
@@ -341,20 +340,15 @@ export function extractFundPosition(pdfText: string): ExtractionResult {
       holdCollections: holdResult.holdCollections,
     };
     
-    console.log('💰 Fund Position extraite avec succès:', {
-      totalFund: fundPosition.totalFundAvailable,
-      collections: fundPosition.collectionsNotDeposited,
-      grandTotal: fundPosition.grandTotal,
-      bankDetails: fundPosition.details.length,
-      holdItems: fundPosition.holdCollections.length
-    });
+    // Pack 2 (FIX_4) : compteurs seuls, aucune valeur financière en console.
+    console.log(`💰 Fund Position extraite : ${fundPosition.details.length} banque(s), ${fundPosition.holdCollections.length} collection(s) en attente`);
     
     return {
       success: true,
       data: fundPosition as any
     };
   } catch (error) {
-    console.error('❌ Erreur extraction Fund Position:', error);
+    console.error('❌ Erreur extraction Fund Position');
     return {
       success: false,
       errors: [error instanceof Error ? error.message : 'Erreur extraction Fund Position']
@@ -396,10 +390,11 @@ function extractFundPositionDetails(pdfText: string): {
     console.log(`📊 ${bankLines.length} lignes de détail bancaire trouvées`);
     
     // Traiter chaque ligne de banque
-    for (const line of bankLines) {
+    for (const [lineIndex, line] of bankLines.entries()) {
       const columns = line.split('\t').map(value => value.trim()).filter(Boolean);
       if (columns.length !== 6) {
-        errors.push(`Ligne Fund Position non exploitable: ${line.trim()}`);
+        // Pack 2 : aucune ligne brute dans les erreurs, seulement son rang.
+        errors.push(`Ligne Fund Position n°${lineIndex + 1} non exploitable.`);
         continue;
       }
 
@@ -407,7 +402,7 @@ function extractFundPositionDetails(pdfText: string): {
       const amounts = [balance, fundApplied, netBalance, nonValidatedDeposit, grandBalance]
         .map(value => parseFinancialInteger(value));
       if (amounts.some(value => value === null)) {
-        errors.push(`Montant Fund Position invalide pour ${bankName.trim()}.`);
+        errors.push(`Ligne Fund Position n°${lineIndex + 1} : montant invalide.`);
         continue;
       }
 
@@ -423,7 +418,7 @@ function extractFundPositionDetails(pdfText: string): {
     
     console.log(`✅ ${details.length} détails bancaires extraits`);
   } catch (error) {
-    console.error('❌ Erreur extraction détails Fund Position:', error);
+    console.error('❌ Erreur extraction détails Fund Position');
     errors.push(error instanceof Error ? error.message : 'Erreur extraction détails Fund Position.');
   }
   
@@ -476,7 +471,7 @@ function extractHoldCollections(pdfText: string): {
     console.log(`📊 ${collectionLines.length} lignes de collections en attente trouvées`);
     
     // Traiter chaque ligne de collection
-    for (const line of collectionLines) {
+    for (const [lineIndex, line] of collectionLines.entries()) {
       // Extraire les données avec une regex adaptée au format
       // Format attendu: DATE | n°chèque/Ech | BANQUE Client | Client | facture | Montant | DATE DEPOT/Nbre Jrs
       const collectionMatch = line.trim().match(
@@ -484,7 +479,7 @@ function extractHoldCollections(pdfText: string): {
       );
       
       if (!collectionMatch) {
-        errors.push(`Ligne HOLD non exploitable: ${line.trim()}`);
+        errors.push(`Ligne HOLD n°${lineIndex + 1} non exploitable.`);
         continue;
       }
 
@@ -496,17 +491,17 @@ function extractHoldCollections(pdfText: string): {
 
       if (/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(depositDateOrDays)) {
         depositDate = parseDocumentDate(depositDateOrDays) ?? undefined;
-        if (!depositDate) errors.push(`Date de dépôt HOLD invalide: ${depositDateOrDays}.`);
+        if (!depositDate) errors.push(`Ligne HOLD n°${lineIndex + 1} : date de dépôt invalide.`);
       } else if (/^\d+$/.test(depositDateOrDays)) {
         const parsedDays = Number(depositDateOrDays);
         if (Number.isSafeInteger(parsedDays)) daysRemaining = parsedDays;
-        else errors.push(`Nombre de jours HOLD invalide: ${depositDateOrDays}.`);
+        else errors.push(`Ligne HOLD n°${lineIndex + 1} : nombre de jours invalide.`);
       } else {
-        errors.push(`Date de dépôt ou nombre de jours HOLD invalide: ${depositDateOrDays}.`);
+        errors.push(`Ligne HOLD n°${lineIndex + 1} : date de dépôt ou nombre de jours invalide.`);
       }
 
-      if (!holdDate) errors.push(`Date HOLD invalide: ${holdDateRaw}.`);
-      if (amount === null) errors.push(`Montant HOLD invalide pour ${chequeNumber}.`);
+      if (!holdDate) errors.push(`Ligne HOLD n°${lineIndex + 1} : date invalide.`);
+      if (amount === null) errors.push(`Ligne HOLD n°${lineIndex + 1} : montant invalide.`);
       if (!holdDate || amount === null || (!depositDate && daysRemaining === undefined)) continue;
 
       holdCollections.push({
@@ -523,7 +518,7 @@ function extractHoldCollections(pdfText: string): {
     
     console.log(`✅ ${holdCollections.length} collections en attente extraites`);
   } catch (error) {
-    console.error('❌ Erreur extraction collections HOLD:', error);
+    console.error('❌ Erreur extraction collections HOLD');
     errors.push(error instanceof Error ? error.message : 'Erreur extraction collections HOLD.');
   }
   

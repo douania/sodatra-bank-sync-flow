@@ -31,6 +31,7 @@ import {
   sheetGridToText,
 } from './excelSheetGrid';
 import { extractFundPositionFromGrid } from './fundPositionGridExtractor';
+import { summarizeExtractionErrors } from './extractionErrorSummary';
 export type { ProcessingResult } from '@/types/processing';
 
 export interface ProcessFilesOptions {
@@ -548,11 +549,11 @@ export class FileProcessingService {
           reports.push(processingResult.data);
         } else {
           console.error(`❌ Échec traitement d’un rapport bancaire (${(processingResult.errors ?? []).length} erreur(s))`);
-          errors.push(`Échec extraction ${fileOrdinal(batch, file, ordinals)}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
+          errors.push(`Échec extraction ${fileOrdinal(batch, file, ordinals)}: ${summarizeExtractionErrors(processingResult.errors)}`);
         }
       } catch (error) {
         console.error('❌ Erreur traitement d’un rapport bancaire');
-        errors.push(`Erreur extraction ${fileOrdinal(batch, file, ordinals)}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+        errors.push(`Erreur extraction ${fileOrdinal(batch, file, ordinals)}: ${summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined)}`);
       }
     }
     
@@ -585,14 +586,14 @@ export class FileProcessingService {
           grid = readSelectedSheetGrid(buffer, sheetName);
         } catch (error) {
           if (error instanceof ExcelSheetSelectionError) {
-            errors.push(`Échec extraction ${ordinal}: ${error.message}`);
+            errors.push(`Échec extraction ${ordinal}: ${summarizeExtractionErrors([error.message])}`);
             return null;
           }
           throw error;
         }
         const gridExtraction = extractFundPositionFromGrid(grid, { fileName: file.name });
         if (!gridExtraction.success || !gridExtraction.data) {
-          errors.push(`Échec extraction ${ordinal}: ${(gridExtraction.errors ?? ['contrat invalide']).join(' ')}`);
+          errors.push(`Échec extraction ${ordinal}: ${summarizeExtractionErrors(gridExtraction.errors)}`);
           return null;
         }
         console.log('💰 Fund Position tabulaire extraite (feuille sélectionnée)');
@@ -617,7 +618,7 @@ export class FileProcessingService {
 
       if (!extractionResult.success || !extractionResult.data) {
         console.error(`❌ Échec de l'extraction du Fund Position (${(extractionResult.errors ?? []).length} erreur(s))`);
-        errors.push(`Échec extraction ${ordinal}: ${(extractionResult.errors ?? ['contrat invalide']).join(' ')}`);
+        errors.push(`Échec extraction ${ordinal}: ${summarizeExtractionErrors(extractionResult.errors)}`);
         return null;
       }
       
@@ -630,7 +631,7 @@ export class FileProcessingService {
       
     } catch (error) {
       console.error('❌ Erreur calcul Fund Position');
-      errors.push(`Erreur extraction ${ordinal}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+      errors.push(`Erreur extraction ${ordinal}: ${summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined)}`);
       return null;
     }
   }

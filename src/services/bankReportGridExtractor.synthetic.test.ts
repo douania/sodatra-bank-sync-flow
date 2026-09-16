@@ -281,7 +281,11 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
   assert.doesNotMatch(JSON.stringify(unnamedResult), /BANK FACILITY \(180 jrs\)/);
 
   // Une date textuelle, un marqueur structurel ou un contenu numérique ne sont jamais un libellé métier.
-  for (const nonLabel of ['09/07/2026', '09/07/26', 'TOTAL', 'Limit', 'BANK FACILITY (180 jrs)', '1 000', 'LESS :']) {
+  for (const nonLabel of [
+    '09/07/2026', '09/07/26', 'TOTAL', 'Limit', 'BANK FACILITY (180 jrs)', '1 000', 'LESS :',
+    'IMPAYE', 'Impayés', 'UNPAID', '1 000 FCFA', '12,5 €', '250 000 XOF', 'AMOUNT', 'DEPOSIT NOT YET CLEARED',
+    'Chéques émis non encaissés', 'CHECK Not yet cleared', 'DESCRIPTION', 'CLIENT',
+  ]) {
     const disguised = englishReport('BDK');
     disguised[15] = [null, D('2026-07-09'), nonLabel, A(1_000_000_000), A(400_000_000), null, A(600_000_000)];
     const disguisedResult = await extractBankReportFromGrid(gridOf(disguised), 'BDK');

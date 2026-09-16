@@ -17,7 +17,20 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324 — GO_FIX_PACK_2_FIX_3_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c — GO_FIX_PACK_2_FIX_4_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Quatrième contre-revue CTO sur `cc7fa3c` : `FAIL` (deux P1). Corrections
+FIX_4 : journaux et erreurs assainis sur tout le graphe d'appel (extracteurs
+texte PDF et legacy inclus : compteurs et rangs de ligne seuls) ; frontière
+`summarizeExtractionErrors` (vocabulaire fermé « ligne N : motif ») avant
+`results.errors` ; suite runtime par sentinelles sensibles exécutée sur chaque
+chemin (échoue sur `cc7fa3c`, passe après) ; `isBusinessLabel` refuse
+marqueurs d'impayé, titres, en-têtes de colonnes et libellés monétaires
+(`IMPAYE`, `1 000 FCFA`). Rejeu
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_4` : verdicts et
+compteurs identiques à FIX_3 (aucune famille `PASS` le 9 juillet ; BDK 46,
+ATB 0, BICIS 0, ORA 0, BIS 9 sur 60 ; Fund Position 0/150). DEF-25 : source
+ou profil attesté ; DEF-28 : source, sans exception XFD.
 
 Troisième contre-revue CTO sur `76c1324` : `FAIL` (trois P1 partiels, un P2).
 Corrections FIX_3 : cellules hors borne collectées avant tout filtre (date
