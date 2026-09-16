@@ -50,11 +50,14 @@ export interface ExcelSheetGrid {
   usedColumnCount: number;
   errorCellCount: number;
   /**
-   * Cellules situées au-delà de la borne de colonnes (`maxColumns`) : elles ne
-   * sont ni lues ni parcourues (cellules parasites en fin de feuille, typiques
-   * des classeurs réels), seulement comptées pour l'auditabilité.
+   * Cellules date parasites situées au-delà de la borne de colonnes
+   * (`maxColumns`). Seule cette signature bénigne est tolérée : cellule
+   * numérique au format date, portant une date calendaire valide, isolée en
+   * fin de feuille (observée dans les classeurs réels). Elles ne sont ni lues
+   * ni parcourues, seulement comptées. Toute autre cellule non vide hors borne
+   * (texte, montant, nombre, erreur, booléen) refuse la feuille.
    */
-  ignoredFarCellCount: number;
+  ignoredFarDateCellCount: number;
 }
 
 export interface ExcelGridLimits {
@@ -208,7 +211,7 @@ export function worksheetToGrid(
   const addresses = Object.keys(worksheet).filter(key => !key.startsWith('!'));
   let maxRow = -1;
   let maxColumn = -1;
-  let ignoredFarCellCount = 0;
+  let ignoredFarDateCellCount = 0;
   const decoded: Array<{ r: number; c: number; key: string }> = [];
   for (const key of addresses) {
     const cell = worksheet[key] as XLSX.CellObject | undefined;
@@ -221,10 +224,17 @@ export function worksheetToGrid(
     if (cell.t === 'n' && isDateFormat(cell.z) && excelSerialToIsoDate(Number(cell.v)) === null) continue;
     const address = XLSX.utils.decode_cell(key);
     if (address.r < 0 || address.c < 0) continue;
-    // Cellule parasite au-delà de la borne de colonnes : comptée, jamais lue.
+    // Hors borne de colonnes : seule une cellule date parasite (signature
+    // bénigne) est tolérée et comptée ; toute autre cellule non vide refuse.
     if (address.c >= limits.maxColumns) {
-      ignoredFarCellCount += 1;
-      continue;
+      if (cell.t === 'n' && isDateFormat(cell.z)) {
+        ignoredFarDateCellCount += 1;
+        continue;
+      }
+      throw new ExcelSheetSelectionError(
+        'SHEET_LIMIT_EXCEEDED',
+        'Cellule non vide au-delà de la borne de colonnes.',
+      );
     }
     decoded.push({ r: address.r, c: address.c, key });
     if (address.r > maxRow) maxRow = address.r;
@@ -253,7 +263,7 @@ export function worksheetToGrid(
     rows[r][c] = converted;
   }
 
-  return { sheetName, rows, usedRowCount, usedColumnCount, errorCellCount, ignoredFarCellCount };
+  return { sheetName, rows, usedRowCount, usedColumnCount, errorCellCount, ignoredFarDateCellCount };
 }
 
 /** Rendu texte canonique (tabulations, dates ISO, nombres exacts) d'une grille. */

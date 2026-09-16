@@ -57,11 +57,6 @@ export interface ImportPreflightEntry<TFile extends ImportFileDescriptor = Impor
   selectedSheetName?: string;
 }
 
-/** Clé stable d'un fichier du lot (sélection de feuille, options de traitement). */
-export function importFileKey(file: ImportFileDescriptor): string {
-  return `${file.name}|${file.size}|${file.lastModified}`;
-}
-
 /** Familles dont un classeur Excel est traité feuille par feuille (Pack 2). */
 export const SHEET_SELECTED_DOCUMENT_KINDS: readonly ImportDocumentKind[] = ['BANK_REPORT', 'FUND_POSITION'];
 
@@ -73,18 +68,19 @@ export interface ImportPreflightResult<TFile extends ImportFileDescriptor = Impo
   deploymentTarget: OperationalImportDeploymentTarget;
 }
 
-export interface ImportPreflightOptions {
+export interface ImportPreflightOptions<TFile extends ImportFileDescriptor = ImportFileDescriptor> {
   deploymentTarget?: OperationalImportDeploymentTarget;
   allowedDocumentKinds?: readonly ImportDocumentKind[];
   /**
-   * Inventaire des feuilles par clé de fichier (`importFileKey`). Quand il est
-   * fourni, tout classeur Excel de rapport bancaire ou de Fund Position doit y
-   * figurer (sinon `SHEET_INVENTORY_PENDING`) et, s'il contient plusieurs
-   * feuilles, une sélection explicite est exigée (`SHEET_SELECTION_REQUIRED`).
+   * Inventaire des feuilles, lié à l'instance de fichier (jamais à une clé
+   * nom|taille|date réutilisable). Garde obligatoire : tout classeur Excel de
+   * rapport bancaire ou de Fund Position absent de l'inventaire est bloqué
+   * (`SHEET_INVENTORY_PENDING`) ; s'il contient plusieurs feuilles, une
+   * sélection explicite est exigée (`SHEET_SELECTION_REQUIRED`).
    */
-  sheetInventory?: Readonly<Record<string, readonly string[]>>;
-  /** Feuille choisie par clé de fichier. */
-  sheetSelections?: Readonly<Record<string, string>>;
+  sheetInventory?: ReadonlyMap<TFile, readonly string[]>;
+  /** Feuille choisie, liée à l'instance de fichier. */
+  sheetSelections?: ReadonlyMap<TFile, string>;
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['xlsx', 'xls', 'csv', 'pdf']);
@@ -234,7 +230,7 @@ export function detectImportDocumentFromText(text: string): {
 
 export function buildImportPreflight<TFile extends ImportFileDescriptor>(
   files: readonly TFile[],
-  options: ImportPreflightOptions = {},
+  options: ImportPreflightOptions<TFile> = {},
 ): ImportPreflightResult<TFile> {
   const deploymentTarget = options.deploymentTarget ?? 'staging';
   const fingerprints = new Map<string, number>();
@@ -368,12 +364,13 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
     let sheetNames: readonly string[] | undefined;
     let selectedSheetName: string | undefined;
     if (
-      options.sheetInventory
-      && SHEET_SELECTED_DOCUMENT_KINDS.includes(detection.kind)
+      SHEET_SELECTED_DOCUMENT_KINDS.includes(detection.kind)
       && (extension === 'xlsx' || extension === 'xls')
     ) {
-      sheetNames = options.sheetInventory[importFileKey(file)];
-      const requested = options.sheetSelections?.[importFileKey(file)];
+      // Garde obligatoire (fail-closed) : sans inventaire pour cette instance,
+      // le fichier reste bloqué.
+      sheetNames = options.sheetInventory?.get(file);
+      const requested = options.sheetSelections?.get(file);
       if (!sheetNames) {
         issues.push({
           code: 'SHEET_INVENTORY_PENDING',

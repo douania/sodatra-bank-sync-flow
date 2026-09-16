@@ -83,15 +83,28 @@ test('la grille est bornée par les cellules présentes et non par la plage déc
   assert.equal(grid.usedColumnCount, 2);
   assert.equal(grid.usedRowCount, 2);
 
-  // Une cellule parasite au-delà de la 512e colonne est comptée, jamais lue ni parcourue.
-  const farCell = XLSX.utils.aoa_to_sheet([['BIS', 1]]);
-  farCell.XFD1 = { t: 'n', v: 46212, z: 'm/d/yy' };
-  farCell.XFD2 = { t: 's', v: 'parasite' };
-  farCell['!ref'] = 'A1:XFD2';
-  const farGrid = worksheetToGrid(farCell, 'S');
+  // Seule une cellule date parasite au-delà de la 512e colonne est tolérée (comptée, jamais lue) ;
+  // toute autre cellule non vide hors borne refuse la feuille.
+  const farDate = XLSX.utils.aoa_to_sheet([['BIS', 1]]);
+  farDate.XFD1 = { t: 'n', v: 46212, z: 'm/d/yy' };
+  farDate['!ref'] = 'A1:XFD1';
+  const farGrid = worksheetToGrid(farDate, 'S');
   assert.equal(farGrid.usedColumnCount, 2);
-  assert.equal(farGrid.usedRowCount, 1);
-  assert.equal(farGrid.ignoredFarCellCount, 2);
+  assert.equal(farGrid.ignoredFarDateCellCount, 1);
+
+  for (const farCell of [
+    { t: 's', v: 'parasite' },
+    { t: 'n', v: 1234567, z: ACCOUNTING },
+    { t: 'n', v: 42 },
+    { t: 'e', v: 23, w: '#REF!' },
+  ] as XLSX.CellObject[]) {
+    const sheetWithFar = XLSX.utils.aoa_to_sheet([['BIS', 1]]);
+    sheetWithFar.XFD1 = farCell;
+    sheetWithFar['!ref'] = 'A1:XFD1';
+    assert.throws(() => worksheetToGrid(sheetWithFar, 'S'), (error: unknown) => (
+      error instanceof ExcelSheetSelectionError && error.code === 'SHEET_LIMIT_EXCEEDED'
+    ), `cellule hors borne de type ${farCell.t} refusée`);
+  }
 
   const tooManyRows = XLSX.utils.aoa_to_sheet([['BIS']]);
   tooManyRows.A20001 = { t: 'n', v: 1 };

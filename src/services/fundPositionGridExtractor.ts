@@ -1,9 +1,14 @@
 import type { FundPosition, FundPositionDetail, FundPositionHold } from '@/types/banking';
 
 import { normalizeBankIdentityText } from './bankIdentity';
-import { parseDocumentDate } from './bankReportExtractionContract';
+import { corroboratingYears, parseCorroboratedDate, uniqueRowAmount } from './bankReportGridExtractor';
 import { validateFundPositionExtraction } from './fundPositionExtractionContract';
 import { isBlankRow, isFormattedAmountCell, type ExcelGridCell, type ExcelSheetGrid } from './excelSheetGrid';
+
+export interface FundPositionGridExtractionOptions {
+  /** Nom du fichier source : ses années sur quatre chiffres corroborent la date du nom de feuille. */
+  fileName?: string;
+}
 
 /**
  * Extraction tabulaire de la Fund Position (Pack 2).
@@ -15,7 +20,8 @@ import { isBlankRow, isFormattedAmountCell, type ExcelGridCell, type ExcelSheetG
  * « HOLD »).
  *
  * Règles déterministes :
- * - date du rapport = nom de feuille `JJMMAA`, sinon cellule
+ * - date du rapport = nom de feuille `JJMMAA` (année corroborée par les
+ *   cellules date du document ou le nom du fichier), sinon cellule
  *   « FUND POSITION JJ/MM/AAAA » ou « REPORT DATE JJ/MM/AAAA », sinon refus ;
  * - une ligne banque porte les cinq montants sous les cinq colonnes d'en-tête ;
  *   cellule vide ou cellule d'erreur Excel = refus du document ;
@@ -23,12 +29,16 @@ import { isBlankRow, isFormattedAmountCell, type ExcelGridCell, type ExcelSheetG
  *   la colonne « Net Balance » ; `grandTotal` = montant de la même ligne sous
  *   la colonne « Grand Balance » ; absence ou erreur = refus ;
  * - `depositForDay` / `paymentForDay` = somme des montants des lignes de leur
- *   bloc (0 si le bloc est vide) ;
+ *   bloc ; bloc absent ou sans montant = valeur absente (jamais zéro) ;
  * - `collectionsNotDeposited` = montant porté par la ligne du titre
- *   « COLLECTION NOT DEPOSITED » elle-même, sinon 0 (non porté par le
- *   document) ;
+ *   « COLLECTION NOT DEPOSITED » ; titre absent ou sans montant = refus
+ *   (jamais zéro par défaut) ;
+ * - tout montant de ligne est l'unique cellule formatée non nulle de la ligne ;
+ *   plusieurs montants non nuls = ambiguïté = refus ;
  * - bloc HOLD : lignes datées jusqu'à une ligne non datée portant un unique
  *   montant, qui doit être égal à la somme des lignes.
+ * Aucune valeur financière ni nom de banque ne figure dans les messages
+ * d'erreur : seuls des numéros de ligne les localisent.
  */
 
 export interface FundPositionGridExtractionResult {
@@ -102,22 +112,16 @@ function amountAt(row: readonly ExcelGridCell[], column: number): { value: numbe
   return { value: cell.number! };
 }
 
-/** Même règle que les rapports bancaires : dernière cellule formatée non nulle, zéro si toutes nulles. */
+/** Même règle que les rapports bancaires : unique cellule formatée non nulle, zéro si toutes nulles, ambiguïté refusée. */
 function rowAmount(row: readonly ExcelGridCell[]): { value: number | null; error?: string } {
-  if (row.some(cell => cell.kind === 'error')) return { value: null, error: 'cellule d’erreur Excel' };
-  const formatted = row.filter(isFormattedAmountCell);
-  if (formatted.length === 0) return { value: null, error: 'montant absent' };
-  const nonZero = formatted.filter(cell => cell.number !== 0);
-  const chosen = nonZero.length > 0 ? nonZero[nonZero.length - 1] : formatted[formatted.length - 1];
-  const value = chosen.number;
-  if (value === undefined || !Number.isSafeInteger(value)) return { value: null, error: 'montant non entier' };
-  return { value };
+  const { amount, error } = uniqueRowAmount(row);
+  return { value: amount, error };
 }
 
-function cellDate(cell: ExcelGridCell | undefined): string | null {
+function cellDate(cell: ExcelGridCell | undefined, years: ReadonlySet<number>): string | null {
   if (!cell) return null;
   if (cell.kind === 'date') return cell.isoDate ?? null;
-  if (cell.kind === 'text') return parseDocumentDate(cell.text);
+  if (cell.kind === 'text') return parseCorroboratedDate(cell.text, years);
   return null;
 }
 
@@ -127,16 +131,16 @@ function cellText(cell: ExcelGridCell | undefined): string {
   return cell.text;
 }
 
-function reportDateOf(grid: ExcelSheetGrid): string | null {
+function reportDateOf(grid: ExcelSheetGrid, years: ReadonlySet<number>): string | null {
   const fromSheetName = grid.sheetName.trim().match(/^(\d{2})(\d{2})(\d{2})$/);
   if (fromSheetName) {
-    return parseDocumentDate(`${fromSheetName[1]}/${fromSheetName[2]}/${fromSheetName[3]}`);
+    return parseCorroboratedDate(`${fromSheetName[1]}/${fromSheetName[2]}/${fromSheetName[3]}`, years);
   }
   for (const row of grid.rows) {
     for (const cell of row) {
       if (cell.kind !== 'text') continue;
       const match = normalizeLabel(cell.text).match(/^(?:FUND POSITION|REPORT DATE)\s+(\d{2}[/-]\d{2}[/-](?:\d{4}|\d{2})|\d{4}-\d{2}-\d{2})$/);
-      if (match) return parseDocumentDate(match[1]);
+      if (match) return parseCorroboratedDate(match[1], years);
     }
   }
   return null;
@@ -145,10 +149,11 @@ function reportDateOf(grid: ExcelSheetGrid): string | null {
 /**
  * Somme d'un bloc « … for the day » : lignes jusqu'au prochain titre ou ligne
  * vide. Une ligne sans aucune cellule de montant (libellé seul) ne porte rien
- * et est ignorée ; une cellule d'erreur ou un montant non entier refuse.
+ * et est ignorée ; une cellule d'erreur, un montant ambigu ou non entier
+ * refuse. Sans aucune ligne à montant, la valeur est absente (jamais zéro).
  */
-function sumBlock(rows: readonly ExcelGridCell[][], start: number, errors: string[], label: string): number {
-  let total = 0;
+function sumBlock(rows: readonly ExcelGridCell[][], start: number, errors: string[], label: string): number | undefined {
+  let total: number | undefined;
   for (let index = start; index < rows.length; index += 1) {
     const row = rows[index];
     if (isBlankRow(row) || rowIsBlockHeading(row)) break;
@@ -158,7 +163,7 @@ function sumBlock(rows: readonly ExcelGridCell[][], start: number, errors: strin
       errors.push(`Ligne ${index + 1} du bloc ${label} : ${amount.error}.`);
       continue;
     }
-    total += amount.value;
+    total = (total ?? 0) + amount.value;
   }
   return total;
 }
@@ -172,14 +177,19 @@ function sumBlock(rows: readonly ExcelGridCell[][], start: number, errors: strin
  * les documents réels). Le bloc se termine par une ligne non datée portant un
  * unique montant, égal à la somme de la colonne MONTANT.
  */
-function extractHold(rows: readonly ExcelGridCell[][], headingIndex: number, errors: string[]): FundPositionHold[] {
+function extractHold(
+  rows: readonly ExcelGridCell[][],
+  headingIndex: number,
+  errors: string[],
+  years: ReadonlySet<number>,
+): FundPositionHold[] {
   const holds: FundPositionHold[] = [];
   let sum = 0;
   let index = headingIndex + 1;
   let amountColumn = 5;
   let daysColumn = 6;
   let depositDateColumn = 7;
-  if (index < rows.length && !cellDate(rows[index][0])) {
+  if (index < rows.length && !cellDate(rows[index][0], years)) {
     const headerLabels = rows[index].map(cell => (cell.kind === 'text' ? normalizeLabel(cell.text) : ''));
     const montantIndex = headerLabels.findIndex(label => label === 'MONTANT' || label === 'AMOUNT');
     if (headerLabels.some(label => label.startsWith('DATE')) && montantIndex !== -1) {
@@ -193,7 +203,7 @@ function extractHold(rows: readonly ExcelGridCell[][], headingIndex: number, err
   for (; index < rows.length; index += 1) {
     const row = rows[index];
     if (isBlankRow(row)) continue;
-    const holdDate = cellDate(row[0]);
+    const holdDate = cellDate(row[0], years);
     if (!holdDate) {
       const amounts = row.filter(isFormattedAmountCell);
       if (amounts.length !== 1 || !Number.isSafeInteger(amounts[0].number ?? NaN)) {
@@ -214,7 +224,7 @@ function extractHold(rows: readonly ExcelGridCell[][], headingIndex: number, err
     }
     const daysCell = row[daysColumn];
     const days = daysCell?.kind === 'number' && Number.isSafeInteger(daysCell.number ?? NaN) ? daysCell.number : undefined;
-    const depositDate = cellDate(row[depositDateColumn]) ?? cellDate(daysCell) ?? undefined;
+    const depositDate = cellDate(row[depositDateColumn], years) ?? cellDate(daysCell, years) ?? undefined;
     sum += amountCell.number!;
     holds.push({
       holdDate,
@@ -231,9 +241,13 @@ function extractHold(rows: readonly ExcelGridCell[][], headingIndex: number, err
   return holds;
 }
 
-export function extractFundPositionFromGrid(grid: ExcelSheetGrid): FundPositionGridExtractionResult {
+export function extractFundPositionFromGrid(
+  grid: ExcelSheetGrid,
+  options: FundPositionGridExtractionOptions = {},
+): FundPositionGridExtractionResult {
   const errors: string[] = [];
   const rows = grid.rows;
+  const years = corroboratingYears(grid, options.fileName);
 
   const header = findHeaderColumns(rows);
   if (!header) {
@@ -247,7 +261,7 @@ export function extractFundPositionFromGrid(grid: ExcelSheetGrid): FundPositionG
     errors.push('Colonne Grand Balance absente : grand total Fund Position non établi.');
   }
 
-  const reportDate = reportDateOf(grid);
+  const reportDate = reportDateOf(grid, years);
   const details: FundPositionDetail[] = [];
   let index = header.rowIndex + 1;
   for (; index < rows.length; index += 1) {
@@ -267,7 +281,7 @@ export function extractFundPositionFromGrid(grid: ExcelSheetGrid): FundPositionG
     const grand = grandBalanceColumn === undefined ? { value: null, error: 'colonne absente' } : amountAt(row, grandBalanceColumn);
     const invalid = [...values, grand].find(value => value.value === null);
     if (invalid) {
-      errors.push(`Montant Fund Position invalide pour ${bankName} (${invalid.error}).`);
+      errors.push(`Ligne ${index + 1} Fund Position : montant invalide (${invalid.error}).`);
       continue;
     }
     details.push({
@@ -283,9 +297,10 @@ export function extractFundPositionFromGrid(grid: ExcelSheetGrid): FundPositionG
   let totalFundAvailable: number | null = null;
   let grandTotal: number | null = null;
   let grandTotalFound = false;
-  let depositForDay = 0;
-  let paymentForDay = 0;
-  let collectionsNotDeposited = 0;
+  let depositForDay: number | undefined;
+  let paymentForDay: number | undefined;
+  let collectionsNotDeposited: number | null = null;
+  let collectionsLabelFound = false;
   let holdCollections: FundPositionHold[] = [];
   let holdFound = false;
 
@@ -307,17 +322,16 @@ export function extractFundPositionFromGrid(grid: ExcelSheetGrid): FundPositionG
     } else if (labels.includes(PAYMENT_FOR_THE_DAY)) {
       paymentForDay = sumBlock(rows, rowIndex + 1, errors, 'Payment for the day');
     } else if (rowHasLabel(row, COLLECTION_NOT_DEPOSITED)) {
-      const amount = row.filter(isFormattedAmountCell);
-      if (amount.length > 0) {
-        const value = amount[amount.length - 1].number;
-        if (value === undefined || !Number.isSafeInteger(value)) errors.push('Collections non déposées invalides.');
-        else collectionsNotDeposited = value;
-      }
+      collectionsLabelFound = true;
+      const amount = rowAmount(row);
+      if (amount.value === null) errors.push(`Collections non déposées : ${amount.error} sur la ligne du titre.`);
+      collectionsNotDeposited = amount.value;
     } else if (labels.includes(HOLD)) {
       holdFound = true;
-      holdCollections = extractHold(rows, rowIndex, errors);
+      holdCollections = extractHold(rows, rowIndex, errors, years);
     }
   }
+  if (!collectionsLabelFound) errors.push('Ligne COLLECTION NOT DEPOSITED absente.');
 
   errors.push(...validateFundPositionExtraction({
     reportDate,
@@ -336,7 +350,7 @@ export function extractFundPositionFromGrid(grid: ExcelSheetGrid): FundPositionG
     data: {
       reportDate: reportDate!,
       totalFundAvailable: totalFundAvailable!,
-      collectionsNotDeposited,
+      collectionsNotDeposited: collectionsNotDeposited!,
       grandTotal: grandTotal!,
       depositForDay,
       paymentForDay,

@@ -17,24 +17,31 @@ import {
  *   doit être unique et égal à la banque attendue ; le corps peut citer
  *   d'autres banques ;
  * - la ligne « OPENING BALANCE JJ/MM/AA » (ou « SOLDE D'OUVERTURE ») porte la
- *   date du rapport et le solde d'ouverture ; si le nom de la feuille est une
- *   date `JJMMAA`, elle doit coïncider ;
+ *   date du solde d'ouverture ; le nom de feuille `JJMMAA` porte la date du
+ *   rapport ; une année sur deux chiffres n'est acceptée que si l'année
+ *   complète est corroborée par le document (cellules date) ou par le nom du
+ *   fichier ; l'écart entre solde d'ouverture et rapport est borné ;
  * - « CLOSING BALANCE as per Book » (ou « SOLDE DE CLÔTURE … ») porte le solde
  *   de clôture ;
- * - les sections sont délimitées par des libellés strictement listés ; une
- *   ligne datée non exploitable, une section déclarée vide ou une cellule
- *   d'erreur Excel refusent le document ;
- * - un montant est la dernière cellule numérique formatée de la ligne (format
- *   comptable), à défaut la dernière cellule numérique ; il doit être un
- *   entier sûr.
+ * - les sections sont délimitées par des libellés strictement listés ; toute
+ *   ligne datée, financière ou libellée hors section ou après un total, toute
+ *   ligne datée non exploitable et toute cellule d'erreur Excel refusent le
+ *   document ;
+ * - un montant est l'unique cellule formatée en montant non nulle de la ligne
+ *   (zéro si toutes les cellules formatées valent zéro) ; deux montants non
+ *   nuls sur une ligne = ambiguïté = refus.
  */
+
+export interface BankReportGridExtractionOptions {
+  /** Nom du fichier source : ses années sur quatre chiffres corroborent les années courtes. */
+  fileName?: string;
+}
 
 export interface BankReportGridEvidence {
   depositCount: number;
   checkCount: number;
   facilityCount: number;
   unpaidCount: number;
-  ignoredPostTotalRowCount: number;
 }
 
 export interface BankReportGridExtractionResult {
@@ -54,6 +61,9 @@ interface BankReportLabelSet {
   impayesHeading: readonly string[];
   impayeMarker: readonly string[];
 }
+
+/** Écart maximal accepté entre la date du solde d'ouverture et la date du rapport. */
+export const MAX_OPENING_TO_REPORT_DAYS = 7;
 
 const DATE_IN_LABEL = '(\\d{2}[/-]\\d{2}[/-](?:\\d{4}|\\d{2}))';
 
@@ -109,8 +119,7 @@ function rowLabels(row: readonly ExcelGridCell[]): string[] {
 }
 
 function rowHasLabel(row: readonly ExcelGridCell[], labels: readonly string[]): boolean {
-  const normalizedLabels = rowLabels(row);
-  return normalizedLabels.some(label => labels.includes(label));
+  return rowLabels(row).some(label => labels.includes(label));
 }
 
 function rowMatches(row: readonly ExcelGridCell[], pattern: RegExp): RegExpMatchArray | null {
@@ -122,8 +131,8 @@ function rowMatches(row: readonly ExcelGridCell[], pattern: RegExp): RegExpMatch
 }
 
 function isTotalRow(row: readonly ExcelGridCell[]): boolean {
-  const labels = rowLabels(row);
-  return labels.length > 0 && labels.every(label => TOTAL_PREFIX.test(label) || label === '');
+  const labels = rowLabels(row).filter(Boolean);
+  return labels.length > 0 && labels.every(label => TOTAL_PREFIX.test(label));
 }
 
 function isFacilityColumnHeaderRow(row: readonly ExcelGridCell[]): boolean {
@@ -131,28 +140,67 @@ function isFacilityColumnHeaderRow(row: readonly ExcelGridCell[]): boolean {
   return labels.length > 0 && labels.every(label => FACILITY_COLUMN_HEADERS.has(label));
 }
 
-function cellDate(cell: ExcelGridCell): string | null {
-  if (cell.kind === 'date') return cell.isoDate ?? null;
-  if (cell.kind === 'text') return parseDocumentDate(cell.text);
-  return null;
+/** Ligne sans contenu exploitable : ni libellé (hors préfixes ADD/LESS), ni date, ni nombre. */
+function isEffectivelyBlank(row: readonly ExcelGridCell[]): boolean {
+  return rowLabels(row).every(label => label === '')
+    && row.every(cell => cell.kind === 'empty' || cell.kind === 'text');
+}
+
+/** Zone de colonnes de montant `[first, last]` inclusive, déterminée par l'en-tête. */
+export interface AmountColumnZone {
+  first: number;
+  last: number;
 }
 
 /**
- * Montant d'une ligne : dernière cellule formatée en montant (format comptable)
- * dont la valeur est non nulle ; si toutes les cellules formatées valent zéro
- * (colonne « - »), le montant est zéro. Une cellule numérique sans format
- * (référence, compteur) n'est jamais un montant. Toute cellule d'erreur Excel
- * sur la ligne refuse le montant.
+ * Montant d'une ligne : l'unique cellule formatée en montant (format comptable)
+ * non nulle dans la zone de colonnes de montant ; si toutes les cellules
+ * formatées de la zone valent zéro (colonne « - »), le montant est zéro.
+ * Plusieurs montants non nuls dans la zone = ambiguïté = refus. Les cellules
+ * hors zone (références formatées d'autres colonnes) ne sont jamais des
+ * montants ; une cellule numérique sans format n'en est jamais un non plus.
+ * Toute cellule d'erreur Excel sur la ligne refuse. Sans zone (Fund Position,
+ * blocs à colonne unique), toute la ligne est la zone.
  */
-function amountOfRow(row: readonly ExcelGridCell[]): { amount: number | null; error?: string } {
+export function uniqueRowAmount(
+  row: readonly ExcelGridCell[],
+  zone?: AmountColumnZone,
+): { amount: number | null; error?: string } {
   if (row.some(cell => cell.kind === 'error')) return { amount: null, error: 'cellule d’erreur Excel' };
-  const formatted = row.filter(isFormattedAmountCell);
-  if (formatted.length === 0) return { amount: null, error: 'montant absent' };
-  const nonZero = formatted.filter(cell => cell.number !== 0);
-  const chosen = nonZero.length > 0 ? nonZero[nonZero.length - 1] : formatted[formatted.length - 1];
-  const value = chosen.number;
+  const inZone = zone
+    ? row.filter((cell, index) => index >= zone.first && index <= zone.last && isFormattedAmountCell(cell))
+    : row.filter(isFormattedAmountCell);
+  if (inZone.length === 0) return { amount: null, error: 'montant absent' };
+  const nonZero = inZone.filter(cell => cell.number !== 0);
+  if (nonZero.length > 1) return { amount: null, error: 'montant ambigu (plusieurs montants non nuls)' };
+  const value = (nonZero[0] ?? inZone[0]).number;
   if (value === undefined || !Number.isSafeInteger(value)) return { amount: null, error: 'montant non entier' };
   return { amount: value };
+}
+
+const AMOUNT_HEADER = /^(?:AMOUNT|MONTANT)\b/;
+
+/**
+ * Zone de montant déterminée par l'en-tête de colonnes (lignes avant le solde
+ * d'ouverture) : de la première colonne titrée AMOUNT/MONTANT à la dernière,
+ * plus la colonne immédiatement suivante lorsqu'elle n'est pas titrée
+ * (colonne « montant 2 » sans titre, observée dans les rapports réels). Sans
+ * colonne titrée, aucune zone : le document est refusé.
+ */
+export function amountColumnZoneFromHeader(rows: readonly ExcelGridCell[][], openingRowIndex: number): AmountColumnZone | null {
+  for (let rowIndex = 0; rowIndex < openingRowIndex; rowIndex += 1) {
+    const row = rows[rowIndex];
+    const titled = row
+      .map((cell, index) => (cell.kind === 'text' && AMOUNT_HEADER.test(normalizeLabel(cell.text)) ? index : -1))
+      .filter(index => index >= 0);
+    if (titled.length === 0) continue;
+    const first = Math.min(...titled);
+    let last = Math.max(...titled);
+    const next = row[last + 1];
+    if (!next || next.kind === 'empty') last += 1;
+    return { first, last };
+  }
+  return null;
 }
 
 function cellReference(cell: ExcelGridCell | undefined): string {
@@ -161,10 +209,39 @@ function cellReference(cell: ExcelGridCell | undefined): string {
   return cell.text;
 }
 
-function sheetNameDate(sheetName: string): string | null {
+/** Années sur quatre chiffres portées par le document (cellules date) et par le nom du fichier. */
+export function corroboratingYears(grid: ExcelSheetGrid, fileName: string | undefined): Set<number> {
+  const years = new Set<number>();
+  for (const row of grid.rows) {
+    for (const cell of row) {
+      if (cell.kind === 'date' && cell.isoDate) years.add(Number(cell.isoDate.slice(0, 4)));
+    }
+  }
+  for (const match of (fileName ?? '').matchAll(/(?<!\d)(20\d{2})(?!\d)/g)) years.add(Number(match[1]));
+  return years;
+}
+
+/**
+ * Date textuelle `JJ/MM/AAAA`, `AAAA-MM-JJ` ou `JJ/MM/AA` ; dans ce dernier
+ * cas l'année 2000 + AA doit appartenir aux années corroborées, sinon refus.
+ */
+export function parseCorroboratedDate(value: string | undefined, years: ReadonlySet<number>): string | null {
+  if (!value) return null;
+  const short = value.trim().match(/^(\d{2})[/-](\d{2})[/-](\d{2})$/);
+  if (!short) return parseDocumentDate(value);
+  const year = 2000 + Number(short[3]);
+  if (!years.has(year)) return null;
+  return parseDocumentDate(`${short[1]}/${short[2]}/${year}`);
+}
+
+function sheetNameDate(sheetName: string, years: ReadonlySet<number>): string | null {
   const match = sheetName.trim().match(/^(\d{2})(\d{2})(\d{2})$/);
   if (!match) return null;
-  return parseDocumentDate(`${match[1]}/${match[2]}/${match[3]}`);
+  return parseCorroboratedDate(`${match[1]}/${match[2]}/${match[3]}`, years);
+}
+
+function daysBetween(earlierIso: string, laterIso: string): number {
+  return Math.round((Date.parse(`${laterIso}T00:00:00Z`) - Date.parse(`${earlierIso}T00:00:00Z`)) / 86_400_000);
 }
 
 function headerText(grid: ExcelSheetGrid, openingRowIndex: number): string {
@@ -178,15 +255,27 @@ function headerText(grid: ExcelSheetGrid, openingRowIndex: number): string {
 export async function extractBankReportFromGrid(
   grid: ExcelSheetGrid,
   bank: OperationalBankCode,
+  options: BankReportGridExtractionOptions = {},
 ): Promise<BankReportGridExtractionResult> {
   const labels = LABELS_BY_BANK[bank];
   const errors: string[] = [];
   const warnings: string[] = [];
   const rows = grid.rows;
+  const years = corroboratingYears(grid, options.fileName);
+  const cellDate = (cell: ExcelGridCell | undefined): string | null => {
+    if (!cell) return null;
+    if (cell.kind === 'date') return cell.isoDate ?? null;
+    if (cell.kind === 'text') return parseCorroboratedDate(cell.text, years);
+    return null;
+  };
 
   const openingRowIndex = rows.findIndex(row => rowMatches(row, labels.opening));
   if (openingRowIndex === -1) {
     return { success: false, errors: ['Solde d’ouverture daté absent.'] };
+  }
+  const zone = amountColumnZoneFromHeader(rows, openingRowIndex);
+  if (!zone) {
+    return { success: false, errors: ['Colonne de montant non titrée (AMOUNT/MONTANT) dans l’en-tête.'] };
   }
 
   const header = headerText(grid, openingRowIndex);
@@ -201,19 +290,26 @@ export async function extractBankReportFromGrid(
     };
   }
 
-  // Date du rapport : le nom de feuille `JJMMAA` fait foi (un classeur annuel
-  // porte une feuille par jour) ; le solde d'ouverture est daté du jour ou d'un
-  // jour antérieur (clôture de la veille), jamais d'un jour postérieur. Sans
-  // nom de feuille daté, la date du solde d'ouverture est la date du rapport.
+  // Date du rapport : le nom de feuille `JJMMAA` fait foi (classeur annuel, une
+  // feuille par jour) ; le solde d'ouverture est daté du jour ou d'un jour
+  // antérieur borné (clôture de la veille), jamais postérieur. Sans nom de
+  // feuille daté, la date du solde d'ouverture est la date du rapport.
   const openingMatch = rowMatches(rows[openingRowIndex], labels.opening)!;
-  const openingDate = parseDocumentDate(openingMatch[1]);
-  if (!openingDate) errors.push('Date du solde d’ouverture invalide.');
-  const sheetDate = sheetNameDate(grid.sheetName);
-  const reportDate = sheetDate ?? openingDate;
-  if (openingDate && sheetDate && openingDate > sheetDate) {
-    errors.push('Date du solde d’ouverture postérieure à la date de la feuille.');
+  const openingDate = parseCorroboratedDate(openingMatch[1], years);
+  if (!openingDate) errors.push('Date du solde d’ouverture invalide ou année non corroborée.');
+  const sheetDate = sheetNameDate(grid.sheetName, years);
+  if (!sheetDate && /^\d{6}$/.test(grid.sheetName.trim())) {
+    errors.push('Date du nom de feuille invalide ou année non corroborée.');
   }
-  const opening = amountOfRow(rows[openingRowIndex]);
+  const reportDate = sheetDate ?? openingDate;
+  if (openingDate && sheetDate) {
+    if (openingDate > sheetDate) {
+      errors.push('Date du solde d’ouverture postérieure à la date de la feuille.');
+    } else if (daysBetween(openingDate, sheetDate) > MAX_OPENING_TO_REPORT_DAYS) {
+      errors.push(`Date du solde d’ouverture antérieure de plus de ${MAX_OPENING_TO_REPORT_DAYS} jours à la feuille.`);
+    }
+  }
+  const opening = uniqueRowAmount(rows[openingRowIndex], zone);
   if (opening.amount === null) errors.push(`Solde d’ouverture invalide (${opening.error}).`);
 
   let closingRowIndex = -1;
@@ -224,7 +320,7 @@ export async function extractBankReportFromGrid(
     }
   }
   if (closingRowIndex === -1) errors.push('Solde de clôture absent.');
-  const closing = closingRowIndex === -1 ? { amount: null } : amountOfRow(rows[closingRowIndex]);
+  const closing = closingRowIndex === -1 ? { amount: null } : uniqueRowAmount(rows[closingRowIndex], zone);
   if (closingRowIndex !== -1 && closing.amount === null) {
     errors.push(`Solde de clôture invalide (${(closing as { error?: string }).error}).`);
   }
@@ -234,7 +330,6 @@ export async function extractBankReportFromGrid(
   const facilities: BankFacility[] = [];
   const impayes: Impaye[] = [];
   const declared = { deposits: false, checks: false, facilities: false, impayes: false };
-  let ignoredPostTotalRowCount = 0;
 
   // Après le solde d'ouverture, les dépôts non crédités peuvent apparaître sans
   // titre (rapports BIS) : la section implicite est « dépôts » jusqu'au premier
@@ -245,7 +340,7 @@ export async function extractBankReportFromGrid(
 
   for (let index = openingRowIndex + 1; index < rows.length; index += 1) {
     const row = rows[index];
-    if (isBlankRow(row)) continue;
+    if (isBlankRow(row) || isEffectivelyBlank(row)) continue;
     if (index === closingRowIndex) {
       section = 'none';
       continue;
@@ -281,21 +376,26 @@ export async function extractBankReportFromGrid(
     }
 
     if (section === 'none') {
-      if (rowLabels(row).some(label => label && !TOTAL_PREFIX.test(label))) {
-        errors.push(`Ligne ${index + 1} hors section non exploitable.`);
-      }
+      // Toute ligne datée, financière ou libellée hors section refuse : aucun
+      // rattachement implicite (DEF-23).
+      errors.push(`Ligne ${index + 1} hors section non exploitable.`);
       continue;
     }
 
     if (section === 'facilities') {
       if (isFacilityColumnHeaderRow(row)) continue;
-      const explicitName = textCells(row).map(text => text.trim()).filter(Boolean)[0];
-      const numbers = row.filter(isFormattedAmountCell);
       if (row.some(cell => cell.kind === 'error')) {
         errors.push(`Ligne ${index + 1} de facilités bancaires : cellule d’erreur Excel.`);
         continue;
       }
+      const explicitName = textCells(row).map(text => text.trim()).filter(Boolean)[0];
+      const numbers = row.filter(isFormattedAmountCell);
       const hasDate = row.some(cell => cellDate(cell) !== null);
+      if (facilitiesClosed) {
+        // Aucune perte silencieuse : une ligne après le total des facilités refuse.
+        errors.push(`Ligne ${index + 1} après le total des facilités non exploitable.`);
+        continue;
+      }
       if (!explicitName && !hasDate) {
         // Ligne de total (chiffres seuls, sans date) : fin des facilités.
         facilitiesClosed = true;
@@ -305,10 +405,6 @@ export async function extractBankReportFromGrid(
       const name = explicitName ?? facilitiesHeadingLabel;
       if (!name) {
         errors.push(`Ligne ${index + 1} de facilités bancaires sans libellé.`);
-        continue;
-      }
-      if (facilitiesClosed) {
-        ignoredPostTotalRowCount += 1;
         continue;
       }
       if (numbers.length !== 3 || numbers.some(cell => !Number.isSafeInteger(cell.number ?? NaN))) {
@@ -336,7 +432,7 @@ export async function extractBankReportFromGrid(
       continue;
     }
 
-    const { amount, error } = amountOfRow(row);
+    const { amount, error } = uniqueRowAmount(row, zone);
     if (amount === null) {
       errors.push(`Ligne ${index + 1} de ${sectionLabel(section)} : ${error}.`);
       continue;
@@ -383,8 +479,8 @@ export async function extractBankReportFromGrid(
   }
 
   // Une section titrée mais vide est un état normal des rapports réels (titre
-  // imprimé chaque jour, aucune ligne ce jour-là) : elle n'est pas une erreur.
-  // Toute ligne présente mais inexploitable a déjà produit une erreur explicite.
+  // imprimé chaque jour, aucune ligne ce jour-là) : avertissement, pas refus.
+  // Toute ligne présente mais inexploitable a déjà produit une erreur.
   const emptyDeclaredSections = [
     declared.deposits && deposits.length === 0 ? 'dépôts non crédités' : null,
     declared.checks && checks.length === 0 ? 'chèques non débités' : null,
@@ -394,16 +490,12 @@ export async function extractBankReportFromGrid(
   if (emptyDeclaredSections.length > 0) {
     warnings.push(`Section(s) titrée(s) sans ligne : ${emptyDeclaredSections.join(', ')}.`);
   }
-  if (ignoredPostTotalRowCount > 0) {
-    warnings.push(`${ignoredPostTotalRowCount} ligne(s) après le total des facilités non exploitée(s).`);
-  }
 
   const evidence: BankReportGridEvidence = {
     depositCount: deposits.length,
     checkCount: checks.length,
     facilityCount: facilities.length,
     unpaidCount: impayes.length,
-    ignoredPostTotalRowCount,
   };
   if (errors.length > 0) return { success: false, errors, warnings, evidence };
 

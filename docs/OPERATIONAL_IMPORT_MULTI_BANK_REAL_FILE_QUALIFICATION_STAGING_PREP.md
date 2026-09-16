@@ -128,8 +128,8 @@ La sortie JSON autorisée contient uniquement :
   `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` ;
 - codes d'erreur fermés ;
 - attestation utilisée, mode de sélection de feuille (`explicit`, `single`,
-  `not-applicable`) et compteurs de grille (lignes, colonnes, cellules d'erreur,
-  lignes ignorées après total) — jamais le nom de la feuille ;
+  `not-applicable`) et compteurs de grille (lignes, colonnes, cellules
+  d'erreur, cellules date parasites hors borne) — jamais le nom de la feuille ;
 - invariants `persistenceAttempted=false`, `environmentAccessed=false` et
   `promotionAuthorized=false`.
 

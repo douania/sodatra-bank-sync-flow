@@ -107,8 +107,13 @@ test('le précontrôle production accepte le candidat Collection et bloque Inter
 });
 
 test('le précontrôle staging conserve les pilotes et une cible inconnue refuse tout', () => {
+  // Pack 2 : un classeur Excel de Fund Position exige un inventaire de feuilles (feuille unique ici).
+  const fundPosition = file('Fund Position.xlsx');
   assert.equal(
-    buildImportPreflight([file('Fund Position.xlsx')], { deploymentTarget: 'staging' }).canProcess,
+    buildImportPreflight([fundPosition], {
+      deploymentTarget: 'staging',
+      sheetInventory: new Map([[fundPosition, ['Feuil1']]]),
+    }).canProcess,
     true,
   );
   const unknown = buildImportPreflight(

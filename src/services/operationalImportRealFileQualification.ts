@@ -75,7 +75,8 @@ export interface RealFileQualificationResult {
     usedRowCount: number;
     usedColumnCount: number;
     errorCellCount: number;
-    ignoredPostTotalRowCount: number;
+    /** Cellules date parasites hors borne de colonnes, seule signature tolérée (comptées, jamais lues). */
+    ignoredFarDateCellCount: number;
   };
   containsRawBankingData: false;
   persistenceAttempted: false;
@@ -278,14 +279,14 @@ export async function qualifyOperationalImportRealFileGrid(
     usedRowCount: input.grid.usedRowCount,
     usedColumnCount: input.grid.usedColumnCount,
     errorCellCount: input.grid.errorCellCount,
-    ignoredPostTotalRowCount: 0,
+    ignoredFarDateCellCount: input.grid.ignoredFarDateCellCount,
   };
   if (text.trim().length < 100) {
     return rejected(base, ['CONTENT_TOO_SHORT'], gridEvidence);
   }
 
   if (input.family === 'FUND_POSITION') {
-    const extraction = extractFundPositionFromGrid(input.grid);
+    const extraction = extractFundPositionFromGrid(input.grid, { fileName: input.sourceFileName });
     if (!extraction.success || !extraction.data) {
       return rejected(base, uniqueErrorCodes(extraction.errors ?? ['Extraction refusée.']), gridEvidence);
     }
@@ -303,8 +304,7 @@ export async function qualifyOperationalImportRealFileGrid(
     return rejected(base, ['BANK_IDENTITY_UNCORROBORATED'], gridEvidence);
   }
 
-  const extraction = await extractBankReportFromGrid(input.grid, input.family);
-  gridEvidence.ignoredPostTotalRowCount = extraction.evidence?.ignoredPostTotalRowCount ?? 0;
+  const extraction = await extractBankReportFromGrid(input.grid, input.family, { fileName: input.sourceFileName });
   if (!extraction.success || !extraction.data) {
     return rejected(base, uniqueErrorCodes(extraction.errors ?? ['Extraction refusée.']), gridEvidence);
   }

@@ -61,7 +61,6 @@ function englishReport(title: string): Cell[][] {
     [null, D('2026-07-09'), 'SPN', A(1_000_000_000), A(400_000_000), null, A(600_000_000)],
     [null, null, 'OVERDRAFT', A(200_000_000), A(0), null, A(200_000_000)],
     [null, null, null, null, A(1_200_000_000)],
-    [null, null, 'AJUSTEMENT', null, A(-5_000_000)],
     [],
     [null, null, null, 'IMPAYE'],
     [D('2026-06-30'), D('2026-07-05'), 'IMPAYE', 'CL01', 'CLIENT SYNTHETIQUE', '123456-654321', A(75_000)],
@@ -96,8 +95,94 @@ test('BDK : un rapport quotidien réel est extrait avec dates de cellule, montan
   assert.equal(report.impayes[0].clientCode, 'CL01');
   assert.equal(report.impayes[1].dateRetour, undefined);
   assert.equal(report.impayes[1].dateEcheance, '2026-07-01');
-  assert.equal(result.evidence?.ignoredPostTotalRowCount, 1);
-  assert.match((result.warnings ?? []).join(' '), /après le total des facilités/);
+  assert.deepEqual(result.warnings, []);
+});
+
+test('aucune perte silencieuse : toute ligne après le total des facilités ou hors section refuse', async () => {
+  const labelledAdjustment = englishReport('BDK');
+  labelledAdjustment.splice(18, 0, [null, null, 'AJUSTEMENT', null, A(-5_000_000)]);
+  const labelled = await extractBankReportFromGrid(gridOf(labelledAdjustment), 'BDK');
+  assert.equal(labelled.success, false);
+  assert.match(labelled.errors?.join(' ') ?? '', /après le total des facilités/);
+
+  const numericAdjustment = englishReport('BDK');
+  numericAdjustment.splice(18, 0, [null, null, null, null, A(-5_000_000)]);
+  assert.equal((await extractBankReportFromGrid(gridOf(numericAdjustment), 'BDK')).success, false);
+
+  // Ligne datée après le total des chèques (avant le solde de clôture) : hors section.
+  const datedOutside = englishReport('BDK');
+  datedOutside.splice(11, 0, [D('2026-07-03'), { ref: 999 }, 'CHQ TARDIF', 'BENEF', null, null, A(10_000)]);
+  const outside = await extractBankReportFromGrid(gridOf(datedOutside), 'BDK');
+  assert.equal(outside.success, false);
+  assert.match(outside.errors?.join(' ') ?? '', /hors section/);
+
+  // Ligne financière sans libellé après le total des impayés : hors section.
+  const numericOutside = englishReport('BDK');
+  numericOutside.push([null, null, null, null, null, null, A(1)]);
+  assert.equal((await extractBankReportFromGrid(gridOf(numericOutside), 'BDK')).success, false);
+});
+
+test('le montant est unique dans la zone titrée AMOUNT/MONTANT : ambiguïté refusée, référence hors zone ignorée, colonne « - » tolérée', async () => {
+  const ambiguous = englishReport('BDK');
+  ambiguous[4] = [D('2026-07-08'), D('2026-07-09'), 'REGLEMENT', 'FOURNISSEUR', 'CLIENT', null, A(250_000), A(1_000)];
+  const result = await extractBankReportFromGrid(gridOf(ambiguous), 'BDK');
+  assert.equal(result.success, false);
+  assert.match(result.errors?.join(' ') ?? '', /montant ambigu/);
+
+  // Une référence formatée en colonne TR NO (hors zone) n'est pas un montant.
+  const formattedReference = englishReport('BDK');
+  formattedReference[4] = [D('2026-07-08'), D('2026-07-09'), 'REGLEMENT', 'FOURNISSEUR', 'CLIENT', A(123_456), A(250_000)];
+  const ignoredReference = await extractBankReportFromGrid(gridOf(formattedReference), 'BDK');
+  assert.equal(ignoredReference.success, true, ignoredReference.errors?.join(' '));
+  assert.equal(ignoredReference.data?.depositsNotCleared[0].montant, 250_000);
+
+  const withZeroColumn = englishReport('BDK');
+  withZeroColumn[4] = [D('2026-07-08'), D('2026-07-09'), 'REGLEMENT', 'FOURNISSEUR', 'CLIENT', null, A(250_000), A(0)];
+  const tolerated = await extractBankReportFromGrid(gridOf(withZeroColumn), 'BDK');
+  assert.equal(tolerated.success, true, tolerated.errors?.join(' '));
+  assert.equal(tolerated.data?.depositsNotCleared[0].montant, 250_000);
+
+  // La colonne suivant la dernière colonne titrée est admise si elle n'est pas titrée (« montant 2 » BICIS).
+  const untitledNext = englishReport('BICIS');
+  untitledNext[1] = ['Date', 'Ch.No', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR NO/FACT.NO', 'AMOUNT'];
+  untitledNext[8] = [D('2026-07-01'), { ref: 1234567 }, 'CHQ', 'BENEF', 'CLIENT', { ref: 99999 }, null, A(150_000)];
+  const nextColumn = await extractBankReportFromGrid(gridOf(untitledNext), 'BICIS');
+  assert.equal(nextColumn.success, true, nextColumn.errors?.join(' '));
+  assert.equal(nextColumn.data?.checksNotCleared?.[0].montant, 150_000);
+
+  // Sans colonne titrée AMOUNT/MONTANT, le document est refusé.
+  const noAmountHeader = englishReport('BDK');
+  noAmountHeader[1] = ['Date', 'Ch.No', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR NO/FACT.NO', 'VALEUR'];
+  const refused = await extractBankReportFromGrid(gridOf(noAmountHeader), 'BDK');
+  assert.equal(refused.success, false);
+  assert.match(refused.errors?.join(' ') ?? '', /Colonne de montant non titrée/);
+});
+
+test('une année courte n’est acceptée que corroborée par les cellules date ou le nom du fichier ; l’écart d’ouverture est borné', async () => {
+  // Sans aucune cellule date ni nom de fichier, l'année « 26 » n'est pas corroborée.
+  const bare: Cell[][] = [
+    [null, null, null, 'BDK'],
+    ['Date', 'Ch.No', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR NO/FACT.NO', 'AMOUNT'],
+    ['OPENING BALANCE 08/07/26', null, null, null, null, null, A(1_000_000)],
+    [null, null, 'CLOSING BALANCE as per Book : C=(A-B)', null, null, null, A(1_000_000)],
+  ];
+  const uncorroborated = await extractBankReportFromGrid(gridOf(bare, 'Feuil1'), 'BDK');
+  assert.equal(uncorroborated.success, false);
+  assert.match(uncorroborated.errors?.join(' ') ?? '', /année non corroborée/);
+  const byFileName = await extractBankReportFromGrid(gridOf(bare, 'Feuil1'), 'BDK', { fileName: '07-BDK 2026.xlsx' });
+  assert.equal(byFileName.success, true, byFileName.errors?.join(' '));
+  assert.equal(byFileName.data?.date, '2026-07-08');
+  const wrongFileYear = await extractBankReportFromGrid(gridOf(bare, 'Feuil1'), 'BDK', { fileName: '07-BDK 2025.xlsx' });
+  assert.equal(wrongFileYear.success, false);
+
+  // Le nom de feuille JJMMAA est corroboré de la même façon ; l'écart ouverture → feuille est borné à 7 jours.
+  const sheetUncorroborated = await extractBankReportFromGrid(gridOf(bare, '090726'), 'BDK');
+  assert.match(sheetUncorroborated.errors?.join(' ') ?? '', /nom de feuille invalide ou année non corroborée/);
+  const tooOld = await extractBankReportFromGrid(gridOf(englishReport('BDK'), '200726'), 'BDK');
+  assert.equal(tooOld.success, false);
+  assert.match(tooOld.errors?.join(' ') ?? '', /plus de 7 jours/);
+  const withinBound = await extractBankReportFromGrid(gridOf(englishReport('BDK'), '150726'), 'BDK');
+  assert.equal(withinBound.success, true, withinBound.errors?.join(' '));
 });
 
 test('ATB : l’alias ATLANTIQUE BANK et les autres banques citées dans le corps sont acceptés', async () => {
@@ -165,7 +250,7 @@ test('l’identité est lue dans l’en-tête : absence, ambiguïté ou banque i
 
 test('les règles fail-closed : date de feuille incohérente, cellule d’erreur, ligne datée non exploitable, section vide', async () => {
   // Le nom de feuille fait foi ; un solde d'ouverture daté de la veille est accepté,
-  // un solde d'ouverture postérieur à la feuille est refusé.
+  // un solde d'ouverture postérieur à la feuille est refusé. (Noms de feuilles synthétiques.)
   const previousDayOpening = await extractBankReportFromGrid(gridOf(englishReport('BDK'), '100726'), 'BDK');
   assert.equal(previousDayOpening.success, true, previousDayOpening.errors?.join(' '));
   assert.equal(previousDayOpening.data?.date, '2026-07-10');
@@ -181,6 +266,14 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
   assert.equal(unnamedResult.success, true, unnamedResult.errors?.join(' '));
   assert.equal(unnamedResult.data?.bankFacilities[0].facilityType, 'BANK FACILITY (180 jrs)');
 
+  // Section titrée sans ligne : avertissement seulement si aucune ligne n'est ignorée jusqu'à la frontière suivante.
+  const emptyThenDated = englishReport('BDK');
+  emptyThenDated.splice(20, 3, [null, null, null, null, null, null, A(100_000)]);
+  assert.equal((await extractBankReportFromGrid(gridOf(emptyThenDated), 'BDK')).success, true, 'total chiffré seul = frontière');
+  const emptyThenStray = englishReport('BDK');
+  emptyThenStray.splice(20, 3, ['NOTE LIBRE']);
+  assert.equal((await extractBankReportFromGrid(gridOf(emptyThenStray), 'BDK')).success, false);
+
   const errorCell = englishReport('BDK');
   errorCell[4][6] = { error: '#REF!' };
   assert.equal((await extractBankReportFromGrid(gridOf(errorCell), 'BDK')).success, false);
@@ -195,7 +288,7 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
 
   // Une section titrée sans ligne est un état normal (titre imprimé chaque jour) : avertissement, pas refus.
   const emptySection = englishReport('BDK');
-  emptySection.splice(21, 3);
+  emptySection.splice(20, 3);
   const emptyResult = await extractBankReportFromGrid(gridOf(emptySection), 'BDK');
   assert.equal(emptyResult.success, true, emptyResult.errors?.join(' '));
   assert.equal(emptyResult.data?.impayes.length, 0);

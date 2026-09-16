@@ -35,7 +35,8 @@ class BankReportProcessingService {
     options: BankReportProcessingOptions = {},
   ): Promise<BankReportProcessingResult> {
     try {
-      console.log('🏦 DÉBUT TRAITEMENT RAPPORT BANCAIRE (NOUVELLE VERSION):', file.name);
+      // Journal sans nom de fichier ni valeur (Pack 2 : aucune donnée réelle en console).
+      console.log('🏦 DÉBUT TRAITEMENT RAPPORT BANCAIRE (NOUVELLE VERSION)');
 
       const isPdfFile = file.name.toLowerCase().endsWith('.pdf');
       const isExcelFile = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
@@ -148,7 +149,7 @@ class BankReportProcessingService {
       throw error;
     }
 
-    const extraction = await extractBankReportFromGrid(grid, bankType);
+    const extraction = await extractBankReportFromGrid(grid, bankType, { fileName: file.name });
     if (!extraction.success || !extraction.data) {
       return {
         success: false,

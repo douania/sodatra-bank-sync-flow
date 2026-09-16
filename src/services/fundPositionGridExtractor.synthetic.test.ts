@@ -95,6 +95,45 @@ test('Fund Position tabulaire : la date vient du nom de feuille JJMMAA, sinon d�
   assert.match(missing.errors?.join(' ') ?? '', /Date Fund Position/);
 });
 
+test('Fund Position tabulaire : aucun zéro inventé — blocs du jour absents = valeur absente, titre COLLECTION sans montant = refus', () => {
+  const noBlocks = nominal().filter(row => !['Deposit for the day', 'Payment for the day'].includes(String(row[0])));
+  noBlocks.splice(noBlocks.findIndex(row => row[1] === 'BDK' && row[6] !== undefined && row.length === 7 && row[2] === null), 1);
+  noBlocks.splice(noBlocks.findIndex(row => row[1] === 'BIS' && row.length === 7 && row[2] === null), 1);
+  const result = extractFundPositionFromGrid(gridOf(noBlocks));
+  assert.equal(result.success, true, result.errors?.join(' '));
+  assert.equal(result.data?.depositForDay, undefined);
+  assert.equal(result.data?.paymentForDay, undefined);
+
+  const noCollectionAmount = nominal();
+  noCollectionAmount[11] = ['COLLECTION NOT DEPOSITED'];
+  const missing = extractFundPositionFromGrid(gridOf(noCollectionAmount));
+  assert.equal(missing.success, false);
+  assert.match(missing.errors?.join(' ') ?? '', /Collections non déposées : montant absent/);
+
+  const noCollectionLabel = nominal();
+  noCollectionLabel.splice(11, 1);
+  const absent = extractFundPositionFromGrid(gridOf(noCollectionLabel));
+  assert.equal(absent.success, false);
+  assert.match(absent.errors?.join(' ') ?? '', /COLLECTION NOT DEPOSITED absente/);
+
+  const ambiguous = nominal();
+  ambiguous[6] = [null, 'BDK', null, null, null, A(2_000_000), A(3_000_000)];
+  const ambiguousResult = extractFundPositionFromGrid(gridOf(ambiguous));
+  assert.equal(ambiguousResult.success, false);
+  assert.match(ambiguousResult.errors?.join(' ') ?? '', /montant ambigu/);
+});
+
+test('Fund Position tabulaire : la date du nom de feuille exige une année corroborée par le document ou le nom du fichier', () => {
+  const noDateCells = nominal().filter(row => !(typeof row[0] === 'object' && row[0] !== null && 'date' in row[0]));
+  noDateCells.splice(noDateCells.findIndex(row => row[2] === 'HOLD'), 5);
+  const uncorroborated = extractFundPositionFromGrid(gridOf(noDateCells));
+  assert.equal(uncorroborated.success, false);
+  assert.match(uncorroborated.errors?.join(' ') ?? '', /Date Fund Position/);
+  const byFileName = extractFundPositionFromGrid(gridOf(noDateCells), { fileName: 'FUND POSITION 2026.xlsx' });
+  assert.equal(byFileName.success, true, byFileName.errors?.join(' '));
+  assert.equal(byFileName.data?.reportDate, '2026-07-09');
+});
+
 test('Fund Position tabulaire refuse cellule d’erreur, montant vide, total absent, HOLD incohérent', () => {
   const errorCell = nominal();
   errorCell[10][6] = { error: '#REF!' };
@@ -143,10 +182,12 @@ test('Fund Position tabulaire : HOLD lit le montant dans la colonne MONTANT et t
   assert.equal(result.data?.holdCollections?.[1].depositDate, undefined);
 });
 
-test('Fund Position tabulaire : aucune donnée financière brute ne fuit dans les erreurs de ligne', () => {
+test('Fund Position tabulaire : ni valeur ni nom de banque ne fuit dans les erreurs, seuls des numéros de ligne', () => {
   const decimal = nominal();
   decimal[1][2] = { amount: 100.5 };
   const result = extractFundPositionFromGrid(gridOf(decimal));
   assert.equal(result.success, false);
-  assert.doesNotMatch(result.errors?.join(' ') ?? '', /100\.5/);
+  const joined = result.errors?.join(' ') ?? '';
+  assert.doesNotMatch(joined, /100\.5|BDK|BIS|ATB/);
+  assert.match(joined, /Ligne 2 Fund Position : montant invalide/);
 });

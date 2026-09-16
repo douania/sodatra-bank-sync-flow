@@ -17,7 +17,24 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b — GO_FIX_PACK_2_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Contre-revue CTO sur `a74581b` : `FAIL` (six P1, deux P2, aucun P0). Corrections
+`GO_FIX_PACK_2` sur la même branche : refus de toute ligne après le total des
+facilités ou hors section ; zone de montant déterminée par l'en-tête et
+unicité du montant ; aucun zéro par défaut (blocs du jour absents = valeur
+absente, `COLLECTION NOT DEPOSITED` sans montant = refus) ; année courte
+corroborée par le document ou le nom de fichier, écart d'ouverture borné à
+7 jours ; cellules hors borne refusées sauf cellule date parasite ; journaux
+sans nom de fichier ni valeur ; sélection de feuille liée à l'instance et
+garde obligatoire ; affirmations documentaires restreintes. Rejeu local
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_1` : ATB, BICIS, ORA
+`PASS` sur la feuille du 9 juillet ; BDK et BIS `FAIL_CLOSED` (lignes après le
+total des facilités, DEF-25) ; Fund Position `FAIL_CLOSED` (DEF-20, DEF-24,
+date non corroborée) ; échantillon 60 feuilles : BDK 46, ATB 58, BICIS 58,
+ORA 2, BIS 22. Verdict CTO : DEF-20/21/22 différés en Pack 2B, DEF-23 corrigé,
+`GO_VALIDATE_STAGING_PACK_2` refusé. Détail :
+`docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md` §2 et §5.
 
 Programme `SBSF-COMPLETE-OPERATIONAL-V1`, Pack 2. GO : `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE`
 (campagne locale du 2026-09-16 : conformité de campagne, qualification métier

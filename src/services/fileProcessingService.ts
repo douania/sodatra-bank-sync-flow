@@ -21,7 +21,6 @@ import {
   detectImportDocument,
   detectImportDocumentFromText,
   getImportDocumentCompatibilityIssue,
-  importFileKey,
   type ImportDocumentKind,
 } from './importPreflightService';
 import {
@@ -36,12 +35,11 @@ export type { ProcessingResult } from '@/types/processing';
 
 export interface ProcessFilesOptions {
   /**
-   * Feuille Excel choisie par clé de fichier (`importFileKey`). Pack 2 : un
-   * rapport bancaire ou une Fund Position Excel est traité sur UNE feuille ;
-   * un classeur à plusieurs feuilles sans sélection est refusé, jamais
-   * concaténé.
+   * Feuille Excel choisie, liée à l'instance de fichier. Pack 2 : un rapport
+   * bancaire ou une Fund Position Excel est traité sur UNE feuille ; un
+   * classeur à plusieurs feuilles sans sélection est refusé, jamais concaténé.
    */
-  sheetSelections?: Readonly<Record<string, string>>;
+  sheetSelections?: ReadonlyMap<File, string>;
 }
 
 export class FileProcessingService {
@@ -74,7 +72,8 @@ export class FileProcessingService {
 
     try {
       console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Optimisé avec Timeouts Étendus');
-      console.log('📁 Fichiers reçus:', files.map(f => f.name));
+      // Pack 2 : aucun nom de fichier ni valeur financière en console.
+      console.log(`📁 Fichiers reçus: ${files.length}`);
       
       // ⭐ DÉMARRAGE DU HEARTBEAT
       const { HeartbeatService } = await import('./supabaseClientService');
@@ -283,7 +282,7 @@ export class FileProcessingService {
         const bankReports = await this.processBankReports(
           categorizedFiles.bankReports,
           results.errors!,
-          options.sheetSelections ?? {},
+          options.sheetSelections ?? new Map<File, string>(),
         );
         
         if (bankReports.length > 0) {
@@ -313,7 +312,7 @@ export class FileProcessingService {
         const fundPosition = await this.processFundPosition(
           categorizedFiles.fundPosition!,
           results.errors!,
-          options.sheetSelections?.[importFileKey(categorizedFiles.fundPosition!)],
+          options.sheetSelections?.get(categorizedFiles.fundPosition!),
         );
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
@@ -508,38 +507,37 @@ export class FileProcessingService {
   private async processBankReports(
     bankReportFiles: File[],
     errors: string[],
-    sheetSelections: Readonly<Record<string, string>>,
+    sheetSelections: ReadonlyMap<File, string>,
   ): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     const { bankReportProcessingService } = await import('./bankReportProcessingService');
 
     console.log(`🏦 Traitement de ${bankReportFiles.length} relevés bancaires...`);
 
+    // Pack 2 : journaux sans nom de fichier, sans résumé financier, sans
+    // avertissement détaillé (les libellés de facilités y figureraient).
     for (const file of bankReportFiles) {
-      console.log(`📄 Traitement du relevé: ${file.name}`);
-
       try {
         const processingResult = await bankReportProcessingService.processBankReportExcel(file, {
-          sheetName: sheetSelections[importFileKey(file)],
+          sheetName: sheetSelections.get(file),
         });
-        
+
         if (processingResult.success && processingResult.data) {
           console.log(`✅ Rapport ${processingResult.bankType} traité avec succès`);
-          console.log(`📊 ${bankReportProcessingService.getBankReportSummary(processingResult.data)}`);
-          
-          // Validation du rapport
+
+          // Validation du rapport (compteur seul en console)
           const warnings = await bankReportProcessingService.validateBankReport(processingResult.data);
           if (warnings.length > 0) {
-            console.warn(`⚠️ Avertissements pour ${processingResult.bankType}:`, warnings);
+            console.warn(`⚠️ ${warnings.length} avertissement(s) de cohérence pour ${processingResult.bankType}`);
           }
-          
+
           reports.push(processingResult.data);
         } else {
-          console.error(`❌ Échec traitement ${file.name}:`, processingResult.errors);
+          console.error(`❌ Échec traitement d’un rapport bancaire (${(processingResult.errors ?? []).length} erreur(s))`);
           errors.push(`Échec extraction ${file.name}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
         }
       } catch (error) {
-        console.error(`❌ Erreur traitement ${file.name}:`, error);
+        console.error('❌ Erreur traitement d’un rapport bancaire');
         errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
       }
     }
@@ -577,11 +575,12 @@ export class FileProcessingService {
           }
           throw error;
         }
-        const gridExtraction = extractFundPositionFromGrid(grid);
+        const gridExtraction = extractFundPositionFromGrid(grid, { fileName: file.name });
         if (!gridExtraction.success || !gridExtraction.data) {
           errors.push(`Échec extraction ${file.name}: ${(gridExtraction.errors ?? ['contrat invalide']).join(' ')}`);
           return null;
         }
+        console.log('💰 Fund Position tabulaire extraite (feuille sélectionnée)');
         return gridExtraction.data;
       } else {
         console.warn('⚠️ Format de fichier non supporté pour Fund Position');
@@ -608,15 +607,10 @@ export class FileProcessingService {
       }
       
       const fundPosition = extractionResult.data;
-      
-      console.log('📊 === FUND POSITION EXTRAITE ===');
-      console.log(`📅 Date: ${fundPosition.reportDate}`);
-      console.log(`💰 Total fonds disponibles: ${fundPosition.totalFundAvailable.toLocaleString()}`);
-      console.log(`📤 Collections non déposées: ${fundPosition.collectionsNotDeposited.toLocaleString()}`);
-      console.log(`🎯 Grand total: ${fundPosition.grandTotal.toLocaleString()}`);
-      console.log(`📊 Détails par banque: ${fundPosition.details?.length || 0} banques`);
-      console.log(`📋 Collections en attente: ${fundPosition.holdCollections?.length || 0} items`);
-      
+
+      // Pack 2 : compteurs seuls en console, aucune date ni valeur financière.
+      console.log(`📊 Fund Position extraite : ${fundPosition.details?.length || 0} banque(s), ${fundPosition.holdCollections?.length || 0} collection(s) en attente`);
+
       return fundPosition;
       
     } catch (error) {

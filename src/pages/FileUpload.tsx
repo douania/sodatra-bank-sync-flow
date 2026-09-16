@@ -30,7 +30,6 @@ import {
 import {
   buildImportPreflight,
   detectImportDocument,
-  importFileKey,
   SHEET_SELECTED_DOCUMENT_KINDS,
 } from '@/services/importPreflightService';
 import { listWorkbookSheetNames } from '@/services/excelSheetGrid';
@@ -131,9 +130,10 @@ const FileUpload = () => {
   const [promotionResult, setPromotionResult] = useState<ProcessingResult | null>(null);
   // ⭐ PACK 2 : un rapport bancaire ou une Fund Position Excel se traite sur UNE
   // feuille choisie explicitement. L'inventaire des feuilles est lu localement
-  // (noms seulement) ; sans sélection, le précontrôle bloque le fichier.
-  const [sheetInventory, setSheetInventory] = useState<Record<string, string[]>>({});
-  const [sheetSelections, setSheetSelections] = useState<Record<string, string>>({});
+  // (noms seulement) et lié à l'instance de fichier ; sans sélection, le
+  // précontrôle bloque le fichier. Les entrées des fichiers retirés sont purgées.
+  const [sheetInventory, setSheetInventory] = useState<ReadonlyMap<File, string[]>>(() => new Map());
+  const [sheetSelections, setSheetSelections] = useState<ReadonlyMap<File, string>>(() => new Map());
   const { toast } = useToast();
   const { user } = useAuth();
   // ⭐ 0Z_AM : garde d'interface production read-only — réutilise la politique
@@ -195,23 +195,28 @@ const FileUpload = () => {
   useEffect(() => {
     let cancelled = false;
     const pending = selectedFiles.filter(file => {
-      const key = importFileKey(file);
       const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1] ?? '';
       return (extension === 'xlsx' || extension === 'xls')
         && SHEET_SELECTED_DOCUMENT_KINDS.includes(detectImportDocument(file.name).kind)
-        && sheetInventory[key] === undefined;
+        && !sheetInventory.has(file);
     });
     if (pending.length === 0) return undefined;
     (async () => {
-      const additions: Record<string, string[]> = {};
+      const additions = new Map<File, string[]>();
       for (const file of pending) {
         try {
-          additions[importFileKey(file)] = listWorkbookSheetNames(await file.arrayBuffer());
+          additions.set(file, listWorkbookSheetNames(await file.arrayBuffer()));
         } catch {
-          additions[importFileKey(file)] = [];
+          additions.set(file, []);
         }
       }
-      if (!cancelled) setSheetInventory(previous => ({ ...previous, ...additions }));
+      if (!cancelled) {
+        setSheetInventory(previous => {
+          const next = new Map(previous);
+          for (const [file, names] of additions) next.set(file, names);
+          return next;
+        });
+      }
     })();
     return () => {
       cancelled = true;
@@ -228,10 +233,31 @@ const FileUpload = () => {
   }, []);
 
   // ⭐ PACK 2 : changer de feuille invalide aussi les résultats précédents.
-  const selectSheet = useCallback((key: string, sheetName: string) => {
+  const selectSheet = useCallback((file: File, sheetName: string) => {
     resetImportStateAfterFileChange();
-    setSheetSelections(previous => ({ ...previous, [key]: sheetName }));
+    setSheetSelections(previous => {
+      const next = new Map(previous);
+      if (sheetName) next.set(file, sheetName);
+      else next.delete(file);
+      return next;
+    });
   }, [resetImportStateAfterFileChange]);
+
+  // ⭐ PACK 2 : purge de l'inventaire et des sélections des fichiers retirés.
+  const forgetSheetState = useCallback((file: File) => {
+    setSheetInventory(previous => {
+      if (!previous.has(file)) return previous;
+      const next = new Map(previous);
+      next.delete(file);
+      return next;
+    });
+    setSheetSelections(previous => {
+      if (!previous.has(file)) return previous;
+      const next = new Map(previous);
+      next.delete(file);
+      return next;
+    });
+  }, []);
 
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
     // ⭐ PACK-C.1 : nouveaux fichiers ajoutés → l'état de review/promotion est périmé.
@@ -270,6 +296,7 @@ const FileUpload = () => {
   const removeFile = (fileToRemove: File) => {
     // ⭐ PACK-C.1 : fichier retiré → l'état de review/promotion est périmé.
     resetImportStateAfterFileChange();
+    forgetSheetState(fileToRemove);
 
     setSelectedFiles(prevFiles => prevFiles.filter(file => file !== fileToRemove));
   };
@@ -668,7 +695,7 @@ const FileUpload = () => {
                           <select
                             className="rounded border border-gray-300 bg-white px-2 py-1 text-sm"
                             value={entry.selectedSheetName ?? ''}
-                            onChange={event => selectSheet(importFileKey(entry.file), event.target.value)}
+                            onChange={event => selectSheet(entry.file, event.target.value)}
                             disabled={processing}
                           >
                             <option value="">— choisir une feuille ({entry.sheetNames.length}) —</option>
