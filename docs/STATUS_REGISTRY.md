@@ -15,6 +15,50 @@
 
 ---
 
+## PACK-2-REAL-FORMAT-COMPATIBILITY
+
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Programme `SBSF-COMPLETE-OPERATIONAL-V1`, Pack 2. GO : `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE`
+(campagne locale du 2026-09-16 : conformité de campagne, qualification métier
+`FAIL` sur les sept familles, aucun GO staging) puis
+`GO_IMPLEMENT_PACK_2_REAL_FORMAT_COMPATIBILITY` (niveau élevé, base `4412d0c9`,
+branche `agent/pack-2-real-format-compatibility`, exécutant Claude Code).
+Rapport : `docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md`.
+
+Livré (local, tests synthétiques, aucun environnement) :
+
+- sélection explicite d'une feuille dans `/upload` et dans le harness
+  (`--sheet`) ; aucune concaténation de feuilles ; grille bornée par les
+  cellules réelles (BIS : plage déclarée `A1:XFD37`, 8 colonnes lues, cellules
+  parasites comptées) ; dates de cellule converties depuis le numéro de série
+  Excel ; cellules d'erreur Excel refusées ;
+- identité bancaire fondée sur l'émetteur de l'en-tête, ambiguïté fail-closed ;
+  alias ATB strictement listés (`ATLANTIQUE BANK`, `ATLANTIK BANK`) ;
+- dates `JJ/MM/AA` = 2000 + AA, jour en premier ; rendu `m/d/yy` refusé ;
+- extracteur tabulaire des rapports bancaires (libellés anglais et français
+  ORA strictement listés, montant = dernière cellule formatée non nulle,
+  date de rapport = nom de feuille `JJMMAA`, solde d'ouverture de la veille
+  accepté) ; extracteur tabulaire Fund Position ;
+- harness : attestation `--anonymized` ou `--real-sensitive-authorized`
+  (exactement une), `--sheet`, sortie sans nom de feuille ni donnée brute,
+  `gridEvidence`, code `EXCEL_ERROR_CELL`.
+
+Validation locale sur les fichiers réels de juillet 2026 (hors dépôt, sous
+GO) : BDK, ATB, BICIS, ORA et BIS `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW`
+sur la feuille du 9 juillet ; sur 60 feuilles échantillonnées par banque :
+BDK 48, ATB 59, BICIS 59, ORA 11, BIS 56 ; Fund Position `FAIL_CLOSED` (colonne
+Grand Balance absente des feuilles récentes ; 24/150 feuilles passent). SGBS
+`NOT_TESTED` (aucun fichier). Aucune famille n'est promue : toutes restent
+`STAGING_PILOT`. Points d'arbitrage CTO consignés en DEF-20 à DEF-23.
+
+`package.json` : scripts uniquement (`test:multi-bank-reports` étendu) ; aucune
+dépendance ni lockfile modifié. Aucun SQL, migration, Supabase, réseau ni
+service tiers. Merge bloqué jusqu'à clôture du Pack 0, régularisation Pack 0R et
+verdict CTO sur la PR.
+
+---
+
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
 **Statut : `MERGED (a22ab60f) — MAIN_CI_GREEN — DELIVERED_WITH_PLATFORM_ATTESTATION (2026-09-08) — GOVERNANCE_ITEMS_OPEN` (livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**

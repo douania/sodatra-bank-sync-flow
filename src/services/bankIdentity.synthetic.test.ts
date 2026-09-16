@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  banksMentionedInHeader,
   corroborateBankIdentity,
   detectBankFromContent,
   detectBankFromFileName,
+  detectBankFromHeader,
   OPERATIONAL_BANK_CODES,
 } from './bankIdentity';
 
@@ -38,4 +40,27 @@ test('la corroboration exige une identité unique et identique dans le nom et le
 test('les sous-chaînes génériques ne sont pas prises pour des codes banque', () => {
   assert.equal(detectBankFromFileName('rapport public.pdf'), null);
   assert.equal(detectBankFromContent('BICYCLE ATLANTIQUE GENERALE'), null);
+});
+
+test('l’identité se lit dans l’en-tête : le corps peut citer d’autres banques, l’en-tête doit être unique', () => {
+  const body = 'BDK\nDate\tCh.No\nOPENING BALANCE 09/07/26\t1 000\nCHQ SGBS 100\nDEPOT CBAO 200\nVIREMENT ATB 300\nCHQ ECOBANK 50';
+  assert.equal(detectBankFromHeader(body), 'BDK');
+  assert.equal(detectBankFromContent(body), null, 'la détection sur tout le contenu reste ambiguë');
+  assert.equal(corroborateBankIdentity('07-BDK 2026.xlsx', body).corroborated, true);
+
+  const ambiguousHeader = 'BDK SGBS\nRAPPORT';
+  assert.equal(detectBankFromHeader(ambiguousHeader), null);
+  assert.deepEqual(banksMentionedInHeader(ambiguousHeader), ['BDK', 'SGBS']);
+  assert.match(corroborateBankIdentity('Rapport BDK.pdf', ambiguousHeader).error ?? '', /ambiguë dans l’en-tête/);
+
+  const lateMention = 'ligne 1\nligne 2\nligne 3\nBDK RAPPORT';
+  assert.equal(detectBankFromHeader(lateMention), null, 'au-delà des trois premières lignes, rien ne fait foi');
+});
+
+test('les alias ATB sont strictement listés : ATLANTIQUE BANK et ATLANTIK BANK', () => {
+  assert.equal(detectBankFromFileName('7-ATLANTIK BANK 2026 (Réparé).xlsx'), 'ATB');
+  assert.equal(detectBankFromFileName('Rapport ATLANTIQUE BANK.xlsx'), 'ATB');
+  assert.equal(detectBankFromHeader('ATLANTIQUE BANK\nDate'), 'ATB');
+  assert.equal(detectBankFromHeader('ATLANTIC BANK\nDate'), null, 'variante non listée refusée');
+  assert.equal(detectBankFromFileName('ATLANTIC BANK.xlsx'), null);
 });

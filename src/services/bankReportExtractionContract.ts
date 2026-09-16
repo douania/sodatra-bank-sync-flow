@@ -1,3 +1,13 @@
+/**
+ * Règle déterministe des dates textuelles (Pack 2) :
+ * - `JJ/MM/AAAA` ou `JJ-MM-AAAA` : jour en premier ;
+ * - `AAAA-MM-JJ` : ISO ;
+ * - `JJ/MM/AA` ou `JJ-MM-AA` : jour en premier, année `AA` = 2000 + AA
+ *   (les libellés de solde des rapports réels sont saisis ainsi) ;
+ * - toute autre forme (jour ou mois sur un chiffre, `M/D/YY` de SheetJS,
+ *   texte) est refusée : une date de cellule Excel doit être convertie depuis
+ *   son numéro de série (voir `excelSheetGrid`), jamais depuis son rendu.
+ */
 export function parseDocumentDate(value: string | undefined): string | null {
   if (!value) return null;
   const cleaned = value.trim();
@@ -6,11 +16,16 @@ export function parseDocumentDate(value: string | undefined): string | null {
   let day: number;
 
   const french = cleaned.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
+  const frenchShortYear = cleaned.match(/^(\d{2})[/-](\d{2})[/-](\d{2})$/);
   const iso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (french) {
     day = Number(french[1]);
     month = Number(french[2]);
     year = Number(french[3]);
+  } else if (frenchShortYear) {
+    day = Number(frenchShortYear[1]);
+    month = Number(frenchShortYear[2]);
+    year = 2000 + Number(frenchShortYear[3]);
   } else if (iso) {
     year = Number(iso[1]);
     month = Number(iso[2]);

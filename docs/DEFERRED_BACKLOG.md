@@ -210,6 +210,41 @@ et crédit séparés, solde, dates ; conteneurs XLS (ATB, BICIS, BIS) et XLSX
 **Reste dû** : aucune règle monétaire, profil ou idempotence modifiés ; la
 qualification sur fichiers réels reste due (Pack 2).
 
+### DEF-20 : Fund Position sans colonne « Grand Balance » (Pack 2) — arbitrage CTO
+
+**Fichiers** : `src/services/fundPositionGridExtractor.ts`, `src/types/banking.ts`.
+**Constat (2026-09-16, fichiers réels)** : les feuilles Fund Position récentes
+(dont juillet 2026) ne portent plus la colonne « Grand Balance » ; le modèle
+et la base exigent `grandBalance` par banque et `grandTotal`. Sur les feuilles
+qui portent la colonne, `Grand Balance = Net Balance + NonValidated Deposit`
+sans exception (860 lignes), mais le grand total inscrit n'est pas la somme de
+la colonne dans 111 feuilles sur 137 : le dériver serait inventer une valeur.
+**Décision Pack 2** : refus explicite (« Colonne Grand Balance absente »).
+**Options** : rendre `grandTotal` / `grandBalance` facultatifs (modèle + DB) ;
+exiger la colonne dans le document source ; accepter une dérivation marquée.
+**Lot probable** : Pack 2 (suite) après arbitrage.
+
+### DEF-21 : Facilités ORA à deux montants (Pack 2) — arbitrage CTO
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : 49 feuilles ORA sur 60 échantillonnées portent des lignes de
+facilités à deux montants (limite et solde), la colonne « utilisé » étant vide
+et sans en-tête de colonnes. Le contrat exige trois montants.
+**Décision Pack 2** : refus (ambiguïté). **Option** : lire « utilisé » vide
+comme zéro sur décision métier explicite.
+
+### DEF-22 : Marqueur de type d'impayé BDK non listé (Pack 2)
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : 9 lignes d'impayés BDK sur 60 feuilles portent en 3e colonne un
+mot de quatre lettres autre que `IMPAYE`. Le contrat exige le marqueur listé.
+**Option** : lister les types admis, ou accepter tout texte avec code client.
+
+### DEF-23 : Lignes datées hors section (Pack 2)
+
+**Constat** : 6 lignes ORA datées apparaissent après une ligne de total
+(hors section). Refus maintenu ; à qualifier avec le producteur des rapports.
+
 ### DEF-12 : Documentation utilisateur
 
 **Problème** : Aucun guide utilisateur pour les opérations d'import, de consultation, d'interprétation des données.

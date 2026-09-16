@@ -179,6 +179,13 @@ production, `integer` en staging et dans la baseline. L'historique d'import
 antérieur à ces lectures n'est pas établi par elles.
 Voir `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
 
+Pack 2 (`agent/pack-2-real-format-compatibility`, draft PR) : les classeurs
+Excel de rapports bancaires et de Fund Position sont traités sur **une feuille
+choisie explicitement** (les fichiers réels sont des classeurs annuels à une
+feuille par jour) ; aucune concaténation de feuilles ; identité bancaire lue
+dans l'en-tête ; extraction tabulaire fail-closed. Voir
+`docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md`.
+
 Le flux `/daily-statements` est séparé de ces deux pipelines :
 - seuls les relevés ONLINE correspondant à un profil structurel exact sont acceptés ;
 - les journaux mensuels Internal Book ne sont pas des relevés bancaires Daily v2 ;
@@ -238,7 +245,7 @@ Ouverts / suivis :
 - Dashboard opérationnel Daily v2 canonical : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE` ; le badge et les frontières de session sont publiés, tandis que la matrice réelle multi-rôles/révocation/refetch/concurrence reste ouverte ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
-- Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;
+- Qualification réelle multi-bank : campagne locale du 2026-09-16 sur les fichiers réels de juillet (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE`) : `FAIL` métier sur les sept familles pour cause de format ; Pack 2 `PACK-2-REAL-FORMAT-COMPATIBILITY` : `IMPLEMENTED_LOCAL — DRAFT_PR` (sélection explicite de feuille, identité par l'en-tête, dates `JJ/MM/AA`, libellés ORA et alias ATB listés, extracteurs tabulaires rapports bancaires et Fund Position, harness `--sheet` / `--real-sensitive-authorized`) ; BDK, ATB, BICIS, ORA, BIS passent localement sur la feuille du 9 juillet, Fund Position refusée (colonne Grand Balance absente), SGBS non testé ; aucune promotion, toutes les familles restent `STAGING_PILOT` ; merge bloqué jusqu'à clôture Pack 0 et Pack 0R ;
 - OPS-CORE-1 : `CLOSED`, précontrôle d'import validé staging et publié en production le 2026-08-13 ;
 - DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;

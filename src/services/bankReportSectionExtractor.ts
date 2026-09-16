@@ -1,6 +1,6 @@
 
 import { BankReport, BankFacility, Impaye, DepositNotCleared, CheckNotCleared } from '@/types/banking';
-import { detectBankFromContent } from './bankIdentity';
+import { detectBankFromHeader } from './bankIdentity';
 import { hasStructuredLines, parseDocumentDate, parseFinancialInteger } from './bankReportExtractionContract';
 
 export interface SectionExtractionResult {
@@ -146,7 +146,8 @@ class BankReportSectionExtractor {
         };
       }
 
-      const contentBank = detectBankFromContent(textContent);
+      // Pack 2 : l'émetteur se lit dans l'en-tête ; le corps peut citer d'autres banques.
+      const contentBank = detectBankFromHeader(textContent);
       if (contentBank !== bankName) {
         return {
           success: false,

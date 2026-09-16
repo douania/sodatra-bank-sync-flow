@@ -344,7 +344,8 @@ test('staging : le pipeline d\'import de la page reste strictement inchangé', (
   assert.match(page, /useDropzone\(\{/);
   assert.match(page, /\{\.\.\.getRootProps\(\{ className: 'dropzone' \}\)\}/);
   assert.match(page, /await partitionCollectionReportFiles\(selectedFiles\)/);
-  assert.match(page, /await fileProcessingService\.processFiles\(otherFiles\)/);
+  // Pack 2 : le pipeline reçoit les sélections explicites de feuille, rien d'autre.
+  assert.match(page, /await fileProcessingService\.processFiles\(otherFiles, \{ sheetSelections \}\)/);
   assert.match(page, /await promoteValidatedCollections\(reviewWithSelection\)/);
   assert.match(page, /const gate = assertPromotionAllowed\(reviewWithSelection\)/);
   assert.match(page, /roles: rolesQuery\.data \?\? \[\]/);

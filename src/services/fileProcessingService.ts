@@ -3,6 +3,7 @@ import { databaseService } from './databaseService';
 import { intelligentSyncService } from './intelligentSyncService';
 import { SupabaseRetryService } from './supabaseClientService';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
+// CollectionReport reste importé pour le typage des collections du lot.
 import { progressService } from './progressService';
 import type { ExcelImportDiagnostics, ProcessingResult } from '@/types/processing';
 import {
@@ -20,12 +21,31 @@ import {
   detectImportDocument,
   detectImportDocumentFromText,
   getImportDocumentCompatibilityIssue,
+  importFileKey,
   type ImportDocumentKind,
 } from './importPreflightService';
+import {
+  ExcelSheetSelectionError,
+  listWorkbookSheetNames,
+  readSelectedSheetGrid,
+  resolveSelectedSheetName,
+  sheetGridToText,
+} from './excelSheetGrid';
+import { extractFundPositionFromGrid } from './fundPositionGridExtractor';
 export type { ProcessingResult } from '@/types/processing';
 
+export interface ProcessFilesOptions {
+  /**
+   * Feuille Excel choisie par clé de fichier (`importFileKey`). Pack 2 : un
+   * rapport bancaire ou une Fund Position Excel est traité sur UNE feuille ;
+   * un classeur à plusieurs feuilles sans sélection est refusé, jamais
+   * concaténé.
+   */
+  sheetSelections?: Readonly<Record<string, string>>;
+}
+
 export class FileProcessingService {
-  async processFiles(files: File[]): Promise<ProcessingResult> {
+  async processFiles(files: File[], options: ProcessFilesOptions = {}): Promise<ProcessingResult> {
     const results: ProcessingResult = {
       success: false,
       data: {
@@ -260,7 +280,11 @@ export class FileProcessingService {
         progressService.startStep('bank_analysis', 'Rapports Bancaires', 'Traitement des relevés bancaires');
         
         console.log('🏦 === DÉBUT TRAITEMENT RELEVÉS BANCAIRES ===');
-        const bankReports = await this.processBankReports(categorizedFiles.bankReports, results.errors!);
+        const bankReports = await this.processBankReports(
+          categorizedFiles.bankReports,
+          results.errors!,
+          options.sheetSelections ?? {},
+        );
         
         if (bankReports.length > 0) {
           results.data!.bankReports = bankReports;
@@ -288,8 +312,8 @@ export class FileProcessingService {
         console.log('💰 Extraction Fund Position...');
         const fundPosition = await this.processFundPosition(
           categorizedFiles.fundPosition!,
-          results.data!.collectionReports,
           results.errors!,
+          options.sheetSelections?.[importFileKey(categorizedFiles.fundPosition!)],
         );
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
@@ -456,12 +480,16 @@ export class FileProcessingService {
 
     const filename = file.name.toUpperCase();
 
-    // Si le nom ne suffit pas, conserver le repli historique d'analyse Excel,
-    // mais réutiliser la même classification stricte que le précontrôle UI.
+    // Si le nom ne suffit pas, conserver le repli d'analyse Excel sur la
+    // PREMIÈRE feuille uniquement (aucune concaténation), avec la même
+    // classification stricte que le précontrôle UI.
     if (filename.endsWith('.XLSX') || filename.endsWith('.XLS')) {
       try {
         const buffer = await file.arrayBuffer();
-        const textContent = await this.extractTextFromExcel(buffer);
+        const sheetNames = listWorkbookSheetNames(buffer);
+        const textContent = sheetNames.length > 0
+          ? sheetGridToText(readSelectedSheetGrid(buffer, sheetNames[0]))
+          : '';
 
         const contentDetection = detectImportDocumentFromText(textContent);
         if (contentDetection.kind !== 'UNKNOWN') {
@@ -477,17 +505,23 @@ export class FileProcessingService {
   }
 
   // ⭐ NOUVELLE MÉTHODE : Traitement des rapports bancaires
-  private async processBankReports(bankReportFiles: File[], errors: string[]): Promise<BankReport[]> {
+  private async processBankReports(
+    bankReportFiles: File[],
+    errors: string[],
+    sheetSelections: Readonly<Record<string, string>>,
+  ): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     const { bankReportProcessingService } = await import('./bankReportProcessingService');
-    
+
     console.log(`🏦 Traitement de ${bankReportFiles.length} relevés bancaires...`);
-    
+
     for (const file of bankReportFiles) {
       console.log(`📄 Traitement du relevé: ${file.name}`);
-      
+
       try {
-        const processingResult = await bankReportProcessingService.processBankReportExcel(file);
+        const processingResult = await bankReportProcessingService.processBankReportExcel(file, {
+          sheetName: sheetSelections[importFileKey(file)],
+        });
         
         if (processingResult.success && processingResult.data) {
           console.log(`✅ Rapport ${processingResult.bankType} traité avec succès`);
@@ -517,27 +551,44 @@ export class FileProcessingService {
   // ⭐ TRAITEMENT FUND POSITION
   private async processFundPosition(
     file: File,
-    currentCollections: CollectionReport[] | undefined,
     errors: string[],
+    selectedSheetName: string | undefined,
   ): Promise<FundPosition | null> {
     try {
       console.log('💰 === TRAITEMENT DÉTAILLÉ FUND POSITION ===');
-      
+
       // Extraire le contenu du fichier
       const buffer = await file.arrayBuffer();
       let textContent = '';
-      
+
       // Extraction du contenu selon le type de fichier
       if (file.name.toLowerCase().endsWith('.pdf')) {
         textContent = await this.extractTextFromPDF(buffer);
       } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
-        textContent = await this.extractTextFromExcel(buffer);
+        // Pack 2 : Fund Position Excel = extraction tabulaire d'UNE feuille choisie.
+        let grid;
+        try {
+          const sheetName = resolveSelectedSheetName(listWorkbookSheetNames(buffer), selectedSheetName);
+          grid = readSelectedSheetGrid(buffer, sheetName);
+        } catch (error) {
+          if (error instanceof ExcelSheetSelectionError) {
+            errors.push(`Échec extraction ${file.name}: ${error.message}`);
+            return null;
+          }
+          throw error;
+        }
+        const gridExtraction = extractFundPositionFromGrid(grid);
+        if (!gridExtraction.success || !gridExtraction.data) {
+          errors.push(`Échec extraction ${file.name}: ${(gridExtraction.errors ?? ['contrat invalide']).join(' ')}`);
+          return null;
+        }
+        return gridExtraction.data;
       } else {
         console.warn('⚠️ Format de fichier non supporté pour Fund Position');
         errors.push(`Échec extraction ${file.name}: format Fund Position non supporté.`);
         return null;
       }
-      
+
       if (!textContent || textContent.length < 100) {
         console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Fund Position');
         errors.push(`Échec extraction ${file.name}: contenu Fund Position insuffisant.`);
@@ -730,29 +781,6 @@ export class FileProcessingService {
     }
   }
   
-  private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {
-    try {
-      const XLSX = await import('xlsx');
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      let allText = '';
-      
-      for (const sheetName of workbook.SheetNames) {
-        const worksheet = workbook.Sheets[sheetName];
-        const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
-        
-        for (const row of sheetData) {
-          if (Array.isArray(row)) {
-            allText += row.join('\t') + '\n';
-          }
-        }
-      }
-      
-      return allText;
-    } catch (error) {
-      console.error('❌ Erreur extraction Excel:', error);
-      return '';
-    }
-  }
 }
 
 export const fileProcessingService = new FileProcessingService();
