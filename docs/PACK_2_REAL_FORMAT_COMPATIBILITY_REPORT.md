@@ -1,8 +1,8 @@
 # Pack 2 — Compatibilité des formats réels (rapports bancaires et Fund Position)
 
-**Date :** 2026-09-16 (révision après contre-revue CTO de la PR #149, `GO_FIX_PACK_2`)
-**GO :** `GO_IMPLEMENT_PACK_2_REAL_FORMAT_COMPATIBILITY` (niveau élevé, base `4412d0c9`), puis `GO_FIX_PACK_2` et `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_1`
-**Statut :** `IMPLEMENTED_LOCAL — DRAFT_PR_149 — FIX_1_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R`
+**Date :** 2026-09-16 (révisions FIX_1 puis FIX_2 après contre-revues CTO de la PR #149, `GO_FIX_PACK_2` reconduit)
+**GO :** `GO_IMPLEMENT_PACK_2_REAL_FORMAT_COMPATIBILITY` (niveau élevé, base `4412d0c9`), puis `GO_FIX_PACK_2` (FIX_1, FIX_2), `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_1` et `…_FIX_2`
+**Statut :** `IMPLEMENTED_LOCAL — DRAFT_PR_149 — FIX_2_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R`
 
 ## 1. Objet
 
@@ -37,6 +37,18 @@ Décisions CTO reprises : DEF-20, DEF-21, DEF-22 différés en Pack 2B (aucune
 dérivation, aucun zéro par défaut, aucune liste ouverte) ; DEF-23 corrigé
 (refus de toute ligne datée ou financière hors section ou après total).
 
+### 2.1 Deuxième contre-revue (commit `863c671`) et corrections FIX_2
+
+| # | Finding | Correction |
+|---|---|---|
+| 1 | P1 — exception hors borne trop large | Signature structurelle exacte : **exactement une** cellule hors borne sur toute la feuille, en colonne `XFD` (index 16383), numérique au format date à date valide ; toute autre configuration (autre colonne, plusieurs cellules, texte, montant, nombre, erreur) refuse la feuille. Tests adversariaux : sept variantes refusées. |
+| 2 | P1 — nom de fichier dans les erreurs `/upload` | Les erreurs retournées désignent le fichier par son rang dans le lot (`fichier n°N`), jamais par son nom (rapports bancaires, Fund Position, fichiers bloqués, Collection Report legacy). Test de source `uploadErrorHygiene` : aucun `.name` dans les `errors.push`, journaux des chemins bancaires et Fund Position sans nom ni valeur. |
+| 3 | P1 — facilité sans libellé nommée par le titre | Toute ligne de facilité sans libellé métier explicite refuse (« facilités bancaires sans libellé ») ; aucun libellé déduit du titre de section. Test inversé (refus attendu, titre absent de la sortie). |
+| 4 | P1 — colonne adjacente non titrée intégrée à la zone | Zone de montant strictement limitée aux colonnes titrées `AMOUNT`/`MONTANT` ; un montant porté par une colonne non titrée refuse la ligne (« montant absent »). Tests : BICIS et ORA (colonne suivante) refusés, même ligne acceptée dans la colonne titrée. |
+
+Conséquences consignées : DEF-26 (facilité BICIS sans libellé), DEF-27
+(montant en colonne non titrée, BICIS et ORA).
+
 ## 3. Règles en vigueur (déterministes, documentées)
 
 ### 3.1 Sélection explicite d'une feuille (`src/services/excelSheetGrid.ts`)
@@ -57,8 +69,9 @@ dérivation, aucun zéro par défaut, aucune liste ouverte) ; DEF-23 corrigé
 
 - Grille construite depuis les cellules présentes, jamais depuis `!ref`.
 - Cellule sans valeur, ou au format date sans date calendaire valide : vide.
-- Hors borne de 512 colonnes : seule une cellule numérique au format date est
-  tolérée (comptée) ; toute autre cellule non vide refuse.
+- Hors borne de 512 colonnes : seule la signature exacte « une unique cellule
+  hors borne, en colonne `XFD`, numérique au format date à date valide » est
+  tolérée (comptée) ; toute autre configuration refuse.
 - Bornes : 20 000 lignes, 512 colonnes, 1 000 000 cellules.
 - Cellule numérique au format date → ISO depuis le numéro de série Excel ;
   cellule d'erreur Excel conservée comme erreur (refus des montants).
@@ -89,12 +102,13 @@ dérivation, aucun zéro par défaut, aucune liste ouverte) ; DEF-23 corrigé
 - Libellés strictement listés (anglais : BDK, ATB, BICIS, BIS, SGBS ;
   français ORA : `SOLDE D'OUVERTURE`, `SOLDE DE CLÔTURE …`, `Dépôts pas encore
   encaissé`, `Chéques émis non encaissés`, `Impayés`).
-- Zone de montant titrée (§2, finding 2) ; montant unique dans la zone.
+- Zone de montant strictement titrée `AMOUNT`/`MONTANT` (§2.1, finding 4) ;
+  montant unique dans la zone ; colonne non titrée jamais lue.
 - Sections : dépôts (implicite après le solde d'ouverture, titre facultatif),
-  chèques, facilités (ligne d'en-tête `Limit | Used | Balance` ignorée ; ligne
-  datée sans libellé nommée par le titre de section ; exactement trois
-  montants formatés ; ligne de total sans date = fin ; **toute ligne après le
-  total = refus**), impayés (marqueur `IMPAYE`, code client).
+  chèques, facilités (ligne d'en-tête `Limit | Used | Balance` ignorée ;
+  **libellé métier explicite obligatoire** ; exactement trois montants
+  formatés ; ligne de total sans date = fin ; **toute ligne après le total =
+  refus**), impayés (marqueur `IMPAYE`, code client).
 - Toute ligne datée, financière ou libellée hors section, toute ligne datée
   non exploitable, toute cellule d'erreur refusent. Une section titrée vide
   est un avertissement uniquement si aucune ligne n'est ignorée jusqu'à la
@@ -143,20 +157,20 @@ Tests synthétiques : `excelSheetGrid`, `bankReportGridExtractor`,
 qualification, `STATUS_REGISTRY`, `MASTER_CONTEXT`, `DEFERRED_BACKLOG`
 (DEF-20 à DEF-24).
 
-## 5. Validation locale sur fichiers réels (`…_FIX_1`, hors dépôt, sous GO)
+## 5. Validation locale sur fichiers réels (`…_FIX_2`, hors dépôt, sous GO)
 
 Harness officiel, feuille du 9 juillet 2026 (Fund Position : dernière feuille
 disponible, 7 juillet 2026) :
 
 | Famille | Décision | Motif ou preuves agrégées |
 |---|---|---|
-| BDK | `FAIL_CLOSED` | deux lignes chiffrées après le total des facilités (refus décidé par le CTO, finding 1) |
+| BDK | `FAIL_CLOSED` | deux lignes chiffrées après le total des facilités (DEF-25) |
 | ATB | `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` | 1 dépôt, 2 chèques, 3 facilités, 8 impayés |
-| BICIS | `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` | 4 dépôts, 3 chèques, 1 facilité, 2 impayés |
-| ORA | `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` | 2 dépôts, 16 chèques, 2 facilités, 12 impayés |
-| BIS | `FAIL_CLOSED` | deux lignes chiffrées après le total des facilités |
+| BICIS | `FAIL_CLOSED` | facilité unique sans libellé métier (DEF-26) ; chèques en colonne non titrée (DEF-27) |
+| ORA | `FAIL_CLOSED` | chèques en colonne non titrée (DEF-27) |
+| BIS | `FAIL_CLOSED` | deux lignes chiffrées après le total des facilités (DEF-25) |
 | SGBS | `NOT_TESTED` | aucun fichier fourni |
-| Fund Position | `FAIL_CLOSED` | colonne Grand Balance absente ; titre COLLECTION NOT DEPOSITED sans montant ; date non corroborée (nom de fichier sans année) |
+| Fund Position | `FAIL_CLOSED` | colonne Grand Balance absente (DEF-20) ; titre COLLECTION NOT DEPOSITED sans montant (DEF-24) ; date non corroborée (nom de fichier sans année) |
 
 Échantillon de 60 feuilles par banque (verdicts et motifs seulement) :
 
@@ -164,19 +178,18 @@ disponible, 7 juillet 2026) :
 |---|---|---|
 | BDK | 46/60 | 6 lignes après le total des facilités ; 9 marqueurs d'impayé non listés (DEF-22) ; 2 soldes d'ouverture postérieurs ; 1 cellule d'erreur |
 | ATB | 58/60 | 1 solde d'ouverture postérieur ; 2 lignes hors section |
-| BICIS | 58/60 | 1 ligne de facilité non exploitable ; 1 solde d'ouverture antérieur de plus de 7 jours |
-| ORA | 2/60 | 74 lignes de facilités à deux montants (DEF-21) ; 34 lignes hors section (DEF-23) ; 4 soldes d'ouverture postérieurs ; 2 clôtures en erreur Excel ; 1 nom de feuille non corroboré |
-| BIS | 22/60 | 70 lignes après le total des facilités ; 3 montants ambigus ; 2 dates textuelles malformées ; 3 écarts de dates |
+| BICIS | 0/60 | 60 facilités sans libellé (DEF-26) ; 2 chèques en colonne non titrée (DEF-27) ; 1 facilité non exploitable ; 1 écart de dates |
+| ORA | 0/60 | 960 chèques en colonne non titrée (DEF-27) ; 74 facilités à deux montants (DEF-21) ; 34 lignes hors section ; 4 soldes postérieurs ; 2 clôtures en erreur Excel ; 1 nom de feuille non corroboré |
+| BIS | 22/60 | 70 lignes après le total des facilités (DEF-25) ; 2 chèques en colonne non titrée ; 2 dates malformées ; 3 écarts de dates |
 | Fund Position (150 feuilles) | 0/150 | titre COLLECTION NOT DEPOSITED sans montant (150) ; colonne Grand Balance absente (102) ; date non corroborée (95) ; cellules d'erreur et montants vides |
 
-Lecture : les règles imposées par la contre-revue (refus après total, aucun
-zéro par défaut, corroboration des années) font passer BDK et BIS de « quasi
-systématiquement acceptés » à « refusés dès qu'une ligne d'ajustement suit le
-total des facilités », et la Fund Position à zéro. Ce sont des refus de contrat
-conformes au verdict, pas des défauts d'extraction ; les lignes concernées
-(ajustements négatifs après le total des facilités BDK/BIS/ATB, titre
-COLLECTION NOT DEPOSITED sans montant) relèvent d'une modélisation à arbitrer
-en Pack 2B (DEF-24, DEF-25).
+Lecture : les règles imposées par les deux contre-revues (refus après total,
+aucun libellé déduit, zone de montant strictement titrée, aucun zéro par
+défaut, corroboration des années) laissent ATB comme seule famille acceptée
+sur la feuille du 9 juillet. Ce sont des refus de contrat conformes aux
+verdicts, pas des défauts d'extraction : les écarts de format des rapports
+réels (DEF-20 à DEF-27) doivent être arbitrés en Pack 2B, par modélisation
+explicite ou par correction à la source, avant toute promotion.
 
 ## 6. Points d'arbitrage CTO (Pack 2B)
 
@@ -188,8 +201,12 @@ en Pack 2B (DEF-24, DEF-25).
 5. DEF-25 : lignes d'ajustement après le total des facilités (BDK, BIS, ATB) :
    présentes dans la majorité des rapports quotidiens ; à modéliser ou à
    faire supprimer à la source avant toute promotion de ces familles.
-6. Nom de fichier Fund Position sans année : à imposer à la source
-   (`FUND POSITION 2026.xlsx`) ou à corroborer autrement.
+6. DEF-26 : facilité BICIS sans libellé métier (toutes les feuilles).
+7. DEF-27 : montants de chèques en colonne non titrée (ORA systématiquement,
+   BICIS et BIS ponctuellement).
+8. Fund Position : année à corroborer par une cellule date complète de la
+   feuille ou par le nom du fichier (le nom n'est pas obligatoire, mais sans
+   aucune année complète le document reste refusé).
 
 ## 7. Sécurité
 
@@ -206,7 +223,7 @@ en Pack 2B (DEF-24, DEF-25).
 
 | Commande | Résultat |
 |---|---|
-| `npm run test:multi-bank-reports` | 78/78 PASS |
+| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`) | 80/80 PASS |
 | `npm run test:import-preflight` | 58/58 PASS |
 | `npm run test:upload-guard` | 14/14 PASS |
 | `npm run test:bdk-pdf` | 27/27 PASS |

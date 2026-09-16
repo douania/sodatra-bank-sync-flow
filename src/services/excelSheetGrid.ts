@@ -50,15 +50,20 @@ export interface ExcelSheetGrid {
   usedColumnCount: number;
   errorCellCount: number;
   /**
-   * Cellules date parasites situées au-delà de la borne de colonnes
-   * (`maxColumns`). Seule cette signature bénigne est tolérée : cellule
-   * numérique au format date, portant une date calendaire valide, isolée en
-   * fin de feuille (observée dans les classeurs réels). Elles ne sont ni lues
-   * ni parcourues, seulement comptées. Toute autre cellule non vide hors borne
-   * (texte, montant, nombre, erreur, booléen) refuse la feuille.
+   * Cellule date parasite tolérée hors borne de colonnes : 0 ou 1. La seule
+   * signature structurelle admise est **exactement une** cellule hors borne
+   * sur toute la feuille, située dans la dernière colonne Excel (`XFD`, index
+   * 16383), numérique au format date et portant une date calendaire valide
+   * (artefact observé dans les classeurs réels). Elle n'est ni lue ni
+   * parcourue, seulement comptée. Toute autre configuration (autre colonne,
+   * plusieurs cellules, texte, montant, nombre, erreur, booléen) refuse la
+   * feuille.
    */
   ignoredFarDateCellCount: number;
 }
+
+/** Index de la dernière colonne Excel (`XFD`). */
+export const EXCEL_LAST_COLUMN_INDEX = 16_383;
 
 export interface ExcelGridLimits {
   maxRows: number;
@@ -211,7 +216,7 @@ export function worksheetToGrid(
   const addresses = Object.keys(worksheet).filter(key => !key.startsWith('!'));
   let maxRow = -1;
   let maxColumn = -1;
-  let ignoredFarDateCellCount = 0;
+  const farCells: Array<{ column: number; benign: boolean }> = [];
   const decoded: Array<{ r: number; c: number; key: string }> = [];
   for (const key of addresses) {
     const cell = worksheet[key] as XLSX.CellObject | undefined;
@@ -224,21 +229,28 @@ export function worksheetToGrid(
     if (cell.t === 'n' && isDateFormat(cell.z) && excelSerialToIsoDate(Number(cell.v)) === null) continue;
     const address = XLSX.utils.decode_cell(key);
     if (address.r < 0 || address.c < 0) continue;
-    // Hors borne de colonnes : seule une cellule date parasite (signature
-    // bénigne) est tolérée et comptée ; toute autre cellule non vide refuse.
+    // Hors borne de colonnes : collectée, évaluée après parcours selon la
+    // signature structurelle exacte (voir `ignoredFarDateCellCount`).
     if (address.c >= limits.maxColumns) {
-      if (cell.t === 'n' && isDateFormat(cell.z)) {
-        ignoredFarDateCellCount += 1;
-        continue;
-      }
-      throw new ExcelSheetSelectionError(
-        'SHEET_LIMIT_EXCEEDED',
-        'Cellule non vide au-delà de la borne de colonnes.',
-      );
+      farCells.push({ column: address.c, benign: cell.t === 'n' && isDateFormat(cell.z) });
+      continue;
     }
     decoded.push({ r: address.r, c: address.c, key });
     if (address.r > maxRow) maxRow = address.r;
     if (address.c > maxColumn) maxColumn = address.c;
+  }
+
+  // Signature structurelle exacte : exactement une cellule hors borne, en
+  // colonne XFD, numérique au format date à date valide. Sinon refus.
+  const ignoredFarDateCellCount = farCells.length === 0 ? 0 : 1;
+  if (
+    farCells.length > 1
+    || (farCells.length === 1 && (!farCells[0].benign || farCells[0].column !== EXCEL_LAST_COLUMN_INDEX))
+  ) {
+    throw new ExcelSheetSelectionError(
+      'SHEET_LIMIT_EXCEEDED',
+      'Cellule non vide au-delà de la borne de colonnes.',
+    );
   }
 
   const usedRowCount = maxRow + 1;

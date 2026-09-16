@@ -142,13 +142,18 @@ test('le montant est unique dans la zone titrée AMOUNT/MONTANT : ambiguïté re
   assert.equal(tolerated.success, true, tolerated.errors?.join(' '));
   assert.equal(tolerated.data?.depositsNotCleared[0].montant, 250_000);
 
-  // La colonne suivant la dernière colonne titrée est admise si elle n'est pas titrée (« montant 2 » BICIS).
+  // Un montant porté par une colonne non titrée (hors zone) n'est jamais lu : la ligne refuse.
   const untitledNext = englishReport('BICIS');
   untitledNext[1] = ['Date', 'Ch.No', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR NO/FACT.NO', 'AMOUNT'];
   untitledNext[8] = [D('2026-07-01'), { ref: 1234567 }, 'CHQ', 'BENEF', 'CLIENT', { ref: 99999 }, null, A(150_000)];
   const nextColumn = await extractBankReportFromGrid(gridOf(untitledNext), 'BICIS');
-  assert.equal(nextColumn.success, true, nextColumn.errors?.join(' '));
-  assert.equal(nextColumn.data?.checksNotCleared?.[0].montant, 150_000);
+  assert.equal(nextColumn.success, false);
+  assert.match(nextColumn.errors?.join(' ') ?? '', /montant absent/);
+  // La même ligne avec le montant dans la colonne titrée passe.
+  untitledNext[8] = [D('2026-07-01'), { ref: 1234567 }, 'CHQ', 'BENEF', 'CLIENT', { ref: 99999 }, A(150_000)];
+  const titledColumn = await extractBankReportFromGrid(gridOf(untitledNext), 'BICIS');
+  assert.equal(titledColumn.success, true, titledColumn.errors?.join(' '));
+  assert.equal(titledColumn.data?.checksNotCleared?.[0].montant, 150_000);
 
   // Sans colonne titrée AMOUNT/MONTANT, le document est refusé.
   const noAmountHeader = englishReport('BDK');
@@ -212,8 +217,8 @@ test('ORA : les libellés français strictement listés sont reconnus', async ()
     ['TOTAL DEPOSIT', null, null, null, null, null, A(100_000), A(0)],
     ['TOTAL (A)', null, null, null, null, null, A(5_100_000), A(0)],
     ['LESS :', null, null, 'Chéques émis non encaissés'],
-    [D('2026-07-01'), { ref: 5555555 }, 'CHQ', 'BENEF', null, { ref: 12345 }, null, null, A(60_000)],
-    [null, null, null, 'TOTAL (B)', null, null, A(0), A(0), A(60_000)],
+    [D('2026-07-01'), { ref: 5555555 }, 'CHQ', 'BENEF', null, { ref: 12345 }, null, A(60_000)],
+    [null, null, null, 'TOTAL (B)', null, null, A(0), A(60_000)],
     [null, null, 'SOLDE DE CLÔTURE selon le livre : C=(A-B)', null, null, null, A(5_040_000)],
     [],
     [null, null, null, 'BANK FACILITY (90Jrs)', null, null, D('2026-07-09')],
@@ -232,6 +237,13 @@ test('ORA : les libellés français strictement listés sont reconnus', async ()
   assert.equal(result.data?.checksNotCleared?.[0].montant, 60_000);
   assert.equal(result.data?.bankFacilities.length, 1);
   assert.equal(result.data?.impayes[0].montant, 40_000, 'un compteur General en fin de ligne n’est pas le montant');
+
+  // Un montant de chèque porté par une colonne non titrée (au-delà de MONTANT -2) refuse la ligne.
+  const untitledChequeColumn = rows.map(row => [...row]);
+  untitledChequeColumn[8] = [D('2026-07-01'), { ref: 5555555 }, 'CHQ', 'BENEF', null, { ref: 12345 }, null, null, A(60_000)];
+  const refused = await extractBankReportFromGrid(gridOf(untitledChequeColumn), 'ORA');
+  assert.equal(refused.success, false);
+  assert.match(refused.errors?.join(' ') ?? '', /chèques non débités : montant absent/);
 });
 
 test('l’identité est lue dans l’en-tête : absence, ambiguïté ou banque inattendue refusent le document', async () => {
@@ -260,11 +272,13 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
   const noSheetDate = await extractBankReportFromGrid(gridOf(englishReport('BDK'), 'Feuil1'), 'BDK');
   assert.equal(noSheetDate.data?.date, '2026-07-09');
 
+  // Une ligne de facilité sans libellé métier explicite refuse : aucun libellé déduit du titre.
   const unnamedFacility = englishReport('BDK');
   unnamedFacility[15] = [null, D('2026-07-09'), null, A(1_000_000_000), A(400_000_000), null, A(600_000_000)];
   const unnamedResult = await extractBankReportFromGrid(gridOf(unnamedFacility), 'BDK');
-  assert.equal(unnamedResult.success, true, unnamedResult.errors?.join(' '));
-  assert.equal(unnamedResult.data?.bankFacilities[0].facilityType, 'BANK FACILITY (180 jrs)');
+  assert.equal(unnamedResult.success, false);
+  assert.match(unnamedResult.errors?.join(' ') ?? '', /facilités bancaires sans libellé/);
+  assert.doesNotMatch(JSON.stringify(unnamedResult), /BANK FACILITY \(180 jrs\)/);
 
   // Section titrée sans ligne : avertissement seulement si aucune ligne n'est ignorée jusqu'à la frontière suivante.
   const emptyThenDated = englishReport('BDK');

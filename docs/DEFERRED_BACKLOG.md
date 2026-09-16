@@ -210,6 +210,29 @@ et crédit séparés, solde, dates ; conteneurs XLS (ATB, BICIS, BIS) et XLSX
 **Reste dû** : aucune règle monétaire, profil ou idempotence modifiés ; la
 qualification sur fichiers réels reste due (Pack 2).
 
+### DEF-26 : Ligne de facilité sans libellé métier (Pack 2, FIX_2) — arbitrage Pack 2B
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : les rapports BICIS portent une facilité unique sur une ligne
+datée à trois montants sans libellé (le titre de section « BANK FACILITY
+(… jrs) » est le seul texte). Le CTO refuse tout libellé déduit du titre
+(contre-revue FIX_1, finding 3).
+**Décision** : refus (« facilités bancaires sans libellé »). **À arbitrer** :
+libellé métier à imposer à la source, ou profil BICIS explicite déclarant la
+facilité unique.
+
+### DEF-27 : Montant porté par une colonne non titrée (Pack 2, FIX_2) — arbitrage Pack 2B
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : certaines lignes de chèques BICIS et ORA portent leur montant
+dans la colonne suivant la dernière colonne titrée `AMOUNT`/`MONTANT`
+(colonne sans titre). Le CTO refuse toute intégration d'une colonne non
+titrée sans preuve de fusion Excel ou profil bancaire explicite (contre-revue
+FIX_1, finding 4).
+**Décision** : zone de montant strictement titrée ; ces lignes refusent
+(« montant absent »). **À arbitrer** : titre à imposer à la source, ou profil
+bancaire explicite par banque.
+
 ### DEF-25 : Lignes d'ajustement après le total des facilités (Pack 2, GO_FIX_PACK_2) — arbitrage Pack 2B
 
 **Fichier** : `src/services/bankReportGridExtractor.ts`.

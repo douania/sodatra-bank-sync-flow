@@ -17,7 +17,17 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b — GO_FIX_PACK_2_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_AND_863c671 — GO_FIX_PACK_2_FIX_2_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Deuxième contre-revue CTO sur `863c671` : `FAIL` (quatre P1). Corrections FIX_2 :
+signature structurelle exacte de la cellule hors borne (une seule, en `XFD`,
+date valide), erreurs `/upload` sans nom de fichier (rang dans le lot), refus
+de toute facilité sans libellé métier, zone de montant strictement titrée.
+Rejeu `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_2` : ATB seule
+famille `PASS` sur la feuille du 9 juillet ; BDK et BIS refusés (DEF-25),
+BICIS refusée (DEF-26, DEF-27), ORA refusée (DEF-27), Fund Position refusée
+(DEF-20, DEF-24, date) ; échantillon 60 feuilles : BDK 46, ATB 58, BICIS 0,
+ORA 0, BIS 22. Arbitrages Pack 2B : DEF-20 à DEF-27.
 
 Contre-revue CTO sur `a74581b` : `FAIL` (six P1, deux P2, aucun P0). Corrections
 `GO_FIX_PACK_2` sur la même branche : refus de toute ligne après le total des

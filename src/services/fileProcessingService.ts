@@ -99,8 +99,10 @@ export class FileProcessingService {
       });
 
       if (categorizedFiles.blockedFiles.length > 0) {
+        // Pack 2 : aucun nom de fichier dans les erreurs retournées ; le
+        // fichier est désigné par son rang dans le lot (visible au précontrôle).
         results.errors.push(...categorizedFiles.blockedFiles.map(
-          ({ file, reason }) => `${file.name}: ${reason}`,
+          ({ file, reason }) => `${fileOrdinal(files, file)}: ${reason}`,
         ));
         progressService.errorStep(
           'file_detection',
@@ -186,8 +188,8 @@ export class FileProcessingService {
             allCollections = [...allCollections, ...excelResult.data];
             excelImportDiagnostics.collections_extracted += excelResult.data.length;
           } else {
-            const errorMsg = `Erreur traitement Excel ${collectionFile.name}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
-            console.error('❌', errorMsg);
+            const errorMsg = `Erreur traitement Excel ${fileOrdinal(files, collectionFile)}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
+            console.error('❌ Erreur traitement Excel d’un Collection Report');
             results.errors?.push(errorMsg);
             if (!excelResult.errors || excelResult.errors.length === 0) {
               excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message: 'Erreur inconnue' });
@@ -283,6 +285,7 @@ export class FileProcessingService {
           categorizedFiles.bankReports,
           results.errors!,
           options.sheetSelections ?? new Map<File, string>(),
+          files,
         );
         
         if (bankReports.length > 0) {
@@ -313,6 +316,7 @@ export class FileProcessingService {
           categorizedFiles.fundPosition!,
           results.errors!,
           options.sheetSelections?.get(categorizedFiles.fundPosition!),
+          fileOrdinal(files, categorizedFiles.fundPosition!),
         );
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
@@ -508,6 +512,7 @@ export class FileProcessingService {
     bankReportFiles: File[],
     errors: string[],
     sheetSelections: ReadonlyMap<File, string>,
+    batch: readonly File[],
   ): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     const { bankReportProcessingService } = await import('./bankReportProcessingService');
@@ -534,11 +539,11 @@ export class FileProcessingService {
           reports.push(processingResult.data);
         } else {
           console.error(`❌ Échec traitement d’un rapport bancaire (${(processingResult.errors ?? []).length} erreur(s))`);
-          errors.push(`Échec extraction ${file.name}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
+          errors.push(`Échec extraction ${fileOrdinal(batch, file)}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
         }
       } catch (error) {
         console.error('❌ Erreur traitement d’un rapport bancaire');
-        errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+        errors.push(`Erreur extraction ${fileOrdinal(batch, file)}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
       }
     }
     
@@ -551,6 +556,7 @@ export class FileProcessingService {
     file: File,
     errors: string[],
     selectedSheetName: string | undefined,
+    ordinal: string,
   ): Promise<FundPosition | null> {
     try {
       console.log('💰 === TRAITEMENT DÉTAILLÉ FUND POSITION ===');
@@ -570,27 +576,27 @@ export class FileProcessingService {
           grid = readSelectedSheetGrid(buffer, sheetName);
         } catch (error) {
           if (error instanceof ExcelSheetSelectionError) {
-            errors.push(`Échec extraction ${file.name}: ${error.message}`);
+            errors.push(`Échec extraction ${ordinal}: ${error.message}`);
             return null;
           }
           throw error;
         }
         const gridExtraction = extractFundPositionFromGrid(grid, { fileName: file.name });
         if (!gridExtraction.success || !gridExtraction.data) {
-          errors.push(`Échec extraction ${file.name}: ${(gridExtraction.errors ?? ['contrat invalide']).join(' ')}`);
+          errors.push(`Échec extraction ${ordinal}: ${(gridExtraction.errors ?? ['contrat invalide']).join(' ')}`);
           return null;
         }
         console.log('💰 Fund Position tabulaire extraite (feuille sélectionnée)');
         return gridExtraction.data;
       } else {
         console.warn('⚠️ Format de fichier non supporté pour Fund Position');
-        errors.push(`Échec extraction ${file.name}: format Fund Position non supporté.`);
+        errors.push(`Échec extraction ${ordinal}: format Fund Position non supporté.`);
         return null;
       }
 
       if (!textContent || textContent.length < 100) {
         console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Fund Position');
-        errors.push(`Échec extraction ${file.name}: contenu Fund Position insuffisant.`);
+        errors.push(`Échec extraction ${ordinal}: contenu Fund Position insuffisant.`);
         return null;
       }
       
@@ -602,7 +608,7 @@ export class FileProcessingService {
 
       if (!extractionResult.success || !extractionResult.data) {
         console.error('❌ Échec de l\'extraction du Fund Position:', extractionResult.errors);
-        errors.push(`Échec extraction ${file.name}: ${(extractionResult.errors ?? ['contrat invalide']).join(' ')}`);
+        errors.push(`Échec extraction ${ordinal}: ${(extractionResult.errors ?? ['contrat invalide']).join(' ')}`);
         return null;
       }
       
@@ -614,8 +620,8 @@ export class FileProcessingService {
       return fundPosition;
       
     } catch (error) {
-      console.error('❌ Erreur calcul Fund Position:', error);
-      errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+      console.error('❌ Erreur calcul Fund Position');
+      errors.push(`Erreur extraction ${ordinal}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
       return null;
     }
   }
@@ -775,6 +781,15 @@ export class FileProcessingService {
     }
   }
   
+}
+
+/**
+ * Désignation d'un fichier dans les erreurs retournées à l'interface (Pack 2) :
+ * rang dans le lot, jamais le nom du fichier.
+ */
+function fileOrdinal(batch: readonly File[], file: File): string {
+  const index = batch.indexOf(file);
+  return `fichier n°${index === -1 ? '?' : String(index + 1)}`;
 }
 
 export const fileProcessingService = new FileProcessingService();

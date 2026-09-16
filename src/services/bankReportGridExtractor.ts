@@ -182,10 +182,11 @@ const AMOUNT_HEADER = /^(?:AMOUNT|MONTANT)\b/;
 
 /**
  * Zone de montant déterminée par l'en-tête de colonnes (lignes avant le solde
- * d'ouverture) : de la première colonne titrée AMOUNT/MONTANT à la dernière,
- * plus la colonne immédiatement suivante lorsqu'elle n'est pas titrée
- * (colonne « montant 2 » sans titre, observée dans les rapports réels). Sans
- * colonne titrée, aucune zone : le document est refusé.
+ * d'ouverture) : de la première colonne titrée AMOUNT/MONTANT à la dernière
+ * colonne titrée AMOUNT/MONTANT, exclusivement. Aucune colonne non titrée
+ * n'est jamais intégrée (un montant porté par une colonne sans titre refuse
+ * la ligne : `montant absent`). Sans colonne titrée, aucune zone : le
+ * document est refusé.
  */
 export function amountColumnZoneFromHeader(rows: readonly ExcelGridCell[][], openingRowIndex: number): AmountColumnZone | null {
   for (let rowIndex = 0; rowIndex < openingRowIndex; rowIndex += 1) {
@@ -194,11 +195,7 @@ export function amountColumnZoneFromHeader(rows: readonly ExcelGridCell[][], ope
       .map((cell, index) => (cell.kind === 'text' && AMOUNT_HEADER.test(normalizeLabel(cell.text)) ? index : -1))
       .filter(index => index >= 0);
     if (titled.length === 0) continue;
-    const first = Math.min(...titled);
-    let last = Math.max(...titled);
-    const next = row[last + 1];
-    if (!next || next.kind === 'empty') last += 1;
-    return { first, last };
+    return { first: Math.min(...titled), last: Math.max(...titled) };
   }
   return null;
 }
@@ -336,7 +333,6 @@ export async function extractBankReportFromGrid(
   // titre ou total.
   let section: Section = 'deposits';
   let facilitiesClosed = false;
-  let facilitiesHeadingLabel = '';
 
   for (let index = openingRowIndex + 1; index < rows.length; index += 1) {
     const row = rows[index];
@@ -360,7 +356,6 @@ export async function extractBankReportFromGrid(
       section = 'facilities';
       declared.facilities = true;
       facilitiesClosed = false;
-      facilitiesHeadingLabel = textCells(row).find(text => labels.facilitiesHeading.test(normalizeLabel(text)))?.trim() ?? '';
       continue;
     }
     if (rowHasLabel(row, labels.impayesHeading) && !cellDate(row[0])) {
@@ -401,8 +396,9 @@ export async function extractBankReportFromGrid(
         facilitiesClosed = true;
         continue;
       }
-      // Une ligne datée sans libellé (facilité unique) prend le titre de la section.
-      const name = explicitName ?? facilitiesHeadingLabel;
+      // Une ligne de facilité exige un libellé métier explicite : aucun libellé
+      // n'est jamais déduit du titre de section.
+      const name = explicitName;
       if (!name) {
         errors.push(`Ligne ${index + 1} de facilités bancaires sans libellé.`);
         continue;

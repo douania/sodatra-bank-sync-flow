@@ -83,8 +83,8 @@ test('la grille est bornée par les cellules présentes et non par la plage déc
   assert.equal(grid.usedColumnCount, 2);
   assert.equal(grid.usedRowCount, 2);
 
-  // Seule une cellule date parasite au-delà de la 512e colonne est tolérée (comptée, jamais lue) ;
-  // toute autre cellule non vide hors borne refuse la feuille.
+  // Signature structurelle exacte tolérée : exactement UNE cellule hors borne, en colonne XFD,
+  // numérique au format date à date valide (comptée, jamais lue). Tout le reste refuse.
   const farDate = XLSX.utils.aoa_to_sheet([['BIS', 1]]);
   farDate.XFD1 = { t: 'n', v: 46212, z: 'm/d/yy' };
   farDate['!ref'] = 'A1:XFD1';
@@ -92,18 +92,22 @@ test('la grille est bornée par les cellules présentes et non par la plage déc
   assert.equal(farGrid.usedColumnCount, 2);
   assert.equal(farGrid.ignoredFarDateCellCount, 1);
 
-  for (const farCell of [
-    { t: 's', v: 'parasite' },
-    { t: 'n', v: 1234567, z: ACCOUNTING },
-    { t: 'n', v: 42 },
-    { t: 'e', v: 23, w: '#REF!' },
-  ] as XLSX.CellObject[]) {
-    const sheetWithFar = XLSX.utils.aoa_to_sheet([['BIS', 1]]);
-    sheetWithFar.XFD1 = farCell;
-    sheetWithFar['!ref'] = 'A1:XFD1';
+  const refusedVariants: Array<[string, Record<string, XLSX.CellObject>]> = [
+    ['texte en XFD', { XFD1: { t: 's', v: 'parasite' } }],
+    ['montant formaté en XFD', { XFD1: { t: 'n', v: 1234567, z: ACCOUNTING } }],
+    ['nombre brut en XFD', { XFD1: { t: 'n', v: 42 } }],
+    ['erreur en XFD', { XFD1: { t: 'e', v: 23, w: '#REF!' } }],
+    ['date hors borne mais pas en XFD', { WA1: { t: 'n', v: 46212, z: 'm/d/yy' } }],
+    ['deux dates en XFD', { XFD1: { t: 'n', v: 46212, z: 'm/d/yy' }, XFD2: { t: 'n', v: 46213, z: 'm/d/yy' } }],
+    ['date en XFD et date ailleurs hors borne', { XFD1: { t: 'n', v: 46212, z: 'm/d/yy' }, WA1: { t: 'n', v: 46212, z: 'm/d/yy' } }],
+  ];
+  for (const [label, cells] of refusedVariants) {
+    const sheetWithFar = XLSX.utils.aoa_to_sheet([['BIS', 1], ['x', 2]]);
+    Object.assign(sheetWithFar, cells);
+    sheetWithFar['!ref'] = 'A1:XFD2';
     assert.throws(() => worksheetToGrid(sheetWithFar, 'S'), (error: unknown) => (
       error instanceof ExcelSheetSelectionError && error.code === 'SHEET_LIMIT_EXCEEDED'
-    ), `cellule hors borne de type ${farCell.t} refusée`);
+    ), `${label} : refus attendu`);
   }
 
   const tooManyRows = XLSX.utils.aoa_to_sheet([['BIS']]);
