@@ -99,6 +99,9 @@ test('la grille est bornée par les cellules présentes et non par la plage déc
     ['erreur en XFD', { XFD1: { t: 'e', v: 23, w: '#REF!' } }],
     ['date hors borne mais pas en XFD', { WA1: { t: 'n', v: 46212, z: 'm/d/yy' } }],
     ['deux dates en XFD', { XFD1: { t: 'n', v: 46212, z: 'm/d/yy' }, XFD2: { t: 'n', v: 46213, z: 'm/d/yy' } }],
+    ['date invalide (série 0) en XFD', { XFD1: { t: 'n', v: 0, z: 'm/d/yy' } }],
+    ['date invalide (série négative) en XFD', { XFD1: { t: 'n', v: -5, z: 'm/d/yy' } }],
+    ['date hors calendrier en XFD', { XFD1: { t: 'n', v: 9_999_999_999, z: 'm/d/yy' } }],
     ['date en XFD et date ailleurs hors borne', { XFD1: { t: 'n', v: 46212, z: 'm/d/yy' }, WA1: { t: 'n', v: 46212, z: 'm/d/yy' } }],
   ];
   for (const [label, cells] of refusedVariants) {

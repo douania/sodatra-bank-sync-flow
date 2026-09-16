@@ -18,18 +18,28 @@ test('aucune erreur retournée par le pipeline /upload ne contient un nom de fic
     assert.doesNotMatch(statement, /\.name\b/, `nom de fichier interdit dans : ${statement.slice(0, 80)}`);
   }
   assert.doesNotMatch(source, /const errorMsg = `[^`]*\$\{[a-zA-Z]*[fF]ile\.name\}/);
-  assert.match(source, /function fileOrdinal\(batch: readonly File\[\], file: File\): string/);
+  assert.match(source, /function fileOrdinal\(batch: readonly File\[\], file: File, ordinals\?: ReadonlyMap<File, number>\): string/);
 });
 
-test('les journaux console des rapports bancaires et de la Fund Position ne portent ni nom de fichier ni valeur', () => {
-  const bankStart = source.indexOf('private async processBankReports(');
-  const clientStart = source.indexOf('private async processClientReconciliation(');
-  const segment = source.slice(bankStart, clientStart);
-  const consoleCalls = segment.match(/console\.(?:log|warn|error)\([^;]*\);/g) ?? [];
-  assert.ok(consoleCalls.length > 0);
+test('aucun journal console du pipeline ne porte de nom de fichier, de valeur, ni d’objet ou de liste d’erreurs', () => {
+  const consoleCalls = source.match(/console\.(?:log|warn|error)\([\s\S]*?\);/g) ?? [];
+  assert.ok(consoleCalls.length > 10, 'les journaux attendus existent');
   for (const call of consoleCalls) {
-    // Un compteur (`.length`) est admis ; le contenu d'un tableau d'erreurs ou d'avertissements ne l'est pas.
-    assert.doesNotMatch(call, /\.name\b|toLocaleString|reportDate|grandTotal|totalFundAvailable|getBankReportSummary|,\s*processingResult\.errors\)|,\s*warnings\)|,\s*error\)/, call.slice(0, 80));
+    // Un compteur (`.length`) est admis ; un nom, une valeur, un objet d'erreur ou une liste ne le sont pas.
+    assert.doesNotMatch(
+      call,
+      /\.name\b|toLocaleString|reportDate|grandTotal|totalFundAvailable|getBankReportSummary|,\s*(?:processingResult|extractionResult|excelResult|syncResult)\.errors\s*\)|,\s*warnings\s*\)|,\s*(?:error|e|err)\s*\)/,
+      call.slice(0, 100),
+    );
   }
   assert.doesNotMatch(source, /Fichiers reçus:', files\.map/);
+  assert.doesNotMatch(source, /'📁 Fichiers:'/);
+});
+
+test('l’interface /upload affiche le même rang « fichier n°N » que celui porté par les erreurs', () => {
+  const page = readFileSync('src/pages/FileUpload.tsx', 'utf8');
+  assert.match(page, /fichier n°\{index \+ 1\}/);
+  assert.match(page, /const fileOrdinals = new Map\(selectedFiles\.map\(\(file, index\) => \[file, index \+ 1\] as const\)\)/);
+  assert.match(page, /processFiles\(otherFiles, \{ sheetSelections, fileOrdinals \}\)/);
+  assert.match(source, /fileOrdinal\(batch: readonly File\[\], file: File, ordinals\?: ReadonlyMap<File, number>\)/);
 });

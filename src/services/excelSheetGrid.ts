@@ -223,18 +223,22 @@ export function worksheetToGrid(
     if (!cell || typeof cell !== 'object' || !('t' in cell)) continue;
     // Une cellule sans valeur (format seul, cellule vidée) ne borne pas la grille.
     if (cell.t !== 'e' && (cell.v === undefined || cell.v === null || cell.v === '')) continue;
-    // Une cellule au format date sans date calendaire valide (série nulle,
-    // négative ou hors calendrier) est une cellule vidée conservant son format :
-    // Excel n'affiche rien, elle ne borne pas la grille.
-    if (cell.t === 'n' && isDateFormat(cell.z) && excelSerialToIsoDate(Number(cell.v)) === null) continue;
     const address = XLSX.utils.decode_cell(key);
     if (address.r < 0 || address.c < 0) continue;
-    // Hors borne de colonnes : collectée, évaluée après parcours selon la
-    // signature structurelle exacte (voir `ignoredFarDateCellCount`).
+    // Hors borne de colonnes : collectée AVANT tout filtre de valeur, évaluée
+    // après parcours selon la signature structurelle exacte (voir
+    // `ignoredFarDateCellCount`) ; une date invalide hors borne n'est pas bénigne.
     if (address.c >= limits.maxColumns) {
-      farCells.push({ column: address.c, benign: cell.t === 'n' && isDateFormat(cell.z) });
+      farCells.push({
+        column: address.c,
+        benign: cell.t === 'n' && isDateFormat(cell.z) && excelSerialToIsoDate(Number(cell.v)) !== null,
+      });
       continue;
     }
+    // Dans la borne : une cellule au format date sans date calendaire valide
+    // (série nulle, négative ou hors calendrier) est une cellule vidée
+    // conservant son format ; Excel n'affiche rien, elle ne borne pas la grille.
+    if (cell.t === 'n' && isDateFormat(cell.z) && excelSerialToIsoDate(Number(cell.v)) === null) continue;
     decoded.push({ r: address.r, c: address.c, key });
     if (address.r > maxRow) maxRow = address.r;
     if (address.c > maxColumn) maxColumn = address.c;

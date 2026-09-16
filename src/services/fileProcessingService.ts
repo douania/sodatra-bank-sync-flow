@@ -40,6 +40,12 @@ export interface ProcessFilesOptions {
    * classeur à plusieurs feuilles sans sélection est refusé, jamais concaténé.
    */
   sheetSelections?: ReadonlyMap<File, string>;
+  /**
+   * Rang d'affichage de chaque fichier (1 = premier de la liste de l'interface).
+   * Les erreurs retournées désignent le fichier par ce rang, identique à celui
+   * affiché au précontrôle ; à défaut, rang dans le lot traité.
+   */
+  fileOrdinals?: ReadonlyMap<File, number>;
 }
 
 export class FileProcessingService {
@@ -102,7 +108,7 @@ export class FileProcessingService {
         // Pack 2 : aucun nom de fichier dans les erreurs retournées ; le
         // fichier est désigné par son rang dans le lot (visible au précontrôle).
         results.errors.push(...categorizedFiles.blockedFiles.map(
-          ({ file, reason }) => `${fileOrdinal(files, file)}: ${reason}`,
+          ({ file, reason }) => `${fileOrdinal(files, file, options.fileOrdinals)}: ${reason}`,
         ));
         progressService.errorStep(
           'file_detection',
@@ -146,7 +152,7 @@ export class FileProcessingService {
         progressService.startStep('excel_processing', 'Traitement Excel', 'Extraction des données du fichier Excel');
         
         console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT OPTIMISÉ ===');
-        console.log('📁 Fichiers:', categorizedFiles.collectionReports.map(f => f.name).join(', '));
+        console.log(`📁 Fichiers Collection Report: ${categorizedFiles.collectionReports.length}`);
         
         progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Lecture et conversion du fichier', 25, 
           `Traitement de ${categorizedFiles.collectionReports.length} fichier(s) Excel`);
@@ -188,7 +194,7 @@ export class FileProcessingService {
             allCollections = [...allCollections, ...excelResult.data];
             excelImportDiagnostics.collections_extracted += excelResult.data.length;
           } else {
-            const errorMsg = `Erreur traitement Excel ${fileOrdinal(files, collectionFile)}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
+            const errorMsg = `Erreur traitement Excel ${fileOrdinal(files, collectionFile, options.fileOrdinals)}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
             console.error('❌ Erreur traitement Excel d’un Collection Report');
             results.errors?.push(errorMsg);
             if (!excelResult.errors || excelResult.errors.length === 0) {
@@ -286,6 +292,7 @@ export class FileProcessingService {
           results.errors!,
           options.sheetSelections ?? new Map<File, string>(),
           files,
+          options.fileOrdinals,
         );
         
         if (bankReports.length > 0) {
@@ -316,7 +323,7 @@ export class FileProcessingService {
           categorizedFiles.fundPosition!,
           results.errors!,
           options.sheetSelections?.get(categorizedFiles.fundPosition!),
-          fileOrdinal(files, categorizedFiles.fundPosition!),
+          fileOrdinal(files, categorizedFiles.fundPosition!, options.fileOrdinals),
         );
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
@@ -371,7 +378,8 @@ export class FileProcessingService {
       return results;
 
     } catch (error) {
-      console.error('❌ ERREUR CRITIQUE GÉNÉRALE:', error);
+      // Pack 2 : aucun objet d'erreur en console (il peut porter une ligne brute).
+      console.error('❌ ERREUR CRITIQUE GÉNÉRALE');
       progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', 
         error instanceof Error ? error.message : 'Erreur inconnue');
       results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
@@ -499,7 +507,7 @@ export class FileProcessingService {
           return contentDetection.kind;
         }
       } catch (error) {
-        console.warn('⚠️ Erreur analyse contenu Excel:', error);
+        console.warn('⚠️ Erreur analyse contenu Excel');
       }
     }
     
@@ -513,6 +521,7 @@ export class FileProcessingService {
     errors: string[],
     sheetSelections: ReadonlyMap<File, string>,
     batch: readonly File[],
+    ordinals?: ReadonlyMap<File, number>,
   ): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     const { bankReportProcessingService } = await import('./bankReportProcessingService');
@@ -539,11 +548,11 @@ export class FileProcessingService {
           reports.push(processingResult.data);
         } else {
           console.error(`❌ Échec traitement d’un rapport bancaire (${(processingResult.errors ?? []).length} erreur(s))`);
-          errors.push(`Échec extraction ${fileOrdinal(batch, file)}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
+          errors.push(`Échec extraction ${fileOrdinal(batch, file, ordinals)}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
         }
       } catch (error) {
         console.error('❌ Erreur traitement d’un rapport bancaire');
-        errors.push(`Erreur extraction ${fileOrdinal(batch, file)}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+        errors.push(`Erreur extraction ${fileOrdinal(batch, file, ordinals)}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
       }
     }
     
@@ -607,7 +616,7 @@ export class FileProcessingService {
       const extractionResult = extractFundPosition(textContent);
 
       if (!extractionResult.success || !extractionResult.data) {
-        console.error('❌ Échec de l\'extraction du Fund Position:', extractionResult.errors);
+        console.error(`❌ Échec de l'extraction du Fund Position (${(extractionResult.errors ?? []).length} erreur(s))`);
         errors.push(`Échec extraction ${ordinal}: ${(extractionResult.errors ?? ['contrat invalide']).join(' ')}`);
         return null;
       }
@@ -643,21 +652,15 @@ export class FileProcessingService {
       }>();
 
       bankReports.forEach(report => {
-        console.log(`🏦 Analyse rapport ${report.bank} du ${report.date}:`, {
-          impayes: report.impayes.length,
-          solde: report.closingBalance
-        });
 
         report.impayes.forEach(impaye => {
           const clientCode = impaye.clientCode;
           // Extraire le nom du client depuis la description de l'impayé
           const clientName = this.extractClientName(impaye.description || '', clientCode);
 
-          console.log(`  ❌ Impayé trouvé: Client ${clientCode} (${clientName}), Montant: ${impaye.montant.toLocaleString()} FCFA, Date: ${impaye.dateEcheance}`);
 
           const current = clientImpayes.get(clientCode) || { amount: 0, clientName };
           const newAmount = current.amount + impaye.montant;
-          console.log(`  💰 Montant cumulé pour ${clientCode}: ${current.amount} + ${impaye.montant} = ${newAmount}`);
 
           clientImpayes.set(clientCode, {
             amount: newAmount,
@@ -667,16 +670,12 @@ export class FileProcessingService {
       });
 
       console.log(`👥 Impayés trouvés pour ${clientImpayes.size} clients:`);
-      clientImpayes.forEach((data, clientCode) => {
-        console.log(`  - ${clientCode} (${data.clientName}): ${data.amount.toLocaleString()} FCFA`);
-      });
 
       // 3. Créer les réconciliations client avec les montants d'impayés réels et les noms de clients
       const clientReconciliations: ClientReconciliation[] = [];
 
       // Ajouter les clients avec impayés
       for (const [clientCode, data] of clientImpayes.entries()) {
-        console.log(`👤 Ajout client avec impayés: ${clientCode} (${data.clientName}) - ${data.amount.toLocaleString()} FCFA`);
         clientReconciliations.push({
           reportDate: new Date().toISOString().split('T')[0],
           clientCode: clientCode,
@@ -690,7 +689,6 @@ export class FileProcessingService {
       for (const client of clientsData) {
         // Ne pas dupliquer les clients déjà ajoutés avec impayés
         if (!clientImpayes.has(client.clientCode)) {
-          console.log(`👤 Ajout client sans impayés: ${client.clientCode}`);
           clientReconciliations.push({
             reportDate: new Date().toISOString().split('T')[0],
             clientCode: client.clientCode,
@@ -701,20 +699,12 @@ export class FileProcessingService {
       }
 
       console.log('👥 Client Reconciliation calculée:', clientReconciliations.length, 'clients');
-      console.log('📊 Échantillon des réconciliations calculées:');
-      clientReconciliations.slice(0, 5).forEach(reconciliation => {
-        console.log(`  - ${reconciliation.clientCode} (${reconciliation.clientName}): ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
-      });
 
       // Vérifier s'il y a des montants non nuls
       const nonZeroReconciliations = clientReconciliations.filter(r => r.impayesAmount > 0);
-      console.log(`📊 Réconciliations avec montants non nuls: ${nonZeroReconciliations.length}`);
-      nonZeroReconciliations.forEach(reconciliation => {
-        console.log(`  - ${reconciliation.clientCode} (${reconciliation.clientName}): ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
-      });
       return clientReconciliations;
     } catch (error) {
-      console.error('❌ Erreur calcul Client Reconciliation:', error);
+      console.error('❌ Erreur calcul Client Reconciliation');
       return [];
     }
   }
@@ -776,7 +766,7 @@ export class FileProcessingService {
       console.log(`📄 PDF text extracted: ${fullText.length} characters`);
       return fullText;
     } catch (error) {
-      console.error('❌ Erreur extraction PDF:', error);
+      console.error('❌ Erreur extraction PDF');
       throw new Error(`Extraction PDF refusée: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
     }
   }
@@ -787,7 +777,9 @@ export class FileProcessingService {
  * Désignation d'un fichier dans les erreurs retournées à l'interface (Pack 2) :
  * rang dans le lot, jamais le nom du fichier.
  */
-function fileOrdinal(batch: readonly File[], file: File): string {
+function fileOrdinal(batch: readonly File[], file: File, ordinals?: ReadonlyMap<File, number>): string {
+  const displayed = ordinals?.get(file);
+  if (displayed !== undefined) return `fichier n°${displayed}`;
   const index = batch.indexOf(file);
   return `fichier n°${index === -1 ? '?' : String(index + 1)}`;
 }

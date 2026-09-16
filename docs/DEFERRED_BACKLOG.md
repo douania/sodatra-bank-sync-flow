@@ -210,6 +210,16 @@ et crédit séparés, solde, dates ; conteneurs XLS (ATB, BICIS, BIS) et XLSX
 **Reste dû** : aucune règle monétaire, profil ou idempotence modifiés ; la
 qualification sur fichiers réels reste due (Pack 2).
 
+### DEF-28 : Cellules parasites XFD sans date valide dans les rapports BIS (Pack 2, FIX_3) — correction à la source
+
+**Fichier** : `src/services/excelSheetGrid.ts`.
+**Constat** : 47 feuilles BIS sur 60 portent en colonne `XFD` une cellule
+numérique au format date dont la série n'est pas une date calendaire valide.
+La contre-revue FIX_2 (finding 1) exige que ces cellules soient collectées
+avant tout filtre et refusées ; seule une cellule XFD à date valide reste
+tolérée. **Décision** : refus de lecture (`SHEET_LIMIT_EXCEEDED`).
+**À arbitrer** : nettoyage des classeurs BIS à la source.
+
 ### DEF-26 : Ligne de facilité sans libellé métier (Pack 2, FIX_2) — arbitrage Pack 2B
 
 **Fichier** : `src/services/bankReportGridExtractor.ts`.
@@ -240,7 +250,13 @@ bancaire explicite par banque.
 portent, après la ligne de total des facilités, une ou deux lignes chiffrées
 négatives (parfois libellées) dont la sémantique n'est pas modélisée ; sur les
 feuilles BDK et BIS observées, il s'agit d'un unique montant formaté placé
-dans la colonne « Used », sans libellé ni date.
+dans la colonne « Used », sans libellé ni date ; sur les feuilles ATB, de deux
+lignes libellées « LIMITE » et « DISPONIBLE » (FIX_3 : elles étaient
+auparavant ignorées à tort comme en-tête de colonnes ; ATB passe de 58/60 à
+0/60).
+**Verdict CTO (FIX_2)** : correction à la source privilégiée ; sinon profil
+bancaire explicite modélisant l'ajustement, jamais réouverture générique après
+total.
 **Décision (verdict CTO, finding 1)** : toute ligne après le total refuse le
 document ; aucune perte silencieuse. Conséquence mesurée : BDK 46/60, BIS
 22/60 sur l'échantillon, feuille du 9 juillet refusée pour ces deux banques.

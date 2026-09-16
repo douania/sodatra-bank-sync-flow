@@ -280,6 +280,15 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
   assert.match(unnamedResult.errors?.join(' ') ?? '', /facilités bancaires sans libellé/);
   assert.doesNotMatch(JSON.stringify(unnamedResult), /BANK FACILITY \(180 jrs\)/);
 
+  // Une date textuelle, un marqueur structurel ou un contenu numérique ne sont jamais un libellé métier.
+  for (const nonLabel of ['09/07/2026', '09/07/26', 'TOTAL', 'Limit', 'BANK FACILITY (180 jrs)', '1 000', 'LESS :']) {
+    const disguised = englishReport('BDK');
+    disguised[15] = [null, D('2026-07-09'), nonLabel, A(1_000_000_000), A(400_000_000), null, A(600_000_000)];
+    const disguisedResult = await extractBankReportFromGrid(gridOf(disguised), 'BDK');
+    assert.equal(disguisedResult.success, false, `libellé « ${nonLabel} » refusé`);
+    assert.doesNotMatch(JSON.stringify(disguisedResult.data ?? {}), /09\/07\/2026|"facilityType":"TOTAL"/);
+  }
+
   // Section titrée sans ligne : avertissement seulement si aucune ligne n'est ignorée jusqu'à la frontière suivante.
   const emptyThenDated = englishReport('BDK');
   emptyThenDated.splice(20, 3, [null, null, null, null, null, null, A(100_000)]);

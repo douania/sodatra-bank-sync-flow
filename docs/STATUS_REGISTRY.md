@@ -17,7 +17,18 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_AND_863c671 — GO_FIX_PACK_2_FIX_2_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324 — GO_FIX_PACK_2_FIX_3_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Troisième contre-revue CTO sur `76c1324` : `FAIL` (trois P1 partiels, un P2).
+Corrections FIX_3 : cellules hors borne collectées avant tout filtre (date
+invalide en XFD refusée) ; journaux du pipeline sans nom, valeur, objet ni
+liste d'erreurs (chemin legacy Client Reconciliation inclus) ; libellé de
+facilité ni date, ni marqueur structurel, ni numérique ; « fichier n°N »
+affiché dans `/upload` et transmis au pipeline. Rejeu
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_3` : aucune famille
+`PASS` sur la feuille du 9 juillet (ATB refusée pour lignes « LIMITE » /
+« DISPONIBLE » après total, BIS refusée pour cellule XFD sans date valide,
+DEF-28) ; échantillon 60 feuilles : BDK 46, ATB 0, BICIS 0, ORA 0, BIS 9.
 
 Deuxième contre-revue CTO sur `863c671` : `FAIL` (quatre P1). Corrections FIX_2 :
 signature structurelle exacte de la cellule hors borne (une seule, en `XFD`,

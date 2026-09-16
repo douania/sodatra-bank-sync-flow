@@ -354,7 +354,9 @@ const FileUpload = () => {
       }
 
       if (otherFiles.length > 0) {
-        const result = await fileProcessingService.processFiles(otherFiles, { sheetSelections });
+        // ⭐ PACK 2 : les erreurs désignent chaque fichier par le rang affiché au précontrôle.
+        const fileOrdinals = new Map(selectedFiles.map((file, index) => [file, index + 1] as const));
+        const result = await fileProcessingService.processFiles(otherFiles, { sheetSelections, fileOrdinals });
 
         // ⭐ PACK-B2 : toujours exposer le résultat structuré, même en échec partiel/global
         setProcessingResults(result);
@@ -680,7 +682,10 @@ const FileUpload = () => {
                   <div className="flex items-center space-x-3">
                     {getFileTypeIcon(entry.documentLabel)}
                     <div>
-                      <div className="font-medium truncate max-w-md">{entry.file.name}</div>
+                      <div className="font-medium truncate max-w-md">
+                        <span className="mr-2 text-gray-500">fichier n°{index + 1}</span>
+                        {entry.file.name}
+                      </div>
                       <div className="text-sm text-gray-500">
                         {(entry.file.size / 1024 / 1024).toFixed(2)} MB
                       </div>

@@ -140,6 +140,26 @@ function isFacilityColumnHeaderRow(row: readonly ExcelGridCell[]): boolean {
   return labels.length > 0 && labels.every(label => FACILITY_COLUMN_HEADERS.has(label));
 }
 
+/**
+ * Libellé métier admissible pour une facilité : texte non vide qui n'est pas
+ * une date (`JJ/MM/AAAA`, ISO ou année courte corroborée), pas un marqueur
+ * structurel (TOTAL…, LIMIT/USED/BALANCE, titre de section, préfixe ADD/LESS)
+ * et pas un contenu purement numérique.
+ */
+export function isBusinessLabel(
+  text: string,
+  years: ReadonlySet<number>,
+  labels: Pick<BankReportLabelSet, 'facilitiesHeading' | 'opening' | 'closing'>,
+): boolean {
+  const normalized = normalizeLabel(text).replace(ADD_LESS_PREFIX, '').trim();
+  if (!normalized) return false;
+  if (parseCorroboratedDate(text, years) !== null || /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(text.trim())) return false;
+  if (/^[\d\s.,+-]+$/.test(normalized)) return false;
+  if (TOTAL_PREFIX.test(normalized) || FACILITY_COLUMN_HEADERS.has(normalized)) return false;
+  if (labels.facilitiesHeading.test(normalized) || labels.opening.test(normalized) || labels.closing.test(normalized)) return false;
+  return true;
+}
+
 /** Ligne sans contenu exploitable : ni libellé (hors préfixes ADD/LESS), ni date, ni nombre. */
 function isEffectivelyBlank(row: readonly ExcelGridCell[]): boolean {
   return rowLabels(row).every(label => label === '')
@@ -342,6 +362,15 @@ export async function extractBankReportFromGrid(
       continue;
     }
 
+    const isHeadingRow = rowHasLabel(row, labels.depositsHeading)
+      || rowHasLabel(row, labels.checksHeading)
+      || rowMatches(row, labels.facilitiesHeading) !== null
+      || (rowHasLabel(row, labels.impayesHeading) && !cellDate(row[0]));
+    if (isHeadingRow && row.some(isFormattedAmountCell)) {
+      // Un titre de section ne porte jamais de montant : ambiguïté = refus.
+      errors.push(`Ligne ${index + 1} : titre de section portant des montants.`);
+      continue;
+    }
     if (rowHasLabel(row, labels.depositsHeading)) {
       section = 'deposits';
       declared.deposits = true;
@@ -378,19 +407,32 @@ export async function extractBankReportFromGrid(
     }
 
     if (section === 'facilities') {
-      if (isFacilityColumnHeaderRow(row)) continue;
+      if (facilitiesClosed) {
+        // Aucune perte silencieuse : une ligne après le total des facilités refuse,
+        // quel que soit son libellé (ajustements « LIMITE », « DISPONIBLE »…).
+        errors.push(`Ligne ${index + 1} après le total des facilités non exploitable.`);
+        continue;
+      }
+      if (isFacilityColumnHeaderRow(row)) {
+        // Une ligne d'en-tête de colonnes ne porte jamais de montant : ambiguïté = refus.
+        if (row.some(isFormattedAmountCell)) {
+          errors.push(`Ligne ${index + 1} : en-tête de colonnes de facilités portant des montants.`);
+        }
+        continue;
+      }
       if (row.some(cell => cell.kind === 'error')) {
         errors.push(`Ligne ${index + 1} de facilités bancaires : cellule d’erreur Excel.`);
         continue;
       }
-      const explicitName = textCells(row).map(text => text.trim()).filter(Boolean)[0];
+      // Libellé métier : première cellule texte qui n'est ni une date (typée ou
+      // textuelle), ni un marqueur structurel (total, en-tête de colonnes, titre
+      // de section), ni un contenu purement numérique.
+      const explicitName = textCells(row)
+        .map(text => text.trim())
+        .filter(Boolean)
+        .find(text => isBusinessLabel(text, years, labels));
       const numbers = row.filter(isFormattedAmountCell);
       const hasDate = row.some(cell => cellDate(cell) !== null);
-      if (facilitiesClosed) {
-        // Aucune perte silencieuse : une ligne après le total des facilités refuse.
-        errors.push(`Ligne ${index + 1} après le total des facilités non exploitable.`);
-        continue;
-      }
       if (!explicitName && !hasDate) {
         // Ligne de total (chiffres seuls, sans date) : fin des facilités.
         facilitiesClosed = true;
