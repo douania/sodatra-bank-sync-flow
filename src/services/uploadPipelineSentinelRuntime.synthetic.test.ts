@@ -364,7 +364,7 @@ test('processFiles sur un lot marqué valide : persistance et synchronisation at
   assertNoSentinel(JSON.stringify(syncResult), 'data.syncResult');
   for (const syncError of syncResult.errors) {
     assert.deepEqual(Object.keys(syncError.collection).filter(key => key !== 'excelSourceRow'), [], 'référence collection limitée au rang de ligne');
-    assert.match(syncError.error, /^(?:ligne d+ : )?(?:persistance refusée|réseau ou délai dépassé|contrat d’extraction refusé)$/);
+    assert.match(syncError.error, /^(?:ligne \d+ : )?(?:persistance refusée|réseau ou délai dépassé|contrat d’extraction refusé)$/);
   }
   assert.ok(syncResult.errors.some(syncError => typeof syncError.collection.excelSourceRow === 'number'), 'au moins une erreur porte son rang de ligne');
 

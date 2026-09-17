@@ -129,6 +129,18 @@ Aucun fichier réel touché en FIX_6 (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_
 enregistré dans `test:multi-bank-reports` (scripts seulement) pour que la
 frontière soit vérifiée en CI. Aucun fichier réel touché en FIX_7.
 
+### 2.7 Huitième contre-revue (commit `b15fd3b`) : `PASS_WITH_RESERVES`, clôture technique
+
+Verdict CTO sur `b15fd3b` : `PASS_WITH_RESERVES`, boucle de corrections de
+sécurité FIX_1 à FIX_7 close ; ajout du script de test de l'agrégateur ratifié
+(script uniquement). Deux réserves P3 levées sous `GO_FIX_PACK_2` de clôture,
+sans autre changement applicatif :
+
+| # | Réserve | Correction |
+|---|---|---|
+| 1 | Fallbacks « Erreur batch inconnue » / « Erreur collection inconnue » hors vocabulaire fermé (`syncResultAggregator.ts`) | Remplacés par le motif fermé `contrat d’extraction refusé` ; test de l'agrégateur adapté. |
+| 2 | Motif `ligne d+` au lieu de `ligne \d+` dans le test runtime (échappement perdu dans un script de patch) | Corrigé : l'assertion accepte désormais « ligne N : motif » comme prévu. |
+
 ## 3. Règles en vigueur (déterministes, documentées)
 
 ### 3.1 Sélection explicite d'une feuille (`src/services/excelSheetGrid.ts`)
@@ -253,7 +265,20 @@ Tests synthétiques : `excelSheetGrid`, `bankReportGridExtractor`,
 qualification, `STATUS_REGISTRY`, `MASTER_CONTEXT`, `DEFERRED_BACKLOG`
 (DEF-20 à DEF-24).
 
-## 5. Validation locale sur fichiers réels (`…_FIX_3` puis `…_FIX_4`, hors dépôt, sous GO)
+## 5. Validation locale sur fichiers réels (`…_FIX_3`, `…_FIX_4`, `…_FIX_7`, hors dépôt, sous GO)
+
+Rejeu `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_7` (2026-09-17,
+HEAD `b15fd3b`, harness officiel, attestation `--real-sensitive-authorized`,
+feuille explicitement sélectionnée, lecture et qualification sans persistance,
+fichiers lus en place sans copie temporaire) : décisions, codes d'erreur et
+compteurs **strictement identiques** aux tableaux ci-dessous — six familles
+`FAIL_CLOSED` sur la feuille de référence (BIS :
+`DOCUMENT_RESOURCE_LIMIT_EXCEEDED`), SGBS `NOT_TESTED` ; échantillons BDK 46/60,
+ATB 0/60, BICIS 0/60, ORA 0/60, BIS 9/60, Fund Position 0/150. Invariants du
+harness : `containsRawBankingData=false`, `persistenceAttempted=false`,
+`environmentAccessed=false`. Arbitrage CTO : campagne acceptée et conforme,
+`FAIL_CLOSED` attendu, aucune régression de FIX_4 à FIX_7 ; aucune famille
+qualifiée pour promotion ni staging.
 
 Rejeu `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_4` (harness,
 feuille du 9 juillet ; Fund Position 7 juillet ; échantillons 60 / 150
@@ -295,6 +320,17 @@ verdicts : les écarts de format des rapports réels (DEF-20 à DEF-28) doivent
 profil bancaire explicite sur attestation métier.
 
 ## 6. Points d'arbitrage CTO (Pack 2B)
+
+Arbitrage CTO du 2026-09-17 (après le rejeu FIX_7) : correction **à la source**
+pour tous les écarts — DEF-20 / DEF-24 : modèle Fund Position à corriger,
+aucune dérivation du Grand Balance, du montant ni de la date ; DEF-25 (BDK,
+ATB) : repositionner ou titrer explicitement les ajustements, interdiction de
+les ignorer ; DEF-26 (BICIS) : libellé métier explicite sur chaque facilité ;
+DEF-27 (BICIS, ORA) : chèques dans une colonne montant explicitement titrée,
+aucun repli positionnel générique ; DEF-28 (BIS) : cellule parasite supprimée
+ou corrigée à la source, aucune tolérance supplémentaire. Si une correction à
+la source est impossible, un profil bancaire spécifique avec preuve métier doit
+être proposé avant tout patch. Aucun assouplissement générique du parseur.
 
 1. DEF-20 : Fund Position sans colonne Grand Balance (différé, aucune dérivation).
 2. DEF-21 : facilités ORA à deux montants (différé, « utilisé » vide ≠ zéro).

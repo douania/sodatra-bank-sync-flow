@@ -17,7 +17,20 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c_f1b4fd6_882e8b8_1b307e0 — GO_FIX_PACK_2_FIX_7_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_PASS_WITH_RESERVES_ON_b15fd3b — REAL_FILES_FIX_7_FAIL_CLOSED_ACCEPTED — TECHNICAL_CLOSURE_APPLIED — CTO_SHA_CHECK_PENDING — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Huitième contre-revue CTO sur `b15fd3b` : `PASS_WITH_RESERVES`, boucle de
+corrections de sécurité FIX_1 à FIX_7 close. Rejeu
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_7` (2026-09-17) :
+campagne acceptée et conforme, six familles `FAIL_CLOSED` sur la feuille de
+référence, SGBS `NOT_TESTED`, échantillons BDK 46/60, ATB 0, BICIS 0, ORA 0,
+BIS 9/60, Fund Position 0/150, identiques à FIX_3 / FIX_4 ; aucune famille
+qualifiée, `GO_VALIDATE_STAGING_PACK_2` refusé. Arbitrage Pack 2B : correction à
+la source pour DEF-20 à DEF-28, sinon profil bancaire avec preuve métier avant
+tout patch. Clôture technique : fallbacks de l'agrégateur ramenés au
+vocabulaire fermé, motif `ligne \d+` corrigé dans le test runtime ; contrôle
+CTO ciblé du nouveau SHA requis. Merge bloqué par Pack 0, Pack 0R, Pack 2B,
+SGBS et vérification finale du SHA.
 
 Septième contre-revue CTO sur `1b307e0` : `FAIL` (deux P1, deux P2, un P3).
 Corrections FIX_7 : frontière du résultat de `/upload` fermée —

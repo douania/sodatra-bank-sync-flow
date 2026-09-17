@@ -12,7 +12,7 @@ function toAuditedBatchError(message: string): SyncCollectionError {
   const safeMessage =
     typeof message === 'string' && message.trim().length > 0
       ? summarizeExtractionErrors([message])
-      : 'Erreur batch inconnue';
+      : 'contrat d’extraction refusé';
 
   return {
     collection: {},
@@ -71,7 +71,7 @@ export function aggregateBatchSyncResults(
           error:
             typeof collectionError.error === 'string'
               ? summarizeExtractionErrors([collectionError.error])
-              : 'Erreur collection inconnue'
+              : 'contrat d’extraction refusé'
         });
       }
     }

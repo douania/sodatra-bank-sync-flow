@@ -187,7 +187,7 @@ test('les erreurs top-level batch sont transformées en erreurs auditées sans r
 
   // Pack 2 (FIX_7) : le message de lot est réduit au vocabulaire fermé.
   assert.equal(aggregated.errors[0].error, 'réseau ou délai dépassé');
-  assert.equal(aggregated.errors[1].error, 'Erreur batch inconnue');
+  assert.equal(aggregated.errors[1].error, 'contrat d’extraction refusé');
   assert.equal(aggregated.errors[2].error, 'réseau ou délai dépassé');
 
   // Les erreurs top-level n'altèrent pas les compteurs.
