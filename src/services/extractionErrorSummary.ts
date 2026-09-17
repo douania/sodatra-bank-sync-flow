@@ -53,7 +53,7 @@ export function classifyExtractionMessage(message: string): ExtractionErrorReaso
   if (n.includes('BANKNAME')) return 'banque obligatoire absente';
   if (n.includes('COLLECTIONAMOUNT')) return 'montant obligatoire invalide';
   // Persistance et réseau (Supabase, retry) : jamais le message serveur.
-  if (n.includes('TIMEOUT') || n.includes('NETWORK') || n.includes('CONNECTION') || n.includes('ECONNRESET') || n.includes('ETIMEDOUT') || n.includes('FETCH FAILED')) {
+  if (n.includes('TIMEOUT') || n.includes('NETWORK') || n.includes('CONNECTION') || n.includes('ECONNRESET') || n.includes('ETIMEDOUT') || n.includes('FETCH FAILED') || n.includes('CONNEXION') || n.includes('RESEAU')) {
     return 'réseau ou délai dépassé';
   }
   if (n.includes('SAUVEGARDE') || n.includes('PERSIST') || n.includes('ROW-LEVEL') || n.includes('RLS') || n.includes('PERMISSION') || n.includes('DUPLICATE') || n.includes('UNIQUE') || n.includes('SUPABASE') || n.includes('RPC')) {

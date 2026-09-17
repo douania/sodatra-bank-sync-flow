@@ -107,7 +107,27 @@ Aucun fichier réel touché en FIX_5 (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_
 | 5 | P2 — journaux bruts de la page et de la revue Collection | Les quatre `console.*` de `FileUpload.tsx` (traitement, promotion) et de `collectionImportReviewService.ts` (statuts proposés, détection) ne portent plus d'objet d'erreur. L'affichage métier des noms de fichiers et codes clients dans la revue reste Pack 2B, comme arbitré. |
 | 6 | Documentation | §2.4 et §7 corrigés : la persistance n'était pas couverte en FIX_5 ; elle est désormais exécutée par doubles. |
 
+**Limites de FIX_6 relevées par la septième contre-revue** : les consoles
+étaient propres, mais `results.data.syncResult` transportait encore le message
+serveur brut et le code client (frontière du résultat non fermée), le test ne
+l'inspectait pas, et le vocabulaire structurel restait incomplet — corrigés en
+FIX_7 (§2.6).
+
 Aucun fichier réel touché en FIX_6 (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_6` refusé).
+
+### 2.6 Septième contre-revue (commit `1b307e0`) et corrections FIX_7
+
+| # | Finding | Correction |
+|---|---|---|
+| 1 | P1 — fuite dans le résultat retourné par `/upload` : `data.syncResult` portait le message Supabase brut et `clientCode` | `intelligentSyncService.processIntelligentSync` n'enregistre plus que le rang de la ligne Excel (`excelSourceRow`) et un motif du vocabulaire fermé ; `syncResultAggregator` applique la même frontière sans condition (erreurs de collection et erreurs de lot) : ni code client, ni objet métier, ni message serveur. `SyncCollectionRef` gagne `excelSourceRow` ; `clientCode` reste réservé à l'affichage métier de la promotion Collection (Pack C, arbitré Pack 2B) et n'est jamais renseigné par `processFiles`. L'interface affiche « ligne N : motif ». |
+| 2 | P1 — vocabulaire structurel contournable (`LIGNE CHQ`, `REFERENCE`, `TYPE FACTURE`, `NATURE`) | Ajout des abréviations et en-têtes structurels connus des rapports et de la Fund Position : `CHQ`, `CHEQ`, `REF(S)`, `REFERENCE(S)`, `FACT`, `FACTURE(S)`, `INVOICE`, `TYPE`, `NATURE`, `NUMERO`, `NUM`, `LIBELLE`, `DESIGNATION`, `OBSERVATION(S)`, `ECH`, `ECHEANCE`, `NBRE`, `JRS`, `BANQUE`, `BENEFICIAIRE`, `FOURNISSEUR`, `REGLEMENT`, `PAIEMENT`, `PAYMENT`, `COLLECTION(S)`, `HOLD`, `COMPTANT`. Tests : les quatre libellés du verdict et onze variantes refusés. |
+| 3 | P2 — le test runtime masquait le finding 1 | Le lot valide inspecte désormais `data.syncResult` (référence limitée au rang de ligne, motif dans le vocabulaire fermé), le résultat complet (message serveur absent partout ; aucune sentinelle hors des trois charges utiles extraites, qui sont les données métier rendues à l'interface) et des **compteurs explicites** du double Supabase : au moins deux `rpc` et un `insert` réellement appelés. Le lot invalide inspecte le résultat complet. Rejoué sur `1b307e0` : échec sur `data.syncResult` (code client sentinelle). |
+| 4 | P3 — couverture supprimée silencieusement sous Node ≥ 24 | Plus aucun `skip` : si le runtime résout l'alias Vite avant le hook de résolution, le chargement du pipeline échoue **explicitement** avec un message nommant la version de Node et les runtimes supportés (Node 20 ou 22, celui de la CI). |
+| 5 | P2 — documentation trop affirmative | §2.5, §7, registre et contexte alignés après fermeture effective de la frontière du résultat. |
+
+`syncResultAggregator.synthetic.test.ts`, jusqu'ici lancé par aucun script, est
+enregistré dans `test:multi-bank-reports` (scripts seulement) pour que la
+frontière soit vérifiée en CI. Aucun fichier réel touché en FIX_7.
 
 ## 3. Règles en vigueur (déterministes, documentées)
 
@@ -216,7 +236,9 @@ Runtime : `src/services/excelSheetGrid.ts`, `src/services/bankReportGridExtracto
 `src/services/internalBookRuntimeProcessingService.ts` (journaux et erreurs, FIX_5),
 `src/services/databaseService.ts` (sauvegardes), `src/services/batchProcessingService.ts`,
 `src/services/intelligentSyncService.ts`, `src/services/collectionImportReviewService.ts`,
-`src/pages/FileUpload.tsx` (journaux, FIX_6).
+`src/pages/FileUpload.tsx` (journaux, FIX_6),
+`src/services/syncResultAggregator.ts`, `src/types/processing.ts`,
+`src/components/ProcessingResultsDetailed.tsx` (frontière du résultat de synchronisation, FIX_7).
 
 Tests synthétiques : `excelSheetGrid`, `bankReportGridExtractor`,
 `fundPositionGridExtractor` (nouveaux) ; `bankIdentity`,
@@ -303,13 +325,15 @@ profil bancaire explicite sur attestation métier.
 | Réseau / services tiers | non |
 | Journaux navigateur | sans nom de fichier, sans valeur, sans nom de banque de détail, sans objet d'erreur : extracteurs grille et texte, service et mapping Collection Report, retry, Internal Book, persistance (`saveBankReport`, `saveFundPosition`), synchronisation par lots, exception générale, page et revue Collection — prouvé par exécution de `processFiles` sur un lot invalide et sur un lot valide dont les doubles Supabase échouent avec des sentinelles (FIX_6) |
 | Garde `/upload` | canonique seule, aucune option d'injection en production ; substitution au niveau du loader Node dans les tests uniquement |
+| Résultat retourné par `/upload` | `results.errors`, diagnostics Excel et `data.syncResult` : rang (fichier, ligne) et motif du vocabulaire fermé seulement ; ni nom de fichier, ni code client, ni message serveur. Les charges utiles extraites (`bankReports`, `fundPosition`, `collectionReports`) sont les données métier rendues à l'interface et ne sont ni journalisées ni recopiées dans les erreurs |
 | Erreurs `/upload` | vocabulaire fermé « ligne N : motif » (`summarizeExtractionErrors`), jamais un message brut d'extracteur |
 
 ## 8. Tests et baselines (local, Node 22.23.1, dépendances du lockfile)
 
 | Commande | Résultat |
 |---|---|
-| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`, `uploadPipelineSentinelRuntime`) | 91/91 PASS |
+| `npm run test:multi-bank-reports` (+ `uploadErrorHygiene`, `sensitiveSentinelRuntime`, `uploadPipelineSentinelRuntime`, `syncResultAggregator`) | 102/102 PASS, 0 skip |
+| `uploadPipelineSentinelRuntime` rejoué sur `1b307e0` (worktree temporaire, supprimé) | FAIL attendu sur `data.syncResult` — preuve adversariale |
 | `uploadPipelineSentinelRuntime` rejoué sur `882e8b8` (worktree temporaire, supprimé) | FAIL attendu sur le lot valide (persistance) — preuve adversariale |
 | `uploadPipelineSentinelRuntime` avant assainissement du mapping Collection | FAIL sur le nom de fichier journalisé — preuve adversariale |
 | `sensitiveSentinelRuntime` rejoué sur `cc7fa3c` (worktree temporaire, supprimé) | 2/5 FAIL attendus (chemins texte) — preuve adversariale |
@@ -323,7 +347,7 @@ profil bancaire explicite sur attestation métier.
 | `npm run test:collections-core` / `test:structured-excel` / `test:structured-csv-all` | 27/27, 20/20, 132/132 PASS |
 | `npm run test:quality-control` | 8/8 PASS |
 | `npm run test:daily-v2-application` / `daily-v2-reporting` / `financial-atomic` | 106/106, 70/70, 25/25 PASS |
-| `npm run test:financial-write-lockdown` | 1/2 : échec d’environnement préexistant (chemin du dépôt local avec espaces, `scandir` sur URL encodée), fichier de test non modifié ; à confirmer en CI |
+| `npm run test:financial-write-lockdown` | 1/2 sur ce poste (chemin du dépôt avec espaces, `scandir` sur URL encodée) ; 2/2 PASS au rejeu indépendant du CTO : échec environnemental, pas une régression ; la CI doit afficher 2/2 |
 | `npm run build` | PASS ; `supabase/functions/mcp/index.ts` intact |
 | `git diff --check` | PASS |
 

@@ -36,6 +36,7 @@ const supabaseDoubleModuleUrl =
   encodeURIComponent(
     `const SENT = ${JSON.stringify(SUPABASE_SENTINEL)};
      const WRITE = new Set(['insert', 'update', 'upsert', 'delete']);
+     const calls = (globalThis.__supabaseDoubleCalls ??= { from: 0, rpc: 0, insert: 0, update: 0, upsert: 0, delete: 0 });
      const failure = () => Object.assign(new Error(SENT), { code: 'SENTINEL', details: SENT, hint: SENT });
      function builder(write) {
        return new Proxy(function () {}, {
@@ -45,13 +46,16 @@ const supabaseDoubleModuleUrl =
              return (resolve, reject) => Promise.resolve(outcome).then(resolve, reject);
            }
            if (typeof prop === 'symbol' || prop === 'toJSON') return undefined;
-           return () => builder(write || WRITE.has(String(prop)));
+           return () => {
+             if (WRITE.has(String(prop))) calls[String(prop)] += 1;
+             return builder(write || WRITE.has(String(prop)));
+           };
          },
        });
      }
      export const supabase = {
-       from: () => builder(false),
-       rpc: async () => ({ data: null, error: failure() }),
+       from: () => { calls.from += 1; return builder(false); },
+       rpc: async () => { calls.rpc += 1; return { data: null, error: failure() }; },
        auth: {
          getUser: async () => ({ data: { user: null }, error: null }),
          getSession: async () => ({ data: { session: null }, error: null }),
@@ -82,8 +86,34 @@ const resolverHooksUrl =
   );
 register(resolverHooksUrl);
 
-const nodeMajorVersion = Number(process.versions.node.split('.')[0]);
-const runnerSkip = nodeMajorVersion >= 24 ? 'Harness Supabase/Vite exécuté en CI Node 20.' : false;
+interface SupabaseDoubleCalls { from: number; rpc: number; insert: number; update: number; upsert: number; delete: number }
+function supabaseDoubleCalls(): SupabaseDoubleCalls {
+  const calls = (globalThis as unknown as { __supabaseDoubleCalls?: SupabaseDoubleCalls }).__supabaseDoubleCalls;
+  assert.ok(calls, 'le double Supabase doit avoir été chargé par le hook de résolution');
+  return calls;
+}
+
+/**
+ * Charge le pipeline sous les doubles. Pack 2 (FIX_7) : aucun `skip` silencieux —
+ * si le runtime résout l'alias Vite avant le hook (constaté sous Node ≥ 24 avec
+ * tsx), l'import du client généré jette et la preuve runtime ÉCHOUE explicitement.
+ */
+async function loadPipeline(): Promise<typeof import('./fileProcessingService')> {
+  try {
+    return await import('./fileProcessingService');
+  } catch {
+    assert.fail(
+      `Harness loader non supporté sur Node ${process.versions.node} : la preuve runtime du pipeline /upload est obligatoire `
+      + '(runtime supporté : Node 20 ou 22, celui de la CI).',
+    );
+  }
+}
+
+/** Résultat complet moins les trois charges utiles extraites (données métier rendues à l'interface). */
+function resultWithoutExtractedPayloads(result: { data?: Record<string, unknown> } & Record<string, unknown>): string {
+  const { bankReports: _bankReports, fundPosition: _fundPosition, collectionReports: _collectionReports, ...restData } = result.data ?? {};
+  return JSON.stringify({ ...result, data: restData });
+}
 
 const FILE_SENTINEL = 'NOMFICHIER_SENTINELLE_QX';
 const SENTINELS = [
@@ -274,8 +304,8 @@ function validBatch(): { files: File[]; sheetSelections: Map<File, string>; file
   };
 }
 
-test('processFiles sur un lot marqué invalide : ni la console, ni la progression, ni les erreurs, ni les diagnostics ne fuient', { skip: runnerSkip }, async () => {
-  const { fileProcessingService } = await import('./fileProcessingService');
+test('processFiles sur un lot marqué invalide : ni la console, ni la progression, ni les erreurs, ni les diagnostics ne fuient', async () => {
+  const { fileProcessingService } = await loadPipeline();
   const { files, sheetSelections, fileOrdinals } = invalidBatch();
 
   const run = await withCapturedRuntime(() => fileProcessingService.processFiles(files, { sheetSelections, fileOrdinals }));
@@ -286,6 +316,7 @@ test('processFiles sur un lot marqué invalide : ni la console, ni la progressio
   assertNoSentinel(run.progress, 'événements de progression (lot invalide)');
   assertNoSentinel(JSON.stringify(run.result.errors), 'results.errors (lot invalide)');
   assertNoSentinel(JSON.stringify(run.result.data?.excelImportDiagnostics ?? null), 'diagnostics Excel (lot invalide)');
+  assertNoSentinel(JSON.stringify(run.result), 'résultat complet (lot invalide)');
   for (const message of run.result.errors ?? []) {
     assert.doesNotMatch(message, /\.xlsx|\.pdf|file=|row=/i, `message brut d’extracteur : ${message.slice(0, 60)}`);
   }
@@ -297,9 +328,10 @@ test('processFiles sur un lot marqué invalide : ni la console, ni la progressio
   assert.equal(run.result.data?.syncResult, undefined);
 });
 
-test('processFiles sur un lot marqué valide : persistance et synchronisation atteintes, leurs échecs sentinelles ne fuient pas', { skip: runnerSkip }, async () => {
-  const { fileProcessingService } = await import('./fileProcessingService');
+test('processFiles sur un lot marqué valide : persistance et synchronisation atteintes, leurs échecs sentinelles ne fuient pas', async () => {
+  const { fileProcessingService } = await loadPipeline();
   const { files, sheetSelections, fileOrdinals } = validBatch();
+  const before = { ...supabaseDoubleCalls() };
 
   const run = await withCapturedRuntime(() => fileProcessingService.processFiles(files, { sheetSelections, fileOrdinals }));
 
@@ -320,10 +352,31 @@ test('processFiles sur un lot marqué valide : persistance et synchronisation at
   assertNoSentinel(run.progress, 'événements de progression (lot valide)');
   assertNoSentinel(JSON.stringify(errors), 'results.errors (lot valide)');
   assertNoSentinel(JSON.stringify(run.result.data?.excelImportDiagnostics ?? null), 'diagnostics Excel (lot valide)');
+
+  // Compteurs explicites du double : la persistance (rpc) et la synchronisation
+  // (insert) ont réellement été appelées, et toutes ont échoué par sentinelle.
+  const after = supabaseDoubleCalls();
+  assert.ok(after.rpc - before.rpc >= 2, `rpc attendus ≥ 2 (rapport bancaire, Fund Position), obtenus ${after.rpc - before.rpc}`);
+  assert.ok(after.insert - before.insert >= 1, `insert attendus ≥ 1, obtenus ${after.insert - before.insert}`);
+
+  // Frontière du résultat : `data.syncResult` ne porte que rang de ligne et motif fermé.
+  const syncResult = run.result.data!.syncResult!;
+  assertNoSentinel(JSON.stringify(syncResult), 'data.syncResult');
+  for (const syncError of syncResult.errors) {
+    assert.deepEqual(Object.keys(syncError.collection).filter(key => key !== 'excelSourceRow'), [], 'référence collection limitée au rang de ligne');
+    assert.match(syncError.error, /^(?:ligne d+ : )?(?:persistance refusée|réseau ou délai dépassé|contrat d’extraction refusé)$/);
+  }
+  assert.ok(syncResult.errors.some(syncError => typeof syncError.collection.excelSourceRow === 'number'), 'au moins une erreur porte son rang de ligne');
+
+  // Résultat complet : le message serveur n'apparaît nulle part, charges utiles
+  // comprises ; hors charges utiles extraites (données métier rendues à
+  // l'interface), aucune sentinelle.
+  assert.equal(JSON.stringify(run.result).includes('SUPABASE_SENTINELLE_QX'), false, 'message serveur dans le résultat complet');
+  assertNoSentinel(resultWithoutExtractedPayloads(run.result as never), 'résultat complet hors charges utiles extraites');
 });
 
-test('processFiles sur un document bloqué au précontrôle : le rang remplace le nom, aucune sentinelle', { skip: runnerSkip }, async () => {
-  const { fileProcessingService } = await import('./fileProcessingService');
+test('processFiles sur un document bloqué au précontrôle : le rang remplace le nom, aucune sentinelle', async () => {
+  const { fileProcessingService } = await loadPipeline();
   const blocked = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], `CLIENT RECONCILIATION ${FILE_SENTINEL}.pdf`);
 
   const run = await withCapturedRuntime(() => fileProcessingService.processFiles([blocked], { fileOrdinals: new Map([[blocked, 3]]) }));
@@ -341,8 +394,8 @@ class ExplodingFile extends File {
   }
 }
 
-test('exception générale du pipeline : réduite au vocabulaire fermé, console et progression sans sentinelle', { skip: runnerSkip }, async () => {
-  const { fileProcessingService } = await import('./fileProcessingService');
+test('exception générale du pipeline : réduite au vocabulaire fermé, console et progression sans sentinelle', async () => {
+  const { fileProcessingService } = await loadPipeline();
   const exploding = new ExplodingFile([new Uint8Array([1])], 'x.xlsx');
 
   const run = await withCapturedRuntime(() => fileProcessingService.processFiles([exploding]));

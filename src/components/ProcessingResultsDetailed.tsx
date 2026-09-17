@@ -331,7 +331,7 @@ const ProcessingResultsDetailed: React.FC<ProcessingResultsDetailedProps> = ({
                       <div className="space-y-1 max-h-40 overflow-y-auto">
                         {syncErrors.slice(0, 10).map((syncError, index) => (
                           <div key={index} className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
-                            {syncError?.collection?.clientCode ?? 'INCONNU'}: {syncError?.error ?? 'Erreur inconnue'}
+                            {syncError?.collection?.clientCode ?? (typeof syncError?.collection?.excelSourceRow === 'number' ? `ligne ${syncError.collection.excelSourceRow}` : 'lot')}: {syncError?.error ?? 'Erreur inconnue'}
                           </div>
                         ))}
                         {syncErrors.length > 10 && (

@@ -167,6 +167,11 @@ const STRUCTURAL_TOKENS = new Set<string>([
   ...FACILITY_COLUMN_HEADERS,
   'TOTAL', 'TOTAUX', 'SOUS', 'AMT', 'AMOUNTS', 'MONTANTS', 'OPENING', 'CLOSING', 'BOOK',
   'ADD', 'LESS', 'PLUS', 'MOINS', 'FCFA', 'CFA', 'XOF', 'EUR', 'USD', 'GBP',
+  // FIX_7 : abréviations et en-têtes structurels connus des rapports et de la Fund Position.
+  'CHQ', 'CHEQ', 'REF', 'REFS', 'REFERENCE', 'REFERENCES', 'FACT', 'FACTURE', 'FACTURES', 'INVOICE',
+  'TYPE', 'NATURE', 'NUMERO', 'NUM', 'LIBELLE', 'DESIGNATION', 'OBSERVATION', 'OBSERVATIONS',
+  'ECH', 'ECHEANCE', 'NBRE', 'JRS', 'BANQUE', 'BENEFICIAIRE', 'FOURNISSEUR', 'REGLEMENT', 'PAIEMENT',
+  'PAYMENT', 'COLLECTION', 'COLLECTIONS', 'HOLD', 'COMPTANT',
 ].filter(Boolean));
 /** Date embarquée (`JJ/MM/AA[AA]`, `JJ-MM-AAAA`) à quelque position que ce soit. */
 const EMBEDDED_DATE = /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/;

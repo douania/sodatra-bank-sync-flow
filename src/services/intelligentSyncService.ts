@@ -1,6 +1,7 @@
 import { supabaseOptimized, SupabaseRetryService } from './supabaseClientService';
 import { CollectionReport } from '@/types/banking';
 import { excelMappingService } from './excelMappingService';
+import { summarizeExtractionErrors } from './extractionErrorSummary';
 
 export enum CollectionStatus {
   NEW = 'NEW',
@@ -398,11 +399,13 @@ export class IntelligentSyncService {
           }
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+          // Pack 2 (FIX_7) : ni objet métier ni message serveur dans le résultat —
+          // rang de la ligne Excel et motif du vocabulaire fermé seulement.
+          const sourceRow = comparison.excelRow?.excelSourceRow;
           result.errors.push({
-            collection: comparison.excelRow,
-            error: errorMsg
+            collection: typeof sourceRow === 'number' ? { excelSourceRow: sourceRow } : {},
+            error: summarizeExtractionErrors([errorMsg])
           });
-          // Pack 2 (FIX_6) : le message reste dans le résultat de synchronisation, jamais en console.
           console.error('❌ Erreur traitement collection');
         }
       }

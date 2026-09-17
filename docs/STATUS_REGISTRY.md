@@ -17,7 +17,18 @@
 
 ## PACK-2-REAL-FORMAT-COMPATIBILITY
 
-**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c_f1b4fd6_882e8b8 — GO_FIX_PACK_2_FIX_6_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_REVIEW_FAIL_ON_a74581b_863c671_76c1324_cc7fa3c_f1b4fd6_882e8b8_1b307e0 — GO_FIX_PACK_2_FIX_7_APPLIED — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Septième contre-revue CTO sur `1b307e0` : `FAIL` (deux P1, deux P2, un P3).
+Corrections FIX_7 : frontière du résultat de `/upload` fermée —
+`data.syncResult` ne porte plus que rang de ligne et motif fermé (ni code
+client, ni objet métier, ni message serveur), à la source et dans
+l'agrégateur ; vocabulaire structurel de `isBusinessLabel` complété (`CHQ`,
+`REF`, `REFERENCE`, `FACT`, `FACTURE`, `TYPE`, `NATURE`…) ; test runtime
+inspectant `data.syncResult`, le résultat complet et des compteurs explicites
+`rpc` / `insert` ; plus aucun `skip` silencieux (échec explicite sur runtime non
+supporté) ; tests de l'agrégateur enregistrés en CI ; docs alignées. Aucun
+fichier réel touché. `financial-write-lockdown` : 2/2 au rejeu du CTO.
 
 Sixième contre-revue CTO sur `882e8b8` : `FAIL` (trois P1, deux P2).
 Corrections FIX_6 : option `mutationGate` retirée de l'API de production

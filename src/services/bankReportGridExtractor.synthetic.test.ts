@@ -293,6 +293,9 @@ test('les règles fail-closed : date de feuille incohérente, cellule d’erreur
     'LIGNE CHEQUE 100', 'FACILITE DEPOSIT', 'TYPE CHECK', 'LIGNE BANK FACILITY', 'Découvert 999', 'AMT 100',
     'CREDIT SPOT 90 JOURS', 'Escompte de chèques', 'Facilité de caisse', 'Not yet cleared', 'Dépôts pas encore encaissés',
     'Closing book', 'Add escompte', 'Vendor SPN', 'Ch.No 12',
+    // FIX_7 : abréviations et en-têtes structurels connus.
+    'LIGNE CHQ', 'REFERENCE', 'TYPE FACTURE', 'NATURE', 'Réf escompte', 'Fact SPN', 'Numéro', 'Libellé',
+    'Désignation', 'Echéance', 'Banque SPN', 'Règlement fournisseur', 'Bénéficiaire', 'Hold', 'Comptant',
   ]) {
     const disguised = englishReport('BDK');
     disguised[15] = [null, D('2026-07-09'), nonLabel, A(1_000_000_000), A(400_000_000), null, A(600_000_000)];

@@ -146,10 +146,10 @@ test('résultats undefined, null ou incomplets traités comme zéros sans crash'
   assert.deepEqual(aggregated.errors, []);
 });
 
-test('les erreurs collection des résultats batch sont conservées', () => {
+test('les erreurs collection des résultats batch sont conservées sous forme fermée : rang de ligne et motif, jamais le code client ni le message serveur', () => {
   const batch1: PartialSyncResultData = {
     errors: [
-      { collection: { clientCode: 'CLI-001' }, error: 'Duplicate key' }
+      { collection: { clientCode: 'CLI-001', excelSourceRow: 12 }, error: 'duplicate key value violates unique constraint "CLI-001 7777777"' }
     ]
   };
   const batch2: PartialSyncResultData = {
@@ -163,15 +163,12 @@ test('les erreurs collection des résultats batch sont conservées', () => {
 
   assert.equal(aggregated.errors.length, 3);
   assert.deepEqual(aggregated.errors[0], {
-    collection: { clientCode: 'CLI-001' },
-    error: 'Duplicate key'
+    collection: { excelSourceRow: 12 },
+    error: 'persistance refusée'
   });
-  assert.equal(aggregated.errors[1].collection.clientCode, undefined);
-  assert.equal(aggregated.errors[1].error, 'Champ manquant');
-  assert.deepEqual(aggregated.errors[2], {
-    collection: { clientCode: 'CLI-002' },
-    error: 'Format invalide'
-  });
+  assert.deepEqual(aggregated.errors[1], { collection: {}, error: 'contrat d’extraction refusé' });
+  assert.deepEqual(aggregated.errors[2], { collection: {}, error: 'contrat d’extraction refusé' });
+  assert.doesNotMatch(JSON.stringify(aggregated), /CLI-00|7777777|duplicate key/i);
 });
 
 test('les erreurs top-level batch sont transformées en erreurs auditées sans référence collection', () => {
@@ -188,9 +185,10 @@ test('les erreurs top-level batch sont transformées en erreurs auditées sans r
     assert.ok(auditedError.error.length > 0);
   }
 
-  assert.equal(aggregated.errors[0].error, 'Erreur lot 2: timeout réseau');
+  // Pack 2 (FIX_7) : le message de lot est réduit au vocabulaire fermé.
+  assert.equal(aggregated.errors[0].error, 'réseau ou délai dépassé');
   assert.equal(aggregated.errors[1].error, 'Erreur batch inconnue');
-  assert.equal(aggregated.errors[2].error, 'Erreur lot 5: connexion perdue');
+  assert.equal(aggregated.errors[2].error, 'réseau ou délai dépassé');
 
   // Les erreurs top-level n'altèrent pas les compteurs.
   assert.equal(aggregated.new_collections, 1);

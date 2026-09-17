@@ -1,3 +1,4 @@
+import { summarizeExtractionErrors } from './extractionErrorSummary';
 import type {
   PartialSyncResultData,
   SyncCollectionError,
@@ -5,11 +6,12 @@ import type {
 } from '@/types/processing';
 
 // Erreur top-level de BatchProcessingService : aucun rattachement à une
-// collection, message conservé tel quel (jamais de données bancaires dedans).
+// collection ; le message est réduit au vocabulaire fermé (Pack 2, FIX_7) :
+// jamais de message serveur ni de donnée bancaire dans le résultat de /upload.
 function toAuditedBatchError(message: string): SyncCollectionError {
   const safeMessage =
     typeof message === 'string' && message.trim().length > 0
-      ? message.trim()
+      ? summarizeExtractionErrors([message])
       : 'Erreur batch inconnue';
 
   return {
@@ -61,13 +63,14 @@ export function aggregateBatchSyncResults(
         if (!collectionError) {
           continue;
         }
+        // Pack 2 (FIX_7) : frontière du résultat de /upload — rang de ligne et
+        // motif fermé seulement ; ni code client, ni objet métier, ni message serveur.
+        const sourceRow = collectionError.collection?.excelSourceRow;
         aggregated.errors.push({
-          collection: {
-            clientCode: collectionError.collection?.clientCode
-          },
+          collection: typeof sourceRow === 'number' ? { excelSourceRow: sourceRow } : {},
           error:
             typeof collectionError.error === 'string'
-              ? collectionError.error
+              ? summarizeExtractionErrors([collectionError.error])
               : 'Erreur collection inconnue'
         });
       }

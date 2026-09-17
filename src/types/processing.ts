@@ -1,7 +1,10 @@
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
 
 export interface SyncCollectionRef {
+  /** Affichage métier de la promotion Collection (Pack C) ; jamais renseigné par `processFiles`. */
   clientCode?: string;
+  /** Rang de la ligne Excel source : seule référence portée par le résultat de `/upload` (Pack 2, FIX_7). */
+  excelSourceRow?: number;
 }
 
 export interface SyncCollectionError {
