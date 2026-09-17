@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,7 +27,12 @@ import {
   isUploadMutationAllowed,
   UPLOAD_READ_ONLY_TARGET_MESSAGE,
 } from '@/services/uploadRuntimeGuard';
-import { buildImportPreflight } from '@/services/importPreflightService';
+import {
+  buildImportPreflight,
+  detectImportDocument,
+  SHEET_SELECTED_DOCUMENT_KINDS,
+} from '@/services/importPreflightService';
+import { listWorkbookSheetNames } from '@/services/excelSheetGrid';
 import {
   isCollectionImportTargetAllowed,
 } from '@/services/collectionImportRuntimeTarget';
@@ -123,6 +128,12 @@ const FileUpload = () => {
   const [collectionReview, setCollectionReview] = useState<CollectionImportReview | null>(null);
   const [promoting, setPromoting] = useState(false);
   const [promotionResult, setPromotionResult] = useState<ProcessingResult | null>(null);
+  // ⭐ PACK 2 : un rapport bancaire ou une Fund Position Excel se traite sur UNE
+  // feuille choisie explicitement. L'inventaire des feuilles est lu localement
+  // (noms seulement) et lié à l'instance de fichier ; sans sélection, le
+  // précontrôle bloque le fichier. Les entrées des fichiers retirés sont purgées.
+  const [sheetInventory, setSheetInventory] = useState<ReadonlyMap<File, string[]>>(() => new Map());
+  const [sheetSelections, setSheetSelections] = useState<ReadonlyMap<File, string>>(() => new Map());
   const { toast } = useToast();
   const { user } = useAuth();
   // ⭐ 0Z_AM : garde d'interface production read-only — réutilise la politique
@@ -173,9 +184,44 @@ const FileUpload = () => {
       allowedDocumentKinds: deploymentTarget === 'production'
         ? ['COLLECTION_REPORT']
         : undefined,
+      sheetInventory,
+      sheetSelections,
     }),
-    [deploymentTarget, selectedFiles],
+    [deploymentTarget, selectedFiles, sheetInventory, sheetSelections],
   );
+
+  // ⭐ PACK 2 : inventaire local des feuilles des classeurs concernés (noms
+  // seulement, aucune cellule lue ici, aucune concaténation).
+  useEffect(() => {
+    let cancelled = false;
+    const pending = selectedFiles.filter(file => {
+      const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1] ?? '';
+      return (extension === 'xlsx' || extension === 'xls')
+        && SHEET_SELECTED_DOCUMENT_KINDS.includes(detectImportDocument(file.name).kind)
+        && !sheetInventory.has(file);
+    });
+    if (pending.length === 0) return undefined;
+    (async () => {
+      const additions = new Map<File, string[]>();
+      for (const file of pending) {
+        try {
+          additions.set(file, listWorkbookSheetNames(await file.arrayBuffer()));
+        } catch {
+          additions.set(file, []);
+        }
+      }
+      if (!cancelled) {
+        setSheetInventory(previous => {
+          const next = new Map(previous);
+          for (const [file, names] of additions) next.set(file, names);
+          return next;
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFiles, sheetInventory]);
 
   // ⭐ PACK-C.1 : toute modification de la liste des fichiers invalide la review,
   // la promotion et les résultats précédents — sinon l'UI afficherait un staging
@@ -184,6 +230,33 @@ const FileUpload = () => {
     setCollectionReview(null);
     setPromotionResult(null);
     setProcessingResults(null);
+  }, []);
+
+  // ⭐ PACK 2 : changer de feuille invalide aussi les résultats précédents.
+  const selectSheet = useCallback((file: File, sheetName: string) => {
+    resetImportStateAfterFileChange();
+    setSheetSelections(previous => {
+      const next = new Map(previous);
+      if (sheetName) next.set(file, sheetName);
+      else next.delete(file);
+      return next;
+    });
+  }, [resetImportStateAfterFileChange]);
+
+  // ⭐ PACK 2 : purge de l'inventaire et des sélections des fichiers retirés.
+  const forgetSheetState = useCallback((file: File) => {
+    setSheetInventory(previous => {
+      if (!previous.has(file)) return previous;
+      const next = new Map(previous);
+      next.delete(file);
+      return next;
+    });
+    setSheetSelections(previous => {
+      if (!previous.has(file)) return previous;
+      const next = new Map(previous);
+      next.delete(file);
+      return next;
+    });
   }, []);
 
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -223,6 +296,7 @@ const FileUpload = () => {
   const removeFile = (fileToRemove: File) => {
     // ⭐ PACK-C.1 : fichier retiré → l'état de review/promotion est périmé.
     resetImportStateAfterFileChange();
+    forgetSheetState(fileToRemove);
 
     setSelectedFiles(prevFiles => prevFiles.filter(file => file !== fileToRemove));
   };
@@ -280,7 +354,9 @@ const FileUpload = () => {
       }
 
       if (otherFiles.length > 0) {
-        const result = await fileProcessingService.processFiles(otherFiles);
+        // ⭐ PACK 2 : les erreurs désignent chaque fichier par le rang affiché au précontrôle.
+        const fileOrdinals = new Map(selectedFiles.map((file, index) => [file, index + 1] as const));
+        const result = await fileProcessingService.processFiles(otherFiles, { sheetSelections, fileOrdinals });
 
         // ⭐ PACK-B2 : toujours exposer le résultat structuré, même en échec partiel/global
         setProcessingResults(result);
@@ -307,7 +383,8 @@ const FileUpload = () => {
         }
       }
     } catch (error) {
-      console.error("Erreur lors du traitement:", error);
+      // Pack 2 (FIX_6) : aucun objet d'erreur en console.
+      console.error("Erreur lors du traitement");
       toast({
         variant: "destructive",
         title: "Erreur Critique",
@@ -386,7 +463,7 @@ const FileUpload = () => {
         });
       }
     } catch (error) {
-      console.error("Erreur lors de la promotion:", error);
+      console.error("Erreur lors de la promotion");
       toast({
         variant: "destructive",
         title: "Erreur de promotion",
@@ -606,7 +683,10 @@ const FileUpload = () => {
                   <div className="flex items-center space-x-3">
                     {getFileTypeIcon(entry.documentLabel)}
                     <div>
-                      <div className="font-medium truncate max-w-md">{entry.file.name}</div>
+                      <div className="font-medium truncate max-w-md">
+                        <span className="mr-2 text-gray-500">fichier n°{index + 1}</span>
+                        {entry.file.name}
+                      </div>
                       <div className="text-sm text-gray-500">
                         {(entry.file.size / 1024 / 1024).toFixed(2)} MB
                       </div>
@@ -615,6 +695,25 @@ const FileUpload = () => {
                           {issue.message}
                         </div>
                       ))}
+                      {entry.sheetNames && entry.sheetNames.length > 1 && (
+                        <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
+                          <span>Feuille à traiter :</span>
+                          <select
+                            className="rounded border border-gray-300 bg-white px-2 py-1 text-sm"
+                            value={entry.selectedSheetName ?? ''}
+                            onChange={event => selectSheet(entry.file, event.target.value)}
+                            disabled={processing}
+                          >
+                            <option value="">— choisir une feuille ({entry.sheetNames.length}) —</option>
+                            {entry.sheetNames.map(sheetName => (
+                              <option key={sheetName} value={sheetName}>{sheetName}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      {entry.sheetNames && entry.sheetNames.length === 1 && (
+                        <div className="text-sm text-gray-500 mt-1">Feuille unique : {entry.sheetNames[0]}</div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">

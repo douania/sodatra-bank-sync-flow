@@ -1,6 +1,7 @@
 import { supabaseOptimized, SupabaseRetryService } from './supabaseClientService';
 import { CollectionReport } from '@/types/banking';
 import { excelMappingService } from './excelMappingService';
+import { summarizeExtractionErrors } from './extractionErrorSummary';
 
 export enum CollectionStatus {
   NEW = 'NEW',
@@ -146,7 +147,7 @@ export class IntelligentSyncService {
         }
         
       } catch (error) {
-        console.error(`❌ Erreur analyse ligne ${i + 1}:`, error);
+        console.error(`❌ Erreur analyse ligne ${i + 1}`);
         comparisons.push({
           excelRow,
           status: CollectionStatus.NEW,
@@ -192,7 +193,7 @@ export class IntelligentSyncService {
       
       return convertedCollections;
     } catch (error) {
-      console.warn('⚠️ Erreur chargement par lot:', error);
+      console.warn('⚠️ Erreur chargement par lot');
       return [];
     }
   }
@@ -398,11 +399,14 @@ export class IntelligentSyncService {
           }
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+          // Pack 2 (FIX_7) : ni objet métier ni message serveur dans le résultat —
+          // rang de la ligne Excel et motif du vocabulaire fermé seulement.
+          const sourceRow = comparison.excelRow?.excelSourceRow;
           result.errors.push({
-            collection: comparison.excelRow,
-            error: errorMsg
+            collection: typeof sourceRow === 'number' ? { excelSourceRow: sourceRow } : {},
+            error: summarizeExtractionErrors([errorMsg])
           });
-          console.error(`❌ Erreur traitement collection:`, errorMsg);
+          console.error('❌ Erreur traitement collection');
         }
       }
     }
@@ -521,10 +525,7 @@ export class IntelligentSyncService {
 
     // 2) Si trouvé : UPDATE contrôlé (idempotent)
     if (existing?.id) {
-      console.log(
-        `♻️ Doublon idempotent — update contrôlé (ID: ${existing.id}, ` +
-        `file: ${collectionData.excel_filename}, row: ${collectionData.excel_source_row})`
-      );
+      console.log(`♻️ Doublon idempotent — update contrôlé (ligne ${collectionData.excel_source_row})`);
       await SupabaseRetryService.executeWithRetry(async () => {
         const { error: updateError } = await supabaseOptimized
           .from('collection_report')
@@ -542,10 +543,7 @@ export class IntelligentSyncService {
         .from('collection_report')
         .insert(collectionData);
       if (insertError) throw insertError;
-      console.log(
-        `✨ Nouvelle collection insérée (file: ${collectionData.excel_filename}, ` +
-        `row: ${collectionData.excel_source_row})`
-      );
+      console.log(`✨ Nouvelle collection insérée (ligne ${collectionData.excel_source_row})`);
       return 'inserted';
     } catch (insertError: any) {
       // 4) Race condition rare : une autre exécution a inséré entre notre SELECT et notre INSERT.
@@ -579,10 +577,7 @@ export class IntelligentSyncService {
         );
       }
 
-      console.log(
-        `♻️ Race résolue — update contrôlé (ID: ${raced.id}, ` +
-        `file: ${collectionData.excel_filename}, row: ${collectionData.excel_source_row})`
-      );
+      console.log(`♻️ Race résolue — update contrôlé (ligne ${collectionData.excel_source_row})`);
       await SupabaseRetryService.executeWithRetry(async () => {
         const { error: updateError } = await supabaseOptimized
           .from('collection_report')
@@ -612,7 +607,7 @@ export class IntelligentSyncService {
         id: data?.id
       };
     } catch (error) {
-      console.error('❌ Erreur vérification traçabilité:', error);
+      console.error('❌ Erreur vérification traçabilité');
       return { exists: false };
     }
   }

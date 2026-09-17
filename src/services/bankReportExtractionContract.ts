@@ -1,3 +1,13 @@
+/**
+ * Règle déterministe des dates textuelles :
+ * - `JJ/MM/AAAA` ou `JJ-MM-AAAA` : jour en premier ;
+ * - `AAAA-MM-JJ` : ISO ;
+ * - toute autre forme est refusée ici. Une année sur deux chiffres
+ *   (`JJ/MM/AA`) n'est acceptée que par `parseCorroboratedDate`
+ *   (`bankReportGridExtractor`), lorsque l'année complète est corroborée par
+ *   le document ; le rendu `M/D/YY` de SheetJS n'est jamais lu : une date de
+ *   cellule Excel est convertie depuis son numéro de série (`excelSheetGrid`).
+ */
 export function parseDocumentDate(value: string | undefined): string | null {
   if (!value) return null;
   const cleaned = value.trim();

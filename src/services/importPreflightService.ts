@@ -3,7 +3,7 @@ import {
   type OperationalImportDeploymentTarget,
   type OperationalImportQualification,
 } from './operationalImportReadiness';
-import { detectBankFromContent, detectBankFromFileName } from './bankIdentity';
+import { detectBankFromFileName, detectBankFromHeader } from './bankIdentity';
 import {
   COLLECTION_IMPORT_MAX_FILE_BYTES,
   COLLECTION_IMPORT_MAX_FILES,
@@ -38,7 +38,9 @@ export interface ImportPreflightIssue {
     | 'DUPLICATE_FILE'
     | 'MULTIPLE_SINGLETON_DOCUMENTS'
     | 'NOT_PRODUCTION_QUALIFIED'
-    | 'TARGET_NOT_AUTHORIZED';
+    | 'TARGET_NOT_AUTHORIZED'
+    | 'SHEET_INVENTORY_PENDING'
+    | 'SHEET_SELECTION_REQUIRED';
   message: string;
 }
 
@@ -49,7 +51,14 @@ export interface ImportPreflightEntry<TFile extends ImportFileDescriptor = Impor
   qualification: OperationalImportQualification;
   status: ImportPreflightStatus;
   issues: ImportPreflightIssue[];
+  /** Feuilles du classeur (rapports bancaires et Fund Position Excel) quand l'inventaire est connu. */
+  sheetNames?: readonly string[];
+  /** Feuille retenue : sélection explicite, ou feuille unique du classeur. */
+  selectedSheetName?: string;
 }
+
+/** Familles dont un classeur Excel est traité feuille par feuille (Pack 2). */
+export const SHEET_SELECTED_DOCUMENT_KINDS: readonly ImportDocumentKind[] = ['BANK_REPORT', 'FUND_POSITION'];
 
 export interface ImportPreflightResult<TFile extends ImportFileDescriptor = ImportFileDescriptor> {
   entries: ImportPreflightEntry<TFile>[];
@@ -59,9 +68,19 @@ export interface ImportPreflightResult<TFile extends ImportFileDescriptor = Impo
   deploymentTarget: OperationalImportDeploymentTarget;
 }
 
-export interface ImportPreflightOptions {
+export interface ImportPreflightOptions<TFile extends ImportFileDescriptor = ImportFileDescriptor> {
   deploymentTarget?: OperationalImportDeploymentTarget;
   allowedDocumentKinds?: readonly ImportDocumentKind[];
+  /**
+   * Inventaire des feuilles, lié à l'instance de fichier (jamais à une clé
+   * nom|taille|date réutilisable). Garde obligatoire : tout classeur Excel de
+   * rapport bancaire ou de Fund Position absent de l'inventaire est bloqué
+   * (`SHEET_INVENTORY_PENDING`) ; s'il contient plusieurs feuilles, une
+   * sélection explicite est exigée (`SHEET_SELECTION_REQUIRED`).
+   */
+  sheetInventory?: ReadonlyMap<TFile, readonly string[]>;
+  /** Feuille choisie, liée à l'instance de fichier. */
+  sheetSelections?: ReadonlyMap<TFile, string>;
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['xlsx', 'xls', 'csv', 'pdf']);
@@ -199,7 +218,9 @@ export function detectImportDocumentFromText(text: string): {
   const family = detectNormalizedDocumentFamily(normalized);
   if (family.kind !== 'UNKNOWN' || family.label !== 'Document non identifié') return family;
 
-  const bank = detectBankFromContent(normalized);
+  // Pack 2 : l'identité bancaire d'un contenu se lit dans son en-tête (premières
+  // lignes), pas dans tout le corps qui cite d'autres banques.
+  const bank = detectBankFromHeader(text);
   if (bank) {
     return { kind: 'BANK_REPORT', label: `Rapport bancaire ${bank}` };
   }
@@ -209,7 +230,7 @@ export function detectImportDocumentFromText(text: string): {
 
 export function buildImportPreflight<TFile extends ImportFileDescriptor>(
   files: readonly TFile[],
-  options: ImportPreflightOptions = {},
+  options: ImportPreflightOptions<TFile> = {},
 ): ImportPreflightResult<TFile> {
   const deploymentTarget = options.deploymentTarget ?? 'staging';
   const fingerprints = new Map<string, number>();
@@ -340,6 +361,38 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
       });
     }
 
+    let sheetNames: readonly string[] | undefined;
+    let selectedSheetName: string | undefined;
+    if (
+      SHEET_SELECTED_DOCUMENT_KINDS.includes(detection.kind)
+      && (extension === 'xlsx' || extension === 'xls')
+    ) {
+      // Garde obligatoire (fail-closed) : sans inventaire pour cette instance,
+      // le fichier reste bloqué.
+      sheetNames = options.sheetInventory?.get(file);
+      const requested = options.sheetSelections?.get(file);
+      if (!sheetNames) {
+        issues.push({
+          code: 'SHEET_INVENTORY_PENDING',
+          message: 'Lecture des feuilles du classeur en cours ; aucun traitement avant l’inventaire.',
+        });
+      } else if (sheetNames.length === 0) {
+        issues.push({
+          code: 'SHEET_SELECTION_REQUIRED',
+          message: 'Aucune feuille lisible dans ce classeur.',
+        });
+      } else if (sheetNames.length === 1) {
+        selectedSheetName = sheetNames[0];
+      } else if (requested && sheetNames.includes(requested)) {
+        selectedSheetName = requested;
+      } else {
+        issues.push({
+          code: 'SHEET_SELECTION_REQUIRED',
+          message: `Le classeur contient ${sheetNames.length} feuilles : choisissez la feuille à traiter (aucune concaténation).`,
+        });
+      }
+    }
+
     return {
       file,
       documentKind: detection.kind,
@@ -347,6 +400,8 @@ export function buildImportPreflight<TFile extends ImportFileDescriptor>(
       qualification: qualification.qualification,
       status: issues.length === 0 ? 'READY' : 'BLOCKED',
       issues,
+      sheetNames,
+      selectedSheetName,
     };
   });
 

@@ -109,7 +109,9 @@ test('adapts needs_review to a failed ProcessingResult with selected book error 
 
   assert.equal(processingResult.success, false);
   assert.equal(processingResult.errors?.[0], 'Internal Book requires review before import.');
-  assert.ok(processingResult.errors?.some((message) => message.includes('A_MINUS_B_MISMATCH [070526]')));
+  // Pack 2 (FIX_5) : code fermé seul, sans nom de feuille ni message brut.
+  assert.ok(processingResult.errors?.some((message) => message === 'A_MINUS_B_MISMATCH'));
+  assert.equal(processingResult.errors?.some((message) => message.includes('070526') || message.includes('Synthetic')), false);
   assert.equal(processingResult.debugInfo.needsReview, true);
   assert.equal(processingResult.debugInfo.selectedBookIssues.length, 1);
   assert.deepEqual(processingResult.debugInfo.selectedBookIssues[0], {

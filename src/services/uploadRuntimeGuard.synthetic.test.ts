@@ -344,7 +344,8 @@ test('staging : le pipeline d\'import de la page reste strictement inchangé', (
   assert.match(page, /useDropzone\(\{/);
   assert.match(page, /\{\.\.\.getRootProps\(\{ className: 'dropzone' \}\)\}/);
   assert.match(page, /await partitionCollectionReportFiles\(selectedFiles\)/);
-  assert.match(page, /await fileProcessingService\.processFiles\(otherFiles\)/);
+  // Pack 2 : le pipeline reçoit les sélections explicites de feuille, rien d'autre.
+  assert.match(page, /await fileProcessingService\.processFiles\(otherFiles, \{ sheetSelections, fileOrdinals \}\)/);
   assert.match(page, /await promoteValidatedCollections\(reviewWithSelection\)/);
   assert.match(page, /const gate = assertPromotionAllowed\(reviewWithSelection\)/);
   assert.match(page, /roles: rolesQuery\.data \?\? \[\]/);
@@ -359,6 +360,9 @@ test('processFiles exige la capacité deposit avant timeout, heartbeat et tout t
     processing,
     /const uploadGate = currentUploadMutationVerdict\('deposit'\);\s*if \(!uploadGate\.allowed\) \{\s*results\.errors\.push\(UPLOAD_READ_ONLY_TARGET_MESSAGE\);\s*return results;\s*\}/,
   );
+  // Pack 2 (FIX_6) : aucune garde injectable dans l'API de production ; les
+  // tests runtime substituent `uploadRuntimeGuard` au niveau du loader Node.
+  assert.doesNotMatch(processing, /mutationGate|UploadMutationGate/);
   const gateIndex = processing.indexOf("currentUploadMutationVerdict('deposit')");
   const timeoutIndex = processing.indexOf('setTimeout');
   assert.ok(gateIndex >= 0 && timeoutIndex >= 0);

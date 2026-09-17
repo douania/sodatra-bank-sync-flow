@@ -210,6 +210,115 @@ et crédit séparés, solde, dates ; conteneurs XLS (ATB, BICIS, BIS) et XLSX
 **Reste dû** : aucune règle monétaire, profil ou idempotence modifiés ; la
 qualification sur fichiers réels reste due (Pack 2).
 
+### DEF-28 : Cellules parasites XFD sans date valide dans les rapports BIS (Pack 2, FIX_3) — correction à la source
+
+**Fichier** : `src/services/excelSheetGrid.ts`.
+**Constat** : 47 feuilles BIS sur 60 portent en colonne `XFD` une cellule
+numérique au format date dont la série n'est pas une date calendaire valide.
+La contre-revue FIX_2 (finding 1) exige que ces cellules soient collectées
+avant tout filtre et refusées ; seule une cellule XFD à date valide reste
+tolérée. **Décision** : refus de lecture (`SHEET_LIMIT_EXCEEDED`).
+**À arbitrer** : nettoyage des classeurs BIS à la source.
+
+### DEF-26 : Ligne de facilité sans libellé métier (Pack 2, FIX_2) — arbitrage Pack 2B
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : les rapports BICIS portent une facilité unique sur une ligne
+datée à trois montants sans libellé (le titre de section « BANK FACILITY
+(… jrs) » est le seul texte). Le CTO refuse tout libellé déduit du titre
+(contre-revue FIX_1, finding 3).
+**Décision** : refus (« facilités bancaires sans libellé »). **À arbitrer** :
+libellé métier à imposer à la source, ou profil BICIS explicite déclarant la
+facilité unique.
+
+### DEF-27 : Montant porté par une colonne non titrée (Pack 2, FIX_2) — arbitrage Pack 2B
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : certaines lignes de chèques BICIS et ORA portent leur montant
+dans la colonne suivant la dernière colonne titrée `AMOUNT`/`MONTANT`
+(colonne sans titre). Le CTO refuse toute intégration d'une colonne non
+titrée sans preuve de fusion Excel ou profil bancaire explicite (contre-revue
+FIX_1, finding 4).
+**Décision** : zone de montant strictement titrée ; ces lignes refusent
+(« montant absent »). **À arbitrer** : titre à imposer à la source, ou profil
+bancaire explicite par banque.
+
+### DEF-25 : Lignes d'ajustement après le total des facilités (Pack 2, GO_FIX_PACK_2) — arbitrage Pack 2B
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : la majorité des rapports quotidiens BDK et BIS (et certains ATB)
+portent, après la ligne de total des facilités, une ou deux lignes chiffrées
+négatives (parfois libellées) dont la sémantique n'est pas modélisée ; sur les
+feuilles BDK et BIS observées, il s'agit d'un unique montant formaté placé
+dans la colonne « Used », sans libellé ni date ; sur les feuilles ATB, de deux
+lignes libellées « LIMITE » et « DISPONIBLE » (FIX_3 : elles étaient
+auparavant ignorées à tort comme en-tête de colonnes ; ATB passe de 58/60 à
+0/60).
+**Verdict CTO (FIX_2)** : correction à la source privilégiée ; sinon profil
+bancaire explicite modélisant l'ajustement, jamais réouverture générique après
+total.
+**Décision (verdict CTO, finding 1)** : toute ligne après le total refuse le
+document ; aucune perte silencieuse. Conséquence mesurée : BDK 46/60, BIS
+22/60 sur l'échantillon, feuille du 9 juillet refusée pour ces deux banques.
+**À arbitrer** : modéliser ces lignes (contrat explicite) ou les faire
+supprimer à la source avant toute promotion.
+
+### DEF-24 : Fund Position — « COLLECTION NOT DEPOSITED » sans montant sur la ligne du titre (Pack 2, GO_FIX_PACK_2)
+
+**Fichier** : `src/services/fundPositionGridExtractor.ts`.
+**Constat** : dans les feuilles réelles, le titre « COLLECTION NOT DEPOSITED »
+ne porte pas toujours un montant ; les lignes suivantes portent des libellés
+et des montants dont la sémantique n'est pas établie. « Absent » ne prouve pas
+zéro (contre-revue CTO de la PR #149, finding 3).
+**Décision** : refus explicite si le titre est absent ou sans montant ; les
+blocs « Deposit/Payment for the day » absents donnent une valeur absente,
+jamais zéro. **Lot probable** : Pack 2B, avec le contrat de nullabilité.
+
+### DEF-20 : Fund Position sans colonne « Grand Balance » (Pack 2) — différé Pack 2B (verdict CTO 2026-09-16)
+
+**Fichiers** : `src/services/fundPositionGridExtractor.ts`, `src/types/banking.ts`.
+**Constat (2026-09-16, fichiers réels)** : les feuilles Fund Position récentes
+(dont juillet 2026) ne portent plus la colonne « Grand Balance » ; le modèle
+et la base exigent `grandBalance` par banque et `grandTotal`. Sur les feuilles
+qui portent la colonne, `Grand Balance = Net Balance + NonValidated Deposit`
+sans exception (860 lignes), mais le grand total inscrit n'est pas la somme de
+la colonne dans 111 feuilles sur 137 : le dériver serait inventer une valeur.
+**Décision Pack 2** : refus explicite (« Colonne Grand Balance absente »).
+**Verdict CTO (contre-revue PR #149)** : différé en Pack 2B ; interdiction de
+dériver `grandBalance` ou `grandTotal` ; toute optionalité modèle/DB exige un
+lot dédié après Pack 0R.
+
+### DEF-21 : Facilités ORA à deux montants (Pack 2) — différé Pack 2B (verdict CTO 2026-09-16)
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : 49 feuilles ORA sur 60 échantillonnées portent des lignes de
+facilités à deux montants (limite et solde), la colonne « utilisé » étant vide
+et sans en-tête de colonnes. Le contrat exige trois montants.
+**Décision Pack 2** : refus (ambiguïté). **Verdict CTO** : une cellule
+« utilisé » vide ne vaut pas zéro ; maintien du refus jusqu'à confirmation
+métier/source, en Pack 2B.
+
+### DEF-22 : Marqueur de type d'impayé BDK non listé (Pack 2) — différé (verdict CTO 2026-09-16)
+
+**Fichier** : `src/services/bankReportGridExtractor.ts`.
+**Constat** : 9 lignes d'impayés BDK sur 60 feuilles portent en 3e colonne un
+mot de quatre lettres autre que `IMPAYE`. Le contrat exige le marqueur listé.
+**Verdict CTO** : ne pas accepter tout texte ; l'ajout exige le marqueur exact
+et sa signification confirmée, puis une liste blanche stricte.
+
+### DEF-23 : Lignes datées ou financières hors section ou après total (Pack 2) — `CORRIGÉ` (GO_FIX_PACK_2)
+
+**Constat initial** : des lignes ORA datées apparaissent après une ligne de
+total ; des lignes d'ajustement suivent le total des facilités (BDK, ATB).
+Après `GO_FIX_PACK_2`, les lignes ORA hors section observées sur 60 feuilles
+sont, pour 28, un nombre non formaté isolé en colonne K (hors de toute
+section et de la zone de montant) et, pour 6, des lignes datées avec montant.
+**Correction** : toute ligne datée, financière ou libellée hors section ou
+après un total refuse le document ; aucun rattachement implicite, aucune ligne
+ignorée. Une section titrée vide reste un avertissement uniquement si aucune
+ligne n'est ignorée jusqu'à la frontière suivante. À qualifier avec le
+producteur des rapports (Pack 2B) si ces lignes doivent être modélisées.
+
 ### DEF-12 : Documentation utilisateur
 
 **Problème** : Aucun guide utilisateur pour les opérations d'import, de consultation, d'interprétation des données.

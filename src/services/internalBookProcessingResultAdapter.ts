@@ -136,9 +136,12 @@ function toDebugIssue(issue: InternalBookValidationIssue): InternalBookProcessin
   };
 }
 
+// Pack 2 (FIX_5) : erreurs retournées = code fermé et rang de ligne seulement ;
+// ni nom de feuille ni message brut (ils restent dans debugInfo, canal d'audit
+// non journalisé et non affiché par /upload).
 function formatIssueMessage(issue: InternalBookValidationIssue): string {
-  const location = issue.sheetName ? ` [${issue.sheetName}]` : '';
-  return `${issue.code}${location}: ${issue.message}`;
+  const location = typeof issue.rowIndex === 'number' ? ` (ligne ${issue.rowIndex + 1})` : '';
+  return `${issue.code}${location}`;
 }
 
 function unique(values: string[]): string[] {

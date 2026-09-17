@@ -60,11 +60,11 @@ export class SupabaseRetryService {
         );
 
         if (!isConnectionError || attempt === finalConfig.maxRetries) {
-          console.error(`❌ ${operationName} échec définitif:`, error);
+          console.error(`❌ ${operationName} échec définitif`);
           throw error;
         }
 
-        console.warn(`⚠️ ${operationName} tentative ${attempt + 1} échouée:`, error.message);
+        console.warn(`⚠️ ${operationName} tentative ${attempt + 1} échouée`);
       }
     }
 
@@ -164,7 +164,7 @@ export class HeartbeatService {
         
         console.log('💓 Heartbeat OK');
       } catch (error) {
-        console.warn('💓 Heartbeat failed:', error);
+        console.warn('💓 Heartbeat failed');
       }
     }, intervalMs);
   }

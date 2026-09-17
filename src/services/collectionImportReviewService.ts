@@ -174,10 +174,8 @@ export async function attachProposedStatuses(review: CollectionImportReview): Pr
       })),
     };
   } catch (error) {
-    console.warn(
-      '⚠️ PACK-C: statuts proposés indisponibles (lecture DB impossible) — review conservée sans statut.',
-      error
-    );
+    // Pack 2 (FIX_6) : aucun objet d'erreur en console.
+    console.warn('⚠️ PACK-C: statuts proposés indisponibles (lecture DB impossible) — review conservée sans statut.');
     return review;
   }
 }
@@ -229,7 +227,7 @@ export async function isCollectionReportExcelFile(file: File): Promise<boolean> 
         return true;
       }
     } catch (error) {
-      console.warn('⚠️ PACK-C: analyse contenu Excel impossible pour la détection:', error);
+      console.warn('⚠️ PACK-C: analyse contenu Excel impossible pour la détection');
     }
   }
 

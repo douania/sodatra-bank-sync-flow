@@ -7,7 +7,7 @@ import {
   type ImportDocumentKind,
 } from './importPreflightService';
 import { detectInternalBookRuntimeFile } from './internalBookRuntimeProcessingService';
-import { detectBankFromContent } from './bankIdentity';
+import { detectBankFromHeader } from './bankIdentity';
 
 function normalize(value: string): string {
   return value
@@ -19,8 +19,9 @@ function normalize(value: string): string {
     .trim();
 }
 
+/** Identité = émetteur déclaré dans l'en-tête (Pack 2) ; le corps peut citer d'autres banques. */
 function detectBankCode(value: string): string | undefined {
-  return detectBankFromContent(value) ?? undefined;
+  return detectBankFromHeader(value) ?? undefined;
 }
 
 function mapDocumentKind(
@@ -60,11 +61,13 @@ async function detectFromExcelContent(file: File): Promise<FileDetectionResult |
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!firstSheet) return null;
 
+  // Première feuille uniquement, une ligne de texte par ligne de cellules :
+  // l'en-tête d'identité correspond ainsi aux premières lignes de la feuille.
   const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
   const content = rows
-    .flat()
-    .filter(value => value !== null && value !== undefined && value !== '')
-    .join(' ');
+    .map(row => row.filter(value => value !== null && value !== undefined && value !== '').join(' '))
+    .filter(Boolean)
+    .join('\n');
   if (!content) return null;
 
   const detection = detectImportDocumentFromText(content);

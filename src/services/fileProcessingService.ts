@@ -3,6 +3,7 @@ import { databaseService } from './databaseService';
 import { intelligentSyncService } from './intelligentSyncService';
 import { SupabaseRetryService } from './supabaseClientService';
 import { BankReport, FundPosition, ClientReconciliation, CollectionReport } from '@/types/banking';
+// CollectionReport reste importé pour le typage des collections du lot.
 import { progressService } from './progressService';
 import type { ExcelImportDiagnostics, ProcessingResult } from '@/types/processing';
 import {
@@ -22,10 +23,34 @@ import {
   getImportDocumentCompatibilityIssue,
   type ImportDocumentKind,
 } from './importPreflightService';
+import {
+  ExcelSheetSelectionError,
+  listWorkbookSheetNames,
+  readSelectedSheetGrid,
+  resolveSelectedSheetName,
+  sheetGridToText,
+} from './excelSheetGrid';
+import { extractFundPositionFromGrid } from './fundPositionGridExtractor';
+import { summarizeExtractionErrors } from './extractionErrorSummary';
 export type { ProcessingResult } from '@/types/processing';
 
+export interface ProcessFilesOptions {
+  /**
+   * Feuille Excel choisie, liée à l'instance de fichier. Pack 2 : un rapport
+   * bancaire ou une Fund Position Excel est traité sur UNE feuille ; un
+   * classeur à plusieurs feuilles sans sélection est refusé, jamais concaténé.
+   */
+  sheetSelections?: ReadonlyMap<File, string>;
+  /**
+   * Rang d'affichage de chaque fichier (1 = premier de la liste de l'interface).
+   * Les erreurs retournées désignent le fichier par ce rang, identique à celui
+   * affiché au précontrôle ; à défaut, rang dans le lot traité.
+   */
+  fileOrdinals?: ReadonlyMap<File, number>;
+}
+
 export class FileProcessingService {
-  async processFiles(files: File[]): Promise<ProcessingResult> {
+  async processFiles(files: File[], options: ProcessFilesOptions = {}): Promise<ProcessingResult> {
     const results: ProcessingResult = {
       success: false,
       data: {
@@ -54,7 +79,8 @@ export class FileProcessingService {
 
     try {
       console.log('🚀 DÉBUT TRAITEMENT FICHIERS - Mode Optimisé avec Timeouts Étendus');
-      console.log('📁 Fichiers reçus:', files.map(f => f.name));
+      // Pack 2 : aucun nom de fichier ni valeur financière en console.
+      console.log(`📁 Fichiers reçus: ${files.length}`);
       
       // ⭐ DÉMARRAGE DU HEARTBEAT
       const { HeartbeatService } = await import('./supabaseClientService');
@@ -80,8 +106,10 @@ export class FileProcessingService {
       });
 
       if (categorizedFiles.blockedFiles.length > 0) {
+        // Pack 2 : aucun nom de fichier dans les erreurs retournées ; le
+        // fichier est désigné par son rang dans le lot (visible au précontrôle).
         results.errors.push(...categorizedFiles.blockedFiles.map(
-          ({ file, reason }) => `${file.name}: ${reason}`,
+          ({ file, reason }) => `${fileOrdinal(files, file, options.fileOrdinals)}: ${reason}`,
         ));
         progressService.errorStep(
           'file_detection',
@@ -125,7 +153,7 @@ export class FileProcessingService {
         progressService.startStep('excel_processing', 'Traitement Excel', 'Extraction des données du fichier Excel');
         
         console.log('🧠 === DÉBUT ANALYSE ET ENRICHISSEMENT INTELLIGENT OPTIMISÉ ===');
-        console.log('📁 Fichiers:', categorizedFiles.collectionReports.map(f => f.name).join(', '));
+        console.log(`📁 Fichiers Collection Report: ${categorizedFiles.collectionReports.length}`);
         
         progressService.updateStepProgress('excel_processing', 'Traitement Excel', 'Lecture et conversion du fichier', 25, 
           `Traitement de ${categorizedFiles.collectionReports.length} fichier(s) Excel`);
@@ -145,33 +173,34 @@ export class FileProcessingService {
         results.data!.excelImportDiagnostics = excelImportDiagnostics;
 
         for (const collectionFile of categorizedFiles.collectionReports) {
+          const collectionOrdinal = fileOrdinal(files, collectionFile, options.fileOrdinals);
           progressService.updateStepProgress('excel_processing', 'Traitement Excel',
-            `Traitement de ${collectionFile.name}`, 25 + (50 * categorizedFiles.collectionReports.indexOf(collectionFile) / categorizedFiles.collectionReports.length));
+            `Traitement du ${collectionOrdinal}`, 25 + (50 * categorizedFiles.collectionReports.indexOf(collectionFile) / categorizedFiles.collectionReports.length));
 
           // ⭐ EXTRACTION EXCEL AVEC RETRY
           const excelResult = await SupabaseRetryService.executeWithRetry(
             () => excelProcessingService.processCollectionReportExcel(collectionFile),
             { maxRetries: 3 },
-            `Extraction Excel - ${collectionFile.name}`
+            `Extraction Excel - ${collectionOrdinal}`
           );
 
           excelImportDiagnostics.files_processed++;
           for (const message of excelResult.errors ?? []) {
-            excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message });
+            excelImportDiagnostics.excel_errors.push({ file: collectionOrdinal, message: summarizeExtractionErrors([message]) });
           }
           for (const message of excelResult.warnings ?? []) {
-            excelImportDiagnostics.excel_warnings.push({ file: collectionFile.name, message });
+            excelImportDiagnostics.excel_warnings.push({ file: collectionOrdinal, message: summarizeExtractionErrors([message]) });
           }
 
           if (excelResult.success && excelResult.data) {
             allCollections = [...allCollections, ...excelResult.data];
             excelImportDiagnostics.collections_extracted += excelResult.data.length;
           } else {
-            const errorMsg = `Erreur traitement Excel ${collectionFile.name}: ${excelResult.errors?.join(', ') || 'Erreur inconnue'}`;
-            console.error('❌', errorMsg);
+            const errorMsg = `Erreur traitement Excel ${collectionOrdinal}: ${summarizeExtractionErrors(excelResult.errors)}`;
+            console.error('❌ Erreur traitement Excel d’un Collection Report');
             results.errors?.push(errorMsg);
             if (!excelResult.errors || excelResult.errors.length === 0) {
-              excelImportDiagnostics.excel_errors.push({ file: collectionFile.name, message: 'Erreur inconnue' });
+              excelImportDiagnostics.excel_errors.push({ file: collectionOrdinal, message: 'contrat d’extraction refusé' });
             }
           }
         }
@@ -247,8 +276,8 @@ export class FileProcessingService {
           
           // ⭐ AJOUTER LES ERREURS AU RÉSULTAT GLOBAL
           if (syncResult.errors.length > 0) {
-            const errorMessages = syncResult.errors.map(e => `${e.collection?.clientCode ?? 'INCONNU'}: ${e.error}`);
-            results.errors?.push(...errorMessages);
+            // Pack 2 (FIX_5) : ni code client ni message serveur dans les erreurs retournées.
+            results.errors?.push(`Synchronisation Collection : ${syncResult.errors.length} collection(s) en erreur (${summarizeExtractionErrors(syncResult.errors.map(e => e.error))}).`);
           }
         }
       } else {
@@ -260,7 +289,13 @@ export class FileProcessingService {
         progressService.startStep('bank_analysis', 'Rapports Bancaires', 'Traitement des relevés bancaires');
         
         console.log('🏦 === DÉBUT TRAITEMENT RELEVÉS BANCAIRES ===');
-        const bankReports = await this.processBankReports(categorizedFiles.bankReports, results.errors!);
+        const bankReports = await this.processBankReports(
+          categorizedFiles.bankReports,
+          results.errors!,
+          options.sheetSelections ?? new Map<File, string>(),
+          files,
+          options.fileOrdinals,
+        );
         
         if (bankReports.length > 0) {
           results.data!.bankReports = bankReports;
@@ -269,7 +304,7 @@ export class FileProcessingService {
           for (const report of bankReports) {
             const saveResult = await databaseService.saveBankReport(report);
             if (!saveResult.success) {
-              results.errors?.push(`Erreur sauvegarde ${report.bank}: ${saveResult.error}`);
+              results.errors?.push(`Erreur sauvegarde rapport bancaire ${report.bank} : ${summarizeExtractionErrors(saveResult.error ? [saveResult.error] : undefined)}`);
             }
           }
           
@@ -288,14 +323,15 @@ export class FileProcessingService {
         console.log('💰 Extraction Fund Position...');
         const fundPosition = await this.processFundPosition(
           categorizedFiles.fundPosition!,
-          results.data!.collectionReports,
           results.errors!,
+          options.sheetSelections?.get(categorizedFiles.fundPosition!),
+          fileOrdinal(files, categorizedFiles.fundPosition!, options.fileOrdinals),
         );
         if (fundPosition) {
           results.data!.fundPosition = fundPosition;
           const saveResult = await databaseService.saveFundPosition(fundPosition);
           if (!saveResult.success) {
-            results.errors?.push(`Erreur sauvegarde Fund Position: ${saveResult.error}`);
+            results.errors?.push(`Erreur sauvegarde Fund Position : ${summarizeExtractionErrors(saveResult.error ? [saveResult.error] : undefined)}`);
           }
         }
         
@@ -344,10 +380,12 @@ export class FileProcessingService {
       return results;
 
     } catch (error) {
-      console.error('❌ ERREUR CRITIQUE GÉNÉRALE:', error);
-      progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', 
-        error instanceof Error ? error.message : 'Erreur inconnue');
-      results.errors?.push(error instanceof Error ? error.message : 'Erreur inconnue');
+      // Pack 2 : aucun objet d'erreur en console (il peut porter une ligne brute).
+      console.error('❌ ERREUR CRITIQUE GÉNÉRALE');
+      // Pack 2 (FIX_5) : l'exception générale est réduite au vocabulaire fermé.
+      const generalReason = summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined);
+      progressService.errorStep('general_error', 'Erreur Critique', 'Échec du traitement', generalReason);
+      results.errors?.push(generalReason);
       
       // ⭐ NETTOYAGE EN CAS D'ERREUR
       const { HeartbeatService } = await import('./supabaseClientService');
@@ -456,19 +494,23 @@ export class FileProcessingService {
 
     const filename = file.name.toUpperCase();
 
-    // Si le nom ne suffit pas, conserver le repli historique d'analyse Excel,
-    // mais réutiliser la même classification stricte que le précontrôle UI.
+    // Si le nom ne suffit pas, conserver le repli d'analyse Excel sur la
+    // PREMIÈRE feuille uniquement (aucune concaténation), avec la même
+    // classification stricte que le précontrôle UI.
     if (filename.endsWith('.XLSX') || filename.endsWith('.XLS')) {
       try {
         const buffer = await file.arrayBuffer();
-        const textContent = await this.extractTextFromExcel(buffer);
+        const sheetNames = listWorkbookSheetNames(buffer);
+        const textContent = sheetNames.length > 0
+          ? sheetGridToText(readSelectedSheetGrid(buffer, sheetNames[0]))
+          : '';
 
         const contentDetection = detectImportDocumentFromText(textContent);
         if (contentDetection.kind !== 'UNKNOWN') {
           return contentDetection.kind;
         }
       } catch (error) {
-        console.warn('⚠️ Erreur analyse contenu Excel:', error);
+        console.warn('⚠️ Erreur analyse contenu Excel');
       }
     }
     
@@ -477,36 +519,43 @@ export class FileProcessingService {
   }
 
   // ⭐ NOUVELLE MÉTHODE : Traitement des rapports bancaires
-  private async processBankReports(bankReportFiles: File[], errors: string[]): Promise<BankReport[]> {
+  private async processBankReports(
+    bankReportFiles: File[],
+    errors: string[],
+    sheetSelections: ReadonlyMap<File, string>,
+    batch: readonly File[],
+    ordinals?: ReadonlyMap<File, number>,
+  ): Promise<BankReport[]> {
     const reports: BankReport[] = [];
     const { bankReportProcessingService } = await import('./bankReportProcessingService');
-    
+
     console.log(`🏦 Traitement de ${bankReportFiles.length} relevés bancaires...`);
-    
+
+    // Pack 2 : journaux sans nom de fichier, sans résumé financier, sans
+    // avertissement détaillé (les libellés de facilités y figureraient).
     for (const file of bankReportFiles) {
-      console.log(`📄 Traitement du relevé: ${file.name}`);
-      
       try {
-        const processingResult = await bankReportProcessingService.processBankReportExcel(file);
-        
+        const processingResult = await bankReportProcessingService.processBankReportExcel(file, {
+          sheetName: sheetSelections.get(file),
+        });
+
         if (processingResult.success && processingResult.data) {
           console.log(`✅ Rapport ${processingResult.bankType} traité avec succès`);
-          console.log(`📊 ${bankReportProcessingService.getBankReportSummary(processingResult.data)}`);
-          
-          // Validation du rapport
+
+          // Validation du rapport (compteur seul en console)
           const warnings = await bankReportProcessingService.validateBankReport(processingResult.data);
           if (warnings.length > 0) {
-            console.warn(`⚠️ Avertissements pour ${processingResult.bankType}:`, warnings);
+            console.warn(`⚠️ ${warnings.length} avertissement(s) de cohérence pour ${processingResult.bankType}`);
           }
-          
+
           reports.push(processingResult.data);
         } else {
-          console.error(`❌ Échec traitement ${file.name}:`, processingResult.errors);
-          errors.push(`Échec extraction ${file.name}: ${(processingResult.errors ?? ['raison inconnue']).join(' ')}`);
+          console.error(`❌ Échec traitement d’un rapport bancaire (${(processingResult.errors ?? []).length} erreur(s))`);
+          errors.push(`Échec extraction ${fileOrdinal(batch, file, ordinals)}: ${summarizeExtractionErrors(processingResult.errors)}`);
         }
       } catch (error) {
-        console.error(`❌ Erreur traitement ${file.name}:`, error);
-        errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+        console.error('❌ Erreur traitement d’un rapport bancaire');
+        errors.push(`Erreur extraction ${fileOrdinal(batch, file, ordinals)}: ${summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined)}`);
       }
     }
     
@@ -517,30 +566,49 @@ export class FileProcessingService {
   // ⭐ TRAITEMENT FUND POSITION
   private async processFundPosition(
     file: File,
-    currentCollections: CollectionReport[] | undefined,
     errors: string[],
+    selectedSheetName: string | undefined,
+    ordinal: string,
   ): Promise<FundPosition | null> {
     try {
       console.log('💰 === TRAITEMENT DÉTAILLÉ FUND POSITION ===');
-      
+
       // Extraire le contenu du fichier
       const buffer = await file.arrayBuffer();
       let textContent = '';
-      
+
       // Extraction du contenu selon le type de fichier
       if (file.name.toLowerCase().endsWith('.pdf')) {
         textContent = await this.extractTextFromPDF(buffer);
       } else if (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) {
-        textContent = await this.extractTextFromExcel(buffer);
+        // Pack 2 : Fund Position Excel = extraction tabulaire d'UNE feuille choisie.
+        let grid;
+        try {
+          const sheetName = resolveSelectedSheetName(listWorkbookSheetNames(buffer), selectedSheetName);
+          grid = readSelectedSheetGrid(buffer, sheetName);
+        } catch (error) {
+          if (error instanceof ExcelSheetSelectionError) {
+            errors.push(`Échec extraction ${ordinal}: ${summarizeExtractionErrors([error.message])}`);
+            return null;
+          }
+          throw error;
+        }
+        const gridExtraction = extractFundPositionFromGrid(grid, { fileName: file.name });
+        if (!gridExtraction.success || !gridExtraction.data) {
+          errors.push(`Échec extraction ${ordinal}: ${summarizeExtractionErrors(gridExtraction.errors)}`);
+          return null;
+        }
+        console.log('💰 Fund Position tabulaire extraite (feuille sélectionnée)');
+        return gridExtraction.data;
       } else {
         console.warn('⚠️ Format de fichier non supporté pour Fund Position');
-        errors.push(`Échec extraction ${file.name}: format Fund Position non supporté.`);
+        errors.push(`Échec extraction ${ordinal}: format Fund Position non supporté.`);
         return null;
       }
-      
+
       if (!textContent || textContent.length < 100) {
         console.warn('⚠️ Contenu textuel insuffisant extrait du fichier Fund Position');
-        errors.push(`Échec extraction ${file.name}: contenu Fund Position insuffisant.`);
+        errors.push(`Échec extraction ${ordinal}: contenu Fund Position insuffisant.`);
         return null;
       }
       
@@ -551,26 +619,21 @@ export class FileProcessingService {
       const extractionResult = extractFundPosition(textContent);
 
       if (!extractionResult.success || !extractionResult.data) {
-        console.error('❌ Échec de l\'extraction du Fund Position:', extractionResult.errors);
-        errors.push(`Échec extraction ${file.name}: ${(extractionResult.errors ?? ['contrat invalide']).join(' ')}`);
+        console.error(`❌ Échec de l'extraction du Fund Position (${(extractionResult.errors ?? []).length} erreur(s))`);
+        errors.push(`Échec extraction ${ordinal}: ${summarizeExtractionErrors(extractionResult.errors)}`);
         return null;
       }
       
       const fundPosition = extractionResult.data;
-      
-      console.log('📊 === FUND POSITION EXTRAITE ===');
-      console.log(`📅 Date: ${fundPosition.reportDate}`);
-      console.log(`💰 Total fonds disponibles: ${fundPosition.totalFundAvailable.toLocaleString()}`);
-      console.log(`📤 Collections non déposées: ${fundPosition.collectionsNotDeposited.toLocaleString()}`);
-      console.log(`🎯 Grand total: ${fundPosition.grandTotal.toLocaleString()}`);
-      console.log(`📊 Détails par banque: ${fundPosition.details?.length || 0} banques`);
-      console.log(`📋 Collections en attente: ${fundPosition.holdCollections?.length || 0} items`);
-      
+
+      // Pack 2 : compteurs seuls en console, aucune date ni valeur financière.
+      console.log(`📊 Fund Position extraite : ${fundPosition.details?.length || 0} banque(s), ${fundPosition.holdCollections?.length || 0} collection(s) en attente`);
+
       return fundPosition;
       
     } catch (error) {
-      console.error('❌ Erreur calcul Fund Position:', error);
-      errors.push(`Erreur extraction ${file.name}: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+      console.error('❌ Erreur calcul Fund Position');
+      errors.push(`Erreur extraction ${ordinal}: ${summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined)}`);
       return null;
     }
   }
@@ -592,21 +655,15 @@ export class FileProcessingService {
       }>();
 
       bankReports.forEach(report => {
-        console.log(`🏦 Analyse rapport ${report.bank} du ${report.date}:`, {
-          impayes: report.impayes.length,
-          solde: report.closingBalance
-        });
 
         report.impayes.forEach(impaye => {
           const clientCode = impaye.clientCode;
           // Extraire le nom du client depuis la description de l'impayé
           const clientName = this.extractClientName(impaye.description || '', clientCode);
 
-          console.log(`  ❌ Impayé trouvé: Client ${clientCode} (${clientName}), Montant: ${impaye.montant.toLocaleString()} FCFA, Date: ${impaye.dateEcheance}`);
 
           const current = clientImpayes.get(clientCode) || { amount: 0, clientName };
           const newAmount = current.amount + impaye.montant;
-          console.log(`  💰 Montant cumulé pour ${clientCode}: ${current.amount} + ${impaye.montant} = ${newAmount}`);
 
           clientImpayes.set(clientCode, {
             amount: newAmount,
@@ -616,16 +673,12 @@ export class FileProcessingService {
       });
 
       console.log(`👥 Impayés trouvés pour ${clientImpayes.size} clients:`);
-      clientImpayes.forEach((data, clientCode) => {
-        console.log(`  - ${clientCode} (${data.clientName}): ${data.amount.toLocaleString()} FCFA`);
-      });
 
       // 3. Créer les réconciliations client avec les montants d'impayés réels et les noms de clients
       const clientReconciliations: ClientReconciliation[] = [];
 
       // Ajouter les clients avec impayés
       for (const [clientCode, data] of clientImpayes.entries()) {
-        console.log(`👤 Ajout client avec impayés: ${clientCode} (${data.clientName}) - ${data.amount.toLocaleString()} FCFA`);
         clientReconciliations.push({
           reportDate: new Date().toISOString().split('T')[0],
           clientCode: clientCode,
@@ -639,7 +692,6 @@ export class FileProcessingService {
       for (const client of clientsData) {
         // Ne pas dupliquer les clients déjà ajoutés avec impayés
         if (!clientImpayes.has(client.clientCode)) {
-          console.log(`👤 Ajout client sans impayés: ${client.clientCode}`);
           clientReconciliations.push({
             reportDate: new Date().toISOString().split('T')[0],
             clientCode: client.clientCode,
@@ -650,20 +702,12 @@ export class FileProcessingService {
       }
 
       console.log('👥 Client Reconciliation calculée:', clientReconciliations.length, 'clients');
-      console.log('📊 Échantillon des réconciliations calculées:');
-      clientReconciliations.slice(0, 5).forEach(reconciliation => {
-        console.log(`  - ${reconciliation.clientCode} (${reconciliation.clientName}): ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
-      });
 
       // Vérifier s'il y a des montants non nuls
       const nonZeroReconciliations = clientReconciliations.filter(r => r.impayesAmount > 0);
-      console.log(`📊 Réconciliations avec montants non nuls: ${nonZeroReconciliations.length}`);
-      nonZeroReconciliations.forEach(reconciliation => {
-        console.log(`  - ${reconciliation.clientCode} (${reconciliation.clientName}): ${reconciliation.impayesAmount.toLocaleString()} FCFA`);
-      });
       return clientReconciliations;
     } catch (error) {
-      console.error('❌ Erreur calcul Client Reconciliation:', error);
+      console.error('❌ Erreur calcul Client Reconciliation');
       return [];
     }
   }
@@ -725,34 +769,22 @@ export class FileProcessingService {
       console.log(`📄 PDF text extracted: ${fullText.length} characters`);
       return fullText;
     } catch (error) {
-      console.error('❌ Erreur extraction PDF:', error);
+      console.error('❌ Erreur extraction PDF');
       throw new Error(`Extraction PDF refusée: ${error instanceof Error ? error.message : 'erreur inconnue'}`);
     }
   }
   
-  private async extractTextFromExcel(buffer: ArrayBuffer): Promise<string> {
-    try {
-      const XLSX = await import('xlsx');
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      let allText = '';
-      
-      for (const sheetName of workbook.SheetNames) {
-        const worksheet = workbook.Sheets[sheetName];
-        const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
-        
-        for (const row of sheetData) {
-          if (Array.isArray(row)) {
-            allText += row.join('\t') + '\n';
-          }
-        }
-      }
-      
-      return allText;
-    } catch (error) {
-      console.error('❌ Erreur extraction Excel:', error);
-      return '';
-    }
-  }
+}
+
+/**
+ * Désignation d'un fichier dans les erreurs retournées à l'interface (Pack 2) :
+ * rang dans le lot, jamais le nom du fichier.
+ */
+function fileOrdinal(batch: readonly File[], file: File, ordinals?: ReadonlyMap<File, number>): string {
+  const displayed = ordinals?.get(file);
+  if (displayed !== undefined) return `fichier n°${displayed}`;
+  const index = batch.indexOf(file);
+  return `fichier n°${index === -1 ? '?' : String(index + 1)}`;
 }
 
 export const fileProcessingService = new FileProcessingService();

@@ -1,4 +1,5 @@
 
+import { summarizeExtractionErrors } from './extractionErrorSummary';
 import { CollectionReport } from '@/types/banking';
 import { SupabaseRetryService } from './supabaseClientService';
 import { progressService } from './progressService';
@@ -90,7 +91,8 @@ export class BatchProcessingService {
         }
         
       } catch (error) {
-        const errorMsg = `Erreur lot ${batchNumber}: ${error instanceof Error ? error.message : 'Erreur inconnue'}`;
+        // Pack 2 (FIX_6) : motif fermé seulement, jamais le message d'origine.
+        const errorMsg = `Erreur lot ${batchNumber} : ${summarizeExtractionErrors(error instanceof Error ? [error.message] : undefined)}`;
         console.error(`❌ ${errorMsg}`);
         errors.push(errorMsg);
         totalFailed += batch.length;

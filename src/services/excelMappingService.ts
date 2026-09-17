@@ -77,11 +77,8 @@ class ExcelMappingService {
   }
 
   mapExcelRowToCollection(row: any): CollectionReport {
-    console.log('🔄 MAPPING avec tolérance aux erreurs:', {
-      client: row.clientCode,
-      filename: row.excel_filename,
-      sourceRow: row.excel_source_row
-    });
+    // Pack 2 (FIX_5) : ni client, ni nom de fichier, ni valeur en console — le rang seulement.
+    console.log(`🔄 MAPPING avec tolérance aux erreurs (ligne ${row.excel_source_row ?? '?'})`);
     
     // Détection du type de collection (EFFET ou CHEQUE)
     const noChqBdValue = row.noChqBd;
@@ -194,11 +191,7 @@ class ExcelMappingService {
       processingStatus: 'NEW'
     };
 
-    console.log('✅ Collection mappée:', {
-      client: collection.clientCode,
-      filename: collection.excelFilename,
-      row: collection.excelSourceRow
-    });
+    console.log(`✅ Collection mappée (ligne ${collection.excelSourceRow})`);
     
     return collection;
   }
@@ -244,9 +237,7 @@ class ExcelMappingService {
             `Formats acceptés : Date, Excel serial, DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD.`
         );
       }
-      console.warn(
-        `⚠️ ${fieldName} invalide${ctx} — valeur="${raw}" — champ laissé vide (null).`
-      );
+      console.warn(`⚠️ ${fieldName} invalide — champ laissé vide (null).`);
       return null;
     }
 
@@ -385,7 +376,7 @@ class ExcelMappingService {
 
         // 3. Validation stricte (pas de parseFloat permissif).
         if (!/^[+-]?\d+(\.\d+)?$/.test(s)) {
-          console.warn('⚠️ parseNumber: format invalide après normalisation:', value);
+          console.warn('⚠️ parseNumber: format invalide après normalisation');
           return undefined;
         }
 
@@ -395,7 +386,7 @@ class ExcelMappingService {
 
       return undefined;
     } catch (error) {
-      console.warn('⚠️ Erreur parsing nombre (non-bloquant):', value, error);
+      console.warn('⚠️ Erreur parsing nombre (non-bloquant)');
       return undefined;
     }
   }

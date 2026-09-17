@@ -30,10 +30,21 @@ Les décisions restent inchangées :
   agrégé, les refus, l'absence de données brutes et les branches critiques de
   la CLI (chemin dépôt, type de nœud, taille, signature et archive invalide).
 
+**Mise à jour Pack 2 (2026-09-16, `GO_IMPLEMENT_PACK_2_REAL_FORMAT_COMPATIBILITY`)** :
+un classeur Excel est qualifié sur **une** feuille choisie (`--sheet <nom>`,
+obligatoire dès que le classeur en contient plusieurs ; aucune concaténation),
+lue sous forme de grille bornée par ses cellules réelles, avec dates converties
+depuis leur numéro de série Excel ; l'attestation est soit `--anonymized`
+(document anonymisé irréversiblement), soit `--real-sensitive-authorized`
+(document réel non anonymisé, usage local couvert par un GO nominatif du CTO —
+exactement une des deux). Le plafond de 50 feuilles est remplacé par la
+sélection explicite. Détail : `docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md`.
+
 La CLI n'importe aucun client Supabase, ne contient aucun appel réseau et
 n'appelle aucun service de persistance. Elle refuse :
 
-- l'absence d'attestation `--anonymized` ;
+- l'absence d'attestation (`--anonymized` ou `--real-sensitive-authorized`) ;
+- un classeur à plusieurs feuilles sans `--sheet`, ou une feuille absente ;
 - un chemin relatif ou situé dans le dépôt, y compris après résolution des
   liens ;
 - un nœud qui n'est pas un fichier régulier ;
@@ -93,6 +104,17 @@ npx tsx scripts/qualifyOperationalImportRealFile.ts `
   --anonymized
 ```
 
+Classeur Excel réel à plusieurs feuilles, sous GO nominatif (Pack 2) :
+
+```powershell
+npx tsx scripts/qualifyOperationalImportRealFile.ts `
+  --family BDK `
+  --case-id BDK-R2 `
+  --file "C:\SODATRA-QUALIFICATION-SECURE\BDK-2026.xlsx" `
+  --sheet 090726 `
+  --real-sensitive-authorized
+```
+
 Familles acceptées par `--family` : `BDK`, `ATB`, `BICIS`, `ORA`, `SGBS`,
 `BIS`, `FUND_POSITION`.
 
@@ -105,6 +127,9 @@ La sortie JSON autorisée contient uniquement :
 - décision `FAIL_CLOSED` ou
   `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW` ;
 - codes d'erreur fermés ;
+- attestation utilisée, mode de sélection de feuille (`explicit`, `single`,
+  `not-applicable`) et compteurs de grille (lignes, colonnes, cellules
+  d'erreur, cellules date parasites hors borne) — jamais le nom de la feuille ;
 - invariants `persistenceAttempted=false`, `environmentAccessed=false` et
   `promotionAuthorized=false`.
 

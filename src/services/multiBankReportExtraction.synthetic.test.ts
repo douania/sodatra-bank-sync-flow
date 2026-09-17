@@ -24,8 +24,12 @@ import {
 } from '../../scripts/qualifyOperationalImportRealFile';
 import type { OperationalBankCode } from './bankIdentity';
 import { bankReportSectionExtractor } from './bankReportSectionExtractor';
+import { worksheetToGrid } from './excelSheetGrid';
 import { extractBankReport, extractClientReconciliation } from './extractionService';
-import { qualifyOperationalImportRealFileText } from './operationalImportRealFileQualification';
+import {
+  qualifyOperationalImportRealFileGrid,
+  qualifyOperationalImportRealFileText,
+} from './operationalImportRealFileQualification';
 
 const nominalFixtures: Record<OperationalBankCode, string> = {
   BDK: 'BDK RAPPORT 05/08/2026\nOPENING BALANCE 05/08/2026 1 000 000\nCLOSING BALANCE as per Book: C=(A-B) 900 000',
@@ -288,6 +292,66 @@ test('le harness réel échoue fermé sur un contenu insuffisant', async () => {
   assert.equal(result.decision, 'FAIL_CLOSED');
 });
 
+test('la CLI exige exactement une attestation : anonymisée ou réelle sous GO nominatif', () => {
+  assert.throws(
+    () => parseQualificationCliArguments([
+      '--family', 'BDK', '--case-id', 'BDK-R1', '--file', resolveOutsideRepository(),
+      '--anonymized', '--real-sensitive-authorized',
+    ]),
+    (error: unknown) => error instanceof QualificationCliError && error.code === 'CLI_USAGE_INVALID',
+  );
+  const realSensitive = parseQualificationCliArguments([
+    '--family', 'BDK', '--case-id', 'BDK-R1', '--file', resolveOutsideRepository(),
+    '--real-sensitive-authorized', '--sheet', '090726',
+  ]);
+  assert.equal(realSensitive.attestation, 'real-sensitive-authorized');
+  assert.equal(realSensitive.sheetName, '090726');
+  const anonymized = parseQualificationCliArguments([
+    '--family', 'BDK', '--case-id', 'BDK-R1', '--file', resolveOutsideRepository(), '--anonymized',
+  ]);
+  assert.equal(anonymized.attestation, 'anonymized');
+  assert.equal(anonymized.sheetName, undefined);
+});
+
+test('la CLI traite une feuille choisie explicitement et refuse un classeur multi-feuilles sans sélection', async () => {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'sodatra-real-file-qualification-'));
+  try {
+    const workbook = XLSX.utils.book_new();
+    const shortSheet = XLSX.utils.aoa_to_sheet([['BDK'], ['CONTENU COURT']]);
+    const otherSheet = XLSX.utils.aoa_to_sheet([['BDK'], ['AUTRE CONTENU COURT']]);
+    XLSX.utils.book_append_sheet(workbook, shortSheet, '090726');
+    XLSX.utils.book_append_sheet(workbook, otherSheet, '100726');
+    const multiSheetPath = join(temporaryRoot, 'BDK_MULTI.xlsx');
+    writeFileSync(multiSheetPath, XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' }));
+
+    const unselected = await executeQualificationCli([
+      '--family', 'BDK', '--case-id', 'BDK-R11', '--file', multiSheetPath, '--real-sensitive-authorized',
+    ]);
+    assert.equal(unselected.exitCode, 2);
+    assert.equal(unselected.payload.errorCode, 'SHEET_SELECTION_REQUIRED');
+
+    const missing = await executeQualificationCli([
+      '--family', 'BDK', '--case-id', 'BDK-R12', '--file', multiSheetPath, '--real-sensitive-authorized',
+      '--sheet', 'ABSENTE',
+    ]);
+    assert.equal(missing.payload.errorCode, 'SHEET_NOT_FOUND');
+
+    const selected = await executeQualificationCli([
+      '--family', 'BDK', '--case-id', 'BDK-R13', '--file', multiSheetPath, '--real-sensitive-authorized',
+      '--sheet', '100726',
+    ]);
+    assert.equal(selected.exitCode, 1);
+    assert.deepEqual(selected.payload.errorCodes, ['CONTENT_TOO_SHORT']);
+    assert.equal(selected.payload.attestation, 'real-sensitive-authorized');
+    assert.equal(selected.payload.sheetSelection, 'explicit');
+    const serialized = JSON.stringify(selected.payload);
+    assert.equal(serialized.includes('100726'), false, 'le nom de feuille (une date) ne quitte pas le harness');
+    assert.equal(serialized.includes('BDK_MULTI'), false);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('la CLI exige l’attestation, un chemin absolu hors dépôt et reste sans écriture', () => {
   assert.throws(
     () => parseQualificationCliArguments([
@@ -313,12 +377,49 @@ test('la CLI exige l’attestation, un chemin absolu hors dépôt et reste sans 
   );
   assert.match(cliSource, /INPUT_PATH_MUST_BE_OUTSIDE_REPOSITORY/);
   assert.match(cliSource, /ANONYMIZATION_ATTESTATION_REQUIRED/);
+  assert.match(cliSource, /--real-sensitive-authorized/);
   assert.match(cliSource, /isPathInsideRepository\(args\.inputPath/);
   assert.match(cliSource, /canonicalRepositoryRoot/);
+  const gridSource = readFileSync('src/services/excelSheetGrid.ts', 'utf8');
   assert.doesNotMatch(
-    `${cliSource}\n${qualificationSource}`,
+    `${cliSource}\n${qualificationSource}\n${gridSource}`,
     /\b(?:writeFile\w*|appendFile\w*|createWriteStream|openSync|unlink\w*|rename\w*|mkdir\w*|rmSync|fetch|supabase|databaseService|saveReport)\b/i,
   );
+});
+
+test('la qualification tabulaire rend une preuve agrégée sans données brutes', async () => {
+  const sheet = XLSX.utils.aoa_to_sheet([
+    [null, null, null, 'BDK'],
+    ['Date', 'Ch.No', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT', 'TR NO/FACT.NO', 'AMOUNT'],
+    ['OPENING BALANCE 09/07/26', null, null, null, null, null, 1_000_000],
+    ['ADD :', 'DEPOSIT NOT YET CLEARED'],
+    [46211, 46212, 'REGLEMENT FAC. 01/07/26', 'FOURNISSEUR', 'CLIENT_SENSIBLE', null, 777_777],
+    [null, null, null, 'TOTAL DEPOSIT', null, null, 777_777],
+    [null, null, 'CLOSING BALANCE as per Book : C=(A-B)', null, null, null, 1_777_777],
+  ]);
+  const accounting = '_-* #,##0\\ _€_-;\\-* #,##0\\ _€_-;_-* "-"??\\ _€_-;_-@_-';
+  for (const address of ['G3', 'G5', 'G6', 'G7']) sheet[address].z = accounting;
+  for (const address of ['A5', 'B5']) sheet[address].z = 'm/d/yy';
+  const grid = worksheetToGrid(sheet, '090726');
+  const result = await qualifyOperationalImportRealFileGrid({
+    caseId: 'BDK-G1',
+    family: 'BDK',
+    format: 'XLSX',
+    sourceFileName: '07-BDK 2026.xlsx',
+    grid,
+    inputSha256: 'e'.repeat(64),
+    byteLength: 4096,
+  });
+  assert.equal(result.success, true, result.errorCodes.join(' '));
+  assert.equal(result.evidence.depositCount, 1);
+  assert.equal(result.evidence.reportDatePresent, true);
+  assert.equal(result.gridEvidence?.errorCellCount, 0);
+  assert.doesNotMatch(JSON.stringify(result), /CLIENT_SENSIBLE|777777|1000000|2026-07|090726/);
+
+  const wrongFamily = await qualifyOperationalImportRealFileGrid({
+    caseId: 'BDK-G2', family: 'ATB', format: 'XLSX', sourceFileName: '07-BDK 2026.xlsx', grid, inputSha256: 'f'.repeat(64), byteLength: 4096,
+  });
+  assert.deepEqual(wrongFamily.errorCodes, ['BANK_IDENTITY_UNCORROBORATED']);
 });
 
 test('la CLI refuse réellement chemins internes, nœuds, tailles, signatures et archives invalides', async () => {
@@ -379,7 +480,7 @@ test('la CLI refuse réellement chemins internes, nœuds, tailles, signatures et
     const truncatedWorkbook = XLSX.utils.book_new();
     const rows = Array.from(
       { length: 20_001 },
-      (_, index) => [index === 0 ? 'BDK' : `SYNTHETIC_ROW_${index}`],
+      (_, index) => [index === 0 ? 'BDK' : `SYNTHETIC_ROW_${index}`, index + 1],
     );
     XLSX.utils.book_append_sheet(
       truncatedWorkbook,

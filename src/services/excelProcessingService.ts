@@ -32,7 +32,7 @@ const OPTIONAL_HEADERS: { canonical: string; aliases: string[] }[] = [
 class ExcelProcessingService {
   async processCollectionReportExcel(file: File): Promise<ExcelProcessingResult> {
     try {
-      console.log('📊 DÉBUT TRAITEMENT EXCEL (MODE TOLÉRANT):', file.name);
+      console.log('📊 DÉBUT TRAITEMENT EXCEL (MODE TOLÉRANT)');
       
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, {
@@ -62,7 +62,7 @@ class ExcelProcessingService {
           ]
         };
       }
-      console.log(`📑 Feuille de données sélectionnée: ${selectedSheetName}`);
+      console.log('📑 Feuille de données sélectionnée');
       const worksheet = workbook.Sheets[selectedSheetName];
       const fullReference = (worksheet as XLSX.WorkSheet & { '!fullref'?: string })['!fullref']
         ?? worksheet['!ref'];
@@ -91,13 +91,13 @@ class ExcelProcessingService {
       
       // Identifier la ligne d'en-tête
       const headers = rawData[0] as string[];
-      console.log('📊 En-têtes détectés:', headers);
+      console.log(`📊 En-têtes détectés: ${headers.length}`);
       
       // ⭐ Lot 3B.3 — Validation stricte des headers obligatoires AVANT parsing ligne par ligne.
       const headerCheck = this.validateMandatoryHeaders(headers);
       if (!headerCheck.ok) {
         const msg = `Headers obligatoires manquants: ${headerCheck.missing.join(', ')}. Import annulé.`;
-        console.error('❌ Lot 3B.3 — rejet global du fichier:', msg);
+        console.error(`❌ Lot 3B.3 — rejet global du fichier: ${headerCheck.missing.length} en-tête(s) obligatoire(s) manquant(s)`);
         return {
           success: false,
           errors: [msg],
@@ -132,11 +132,8 @@ class ExcelProcessingService {
           rowData.excel_filename = file.name;
           rowData.excel_source_row = rowIndex + 1;
           
-          console.log(`📊 Ligne ${rowIndex + 1}: traitement (mode tolérant)`, {
-            filename: rowData.excel_filename,
-            row: rowData.excel_source_row,
-            client: rowData.clientCode
-          });
+          // Pack 2 (FIX_5) : ni nom de fichier ni client en console, seulement le rang.
+          console.log(`📊 Ligne ${rowIndex + 1}: traitement (mode tolérant)`);
           
           // Mapper vers le format CollectionReport
           const mappedData = excelMappingService.mapExcelRowToCollection(rowData);
@@ -165,10 +162,10 @@ class ExcelProcessingService {
             || isMandatoryAmountError
             || isMandatoryBankError
           ) {
-            console.error('❌ Erreur bloquante (ligne rejetée):', errorMsg);
+            console.error(`❌ Erreur bloquante (ligne ${rowIndex + 1} rejetée)`);
             errors.push(errorMsg);
           } else {
-            console.warn('⚠️ Erreur non-bloquante:', errorMsg);
+            console.warn(`⚠️ Erreur non-bloquante (ligne ${rowIndex + 1})`);
             warnings.push(errorMsg);
           }
           continue;
@@ -196,7 +193,7 @@ class ExcelProcessingService {
       };
       
     } catch (error) {
-      console.error('❌ ERREUR CRITIQUE TRAITEMENT EXCEL:', error);
+      console.error('❌ ERREUR CRITIQUE TRAITEMENT EXCEL');
       return {
         success: false,
         errors: [`Erreur critique: ${error instanceof Error ? error.message : 'Erreur inconnue'}`]

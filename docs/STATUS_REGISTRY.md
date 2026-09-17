@@ -15,6 +15,147 @@
 
 ---
 
+## PACK-2-REAL-FORMAT-COMPATIBILITY
+
+**Statut : `IMPLEMENTED_LOCAL — DRAFT_PR_149 — CTO_PASS_WITH_RESERVES_ON_b15fd3b — REAL_FILES_FIX_7_FAIL_CLOSED_ACCEPTED — TECHNICAL_CLOSURE_APPLIED — CTO_SHA_CHECK_PENDING — MERGE_BLOCKED_UNTIL_PACK_0_CLOSURE_AND_PACK_0R` (2026-09-16 Europe/Paris)**
+
+Huitième contre-revue CTO sur `b15fd3b` : `PASS_WITH_RESERVES`, boucle de
+corrections de sécurité FIX_1 à FIX_7 close. Rejeu
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_7` (2026-09-17) :
+campagne acceptée et conforme, six familles `FAIL_CLOSED` sur la feuille de
+référence, SGBS `NOT_TESTED`, échantillons BDK 46/60, ATB 0, BICIS 0, ORA 0,
+BIS 9/60, Fund Position 0/150, identiques à FIX_3 / FIX_4 ; aucune famille
+qualifiée, `GO_VALIDATE_STAGING_PACK_2` refusé. Arbitrage Pack 2B : correction à
+la source pour DEF-20 à DEF-28, sinon profil bancaire avec preuve métier avant
+tout patch. Clôture technique : fallbacks de l'agrégateur ramenés au
+vocabulaire fermé, motif `ligne \d+` corrigé dans le test runtime ; contrôle
+CTO ciblé du nouveau SHA requis. Merge bloqué par Pack 0, Pack 0R, Pack 2B,
+SGBS et vérification finale du SHA.
+
+Septième contre-revue CTO sur `1b307e0` : `FAIL` (deux P1, deux P2, un P3).
+Corrections FIX_7 : frontière du résultat de `/upload` fermée —
+`data.syncResult` ne porte plus que rang de ligne et motif fermé (ni code
+client, ni objet métier, ni message serveur), à la source et dans
+l'agrégateur ; vocabulaire structurel de `isBusinessLabel` complété (`CHQ`,
+`REF`, `REFERENCE`, `FACT`, `FACTURE`, `TYPE`, `NATURE`…) ; test runtime
+inspectant `data.syncResult`, le résultat complet et des compteurs explicites
+`rpc` / `insert` ; plus aucun `skip` silencieux (échec explicite sur runtime non
+supporté) ; tests de l'agrégateur enregistrés en CI ; docs alignées. Aucun
+fichier réel touché. `financial-write-lockdown` : 2/2 au rejeu du CTO.
+
+Sixième contre-revue CTO sur `882e8b8` : `FAIL` (trois P1, deux P2).
+Corrections FIX_6 : option `mutationGate` retirée de l'API de production
+(garde canonique seule, substitution au niveau du loader dans les tests) ;
+journaux de persistance et de synchronisation atteignables assainis
+(`databaseService`, `batchProcessingService`, `intelligentSyncService`) ;
+`isBusinessLabel` refuse tout chiffre et tout mot du vocabulaire structurel
+complet ; test de bout en bout sur lot valide jusqu'aux doubles Supabase en
+échec sentinelle (persistance et synchronisation atteintes) ; quatre
+`console.*` bruts de la page et de la revue Collection neutralisés ; docs
+corrigées. Aucun fichier réel touché (rejeu FIX_6 refusé).
+
+Cinquième contre-revue CTO sur `f1b4fd6` : `FAIL` (trois P1, deux P2).
+Corrections FIX_5 : journaux du service et du mapping Collection Report, du
+retry et du heartbeat réduits aux compteurs et rangs ; frontière fermée sur
+diagnostics Excel, synchronisation, sauvegardes, exception générale et
+Internal Book (code + rang de ligne) ; `isBusinessLabel` refuse mots
+structurels, dates et séquences monétaires en composition ; test runtime de
+bout en bout `processFiles` sur lot marqué (console, progression, erreurs,
+diagnostics) avec garde injectable tests-seulement ; documentation ramenée au
+périmètre réel. Aucun fichier réel touché (rejeu FIX_5 refusé par le CTO).
+Réserve CTO : revue Collection en mémoire (Pack C) hors périmètre.
+
+Quatrième contre-revue CTO sur `cc7fa3c` : `FAIL` (deux P1). Corrections
+FIX_4 : journaux et erreurs assainis sur tout le graphe d'appel (extracteurs
+texte PDF et legacy inclus : compteurs et rangs de ligne seuls) ; frontière
+`summarizeExtractionErrors` (vocabulaire fermé « ligne N : motif ») avant
+`results.errors` ; suite runtime par sentinelles sensibles exécutée sur chaque
+chemin (échoue sur `cc7fa3c`, passe après) ; `isBusinessLabel` refuse
+marqueurs d'impayé, titres, en-têtes de colonnes et libellés monétaires
+(`IMPAYE`, `1 000 FCFA`). Rejeu
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_4` : verdicts et
+compteurs identiques à FIX_3 (aucune famille `PASS` le 9 juillet ; BDK 46,
+ATB 0, BICIS 0, ORA 0, BIS 9 sur 60 ; Fund Position 0/150). DEF-25 : source
+ou profil attesté ; DEF-28 : source, sans exception XFD.
+
+Troisième contre-revue CTO sur `76c1324` : `FAIL` (trois P1 partiels, un P2).
+Corrections FIX_3 : cellules hors borne collectées avant tout filtre (date
+invalide en XFD refusée) ; journaux du pipeline sans nom, valeur, objet ni
+liste d'erreurs (chemin legacy Client Reconciliation inclus) ; libellé de
+facilité ni date, ni marqueur structurel, ni numérique ; « fichier n°N »
+affiché dans `/upload` et transmis au pipeline. Rejeu
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_3` : aucune famille
+`PASS` sur la feuille du 9 juillet (ATB refusée pour lignes « LIMITE » /
+« DISPONIBLE » après total, BIS refusée pour cellule XFD sans date valide,
+DEF-28) ; échantillon 60 feuilles : BDK 46, ATB 0, BICIS 0, ORA 0, BIS 9.
+
+Deuxième contre-revue CTO sur `863c671` : `FAIL` (quatre P1). Corrections FIX_2 :
+signature structurelle exacte de la cellule hors borne (une seule, en `XFD`,
+date valide), erreurs `/upload` sans nom de fichier (rang dans le lot), refus
+de toute facilité sans libellé métier, zone de montant strictement titrée.
+Rejeu `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_2` : ATB seule
+famille `PASS` sur la feuille du 9 juillet ; BDK et BIS refusés (DEF-25),
+BICIS refusée (DEF-26, DEF-27), ORA refusée (DEF-27), Fund Position refusée
+(DEF-20, DEF-24, date) ; échantillon 60 feuilles : BDK 46, ATB 58, BICIS 0,
+ORA 0, BIS 22. Arbitrages Pack 2B : DEF-20 à DEF-27.
+
+Contre-revue CTO sur `a74581b` : `FAIL` (six P1, deux P2, aucun P0). Corrections
+`GO_FIX_PACK_2` sur la même branche : refus de toute ligne après le total des
+facilités ou hors section ; zone de montant déterminée par l'en-tête et
+unicité du montant ; aucun zéro par défaut (blocs du jour absents = valeur
+absente, `COLLECTION NOT DEPOSITED` sans montant = refus) ; année courte
+corroborée par le document ou le nom de fichier, écart d'ouverture borné à
+7 jours ; cellules hors borne refusées sauf cellule date parasite ; journaux
+sans nom de fichier ni valeur ; sélection de feuille liée à l'instance et
+garde obligatoire ; affirmations documentaires restreintes. Rejeu local
+`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE_FIX_1` : ATB, BICIS, ORA
+`PASS` sur la feuille du 9 juillet ; BDK et BIS `FAIL_CLOSED` (lignes après le
+total des facilités, DEF-25) ; Fund Position `FAIL_CLOSED` (DEF-20, DEF-24,
+date non corroborée) ; échantillon 60 feuilles : BDK 46, ATB 58, BICIS 58,
+ORA 2, BIS 22. Verdict CTO : DEF-20/21/22 différés en Pack 2B, DEF-23 corrigé,
+`GO_VALIDATE_STAGING_PACK_2` refusé. Détail :
+`docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md` §2 et §5.
+
+Programme `SBSF-COMPLETE-OPERATIONAL-V1`, Pack 2. GO : `GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE`
+(campagne locale du 2026-09-16 : conformité de campagne, qualification métier
+`FAIL` sur les sept familles, aucun GO staging) puis
+`GO_IMPLEMENT_PACK_2_REAL_FORMAT_COMPATIBILITY` (niveau élevé, base `4412d0c9`,
+branche `agent/pack-2-real-format-compatibility`, exécutant Claude Code).
+Rapport : `docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md`.
+
+Livré (local, tests synthétiques, aucun environnement) :
+
+- sélection explicite d'une feuille dans `/upload` et dans le harness
+  (`--sheet`) ; aucune concaténation de feuilles ; grille bornée par les
+  cellules réelles (BIS : plage déclarée `A1:XFD37`, 8 colonnes lues, cellules
+  parasites comptées) ; dates de cellule converties depuis le numéro de série
+  Excel ; cellules d'erreur Excel refusées ;
+- identité bancaire fondée sur l'émetteur de l'en-tête, ambiguïté fail-closed ;
+  alias ATB strictement listés (`ATLANTIQUE BANK`, `ATLANTIK BANK`) ;
+- dates `JJ/MM/AA` = 2000 + AA, jour en premier ; rendu `m/d/yy` refusé ;
+- extracteur tabulaire des rapports bancaires (libellés anglais et français
+  ORA strictement listés, montant = dernière cellule formatée non nulle,
+  date de rapport = nom de feuille `JJMMAA`, solde d'ouverture de la veille
+  accepté) ; extracteur tabulaire Fund Position ;
+- harness : attestation `--anonymized` ou `--real-sensitive-authorized`
+  (exactement une), `--sheet`, sortie sans nom de feuille ni donnée brute,
+  `gridEvidence`, code `EXCEL_ERROR_CELL`.
+
+Validation locale sur les fichiers réels de juillet 2026 (hors dépôt, sous
+GO) : BDK, ATB, BICIS, ORA et BIS `LOCAL_CONTRACT_PASS_REQUIRES_STAGING_REVIEW`
+sur la feuille du 9 juillet ; sur 60 feuilles échantillonnées par banque :
+BDK 48, ATB 59, BICIS 59, ORA 11, BIS 56 ; Fund Position `FAIL_CLOSED` (colonne
+Grand Balance absente des feuilles récentes ; 24/150 feuilles passent). SGBS
+`NOT_TESTED` (aucun fichier). Aucune famille n'est promue : toutes restent
+`STAGING_PILOT`. Points d'arbitrage CTO consignés en DEF-20 à DEF-23.
+
+`package.json` : scripts uniquement (`test:multi-bank-reports` étendu) ; aucune
+dépendance ni lockfile modifié. Aucun SQL, migration, Supabase, réseau ni
+service tiers. Merge bloqué jusqu'à clôture du Pack 0, régularisation Pack 0R et
+verdict CTO sur la PR.
+
+---
+
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
 **Statut : `MERGED (a22ab60f) — MAIN_CI_GREEN — DELIVERED_WITH_PLATFORM_ATTESTATION (2026-09-08) — GOVERNANCE_ITEMS_OPEN` (livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**

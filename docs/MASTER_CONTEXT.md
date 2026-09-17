@@ -179,6 +179,13 @@ production, `integer` en staging et dans la baseline. L'historique d'import
 antérieur à ces lectures n'est pas établi par elles.
 Voir `docs/COLLECTION_REPORT_CONTROLLED_PRODUCTION_ACTIVATION_REPORT.md`.
 
+Pack 2 (`agent/pack-2-real-format-compatibility`, draft PR) : les classeurs
+Excel de rapports bancaires et de Fund Position sont traités sur **une feuille
+choisie explicitement** (les fichiers réels sont des classeurs annuels à une
+feuille par jour) ; aucune concaténation de feuilles ; identité bancaire lue
+dans l'en-tête ; extraction tabulaire fail-closed. Voir
+`docs/PACK_2_REAL_FORMAT_COMPATIBILITY_REPORT.md`.
+
 Le flux `/daily-statements` est séparé de ces deux pipelines :
 - seuls les relevés ONLINE correspondant à un profil structurel exact sont acceptés ;
 - les journaux mensuels Internal Book ne sont pas des relevés bancaires Daily v2 ;
@@ -238,7 +245,7 @@ Ouverts / suivis :
 - Dashboard opérationnel Daily v2 canonical : `CLOSED_WITH_RESERVE — PRODUCTION_DASHBOARD_READ_ONLY_VALIDATED — ORA_PILOT_SCOPE` ; le badge et les frontières de session sont publiés, tandis que la matrice réelle multi-rôles/révocation/refetch/concurrence reste ouverte ;
 - DEF-05 : `CLOSED`, pipeline global consolidé par la PR #130 ;
 - Operational Import multi-bank : `CLOSED — PRODUCTION_RUNTIME_VALIDATED_READ_ONLY`, contrat fail-closed publié et smokes production verts sans promotion de banque ;
-- Qualification réelle multi-bank : `PREPARED_LOCAL — REAL_FILES_NOT_PROVIDED — STAGING_NOT_EXECUTED`, harness local sans persistance prêt avant campagne staging ;
+- Qualification réelle multi-bank : campagne locale du 2026-09-16 sur les fichiers réels de juillet (`GO_VALIDATE_LOCAL_PACK_2_REAL_FILES_JULY_SENSITIVE`) : `FAIL` métier sur les sept familles pour cause de format ; Pack 2 `PACK-2-REAL-FORMAT-COMPATIBILITY` : `IMPLEMENTED_LOCAL — DRAFT_PR` (sélection explicite de feuille, identité par l'en-tête, dates `JJ/MM/AA`, libellés ORA et alias ATB listés, extracteurs tabulaires rapports bancaires et Fund Position, harness `--sheet` / `--real-sensitive-authorized`) ; après contre-revue CTO (`FAIL` sur `a74581b`) et corrections `GO_FIX_PACK_2` (refus de toute ligne après total ou hors section, zone de montant titrée, aucun zéro par défaut, années corroborées, journaux purgés, sélection liée à l'instance), puis FIX_2 et FIX_3 (cellule hors borne à signature exacte et date valide, journaux et erreurs sans nom de fichier ni valeur, libellé de facilité métier obligatoire, zone de montant strictement titrée, rang « fichier n°N » affiché) et FIX_4 (journaux et erreurs assainis sur tout le graphe d'appel, résumé fermé « ligne N : motif » à la frontière `/upload`, tests runtime par sentinelles, libellé de facilité refusant marqueurs d'impayé et montants) et FIX_5 (journaux Collection Report, retry et Internal Book assainis, frontière fermée sur diagnostics, synchronisation, sauvegardes et exception générale, libellé refusant mots structurels, dates et montants en composition, exécution de bout en bout de `processFiles` par sentinelles) et FIX_6 (garde canonique seule sans option d'injection, journaux de persistance et de synchronisation assainis, libellé refusant tout chiffre et tout mot structurel, lot valide exécuté jusqu'aux doubles Supabase en échec sentinelle, journaux de la page et de la revue Collection neutralisés) et FIX_7 (frontière du résultat fermée : `data.syncResult` réduit au rang de ligne et au motif fermé, vocabulaire structurel complété, test runtime inspectant le résultat complet avec compteurs `rpc`/`insert`, aucun `skip` silencieux ; verdict CTO `PASS_WITH_RESERVES` sur `b15fd3b`, réserves P3 levées en clôture technique ; rejeu réel FIX_7 du 2026-09-17 accepté, `FAIL_CLOSED` identique, correction à la source arbitrée pour DEF-20 à DEF-28), aucune famille ne passe localement sur la feuille du 9 juillet : BDK, ATB et BIS refusés (DEF-25, DEF-28), BICIS (DEF-26, DEF-27), ORA (DEF-27), Fund Position (DEF-20, DEF-24), SGBS non testé ; aucune promotion, toutes les familles restent `STAGING_PILOT` ; `GO_VALIDATE_STAGING_PACK_2` refusé ; merge bloqué jusqu'à clôture Pack 0, Pack 0R et nouvelle contre-revue ;
 - OPS-CORE-1 : `CLOSED`, précontrôle d'import validé staging et publié en production le 2026-08-13 ;
 - DEF-10 : `CLOSED`, OPS-CORE-2 validé en production le 2026-08-12 ;
 - DEF-16 : `CLOSED`, OPS-CORE-4 validé en production le 2026-08-13 ;

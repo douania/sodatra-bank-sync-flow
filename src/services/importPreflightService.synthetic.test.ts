@@ -8,6 +8,64 @@ import {
   detectImportDocumentFromText,
   type ImportFileDescriptor,
 } from './importPreflightService';
+
+test('Pack 2 : un classeur Excel de rapport bancaire ou de Fund Position exige une feuille choisie, liée à l’instance', () => {
+  const bank = { name: '07-BDK 2026.xlsx', size: 10, lastModified: 1 };
+  const fund = { name: 'FUND POSITION.xlsx', size: 20, lastModified: 1 };
+  const pdf = { name: 'Releve BDK.pdf', size: 30, lastModified: 1 };
+
+  // Garde obligatoire : sans inventaire, les classeurs Excel concernés sont bloqués.
+  const pending = buildImportPreflight([bank, fund, pdf]);
+  assert.equal(pending.canProcess, false);
+  assert.deepEqual(pending.entries.map(entry => entry.issues.map(issue => issue.code)), [
+    ['SHEET_INVENTORY_PENDING'],
+    ['SHEET_INVENTORY_PENDING'],
+    [],
+  ]);
+
+  // Noms de feuilles synthétiques.
+  const inventory = new Map<ImportFileDescriptor, readonly string[]>([
+    [bank, ['010126', '020126']],
+    [fund, ['010126']],
+  ]);
+  const unselected = buildImportPreflight([bank, fund, pdf], { sheetInventory: inventory });
+  assert.equal(unselected.entries[0].status, 'BLOCKED');
+  assert.equal(unselected.entries[0].issues[0].code, 'SHEET_SELECTION_REQUIRED');
+  assert.deepEqual(unselected.entries[0].sheetNames, ['010126', '020126']);
+  assert.equal(unselected.entries[1].status, 'READY', 'une feuille unique est retenue implicitement');
+  assert.equal(unselected.entries[1].selectedSheetName, '010126');
+
+  const wrongSelection = buildImportPreflight([bank], {
+    sheetInventory: inventory,
+    sheetSelections: new Map([[bank, 'ABSENTE']]),
+  });
+  assert.equal(wrongSelection.entries[0].issues[0].code, 'SHEET_SELECTION_REQUIRED');
+
+  const selected = buildImportPreflight([bank, fund, pdf], {
+    sheetInventory: inventory,
+    sheetSelections: new Map([[bank, '020126']]),
+  });
+  assert.equal(selected.canProcess, true);
+  assert.equal(selected.entries[0].selectedSheetName, '020126');
+
+  // Une autre instance de même nom, taille et date ne réutilise ni inventaire ni sélection.
+  const replacement = { name: '07-BDK 2026.xlsx', size: 10, lastModified: 1 };
+  const replaced = buildImportPreflight([replacement], {
+    sheetInventory: inventory,
+    sheetSelections: new Map([[bank, '020126']]),
+  });
+  assert.equal(replaced.entries[0].issues[0].code, 'SHEET_INVENTORY_PENDING');
+
+  const unreadable = buildImportPreflight([bank], { sheetInventory: new Map([[bank, []]]) });
+  assert.equal(unreadable.entries[0].issues[0].code, 'SHEET_SELECTION_REQUIRED');
+});
+
+test('Pack 2 : le repli de contenu lit l’identité bancaire dans l’en-tête, pas dans le corps', () => {
+  const body = 'BDK\nDate\tCh.No\nOPENING BALANCE 09/07/26\nCHQ SGBS\nDEPOT CBAO\nVIREMENT ATB';
+  assert.equal(detectImportDocumentFromText(body).kind, 'BANK_REPORT');
+  assert.equal(detectImportDocumentFromText(body).label, 'Rapport bancaire BDK');
+  assert.equal(detectImportDocumentFromText('BDK SGBS\nRAPPORT').kind, 'UNKNOWN');
+});
 import {
   COLLECTION_IMPORT_MAX_FILE_BYTES,
   COLLECTION_IMPORT_MAX_FILES,
@@ -57,11 +115,12 @@ test('bloque toute ambiguïté entre familles au lieu de choisir selon l’ordre
 });
 
 test('autorise un lot entièrement identifié et supporté', () => {
+  const fundPosition = file('Fund Position.xlsx');
   const result = buildImportPreflight([
     file('Collection Report.xlsx'),
     file('Releve BDK.pdf'),
-    file('Fund Position.xlsx'),
-  ]);
+    fundPosition,
+  ], { sheetInventory: new Map([[fundPosition, ['Feuil1']]]) });
 
   assert.equal(result.canProcess, true);
   assert.equal(result.readyCount, 3);

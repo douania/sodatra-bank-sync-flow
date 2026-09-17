@@ -1,6 +1,6 @@
 
 import { BankReport, BankFacility, Impaye, DepositNotCleared, CheckNotCleared } from '@/types/banking';
-import { detectBankFromContent } from './bankIdentity';
+import { detectBankFromHeader } from './bankIdentity';
 import { hasStructuredLines, parseDocumentDate, parseFinancialInteger } from './bankReportExtractionContract';
 
 export interface SectionExtractionResult {
@@ -146,7 +146,8 @@ class BankReportSectionExtractor {
         };
       }
 
-      const contentBank = detectBankFromContent(textContent);
+      // Pack 2 : l'émetteur se lit dans l'en-tête ; le corps peut citer d'autres banques.
+      const contentBank = detectBankFromHeader(textContent);
       if (contentBank !== bankName) {
         return {
           success: false,
@@ -221,7 +222,7 @@ class BankReportSectionExtractor {
       };
 
     } catch (error) {
-      console.error(`❌ Erreur extraction ${bankName}:`, error);
+      console.error(`❌ Erreur extraction ${bankName}`);
       return {
         success: false,
         errors: [`Erreur extraction: ${error instanceof Error ? error.message : 'Erreur inconnue'}`]
@@ -234,7 +235,7 @@ class BankReportSectionExtractor {
     const lines = textContent.split('\n');
     let inDepositsSection = false;
 
-    for (const line of lines) {
+    for (const [lineIndex, line] of lines.entries()) {
       if (this.matchesSectionHeading(line, config.patterns.depositsSection)) {
         inDepositsSection = true;
         continue;
@@ -254,7 +255,7 @@ class BankReportSectionExtractor {
         } else if (this.isSectionBoundary(line, config.patterns.depositsSection, config)) {
           inDepositsSection = false;
         } else {
-          throw new Error(`Ligne de dépôts non crédités non exploitable: ${line.trim()}`);
+          throw new Error(`Ligne de dépôts non crédités non exploitable (ligne ${lineIndex + 1}).`);
         }
       }
     }
@@ -267,7 +268,7 @@ class BankReportSectionExtractor {
     const lines = textContent.split('\n');
     let inChecksSection = false;
 
-    for (const line of lines) {
+    for (const [lineIndex, line] of lines.entries()) {
       if (this.matchesSectionHeading(line, config.patterns.checksSection)) {
         inChecksSection = true;
         continue;
@@ -285,7 +286,7 @@ class BankReportSectionExtractor {
         } else if (this.isSectionBoundary(line, config.patterns.checksSection, config)) {
           inChecksSection = false;
         } else {
-          throw new Error(`Ligne de chèques non débités non exploitable: ${line.trim()}`);
+          throw new Error(`Ligne de chèques non débités non exploitable (ligne ${lineIndex + 1}).`);
         }
       }
     }
@@ -298,7 +299,7 @@ class BankReportSectionExtractor {
     const lines = textContent.split('\n');
     let inFacilitiesSection = false;
 
-    for (const line of lines) {
+    for (const [lineIndex, line] of lines.entries()) {
       if (this.matchesSectionHeading(line, config.patterns.facilitiesSection)) {
         inFacilitiesSection = true;
         continue;
@@ -320,7 +321,7 @@ class BankReportSectionExtractor {
         } else if (this.isSectionBoundary(line, config.patterns.facilitiesSection, config)) {
           inFacilitiesSection = false;
         } else {
-          throw new Error(`Ligne de facilités bancaires non exploitable: ${line.trim()}`);
+          throw new Error(`Ligne de facilités bancaires non exploitable (ligne ${lineIndex + 1}).`);
         }
       }
     }
@@ -335,7 +336,7 @@ class BankReportSectionExtractor {
     
     console.log('🔍 Recherche des impayés dans le texte...');
 
-    for (const line of lines) {
+    for (const [lineIndex, line] of lines.entries()) {
       if (inImpayesSection && line.trim()) {
         const match = this.matchCompleteLine(line, config.patterns.impayeLine);
         if (match) {
@@ -343,7 +344,6 @@ class BankReportSectionExtractor {
           const clientCode = match[3]?.trim() || 'UNKNOWN';
           const description = match[4]?.trim() || 'IMPAYE';
           
-          console.log(`✅ Impayé trouvé: Client ${clientCode}, Description: ${description}`);
           
           const firstDate = this.parseDate(match[1]);
           const secondDate = match[2] ? this.parseDate(match[2]) : undefined;
@@ -358,7 +358,7 @@ class BankReportSectionExtractor {
         } else if (this.isSectionBoundary(line, config.patterns.impayesSection, config)) {
           inImpayesSection = false;
         } else {
-          throw new Error(`Ligne d’impayés non exploitable: ${line.trim()}`);
+          throw new Error(`Ligne d’impayés non exploitable (ligne ${lineIndex + 1}).`);
         }
       }
 
@@ -372,7 +372,7 @@ class BankReportSectionExtractor {
 
   private parseAmount(value: string | undefined): number {
     const parsed = parseFinancialInteger(value);
-    if (parsed === null) throw new Error(`Montant invalide: ${value ?? 'absent'}`);
+    if (parsed === null) throw new Error(value === undefined ? 'Montant absent.' : 'Montant invalide.');
     return parsed;
   }
 
@@ -416,7 +416,7 @@ class BankReportSectionExtractor {
 
   private parseDate(value: string | undefined): string {
     const parsed = parseDocumentDate(value);
-    if (!parsed) throw new Error(`Date invalide: ${value ?? 'absente'}`);
+    if (!parsed) throw new Error(value === undefined ? 'Date absente.' : 'Date invalide.');
     return parsed;
   }
 }

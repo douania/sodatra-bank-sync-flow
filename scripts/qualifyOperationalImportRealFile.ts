@@ -3,10 +3,16 @@ import { open, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import * as XLSX from 'xlsx';
-
 import { reconstructPdfTextLines } from '../src/services/pdfTextLineReconstruction';
 import {
+  DEFAULT_EXCEL_GRID_LIMITS,
+  ExcelSheetSelectionError,
+  listWorkbookSheetNames,
+  readSelectedSheetGrid,
+  resolveSelectedSheetName,
+} from '../src/services/excelSheetGrid';
+import {
+  qualifyOperationalImportRealFileGrid,
   qualifyOperationalImportRealFileText,
   type RealFileQualificationFamily,
   type RealFileQualificationFormat,
@@ -17,10 +23,6 @@ const MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 const MAX_ZIP_ENTRIES = 10_000;
 const MAX_PDF_PAGES = 200;
 const MAX_PDF_TEXT_ITEMS = 200_000;
-const MAX_WORKBOOK_SHEETS = 50;
-const MAX_EXCEL_ROWS_PER_SHEET = 20_000;
-const MAX_EXCEL_COLUMNS_PER_ROW = 512;
-const MAX_EXCEL_CELLS = 1_000_000;
 const MAX_EXTRACTED_TEXT_CHARACTERS = 2_000_000;
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const FAMILIES = new Set<RealFileQualificationFamily>([
@@ -44,15 +46,28 @@ type QualificationCliErrorCode =
   | 'INPUT_FILE_TOO_LARGE'
   | 'INPUT_FORMAT_UNSUPPORTED'
   | 'INPUT_FILE_SIGNATURE_MISMATCH'
+  | 'SHEET_SELECTION_REQUIRED'
+  | 'SHEET_NOT_FOUND'
   | 'DOCUMENT_TEXT_EXTRACTION_FAILED'
   | 'DOCUMENT_RESOURCE_LIMIT_EXCEEDED'
   | 'QUALIFICATION_RUNTIME_FAILED';
+
+/**
+ * Attestation opérateur (exactement une) :
+ * - `anonymized` : document anonymisé de manière irréversible avant remise ;
+ * - `real-sensitive-authorized` : document réel non anonymisé, dont l'usage
+ *   local est couvert par un GO nominatif du CTO (lecture locale, aucune copie,
+ *   aucune donnée dans la sortie). Le harness n'est jamais un anonymiseur.
+ */
+export type QualificationAttestation = 'anonymized' | 'real-sensitive-authorized';
 
 interface QualificationCliArguments {
   family: RealFileQualificationFamily;
   caseId: string;
   inputPath: string;
-  anonymizationAttested: true;
+  attestation: QualificationAttestation;
+  /** Feuille demandée ; obligatoire pour un classeur à plusieurs feuilles. */
+  sheetName?: string;
 }
 
 interface QualificationCliFailure {
@@ -83,23 +98,33 @@ function optionValue(argv: readonly string[], option: string): string | undefine
 }
 
 export function parseQualificationCliArguments(argv: readonly string[]): QualificationCliArguments {
-  const allowedOptions = new Set(['--family', '--case-id', '--file', '--anonymized']);
+  const allowedOptions = new Set([
+    '--family',
+    '--case-id',
+    '--file',
+    '--sheet',
+    '--anonymized',
+    '--real-sensitive-authorized',
+  ]);
   for (const argument of argv) {
     if (argument.startsWith('--') && !allowedOptions.has(argument)) {
       throw new QualificationCliError('CLI_USAGE_INVALID');
     }
   }
 
-  if (!argv.includes('--anonymized')) {
+  const anonymizedCount = argv.filter(argument => argument === '--anonymized').length;
+  const realSensitiveCount = argv.filter(argument => argument === '--real-sensitive-authorized').length;
+  if (anonymizedCount === 0 && realSensitiveCount === 0) {
     throw new QualificationCliError('ANONYMIZATION_ATTESTATION_REQUIRED');
   }
-  if (argv.filter(argument => argument === '--anonymized').length !== 1) {
+  if (anonymizedCount + realSensitiveCount !== 1) {
     throw new QualificationCliError('CLI_USAGE_INVALID');
   }
 
   const rawFamily = optionValue(argv, '--family')?.toUpperCase();
   const caseId = optionValue(argv, '--case-id');
   const inputPath = optionValue(argv, '--file');
+  const sheetName = optionValue(argv, '--sheet');
   if (!rawFamily || !FAMILIES.has(rawFamily as RealFileQualificationFamily) || !caseId || !inputPath) {
     throw new QualificationCliError('CLI_USAGE_INVALID');
   }
@@ -114,7 +139,8 @@ export function parseQualificationCliArguments(argv: readonly string[]): Qualifi
     family: rawFamily as RealFileQualificationFamily,
     caseId,
     inputPath,
-    anonymizationAttested: true,
+    attestation: anonymizedCount === 1 ? 'anonymized' : 'real-sensitive-authorized',
+    sheetName,
   };
 }
 
@@ -259,62 +285,6 @@ async function extractPdfText(bytes: Uint8Array): Promise<string> {
   }
 }
 
-function extractExcelText(bytes: Uint8Array): string {
-  const workbook = XLSX.read(bytes, {
-    type: 'array',
-    raw: false,
-    cellDates: false,
-    sheetRows: MAX_EXCEL_ROWS_PER_SHEET + 1,
-  });
-  if (workbook.SheetNames.length > MAX_WORKBOOK_SHEETS) {
-    throw new QualificationCliError('DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
-  }
-  const text: BoundedTextAccumulator = { parts: [], length: 0 };
-  let declaredCellCount = 0;
-
-  for (const sheetName of workbook.SheetNames) {
-    const worksheet = workbook.Sheets[sheetName];
-    const fullReference = (
-      worksheet as XLSX.WorkSheet & { '!fullref'?: string }
-    )['!fullref'] ?? worksheet['!ref'];
-    const declaredRange = fullReference ? XLSX.utils.decode_range(fullReference) : null;
-    if (declaredRange) {
-      const declaredRows = declaredRange.e.r - declaredRange.s.r + 1;
-      const declaredColumns = declaredRange.e.c - declaredRange.s.c + 1;
-      declaredCellCount += declaredRows * declaredColumns;
-      if (
-        declaredRows > MAX_EXCEL_ROWS_PER_SHEET
-        || declaredColumns > MAX_EXCEL_COLUMNS_PER_ROW
-        || declaredCellCount > MAX_EXCEL_CELLS
-      ) {
-        throw new QualificationCliError('DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
-      }
-    }
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-      header: 1,
-      raw: false,
-      defval: '',
-    });
-    if (rows.length > MAX_EXCEL_ROWS_PER_SHEET) {
-      throw new QualificationCliError('DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
-    }
-    for (const row of rows) {
-      if (row.length > MAX_EXCEL_COLUMNS_PER_ROW) {
-        throw new QualificationCliError('DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
-      }
-      appendTextWithinLimit(text, `${row.map(value => String(value)).join('\t')}\n`);
-    }
-  }
-  return text.parts.join('');
-}
-
-async function extractDocumentText(
-  bytes: Uint8Array,
-  format: RealFileQualificationFormat,
-): Promise<string> {
-  return format === 'PDF' ? extractPdfText(bytes) : extractExcelText(bytes);
-}
-
 async function readBoundedRegularFile(canonicalInputPath: string): Promise<Uint8Array> {
   const metadata = await stat(canonicalInputPath).catch(() => {
     throw new QualificationCliError('INPUT_FILE_UNREADABLE');
@@ -357,6 +327,19 @@ function failure(errorCode: QualificationCliErrorCode): QualificationCliFailure 
     environmentAccessed: false,
     promotionAuthorized: false,
   };
+}
+
+function mapSheetSelectionError(error: ExcelSheetSelectionError): QualificationCliError {
+  switch (error.code) {
+    case 'SHEET_SELECTION_REQUIRED':
+      return new QualificationCliError('SHEET_SELECTION_REQUIRED');
+    case 'SHEET_NOT_FOUND':
+      return new QualificationCliError('SHEET_NOT_FOUND');
+    case 'SHEET_LIMIT_EXCEEDED':
+      return new QualificationCliError('DOCUMENT_RESOURCE_LIMIT_EXCEEDED');
+    default:
+      return new QualificationCliError('DOCUMENT_TEXT_EXTRACTION_FAILED');
+  }
 }
 
 async function withMutedConsole<T>(operation: () => Promise<T>): Promise<T> {
@@ -413,23 +396,63 @@ export async function runQualificationCli(
     if (format === 'XLSX') assertZipArchiveWithinLimits(inputBytes);
 
     const inputSha256 = createHash('sha256').update(inputBytes).digest('hex');
+    const sourceFileName = basename(canonicalInputPath);
     const result = await withMutedConsole(async () => {
-      let extractedText: string;
+      if (format === 'PDF') {
+        let extractedText: string;
+        try {
+          extractedText = await extractPdfText(inputBytes);
+        } catch (error) {
+          if (error instanceof QualificationCliError) throw error;
+          throw new QualificationCliError('DOCUMENT_TEXT_EXTRACTION_FAILED');
+        }
+        return {
+          ...await qualifyOperationalImportRealFileText({
+            caseId: args.caseId,
+            family: args.family,
+            format,
+            sourceFileName,
+            extractedText,
+            inputSha256,
+            byteLength: inputBytes.byteLength,
+          }),
+          attestation: args.attestation,
+          sheetSelection: 'not-applicable' as const,
+        };
+      }
+
+      // Excel : une feuille choisie explicitement, lue sous forme de grille
+      // bornée par ses cellules réelles. Aucune concaténation de feuilles.
+      let sheetName: string;
+      let sheetSelection: 'explicit' | 'single';
       try {
-        extractedText = await extractDocumentText(inputBytes, format);
+        const sheetNames = listWorkbookSheetNames(inputBytes);
+        sheetName = resolveSelectedSheetName(sheetNames, args.sheetName);
+        sheetSelection = sheetNames.length === 1 && !args.sheetName ? 'single' : 'explicit';
       } catch (error) {
-        if (error instanceof QualificationCliError) throw error;
+        if (error instanceof ExcelSheetSelectionError) throw mapSheetSelectionError(error);
         throw new QualificationCliError('DOCUMENT_TEXT_EXTRACTION_FAILED');
       }
-      return qualifyOperationalImportRealFileText({
-        caseId: args.caseId,
-        family: args.family,
-        format,
-        sourceFileName: basename(canonicalInputPath),
-        extractedText,
-        inputSha256,
-        byteLength: inputBytes.byteLength,
-      });
+      let grid;
+      try {
+        grid = readSelectedSheetGrid(inputBytes, sheetName, DEFAULT_EXCEL_GRID_LIMITS);
+      } catch (error) {
+        if (error instanceof ExcelSheetSelectionError) throw mapSheetSelectionError(error);
+        throw new QualificationCliError('DOCUMENT_TEXT_EXTRACTION_FAILED');
+      }
+      return {
+        ...await qualifyOperationalImportRealFileGrid({
+          caseId: args.caseId,
+          family: args.family,
+          format,
+          sourceFileName,
+          grid,
+          inputSha256,
+          byteLength: inputBytes.byteLength,
+        }),
+        attestation: args.attestation,
+        sheetSelection,
+      };
     });
 
     writeOutput(`${JSON.stringify(result, null, 2)}\n`);

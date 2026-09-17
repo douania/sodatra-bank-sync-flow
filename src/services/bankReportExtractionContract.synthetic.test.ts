@@ -1,4 +1,14 @@
 import assert from 'node:assert/strict';
+
+import { parseDocumentDate as parseDocumentDateForShortYear } from './bankReportExtractionContract';
+
+test('règle Pack 2 : le contrat texte refuse toute année courte et tout rendu m/d/yy ; seule la corroboration documentaire les accepte', () => {
+  assert.equal(parseDocumentDateForShortYear('09/07/26'), null);
+  assert.equal(parseDocumentDateForShortYear('09-07-26'), null);
+  assert.equal(parseDocumentDateForShortYear('7/9/26'), null);
+  assert.equal(parseDocumentDateForShortYear('07/9/26'), null);
+  assert.equal(parseDocumentDateForShortYear('09/07/2026'), '2026-07-09');
+});
 import test from 'node:test';
 
 import { hasStructuredLines, parseDocumentDate, parseFinancialInteger } from './bankReportExtractionContract';
