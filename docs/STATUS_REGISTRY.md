@@ -15,6 +15,80 @@
 
 ---
 
+## PACK-0R-TRACEABILITY-REGULARIZATION
+
+**Statut : `CLOSED_WITH_RESERVE` à la fusion de cette entrée (décision CTO du 2026-10-23 ; réserve : lacunes historiques acceptées E2, E8, E9)**
+
+Objet : régularisation de traçabilité du pilote Collection production signalé et des
+applications staging et production de la migration `20260901000000`, sans GO tracé.
+Aucun GO rétroactif. Les corrections applicatives et de données Collections relèvent
+du Pack 1.
+
+Cette clôture porte sur la régularisation documentaire : aucune autorisation
+rétroactive, aucune qualification des lignes promues, aucune baisse des risques. Elle
+ne clôt ni le Pack 0 ni les suites Pack 1 et OPS.
+
+Faits retenus (UTC) :
+- 2026-09-01 18:01:37 : CI de `main` verte sur `55c9077` (run `33541041220`, lecture
+  GitHub en GET sous `GO_READ_GITHUB_ACTIONS_PACK_0R_E7`). L'énoncé « CI verte depuis
+  le run du 2026-09-03 » de l'entrée COLLECTION-REPORT-CONTROLLED-PRODUCTION-ACTIVATION
+  est complété par un succès également établi le 1er septembre ; la continuité entre
+  ces dates n'est pas établie.
+- 2026-09-01 18:10 : application de `20260901000000` sur staging, selon l'observation
+  du 2026-09-07.
+- Application en production : date non établie (ledger sans horodatage).
+- 2026-09-02 16:27:53 : ouverture du scope Collection production, rôle de base
+  `postgres->postgres`, échéance à 10 minutes.
+- 2026-09-02 16:30:53 : promotion Collection Report, 1 commande, 2 insertions, sous
+  une identité applicative.
+- 2026-09-02 16:31:51 : reverrouillage, rôle `postgres->postgres`.
+- Identités techniques différentes ; opérateur(s) humain(s) non établi(s).
+- Sens de la mention « Collection Report 2026-08-24 » : inconnu.
+
+Lectures production du 2026-10-23 sous `GO_PRODUCTION_PACK_0R_READ_ONLY_E2_E5`,
+exécutées par l'utilisateur dans l'éditeur SQL du tableau de bord (six SELECT de
+métadonnées, aucun contenu de ligne ni identifiant d'utilisateur) ; résultats examinés
+par le CTO comme preuves rapportées.
+
+Qualification CTO du 2026-10-23 : A1 à A5 « autorisation non retrouvée dans les
+sources consultées » ; A5 est une fermeture réduisant l'exposition. Aucune absence
+d'autorisation n'est démontrée.
+
+Lacunes historiques acceptées pour la clôture documentaire : date d'application en
+production (E2), opérateur humain et canal (E8), demande initiale (E9). Ni GO
+rétroactif, ni qualification des données. E6 non autorisée.
+
+Risques maintenus : gouvernance, auditabilité et récurrence élevés ; intégrité et
+conformité du schéma indéterminées, traitement conservateur élevé ; fiabilité
+documentaire modérée.
+
+Suites : qualification des lignes promues et corrections éventuelles → Pack 1 ;
+traçabilité des actes d'application et d'ouverture de scope, et règles documentaires
+du registre → lot OPS dédié sous pilotage CTO. Responsable humain : Ramzi Hoballah,
+directeur général de SODATRA (dirigeant demandeur), jusqu'à délégation nominative.
+
+Hors périmètre : bundle production non réconcilié entre le 2026-09-01 et le
+2026-09-07, suivi de provenance du Pack 0.
+
+Références hors dépôt (nom exact, SHA-256) :
+- `FORMALISATION-PACK-0R-2026-10-07.md` (cadrage) :
+  `436d8c63647ceb4c71053574b24ca38dcde4412aa27be7d6321647efe9d8bf3b`
+- `PACK-0R-EXECUTION-DOCUMENTAIRE-2026-10-23.md` (exécution r1) :
+  `578cd1e5e353dd7bece52884716b6f2873d56b57ba94493ce16907aac6eeca6f`
+- `PACK-0R-EXECUTION-DOCUMENTAIRE-R2-2026-10-23.md` (exécution r2) :
+  `49ef999b2c14de2dccbd59885e64c8f53d26b6f1a83b844f2181ff82e5d1309b`
+- `PACK-0R-E2-E5-REQUETES-LECTURE-SEULE.sql` (requêtes E2 à E5) :
+  `8a086151b94e0eb4528cdf8baae681114ba7e6da7ccacb352552d6494727ba1c`
+- `PACK-0R-RELEVE-DE-DECISION-2026-10-23.md` (relevé de décision) :
+  `fc4a4136a9f66a81ea9db73f6d0834c173a842c41d10464f7e516b3bdbc013a3`
+
+GO : `GO_FORMALIZE_PACK_0R_DOC_ONLY`, `GO_EXECUTE_PACK_0R_DOCUMENTARY_ONLY`,
+`GO_READ_GITHUB_ACTIONS_PACK_0R_E7`, `GO_PRODUCTION_PACK_0R_READ_ONLY_E2_E5`,
+`GO_FIX_PACK_0R_DOCUMENTARY_ONLY`, `GO_IMPLEMENT_PACK_0R_REGISTRY_DOC_ONLY` ; la
+fusion de cette entrée exige un `GO_MERGE_PR` distinct.
+
+---
+
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
 **Statut : `CLOSED — DELIVERED_WITH_PLATFORM_ATTESTATION — FOLLOW_UPS_OPEN` (clôture consignée le 2026-09-08 sous `GO_IMPLEMENT_PACK_0_CLOSURE_DOCS` ; livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**
