@@ -91,7 +91,7 @@ fusion de cette entrée exige un `GO_MERGE_PR` distinct.
 
 ## PACK-0-CRITICAL-BLOCKERS-AND-GOVERNANCE
 
-**Statut : `CLOSED — DELIVERED_WITH_PLATFORM_ATTESTATION — FOLLOW_UPS_OPEN` (clôture consignée le 2026-09-08 sous `GO_IMPLEMENT_PACK_0_CLOSURE_DOCS` ; livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**
+**Statut : `CLOSED — DELIVERED_WITH_PLATFORM_ATTESTATION — FOLLOW_UPS_OPEN` (clôture documentaire avec suivis ouverts : principe retenu par le CTO le 2026-10-07, confirmé le 2026-10-23, prise d'effet à la fusion de la PR #148 ; consignée sous `GO_IMPLEMENT_PACK_0_CLOSURE_DOCS` puis `GO_UPDATE_PR_148_DOC_ONLY` ; livraison validée par le CTO le 2026-09-08 avec réserve sur le smoke reporting ; entrée initiale 2026-09-06 Europe/Paris)**
 
 Clôture : le Pack 0 est clos sur son objet (blocages critiques et gouvernance
 livrés). PR #146 fusionnée le 2026-09-07 17:37 UTC en `a22ab60f` sous
@@ -100,9 +100,11 @@ sous `GO_PRODUCTION_PACK_0_PUBLISH`, provenance embarquée `known` égale au
 candidat (détail dans la section « Merge et livraison » ci-dessous). Quatre
 suivis restent ouverts, tracés dans « Suivis ouverts après clôture » avec
 responsable et critère de résolution ; aucun n'est déclaré résolu sans preuve.
-Le pilote Collection production signalé et la dérive `collection_report.nj`
-sont **maintenus au Pack 1** par décision CTO et ne relancent pas l'audit de
-cette livraison.
+La traçabilité du pilote Collection production signalé est close au Pack 0R
+(`CLOSED_WITH_RESERVE`, 2026-10-23, entrée `PACK-0R-TRACEABILITY-REGULARIZATION`) ;
+la qualification des lignes promues, les corrections éventuelles et la dérive
+`collection_report.nj` restent **au Pack 1** par décision CTO ; ni l'une ni
+l'autre ne relance l'audit de cette livraison.
 
 Programme `SBSF-COMPLETE-OPERATIONAL-V1`, mandat `GO_IMPLEMENT_PACK_0` puis
 `GO_FIX_PACK_0` du 2026-09-06 et `GO_FIX_PACK_0` « provenance réelle du
@@ -401,7 +403,7 @@ CI l'exécute), compatibilité Lovable de la dépendance par URL, ruleset GitHub
 
 Aucune action de cette passe n'a été exécutée : pas de fermeture de PR, de
 changement de visibilité, d'action Lovable ni de publication. Aucun suivi n'est
-déclaré résolu sans preuve.
+déclaré résolu sans preuve. **État au 2026-09-08, non revérifié.**
 
 | Suivi | État consigné | Responsable | Critère de résolution |
 |---|---|---|---|
@@ -411,9 +413,11 @@ déclaré résolu sans preuve.
 | Reporting Daily v2 (smoke) | **`NOT_RUN`.** Trois tentatives automatisées sur le site publié (session existante) n'ont pas déclenché la génération : dates acceptées, bouton « Générer le rapport » actif, aucune requête REST, aucun toast, aucun résultat ; cela n'établit pas un défaut applicatif (état React attendu par `DailyV2Reporting.tsx` non atteint par l'automatisation) | Utilisateur (ou Codex avec navigateur réel) | Saisie manuelle des dates sur `/daily-statements` › Reporting puis clic : toast « Rapport Daily v2 généré » et tableau ou message « Aucune unité canonical active… » ; dans le panneau réseau natif, `HEAD daily_statement_units_canonical?select=id` en 200 et le `GET` de reporting en 200/206. Si la saisie manuelle ne produit rien : ouvrir un défaut (triage Pack 1 ou 2) sans réouvrir la livraison |
 | 503 sur les HEAD de comptage | **Origine indéterminée.** Le lecteur réseau de l'extension a affiché 503 sur les HEAD de comptage du dashboard les 7 et 8 septembre ; les journaux API Gateway montrent ces HEAD en 200 (09:44–10:10 UTC le 2026-09-08 : 14 requêtes toutes 200/206) ; le dashboard fail-closed s'est rendu. Les journaux favorables ne prouvent pas que l'affichage était à tort | Utilisateur ou Codex, lors du smoke manuel | Reproduction avec les outils de développement natifs du navigateur sur `/dashboard`, statut réel des HEAD et en-tête `Retry-After`, corrélation API Gateway et PostgREST sur la même minute ; conclusion « artefact d'outil » ou « 503 réel côté passerelle/PostgREST » |
 
-Maintenus au Pack 1 (décision CTO) : pilote Collection production signalé par
-la raison du verrou du 2026-09-02 et dérive `collection_report.nj` (`numeric`
-en production, `integer` en staging et baseline).
+Pilote Collection production signalé par la raison du verrou du 2026-09-02 :
+traçabilité close au Pack 0R (`CLOSED_WITH_RESERVE`, 2026-10-23) ; qualification
+des lignes promues et corrections éventuelles maintenues au Pack 1 (décision
+CTO), de même que la dérive `collection_report.nj` (`numeric` en production,
+`integer` en staging et baseline).
 
 Compatibilité de build Lovable de `xlsx@0.20.3` (dépendance par URL de
 tarball) : **constatée** sur le build de publication du 2026-09-08
