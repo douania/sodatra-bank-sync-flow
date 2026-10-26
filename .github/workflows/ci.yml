@@ -145,6 +145,17 @@ jobs:
         shell: pwsh
         run: ./supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1
 
+      # PAYABLES-CHEQUES-CORE — invoices, commitments and issued cheques:
+      # synthetic contracts (amount in words, layout, bank grammars parity,
+      # service guards, print flow) and the disposable PostgreSQL 17 replay
+      # with real two-session races. Synthetic data only.
+      - name: Payables and cheques contracts
+        run: npm run test:payables-cheques
+
+      - name: Payables and cheques server contract (PostgreSQL 17)
+        shell: pwsh
+        run: ./supabase/tests/payables_cheques_core/run_pg17_replay.ps1
+
       # PACK 0 (GO_FIX_PACK_0 Node typing) — blocking: the Node project
       # (vite.config.ts and the modules it imports, e.g. the build provenance
       # collector) must typecheck with zero errors. The application project
