@@ -136,6 +136,8 @@ CREATE TABLE public.payables_bank_match_proposals (
   amount             numeric(18,2) NOT NULL,
   accounting_date    date NOT NULL,
   value_date         date,
+  -- Cutoff de la proposition, conservé pour le recontrôle et l'audit.
+  cutoff_date        date NOT NULL,
   status             text NOT NULL DEFAULT 'PROPOSED'
                        CHECK (status IN ('PROPOSED','CONFIRMED','REJECTED','INVALIDATED','REVOKED','SUPERSEDED')),
   triggered_by       uuid NOT NULL REFERENCES auth.users(id),
@@ -203,23 +205,41 @@ BEGIN
 END;
 $$;
 
--- Population admissible au cutoff : une seule ligne active non consommée et un
--- seul chèque doivent porter la référence. Retourne la ligne unique ou NULL.
-CREATE FUNCTION payables_private.unique_reference_line(p_account uuid, p_reference text, p_cutoff date)
+-- Unicité sur la population canonique COMPLÈTE du compte : toutes les lignes
+-- de débit actives, quelle que soit leur date (une ligne postérieure au débit
+-- ou au cutoff rend la référence ambiguë) et quel que soit l'état de leur
+-- unité (une ligne d'un relevé en revue compte aussi). La référence est
+-- recalculée depuis le libellé canonique par la grammaire courante : aucune
+-- dépendance à l'état de la projection. Seules les lignes déjà consommées par
+-- un rapprochement confirmé sont écartées. Retourne la ligne unique ou NULL.
+CREATE FUNCTION payables_private.unique_reference_line(p_account uuid, p_reference text)
 RETURNS uuid
 LANGUAGE sql
 STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT CASE WHEN count(*) = 1 THEN min(r.line_id::text)::uuid END
-  FROM public.payables_bank_line_references r
-  JOIN public.daily_statement_lines_canonical l ON l.id = r.line_id
+  SELECT CASE WHEN count(*) = 1 THEN min(l.id::text)::uuid END
+  FROM public.daily_statement_lines_canonical l
   JOIN public.daily_statement_units_canonical u ON u.id = l.canonical_unit_id
-  WHERE r.account_registry_id = p_account AND r.outcome = 'REFERENCE' AND r.reference_text = p_reference
-    AND r.grammar_version = payables_private.cheque_grammar_version(u.bank)
-    AND l.is_active AND l.accounting_date <= p_cutoff
+  CROSS JOIN LATERAL payables_private.extract_cheque_reference(u.bank, l.description_sanitized) x
+  WHERE u.account_registry_id = p_account AND l.is_active AND l.direction = 'debit'
+    AND x.outcome = 'REFERENCE' AND x.reference_text = p_reference
     AND NOT EXISTS (SELECT 1 FROM public.payables_bank_match_proposals m
                     WHERE m.line_id = l.id AND m.status = 'CONFIRMED')
+$$;
+
+-- Admissibilité de la ligne candidate elle-même : unité canonique ingérée et
+-- validée (un relevé en revue ne prouve rien).
+CREATE FUNCTION payables_private.line_unit_admissible(p_line uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT coalesce((SELECT l.is_active AND l.direction = 'debit' AND u.status = 'ingested' AND u.validation_status = 'valid'
+                   FROM public.daily_statement_lines_canonical l
+                   JOIN public.daily_statement_units_canonical u ON u.id = l.canonical_unit_id
+                   WHERE l.id = p_line), false)
 $$;
 
 CREATE FUNCTION payables_private.revoke_bank_match(p_actor uuid, p_match uuid, p_command text, p_reason text)
@@ -318,7 +338,7 @@ BEGIN
      WHERE f.bank_account_id = p_bank_account_id AND f.cheque_number = v_ref.reference_text FOR UPDATE;
     IF v_form.id IS NULL THEN v_skipped := v_skipped + 1; CONTINUE; END IF;
     v_issuance := payables_private.current_issuance(v_form.id);
-    v_unique := payables_private.unique_reference_line(p_bank_account_id, v_ref.reference_text, p_cutoff);
+    v_unique := payables_private.unique_reference_line(p_bank_account_id, v_ref.reference_text);
     IF v_form.state IN ('CANCELLED','REPLACED') THEN
       -- Débit d'un chèque réputé annulé : exception bloquante, jamais ignorée.
       IF NOT EXISTS (SELECT 1 FROM public.payables_exceptions e WHERE e.kind = 'CANCELLED_CHEQUE_PRESENTED'
@@ -347,14 +367,16 @@ BEGIN
     END IF;
     IF v_form.state <> 'ISSUED' OR v_issuance.id IS NULL OR v_issuance.amount IS NULL
        OR v_issuance.amount <> v_ref.debit_amount OR v_ref.line_currency <> 'XOF'
-       OR v_issuance.issue_date > v_ref.accounting_date OR v_unique IS DISTINCT FROM v_ref.line_id THEN
+       OR v_issuance.issue_date > v_ref.accounting_date OR v_unique IS DISTINCT FROM v_ref.line_id
+       -- Une ligne d'un relevé en revue (ou remplacé) n'alimente aucune proposition.
+       OR NOT payables_private.line_unit_admissible(v_ref.line_id) THEN
       v_skipped := v_skipped + 1;
       CONTINUE;
     END IF;
     INSERT INTO public.payables_bank_match_proposals (form_id, line_id, reference_id, grammar_version, amount,
-      accounting_date, value_date, triggered_by)
+      accounting_date, value_date, cutoff_date, triggered_by)
     VALUES (v_form.id, v_ref.line_id, v_ref.id, v_ref.grammar_version, v_ref.debit_amount, v_ref.accounting_date,
-      v_ref.line_value_date, v_actor)
+      v_ref.line_value_date, p_cutoff, v_actor)
     ON CONFLICT DO NOTHING;
     IF FOUND THEN v_proposed := v_proposed + 1; END IF;
   END LOOP;
@@ -378,7 +400,7 @@ DECLARE
   v_cmd constant text := 'DECIDE_BANK_MATCH';
   v_replay jsonb; v_proposal public.payables_bank_match_proposals; v_form public.payables_cheque_forms;
   v_line record; v_ref public.payables_bank_line_references; v_issuance public.payables_issuances;
-  v_reason text; v_outcome text; v_exit uuid;
+  v_reason text; v_outcome text; v_exit uuid; v_extract record; v_failure text;
 BEGIN
   PERFORM payables_private.assert_business_writes_enabled();
   PERFORM payables_private.require_capability(v_actor, 'BANK_FOLLOWUP');
@@ -396,11 +418,15 @@ BEGIN
   PERFORM payables_private.assert_version(v_proposal.row_version, p_expected_version);
   PERFORM payables_private.assert_lock_free('FORM', v_form.id, v_actor);
   IF v_proposal.status <> 'PROPOSED' THEN RAISE EXCEPTION 'PAYABLES_MATCH_STATE_INVALID'; END IF;
-  SELECT l.id, l.is_active, l.debit_amount, l.currency, l.accounting_date, l.value_date, u.bank, u.account_registry_id
+  -- Verrou partagé sur la ligne ET son unité : un remplacement ou une remise
+  -- en revue concurrents de Daily v2 attendent la fin de la décision.
+  SELECT l.id, l.is_active, l.direction, l.debit_amount, l.currency, l.accounting_date, l.value_date,
+         l.description_sanitized, u.bank, u.account_registry_id, u.status AS unit_status,
+         u.validation_status AS unit_validation
     INTO v_line
     FROM public.daily_statement_lines_canonical l
     JOIN public.daily_statement_units_canonical u ON u.id = l.canonical_unit_id
-   WHERE l.id = v_proposal.line_id FOR SHARE OF l;
+   WHERE l.id = v_proposal.line_id FOR SHARE OF l, u;
   SELECT * INTO v_ref FROM public.payables_bank_line_references WHERE id = v_proposal.reference_id;
   IF p_decision = 'REJECT' THEN
     UPDATE public.payables_bank_match_proposals SET status = 'REJECTED', decided_by = v_actor,
@@ -409,21 +435,31 @@ BEGIN
     v_outcome := 'REJECTED';
   ELSE
     v_issuance := payables_private.current_issuance(v_form.id);
-    -- Recontrôle serveur complet à la confirmation.
-    IF NOT v_line.is_active
-       OR v_ref.grammar_version <> payables_private.cheque_grammar_version(v_line.bank)
-       OR v_proposal.grammar_version <> v_ref.grammar_version
-       OR v_line.account_registry_id <> v_form.bank_account_id
-       OR v_form.state <> 'ISSUED'
-       OR v_issuance.amount IS DISTINCT FROM v_line.debit_amount
-       OR v_line.currency <> 'XOF'
-       OR v_ref.reference_text IS DISTINCT FROM v_form.cheque_number
-       OR payables_private.unique_reference_line(v_form.bank_account_id, v_form.cheque_number, v_line.accounting_date)
-            IS DISTINCT FROM v_line.id
-       OR EXISTS (SELECT 1 FROM public.payables_bank_match_proposals m
-                  WHERE m.status = 'CONFIRMED' AND (m.line_id = v_line.id OR m.form_id = v_form.id)) THEN
+    SELECT * INTO v_extract FROM payables_private.extract_cheque_reference(v_line.bank, v_line.description_sanitized);
+    -- Recontrôle serveur complet à la confirmation, sur l'état canonique
+    -- courant (jamais sur la seule projection) ; le premier écart est consigné.
+    v_failure := CASE
+      WHEN NOT v_line.is_active OR v_line.direction <> 'debit' THEN 'LINE_INACTIVE'
+      WHEN v_line.unit_status <> 'ingested' OR v_line.unit_validation <> 'valid' THEN 'UNIT_NOT_VALID'
+      WHEN v_line.accounting_date > v_proposal.cutoff_date THEN 'AFTER_PROPOSAL_CUTOFF'
+      WHEN v_ref.grammar_version <> payables_private.cheque_grammar_version(v_line.bank)
+           OR v_proposal.grammar_version <> v_ref.grammar_version
+           OR v_extract.grammar_version IS DISTINCT FROM v_ref.grammar_version THEN 'GRAMMAR_CHANGED'
+      WHEN v_extract.outcome IS DISTINCT FROM 'REFERENCE' OR v_extract.reference_text IS DISTINCT FROM v_form.cheque_number
+           OR v_ref.reference_text IS DISTINCT FROM v_form.cheque_number THEN 'REFERENCE_CHANGED'
+      WHEN v_line.account_registry_id <> v_form.bank_account_id THEN 'ACCOUNT_MISMATCH'
+      WHEN v_form.state <> 'ISSUED' THEN 'FORM_NOT_ISSUED'
+      WHEN v_line.currency <> 'XOF' THEN 'CURRENCY_NOT_SUPPORTED'
+      WHEN v_issuance.amount IS DISTINCT FROM v_line.debit_amount THEN 'AMOUNT_MISMATCH'
+      WHEN v_issuance.issue_date > v_line.accounting_date THEN 'ISSUE_AFTER_DEBIT'
+      WHEN payables_private.unique_reference_line(v_form.bank_account_id, v_form.cheque_number)
+           IS DISTINCT FROM v_line.id THEN 'REFERENCE_AMBIGUOUS'
+      WHEN EXISTS (SELECT 1 FROM public.payables_bank_match_proposals m
+                   WHERE m.status = 'CONFIRMED' AND (m.line_id = v_line.id OR m.form_id = v_form.id)) THEN 'ALREADY_CONSUMED'
+      END;
+    IF v_failure IS NOT NULL THEN
       UPDATE public.payables_bank_match_proposals SET status = 'INVALIDATED', decided_by = v_actor,
-             decided_at = statement_timestamp(), decision_reason = 'Recontrôle serveur échoué à la confirmation',
+             decided_at = statement_timestamp(), decision_reason = 'Recontrôle serveur échoué : ' || v_failure,
              row_version = row_version + 1
        WHERE id = p_proposal_id;
       v_outcome := 'INVALIDATED';
@@ -443,9 +479,9 @@ BEGIN
   END IF;
   PERFORM payables_private.append_event(v_actor, v_cmd, 'BANK_MATCH_' || v_outcome, 'CHEQUE_FORM', v_form.id,
     gen_random_uuid(), v_reason, v_line.accounting_date, jsonb_build_object('proposal_id', p_proposal_id,
-    'grammar_version', v_proposal.grammar_version, 'exit_id', v_exit));
+    'grammar_version', v_proposal.grammar_version, 'exit_id', v_exit, 'failure', v_failure));
   RETURN payables_private.idem_finish(v_actor, v_cmd, p_command_key, jsonb_build_object(
-    'proposal_id', p_proposal_id, 'outcome', v_outcome, 'exit_id', v_exit));
+    'proposal_id', p_proposal_id, 'outcome', v_outcome, 'exit_id', v_exit, 'failure', v_failure));
 END;
 $$;
 
@@ -467,13 +503,10 @@ BEGIN
   v_replay := payables_private.idem_begin(v_actor, v_cmd, p_command_key, '{}'::jsonb);
   IF v_replay IS NOT NULL THEN RETURN v_replay; END IF;
   FOR v_row IN
-    SELECT m.id AS match_id, m.form_id, f.bank_account_id, f.payment_id
-    FROM public.payables_bank_match_proposals m
-    JOIN public.payables_cheque_forms f ON f.id = m.form_id
-    JOIN public.daily_statement_lines_canonical l ON l.id = m.line_id
-    WHERE m.status = 'CONFIRMED' AND NOT l.is_active
-      AND NOT EXISTS (SELECT 1 FROM public.payables_exceptions e
-                      WHERE e.kind = 'MATCH_EVIDENCE_INACTIVE' AND e.match_id = m.id AND e.status = 'OPEN')
+    SELECT st.match_id, st.form_id, st.bank_account_id, st.payment_id
+    FROM payables_private.stale_match_evidence() st
+    WHERE NOT EXISTS (SELECT 1 FROM public.payables_exceptions e
+                      WHERE e.kind = 'MATCH_EVIDENCE_INACTIVE' AND e.match_id = st.match_id AND e.status = 'OPEN')
   LOOP
     PERFORM payables_private.open_exception(v_actor, 'MATCH_EVIDENCE_INACTIVE',
       'La ligne bancaire du rapprochement confirmé a été remplacée', NULL, v_row.payment_id, v_row.form_id,
@@ -524,7 +557,7 @@ BEGIN
    WHERE l.id = p_new_line_id FOR SHARE OF l;
   IF v_line.id IS NULL OR NOT v_line.is_active OR v_line.direction <> 'debit'
      OR v_line.account_registry_id <> v_form.bank_account_id OR v_line.currency <> 'XOF'
-     OR v_line.debit_amount <> v_old.amount THEN
+     OR v_line.debit_amount <> v_old.amount OR NOT payables_private.line_unit_admissible(p_new_line_id) THEN
     RAISE EXCEPTION 'PAYABLES_REBIND_EVIDENCE_INVALID';
   END IF;
   PERFORM payables_private.refresh_references(v_actor, v_form.bank_account_id, v_line.accounting_date, v_line.accounting_date);
@@ -534,17 +567,16 @@ BEGIN
   IF v_ref.id IS NULL OR v_ref.outcome <> 'REFERENCE' OR v_ref.reference_text <> v_form.cheque_number
      OR v_issuance.amount IS DISTINCT FROM v_line.debit_amount
      OR EXISTS (SELECT 1 FROM public.payables_bank_match_proposals m WHERE m.line_id = p_new_line_id AND m.status = 'CONFIRMED')
-     OR payables_private.unique_reference_line(v_form.bank_account_id, v_form.cheque_number, v_line.accounting_date)
-          IS DISTINCT FROM p_new_line_id THEN
+     OR payables_private.unique_reference_line(v_form.bank_account_id, v_form.cheque_number) IS DISTINCT FROM p_new_line_id THEN
     RAISE EXCEPTION 'PAYABLES_REBIND_EVIDENCE_INVALID';
   END IF;
   UPDATE public.payables_bank_match_proposals SET status = 'SUPERSEDED', row_version = row_version + 1 WHERE id = p_match_id;
   UPDATE public.payables_exits SET status = 'REVOKED', row_version = row_version + 1
    WHERE match_id = p_match_id AND kind = 'BANK_MATCH' AND status = 'VALIDATED';
   INSERT INTO public.payables_bank_match_proposals (form_id, line_id, reference_id, grammar_version, amount, accounting_date,
-    value_date, status, triggered_by, decided_by, decided_at, decision_reason, supersedes_id)
+    value_date, cutoff_date, status, triggered_by, decided_by, decided_at, decision_reason, supersedes_id)
   VALUES (v_form.id, p_new_line_id, v_ref.id, v_ref.grammar_version, v_line.debit_amount, v_line.accounting_date,
-    v_line.value_date, 'CONFIRMED', v_actor, v_actor, statement_timestamp(), v_reason, p_match_id)
+    v_line.value_date, v_line.accounting_date, 'CONFIRMED', v_actor, v_actor, statement_timestamp(), v_reason, p_match_id)
   RETURNING id INTO v_new;
   INSERT INTO public.payables_exits (form_id, kind, status, requested_by, decided_by, decided_at, accounting_date,
     value_date, reason, match_id)
@@ -573,6 +605,42 @@ BEGIN
 END;
 $$;
 
+-- Capacité bancaire explicite du domaine (arbitrage CTO) : soldes, relevés,
+-- lignes et rapprochements ne sont lisibles qu'avec BANK_READ, en plus de la
+-- lecture du domaine. Aucune RLS Daily v2 n'est modifiée.
+CREATE FUNCTION payables_private.require_bank_read(p_actor uuid)
+RETURNS void
+LANGUAGE plpgsql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  PERFORM payables_private.require_read(p_actor);
+  IF NOT payables_private.has_capability(p_actor, 'BANK_READ') THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'PAYABLES_CAPABILITY_REQUIRED:BANK_READ';
+  END IF;
+END;
+$$;
+
+-- Preuve périmée : rapprochement confirmé dont la ligne n'est plus active ou
+-- dont l'unité n'est plus ingérée et validée. Lue directement par la vue et la
+-- file de travail, sans attendre le balayage manuel ; le rapprochement lui-même
+-- n'est jamais réinterprété.
+CREATE FUNCTION payables_private.stale_match_evidence()
+RETURNS TABLE (match_id uuid, form_id uuid, bank_account_id uuid, payment_id uuid, decided_at timestamptz)
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT m.id, m.form_id, f.bank_account_id, f.payment_id, m.decided_at
+  FROM public.payables_bank_match_proposals m
+  JOIN public.payables_cheque_forms f ON f.id = m.form_id
+  JOIN public.daily_statement_lines_canonical l ON l.id = m.line_id
+  JOIN public.daily_statement_units_canonical u ON u.id = l.canonical_unit_id
+  WHERE m.status = 'CONFIRMED'
+    AND NOT (l.is_active AND u.status = 'ingested' AND u.validation_status = 'valid')
+$$;
+
 CREATE FUNCTION public.payables_work_queue_v1()
 RETURNS TABLE (item_type text, object_id uuid, related_id uuid, since timestamptz, lock_holder uuid, lock_expires_at timestamptz)
 LANGUAGE plpgsql
@@ -580,9 +648,11 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-DECLARE v_actor uuid := payables_private.require_actor();
+DECLARE v_actor uuid := payables_private.require_actor(); v_bank boolean;
 BEGIN
   PERFORM payables_private.require_read(v_actor);
+  -- Les éléments du suivi bancaire ne sont listés qu'avec BANK_READ.
+  v_bank := payables_private.has_capability(v_actor, 'BANK_READ');
   RETURN QUERY
   WITH items AS (
     SELECT 'PAYMENT_TO_PRINT'::text AS t, p.id AS obj, p.invoice_id AS rel, p.created_at AS s, 'PAYMENT'::text AS lt
@@ -612,7 +682,13 @@ BEGIN
     FROM public.payables_exceptions x WHERE x.status = 'OPEN'
     UNION ALL
     SELECT 'BANK_MATCH_TO_DECIDE', m.id, m.form_id, m.proposed_at, 'FORM'
-    FROM public.payables_bank_match_proposals m WHERE m.status = 'PROPOSED'
+    FROM public.payables_bank_match_proposals m WHERE m.status = 'PROPOSED' AND v_bank
+    UNION ALL
+    -- Preuve périmée signalée immédiatement, avant tout balayage manuel.
+    SELECT 'MATCH_EVIDENCE_STALE', st.match_id, st.form_id, st.decided_at, 'FORM'
+    FROM payables_private.stale_match_evidence() st
+    WHERE v_bank AND NOT EXISTS (SELECT 1 FROM public.payables_exceptions x WHERE x.kind = 'MATCH_EVIDENCE_INACTIVE'
+                                 AND x.match_id = st.match_id AND x.status = 'OPEN')
     UNION ALL
     SELECT 'SUPPLIER_MERGE_TO_VALIDATE', sm.id, sm.absorbed_id, sm.proposed_at, NULL
     FROM public.payables_supplier_merges sm WHERE sm.status = 'PROPOSED'
@@ -633,27 +709,37 @@ BEGIN
   SELECT i.t, i.obj, i.rel, i.s, l.holder, l.expires_at
   FROM items i
   LEFT JOIN public.payables_work_locks l
-    ON l.object_type = i.lt AND l.object_id = CASE WHEN i.t IN ('EXIT_TO_VALIDATE','BANK_MATCH_TO_DECIDE') THEN i.rel ELSE i.obj END
+    ON l.object_type = i.lt
+   AND l.object_id = CASE WHEN i.t IN ('EXIT_TO_VALIDATE','BANK_MATCH_TO_DECIDE','MATCH_EVIDENCE_STALE') THEN i.rel ELSE i.obj END
    AND l.released_at IS NULL AND l.expires_at > statement_timestamp()
-  ORDER BY i.s;
+  -- Ordre total : la lecture paginée côté client reste déterministe.
+  ORDER BY i.s, i.t, i.obj;
 END;
 $$;
 
 -- Vue opérationnelle par compte. Une seule instruction (un seul instantané) ;
--- le solde vient EXCLUSIVEMENT de la dernière journée canonique (jamais d'un
--- ancien solde) ; aucune somme entre devises ; une donnée absente reste NULL
--- avec motif, jamais zéro. La position indicative après chèques reste distincte
--- du solde bancaire confirmé et de la disponibilité nette en date de valeur
--- (non calculée ici).
+-- chaque projection porte sa propre date : solde au dernier relevé S (jamais un
+-- relevé plus ancien), circulation à la date demandée A, circulation au relevé
+-- S, chèques non reflétés dans le solde de S (émis au plus tard en A, sans débit
+-- rapproché au plus tard en S, non annulés au plus tard en A), engagements et
+-- virements à l'état courant. Position indicative en A = solde de S − chèques
+-- non reflétés ; elle n'existe qu'avec des données cohérentes, dont une
+-- couverture PROUVÉE par la chaîne des soldes (ouverture de chaque relevé =
+-- clôture du précédent, depuis le relevé d'ancrage de la reprise). Aucune somme
+-- entre devises ; une donnée absente reste NULL avec motif, jamais zéro. La
+-- disponibilité nette en date de valeur n'est pas calculée ici.
 CREATE FUNCTION public.payables_account_positions_v1(p_as_of date DEFAULT NULL)
 RETURNS TABLE (
   account_id uuid, bank text, account_alias text, currency text,
+  as_of date, is_historical boolean, current_state_date date,
   last_statement_date date, bank_balance numeric, balance_status text,
   register_status text, takeover_cutoff date, bank_qualified boolean,
+  coverage_status text, coverage_issue_date date,
   circulation_count integer, circulation_amount numeric, circulation_unknown_count integer,
-  circulation_at_statement_amount numeric, engaged_not_debited_amount numeric,
-  transfers_pending_count integer, transfers_pending_amount numeric,
-  pending_bank_items integer, open_blocking_exceptions integer, coverage_gap_days integer,
+  circulation_at_statement_amount numeric,
+  unreflected_cheques_count integer, unreflected_cheques_amount numeric,
+  engaged_not_debited_amount numeric, transfers_pending_count integer, transfers_pending_amount numeric,
+  pending_bank_items integer, stale_match_evidence integer, open_blocking_exceptions integer,
   indicative_position numeric, indicative_reasons text[]
 )
 LANGUAGE plpgsql
@@ -661,10 +747,13 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-DECLARE v_actor uuid := payables_private.require_actor(); v_as_of date := coalesce(p_as_of, payables_private.today());
+DECLARE
+  v_actor uuid := payables_private.require_actor();
+  v_today date := payables_private.today();
+  v_as_of date := coalesce(p_as_of, payables_private.today());
 BEGIN
-  PERFORM payables_private.require_read(v_actor);
-  IF v_as_of > payables_private.today() THEN RAISE EXCEPTION 'PAYABLES_FUTURE_DATE_FORBIDDEN:AS_OF'; END IF;
+  PERFORM payables_private.require_bank_read(v_actor);
+  IF v_as_of > v_today THEN RAISE EXCEPTION 'PAYABLES_FUTURE_DATE_FORBIDDEN:AS_OF'; END IF;
   RETURN QUERY
   WITH acc AS (
     SELECT r.id, r.bank, r.safe_alias, r.currency FROM public.daily_statement_account_registry r WHERE r.status = 'active'
@@ -674,7 +763,7 @@ BEGIN
            u.aggregates_status, u.closing_balance_derived
     FROM public.daily_statement_units_canonical u
     WHERE u.status = 'ingested' AND u.account_registry_id IS NOT NULL AND u.accounting_date <= v_as_of
-    ORDER BY u.account_registry_id, u.accounting_date DESC
+    ORDER BY u.account_registry_id, u.accounting_date DESC, u.id
   ),
   takeover AS (
     SELECT b.bank_account_id, bool_or(b.completeness_attested) AS attested, max(b.cutoff_date) AS cutoff
@@ -683,8 +772,9 @@ BEGIN
   issued AS (
     SELECT f.id, f.bank_account_id, i.issue_date, i.amount,
            (SELECT min(e.accounting_date) FROM public.payables_exits e
-             WHERE e.form_id = f.id AND e.status = 'VALIDATED' AND e.kind IN ('CANCELLATION','REPLACEMENT','BANK_MATCH'))
-             AS exit_date
+             WHERE e.form_id = f.id AND e.status = 'VALIDATED' AND e.kind = 'BANK_MATCH') AS debit_date,
+           (SELECT min(e.accounting_date) FROM public.payables_exits e
+             WHERE e.form_id = f.id AND e.status = 'VALIDATED' AND e.kind IN ('CANCELLATION','REPLACEMENT')) AS cancel_date
     FROM public.payables_cheque_forms f
     CROSS JOIN LATERAL (SELECT x.issue_date, x.amount FROM public.payables_issuances x
                         WHERE x.form_id = f.id ORDER BY x.revision_no DESC LIMIT 1) i
@@ -692,22 +782,31 @@ BEGIN
   ),
   circ AS (
     SELECT a.id AS account,
-      count(s.id) FILTER (WHERE s.issue_date <= v_as_of AND (s.exit_date IS NULL OR s.exit_date > v_as_of))::integer AS n_now,
-      CASE WHEN bool_or(s.amount IS NULL) FILTER (WHERE s.issue_date <= v_as_of AND (s.exit_date IS NULL OR s.exit_date > v_as_of))
-           THEN NULL
-           ELSE coalesce(sum(s.amount) FILTER (WHERE s.issue_date <= v_as_of AND (s.exit_date IS NULL OR s.exit_date > v_as_of)), 0)
-      END AS amt_now,
-      count(s.id) FILTER (WHERE s.amount IS NULL AND s.issue_date <= v_as_of
-                          AND (s.exit_date IS NULL OR s.exit_date > v_as_of))::integer AS unknown_now,
+      count(s.id) FILTER (WHERE s.now_out)::integer AS n_now,
+      CASE WHEN bool_or(s.amount IS NULL) FILTER (WHERE s.now_out) THEN NULL
+           ELSE coalesce(sum(s.amount) FILTER (WHERE s.now_out), 0) END AS amt_now,
+      count(s.id) FILTER (WHERE s.now_out AND s.amount IS NULL)::integer AS unknown_now,
       CASE WHEN lu.accounting_date IS NULL THEN NULL
-           WHEN bool_or(s.amount IS NULL) FILTER (WHERE s.issue_date <= lu.accounting_date
-                AND (s.exit_date IS NULL OR s.exit_date > lu.accounting_date)) THEN NULL
-           ELSE coalesce(sum(s.amount) FILTER (WHERE s.issue_date <= lu.accounting_date
-                AND (s.exit_date IS NULL OR s.exit_date > lu.accounting_date)), 0)
-      END AS amt_at_statement
+           WHEN bool_or(s.amount IS NULL) FILTER (WHERE s.stmt_out) THEN NULL
+           ELSE coalesce(sum(s.amount) FILTER (WHERE s.stmt_out), 0) END AS amt_at_statement,
+      count(s.id) FILTER (WHERE s.unreflected)::integer AS n_unreflected,
+      CASE WHEN lu.accounting_date IS NULL THEN NULL
+           WHEN bool_or(s.amount IS NULL) FILTER (WHERE s.unreflected) THEN NULL
+           ELSE coalesce(sum(s.amount) FILTER (WHERE s.unreflected), 0) END AS amt_unreflected
     FROM acc a
     LEFT JOIN last_unit lu ON lu.account_registry_id = a.id
-    LEFT JOIN issued s ON s.bank_account_id = a.id
+    LEFT JOIN LATERAL (
+      SELECT x.id, x.amount,
+        (x.issue_date <= v_as_of AND coalesce(x.debit_date, 'infinity'::date) > v_as_of
+         AND coalesce(x.cancel_date, 'infinity'::date) > v_as_of) AS now_out,
+        (lu.accounting_date IS NOT NULL AND x.issue_date <= lu.accounting_date
+         AND coalesce(x.debit_date, 'infinity'::date) > lu.accounting_date
+         AND coalesce(x.cancel_date, 'infinity'::date) > lu.accounting_date) AS stmt_out,
+        (lu.accounting_date IS NOT NULL AND x.issue_date <= v_as_of
+         AND coalesce(x.debit_date, 'infinity'::date) > lu.accounting_date
+         AND coalesce(x.cancel_date, 'infinity'::date) > v_as_of) AS unreflected
+      FROM issued x WHERE x.bank_account_id = a.id
+    ) s ON true
     GROUP BY a.id, lu.accounting_date
   ),
   engaged AS (
@@ -743,23 +842,47 @@ BEGIN
       ON r.line_id = l.id AND r.grammar_version = payables_private.cheque_grammar_version(a.bank)
     GROUP BY a.id
   ),
+  stale AS (
+    SELECT st.bank_account_id AS account, count(*)::integer AS n
+    FROM payables_private.stale_match_evidence() st GROUP BY st.bank_account_id
+  ),
   blocking AS (
     SELECT x.bank_account_id AS account, count(*)::integer AS n
     FROM public.payables_exceptions x WHERE x.status = 'OPEN' AND x.blocks_account GROUP BY x.bank_account_id
   ),
+  -- Couverture prouvée par la chaîne des soldes : relevé d'ancrage (dernier
+  -- relevé ingéré au plus tard à la date de reprise) puis chaque relevé
+  -- jusqu'à S, ouverture = clôture du précédent, relevés validés et dérivés.
+  -- Aucun seuil calendaire ne vaut preuve.
   coverage AS (
-    SELECT a.id AS account, max(d.gap)::integer AS gap
+    SELECT a.id AS account, cv.status, cv.issue_date
     FROM acc a
     JOIN takeover tk ON tk.bank_account_id = a.id
     JOIN last_unit lu ON lu.account_registry_id = a.id
     CROSS JOIN LATERAL (
-      SELECT dd - lag(dd) OVER (ORDER BY dd) AS gap
-      FROM (SELECT tk.cutoff AS dd
-            UNION SELECT u.accounting_date FROM public.daily_statement_units_canonical u
-                   WHERE u.account_registry_id = a.id AND u.status = 'ingested'
-                     AND u.accounting_date > tk.cutoff AND u.accounting_date <= lu.accounting_date) z
-    ) d
-    GROUP BY a.id
+      WITH anchor AS (
+        SELECT max(x.accounting_date) AS d FROM public.daily_statement_units_canonical x
+        WHERE x.account_registry_id = a.id AND x.status = 'ingested' AND x.accounting_date <= tk.cutoff
+      ),
+      chain AS (
+        SELECT u.accounting_date AS d, u.opening_balance_derived AS opening, u.closing_balance_derived AS closing,
+               (u.validation_status = 'valid' AND u.aggregates_status = 'derived') AS ok,
+               lag(u.closing_balance_derived) OVER (ORDER BY u.accounting_date, u.id) AS prev_closing,
+               row_number() OVER (ORDER BY u.accounting_date, u.id) AS rn
+        FROM public.daily_statement_units_canonical u CROSS JOIN anchor
+        WHERE u.account_registry_id = a.id AND u.status = 'ingested'
+          AND u.accounting_date >= anchor.d AND u.accounting_date <= lu.accounting_date
+      )
+      SELECT
+        CASE WHEN (SELECT anchor.d FROM anchor) IS NULL OR NOT EXISTS (SELECT 1 FROM chain) THEN 'UNPROVEN'
+             WHEN EXISTS (SELECT 1 FROM chain c WHERE c.rn > 1 AND c.opening IS NOT NULL AND c.prev_closing IS NOT NULL
+                          AND c.opening <> c.prev_closing) THEN 'BROKEN'
+             WHEN EXISTS (SELECT 1 FROM chain c WHERE NOT c.ok OR (c.rn = 1 AND c.closing IS NULL)
+                          OR (c.rn > 1 AND (c.opening IS NULL OR c.prev_closing IS NULL))) THEN 'UNPROVEN'
+             ELSE 'PROVEN' END AS status,
+        (SELECT min(c.d) FROM chain c
+          WHERE NOT c.ok OR (c.rn > 1 AND c.opening IS DISTINCT FROM c.prev_closing)) AS issue_date
+    ) cv
   ),
   assembled AS (
     SELECT a.id, a.bank, a.safe_alias, a.currency, lu.accounting_date AS last_date,
@@ -772,10 +895,11 @@ BEGIN
       CASE WHEN tk.attested THEN 'COMPLETE' WHEN tk.bank_account_id IS NOT NULL THEN 'INCOMPLETE' ELSE 'NOT_STARTED' END AS reg,
       tk.cutoff,
       a.bank IN ('BDK','ORA','ATB','BICIS') AS qualified,
-      c.n_now, c.amt_now, c.unknown_now, c.amt_at_statement,
+      cv.status AS cov_status, cv.issue_date AS cov_issue,
+      c.n_now, c.amt_now, c.unknown_now, c.amt_at_statement, c.n_unreflected, c.amt_unreflected,
       coalesce(eg.amt, 0) AS engaged_amt,
       coalesce(tr.n, 0) AS tr_n, coalesce(tr.amt, 0) AS tr_amt,
-      coalesce(pd.n, 0) AS pending_n, coalesce(bl.n, 0) AS blocking_n, cv.gap
+      coalesce(pd.n, 0) AS pending_n, coalesce(sl.n, 0) AS stale_n, coalesce(bl.n, 0) AS blocking_n
     FROM acc a
     LEFT JOIN last_unit lu ON lu.account_registry_id = a.id
     LEFT JOIN takeover tk ON tk.bank_account_id = a.id
@@ -783,6 +907,7 @@ BEGIN
     LEFT JOIN engaged eg ON eg.account = a.id
     LEFT JOIN transfers tr ON tr.account = a.id
     LEFT JOIN pending pd ON pd.account = a.id
+    LEFT JOIN stale sl ON sl.account = a.id
     LEFT JOIN blocking bl ON bl.account = a.id
     LEFT JOIN coverage cv ON cv.account = a.id
   ),
@@ -792,24 +917,26 @@ BEGIN
       CASE WHEN s.bal_status <> 'AVAILABLE' THEN 'BALANCE_' || s.bal_status END,
       CASE WHEN s.reg <> 'COMPLETE' THEN 'REGISTER_' || s.reg END,
       CASE WHEN s.reg = 'COMPLETE' AND s.last_date IS NOT NULL AND s.last_date < s.cutoff THEN 'STATEMENT_BEFORE_TAKEOVER' END,
+      CASE WHEN s.cov_status IN ('BROKEN','UNPROVEN') THEN 'COVERAGE_' || s.cov_status END,
       CASE WHEN NOT s.qualified THEN 'BANK_NOT_QUALIFIED' END,
       CASE WHEN s.pending_n > 0 THEN 'BANK_FOLLOWUP_PENDING' END,
+      CASE WHEN s.stale_n > 0 THEN 'MATCH_EVIDENCE_STALE' END,
       CASE WHEN s.blocking_n > 0 THEN 'BLOCKING_EXCEPTION_OPEN' END,
-      CASE WHEN s.amt_at_statement IS NULL AND s.last_date IS NOT NULL THEN 'AMOUNT_UNKNOWN' END,
-      -- Calendrier ouvré non arrêté (confirmation 15) : écart provisoire de 3 jours calendaires.
-      CASE WHEN s.gap IS NOT NULL AND s.gap > 3 THEN 'COVERAGE_GAP' END
+      CASE WHEN s.last_date IS NOT NULL AND s.amt_unreflected IS NULL THEN 'AMOUNT_UNKNOWN' END
     ], NULL) AS why
     FROM assembled s
   )
-  SELECT r.id, r.bank, r.safe_alias, r.currency, r.last_date,
-         CASE WHEN r.bal_status = 'AVAILABLE' THEN r.closing END, r.bal_status,
-         r.reg, r.cutoff, r.qualified,
-         coalesce(r.n_now, 0), r.amt_now, coalesce(r.unknown_now, 0), r.amt_at_statement, r.engaged_amt,
-         r.tr_n, r.tr_amt, r.pending_n, r.blocking_n, r.gap,
-         CASE WHEN cardinality(r.why) = 0 THEN r.closing - r.amt_at_statement END,
+  SELECT r.id, r.bank, r.safe_alias, r.currency,
+         v_as_of, v_as_of < v_today, v_today,
+         r.last_date, CASE WHEN r.bal_status = 'AVAILABLE' THEN r.closing END, r.bal_status,
+         r.reg, r.cutoff, r.qualified, r.cov_status, r.cov_issue,
+         coalesce(r.n_now, 0), r.amt_now, coalesce(r.unknown_now, 0), r.amt_at_statement,
+         coalesce(r.n_unreflected, 0), r.amt_unreflected,
+         r.engaged_amt, r.tr_n, r.tr_amt, r.pending_n, r.stale_n, r.blocking_n,
+         CASE WHEN cardinality(r.why) = 0 THEN r.closing - r.amt_unreflected END,
          r.why
   FROM reasons r
-  ORDER BY r.bank, r.safe_alias;
+  ORDER BY r.bank, r.safe_alias, r.id;
 END;
 $$;
 
@@ -826,7 +953,7 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE v_actor uuid := payables_private.require_actor();
 BEGIN
-  PERFORM payables_private.require_read(v_actor);
+  PERFORM payables_private.require_bank_read(v_actor);
   IF p_from IS NULL OR p_to IS NULL OR p_from > p_to OR p_to - p_from > 93 THEN RAISE EXCEPTION 'PAYABLES_PERIOD_INVALID'; END IF;
   -- Le libellé bancaire n'est jamais renvoyé : seuls la famille, le résultat et
   -- la référence extraite sont exposés.
@@ -838,7 +965,7 @@ BEGIN
   LEFT JOIN public.payables_bank_line_references r
     ON r.line_id = l.id AND r.grammar_version = payables_private.cheque_grammar_version(u.bank)
   LEFT JOIN LATERAL (SELECT x.* FROM public.payables_bank_match_proposals x WHERE x.line_id = l.id
-                     ORDER BY x.proposed_at DESC LIMIT 1) m ON true
+                     ORDER BY x.proposed_at DESC, x.id LIMIT 1) m ON true
   WHERE u.account_registry_id = p_bank_account_id AND l.direction = 'debit'
     AND l.accounting_date BETWEEN p_from AND p_to
   ORDER BY l.accounting_date, l.id;
@@ -856,8 +983,9 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', v_table);
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated, service_role', v_table);
     EXECUTE format('GRANT SELECT ON TABLE public.%I TO authenticated', v_table);
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (public.payables_current_actor_can_read())',
-      v_table || '_read', v_table);
+    -- Données bancaires : lecture du domaine ET capacité BANK_READ.
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (public.payables_current_actor_can_read()'
+      ' AND public.payables_current_actor_has_capability(%L))', v_table || '_read', v_table, 'BANK_READ');
   END LOOP;
 END $$;
 
@@ -913,6 +1041,7 @@ GRANT EXECUTE ON FUNCTION public.payables_current_actor_has_capability(text) TO 
 GRANT EXECUTE ON FUNCTION public.payables_current_actor_can_read() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_my_access_v1() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_invoice_overview_v1() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.payables_accounts_v1() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_refresh_bank_references_v1(text,uuid,date,date) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_propose_bank_matches_v1(text,uuid,date) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_decide_bank_match_v1(text,uuid,integer,text,text) TO authenticated;

@@ -62,6 +62,8 @@ const MESSAGES: Record<string, string> = {
   PAYABLES_PERIOD_INVALID: 'La période demandée est invalide.',
   PAYABLES_NOTHING_TO_ALLOCATE: 'Il ne reste rien à engager sur cette facture.',
   PAYABLES_TRANSFER_REFERENCE_DUPLICATE: 'Cette référence bancaire est déjà déclarée pour ce compte.',
+  PAYABLES_READ_INCOMPLETE:
+    'Lecture incomplète (données modifiées pendant la lecture ou volume trop élevé) : rechargez ; aucun total n’est affiché.',
 };
 
 export class PayablesError extends Error {

@@ -119,7 +119,7 @@ SELECT pc_test.grant_cap('gov_a', 'gov_b', u, c) FROM (VALUES
   ('acc3','READ'), ('acc3','CHEQUE_PREPARE_PRINT'), ('acc3','CHEQUE_CONFIRM_ISSUE'), ('acc3','EXIT_REQUEST'),
   ('acc3','EXIT_VALIDATE'), ('acc3','EXCEPTION_INSTRUCT'), ('acc3','SUPPLIER_MANAGE'), ('acc3','INVOICE_MANAGE'),
   ('acc3','TRANSFER_DECLARE'),
-  ('acc4','READ'), ('acc4','BANK_FOLLOWUP'), ('acc4','PARAM_VALIDATE'),
+  ('acc4','READ'), ('acc4','BANK_FOLLOWUP'), ('acc4','BANK_READ'), ('acc4','PARAM_VALIDATE'),
   ('auditor','AUDIT')) AS t(u, c);
 
 -- Révocation : effet immédiat, historique conservé.

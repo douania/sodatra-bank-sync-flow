@@ -5,12 +5,15 @@ import { currentPayablesRuntimeVerdict, isRuntimeRefused } from './payablesRunti
 import type { AccountPositionRow, InvoiceOverviewRow } from './operationalPositionModel';
 import type { WorkQueueRow } from './payablesWorkQueueModel';
 import type {
+  AccountRow,
   BankFollowupLineRow,
   CapabilityGrantRow,
   ChequeContentRow,
   ChequeFormRow,
+  DeliveryRow,
   ExceptionRow,
   ExitRow,
+  IssuanceRow,
   ParameterVersionRow,
   PayablesAccess,
   PaymentRow,
@@ -45,11 +48,48 @@ async function rpc<T>(name: string, args: Json = {}): Promise<T> {
   return data as T;
 }
 
-async function readTable<T>(table: string, columns: string, orderBy: string, ascending = true): Promise<T[]> {
+// Lectures de listes : pages de 1 000 lignes (plafond PostgREST) avec compte
+// exact, jusqu'à la totalité. Toute incohérence (compte absent ou modifié
+// pendant la lecture, page vide prématurée, volume au-delà de la borne) est une
+// lecture incomplète explicite : jamais une liste tronquée en silence, donc
+// jamais un total calculé sur une liste partielle.
+export const READ_PAGE_SIZE = 1000;
+export const READ_MAX_ROWS = 50_000;
+
+type PageResult = { data: unknown[] | null; error: unknown; count: number | null };
+
+function incomplete(): PayablesError {
+  return toPayablesError('PAYABLES_READ_INCOMPLETE');
+}
+
+async function readAllPages<T>(fetchPage: (from: number, to: number) => PromiseLike<PageResult>): Promise<T[]> {
   await assertReady();
-  const { data, error } = await db.from(table).select(columns).order(orderBy, { ascending }).limit(1000);
-  if (error) throw toPayablesError(error, 'Lecture impossible.');
-  return (data ?? []) as T[];
+  const rows: T[] = [];
+  let expected: number | null = null;
+  for (let from = 0; ; from += READ_PAGE_SIZE) {
+    const { data, error, count } = await fetchPage(from, from + READ_PAGE_SIZE - 1);
+    if (error) throw toPayablesError(error, 'Lecture impossible.');
+    if (typeof count !== 'number' || (expected !== null && count !== expected)) throw incomplete();
+    expected = count;
+    if (expected > READ_MAX_ROWS) throw incomplete();
+    const page = (data ?? []) as T[];
+    rows.push(...page);
+    if (rows.length >= expected) break;
+    if (page.length === 0) throw incomplete();
+  }
+  if (rows.length !== expected) throw incomplete();
+  return rows;
+}
+
+function readTable<T>(table: string, columns: string, orderBy: string, ascending = true): Promise<T[]> {
+  // Ordre total (clé + identifiant) : les pages successives ne se chevauchent pas.
+  return readAllPages<T>((from, to) => db.from(table).select(columns, { count: 'exact' })
+    .order(orderBy, { ascending }).order('id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResult>);
+}
+
+function rpcList<T>(name: string, args: Json = {}): Promise<T[]> {
+  // Les fonctions de lecture ordonnent totalement leurs lignes côté serveur.
+  return readAllPages<T>((from, to) => db.rpc(name, args, { count: 'exact' }).range(from, to) as unknown as PromiseLike<PageResult>);
 }
 
 export function newCommandKey(scope: string): string {
@@ -59,12 +99,15 @@ export function newCommandKey(scope: string): string {
 // --- Lectures --------------------------------------------------------------
 
 export const readMyAccess = () => rpc<PayablesAccess>('payables_my_access_v1');
-export const readInvoiceOverview = () => rpc<InvoiceOverviewRow[]>('payables_invoice_overview_v1');
+export const readInvoiceOverview = () => rpcList<InvoiceOverviewRow>('payables_invoice_overview_v1');
+/** Comptes du registre sans aucune donnée bancaire (droit de lecture du domaine). */
+export const readAccounts = () => rpcList<AccountRow>('payables_accounts_v1');
+/** Données bancaires : exige la capacité BANK_READ côté serveur. */
 export const readAccountPositions = (asOf: string | null) =>
-  rpc<AccountPositionRow[]>('payables_account_positions_v1', { p_as_of: asOf });
-export const readWorkQueue = () => rpc<WorkQueueRow[]>('payables_work_queue_v1');
+  rpcList<AccountPositionRow>('payables_account_positions_v1', { p_as_of: asOf });
+export const readWorkQueue = () => rpcList<WorkQueueRow>('payables_work_queue_v1');
 export const readBankFollowupLines = (accountId: string, from: string, to: string) =>
-  rpc<BankFollowupLineRow[]>('payables_bank_followup_lines_v1', { p_bank_account_id: accountId, p_from: from, p_to: to });
+  rpcList<BankFollowupLineRow>('payables_bank_followup_lines_v1', { p_bank_account_id: accountId, p_from: from, p_to: to });
 
 export const listSuppliers = () =>
   readTable<SupplierRow>('payables_suppliers', 'id,canonical_name,status,merged_into_id', 'canonical_name');
@@ -76,6 +119,10 @@ export const listForms = () =>
   readTable<ChequeFormRow>('payables_cheque_forms',
     'id,bank_account_id,cheque_number,payment_id,provenance,state,presigned,unused_reason,created_at,updated_at,row_version',
     'updated_at', false);
+export const listIssuances = () =>
+  readTable<IssuanceRow>('payables_issuances', 'id,form_id,revision_no,path,issue_date,amount,recorded_at', 'recorded_at', false);
+export const listDeliveries = () =>
+  readTable<DeliveryRow>('payables_deliveries', 'id,form_id,delivered_on', 'delivered_on', false);
 export const listContents = () =>
   readTable<ChequeContentRow>('payables_cheque_contents', 'id,form_id,version_no,fields,content_hash,profile_version_id',
     'version_no', false);

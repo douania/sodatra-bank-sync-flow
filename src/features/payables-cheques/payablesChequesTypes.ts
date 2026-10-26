@@ -1,7 +1,7 @@
 export const PAYABLES_CAPABILITIES = [
   'READ', 'AUDIT', 'INVOICE_MANAGE', 'SUPPLIER_MANAGE', 'SUPPLIER_MERGE_VALIDATE', 'CHEQUE_PREPARE_PRINT',
-  'CHEQUE_CONFIRM_ISSUE', 'TRANSFER_DECLARE', 'EXIT_REQUEST', 'EXIT_VALIDATE', 'BANK_FOLLOWUP', 'EXCEPTION_INSTRUCT',
-  'PARAM_PROPOSE', 'PARAM_VALIDATE',
+  'CHEQUE_CONFIRM_ISSUE', 'TRANSFER_DECLARE', 'EXIT_REQUEST', 'EXIT_VALIDATE', 'BANK_FOLLOWUP', 'BANK_READ',
+  'EXCEPTION_INSTRUCT', 'PARAM_PROPOSE', 'PARAM_VALIDATE',
 ] as const;
 export type PayablesCapability = (typeof PAYABLES_CAPABILITIES)[number];
 
@@ -53,6 +53,31 @@ export interface ChequeFormRow {
   created_at: string;
   updated_at: string;
   row_version: number;
+}
+
+/** Compte du registre : métadonnées seules, aucune donnée bancaire. */
+export interface AccountRow {
+  account_id: string;
+  bank: string;
+  account_alias: string;
+  currency: string;
+  bank_qualified: boolean;
+}
+
+export interface IssuanceRow {
+  id: string;
+  form_id: string;
+  revision_no: number;
+  path: 'NORMAL' | 'EXCEPTION' | 'TAKEOVER';
+  issue_date: string;
+  amount: number | null;
+  recorded_at: string;
+}
+
+export interface DeliveryRow {
+  id: string;
+  form_id: string;
+  delivered_on: string;
 }
 
 export interface ChequeContentRow {

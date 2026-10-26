@@ -58,6 +58,7 @@ CREATE TABLE public.daily_statement_units_canonical (
   account_fingerprint     text NOT NULL,
   currency                text NOT NULL,
   accounting_date         date NOT NULL,
+  opening_balance_derived numeric(18,2),
   closing_balance_derived numeric(18,2),
   aggregates_status       text NOT NULL CHECK (aggregates_status IN ('derived','unavailable')),
   validation_status       text NOT NULL CHECK (validation_status IN ('valid','needs_review')),

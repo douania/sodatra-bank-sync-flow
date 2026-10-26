@@ -1,8 +1,10 @@
 # PAYABLES-CHEQUES-CORE — Factures, engagements et chèques émis
 
-> Rapport du lot `GO_IMPLEMENT_PAYABLES_CHEQUES_CORE` (P5). Statut :
-> **implémenté localement, PR en brouillon, migrations non appliquées**. Aucune
-> disponibilité staging ni production n'est revendiquée par ce document.
+> Rapport du lot `GO_IMPLEMENT_PAYABLES_CHEQUES_CORE` (P5), complété par
+> `GO_FIX_PAYABLES_CHEQUES_CORE` (contre-revue CTO du 26 octobre 2026, FAIL ciblé
+> sur `1dddbe3`, corrections en § 6 ter). Statut : **implémenté localement, PR en
+> brouillon, migrations non appliquées**. Aucune disponibilité staging ni
+> production n'est revendiquée par ce document.
 
 ## 1. Métadonnées
 
@@ -10,7 +12,7 @@
 |---|---|
 | Base | `origin/main` = `7c03b548213f129715685be8276c4ec3d7348408` (revérifiée en GET au préflight) |
 | Branche | `codex/payables-cheques-core`, worktree isolé neuf |
-| GO reçus | `GO_IMPLEMENT_PAYABLES_CHEQUES_CORE`, `GO_VALIDATE_LOCAL_PAYABLES_CHEQUES_CORE_SYNTHETIC`, `GO_VALIDATE_LOCAL_PAYABLES_CHEQUES_REAL_FILES_READ_ONLY` |
+| GO reçus | `GO_IMPLEMENT_PAYABLES_CHEQUES_CORE`, `GO_VALIDATE_LOCAL_PAYABLES_CHEQUES_CORE_SYNTHETIC`, `GO_VALIDATE_LOCAL_PAYABLES_CHEQUES_REAL_FILES_READ_ONLY`, puis `GO_FIX_PAYABLES_CHEQUES_CORE` (même branche, même PR ; vérification navigateur locale synthétique autorisée) |
 | Hors GO (non fait) | merge, déploiement, SQL distant, staging, production, impression physique |
 | Référence fonctionnelle | conception canonique Pack 2B R2 (hors dépôt) et arbitrages CTO du 25 octobre 2026 |
 
@@ -58,12 +60,21 @@ bancaire → sortie de circulation.
   références, calculée côté serveur depuis les lignes Daily v2 canoniques ; grammaires
   fermées et versionnées pour BDK, ORA, ATB et BICIS ; frais, retraits et formes
   inconnues exclus ; propositions exactes et non ambiguës confirmées par un comptable ;
-  recontrôle serveur à la confirmation ; remplacement de relevé signalé puis instruit
-  (révocation ou rattachement revérifié), jamais réinterprété en silence.
-- **Vue opérationnelle par compte** : dernier relevé et sa date, solde bancaire ou motif
-  d'indisponibilité, chèques en circulation, engagements chèques non débités, virements
-  déclarés en attente (à part), position indicative après chèques uniquement si toutes
-  les conditions sont réunies, factures restant à engager regroupées par échéance.
+  recontrôle serveur complet à la confirmation (population canonique complète,
+  cutoff conservé, émission courante, relevé validé, référence recalculée), motif
+  d'invalidation consigné ; preuve remplacée ou remise en revue signalée
+  immédiatement, puis instruite (révocation ou rattachement revérifié), jamais
+  réinterprétée en silence. Données bancaires lisibles avec la capacité `BANK_READ`.
+- **Vue opérationnelle par compte** (capacité `BANK_READ`) : chaque projection porte sa
+  date — solde au dernier relevé S, circulation à la date demandée A et au relevé S,
+  chèques non reflétés dans le solde de S (dont ceux émis après S), engagements et
+  virements à l'état courant ; position indicative en A = solde de S − chèques non
+  reflétés, uniquement si toutes les conditions sont réunies, dont une couverture
+  prouvée par la chaîne des soldes ; position historique signalée comme telle ;
+  factures restant à engager regroupées par échéance.
+- **Registre des chèques** : toutes les formules (circuit, reprise initiale, émissions
+  déclarées sans paiement), consultables individuellement, avec les actions autorisées
+  (remise, annulation, correction ; remplacement seulement avec un paiement).
 
 Exclus : comptabilité, SAGE, P4, facilités, encaissements, Fund Position, exports
 officiels de trésorerie, ordres bancaires, reproduction de signature, profils
@@ -74,9 +85,9 @@ d'impression autres qu'ORABANK, corrections ORAB/BIS/BRIDGE/NSIA de Daily v2.
 | Type | Fichiers |
 |---|---|
 | Migrations (nouvelles) | `supabase/migrations/20261026090000_payables_cheques_core.sql`, `supabase/migrations/20261026090100_payables_cheques_bank_followup.sql` |
-| Tests serveur | `supabase/tests/payables_cheques_core/**` (shim, 11 fichiers d'assertions, courses, runner PowerShell, README) |
+| Tests serveur | `supabase/tests/payables_cheques_core/**` (shim, 11 fichiers d'assertions, trois courses réelles à deux sessions, runner PowerShell, README) |
 | Front (nouveaux) | `src/features/payables-cheques/**`, `src/pages/PayablesCheques.tsx` |
-| Modifiés | `src/App.tsx` (route protégée), `src/components/Layout.tsx` (entrée de menu contrôlée), `package.json` (script `test:payables-cheques` uniquement), `.github/workflows/ci.yml` (deux étapes ajoutées), `docs/STATUS_REGISTRY.md`, `docs/MASTER_CONTEXT.md` |
+| Modifiés | `src/App.tsx` (route protégée), `src/components/Layout.tsx` (entrée de menu contrôlée), `package.json` (scripts `test:payables-cheques` et `test:payables-cheques-print` uniquement), `.github/workflows/ci.yml` (deux étapes ajoutées), `docs/STATUS_REGISTRY.md`, `docs/MASTER_CONTEXT.md` |
 | Non touchés | migrations historiques, Daily v2, Collections Core, Auth/RLS existants, `src/integrations/supabase/types.ts`, `.env*`, lockfile, dépendances, artefact MCP, PR #149 |
 
 ## 4. Sécurité et serveur
@@ -91,6 +102,11 @@ d'impression autres qu'ORABANK, corrections ORAB/BIS/BRIDGE/NSIA de Daily v2.
   `authenticated`.
 - RLS en lecture seule fondée sur `READ`/`AUDIT` ; journal du domaine lisible par
   `AUDIT` seulement ; registre de commandes non lisible.
+- Données bancaires (soldes, relevés, lignes, références, rapprochements, sorties par
+  rapprochement) : capacité explicite `BANK_READ` du domaine, contrôlée côté serveur
+  sur chaque lecture (vues `SECURITY DEFINER` et politiques RLS du domaine) ; le droit
+  `READ` seul n'y donne aucun accès. Aucune RLS historique ni Daily v2 modifiée. La
+  liste des comptes (`payables_accounts_v1`) n'expose que banque, alias et devise.
 - Aucune suppression (déclencheurs d'instruction sur toutes les tables) ; faits
   immuables (contenus, signatures, émissions, remises, références, déclarations) ;
   versions décidées immuables.
@@ -111,10 +127,11 @@ Environnement local : Node 22.23.1, npm 10.9.8, ESLint 9.13.0, TypeScript 5.6.3
 | `npx tsc -p tsconfig.app.json --noEmit` | baseline 16 diagnostics ; branche 16 ; **diff exact vide** |
 | `npx tsc -p tsconfig.node.json --noEmit` | 0 erreur |
 | `npm run build` | succès ; artefact `supabase/functions/mcp/index.ts` inchangé |
-| `npm run test:payables-cheques` | 34 tests, 34 réussis, 0 ignoré |
+| `npm run test:payables-cheques` | 39 tests, 39 réussis, 0 ignoré |
+| `npm run test:payables-cheques-print` (preuve navigateur, Chrome sans tête local, données synthétiques, aucune imprimante) | page d'application synthétique de 400 lignes avec un élément en position fixe : **PDF d'exactement 1 page de 170 × 95 mm** ; l'ancienne feuille produisait **28 pages** sur la même page ; capture sous les règles d'impression : seuls les champs à remplir apparaissent |
 | Toutes les suites Node du CI (19 scripts `test:*`, globs Daily v2 dashboard et session, hygiène des journaux) | 22 suites, 0 échec, 0 ignoré |
-| `supabase/tests/payables_cheques_core/run_pg17_replay.ps1`, lancé dans un processus Windows PowerShell 5.1 neuf | 11 fichiers `PASS`, `CONCURRENT_RESERVATION_BLOCKED` et `CONCURRENT_CONFIRMATION_BLOCKED` (la session perdante attend environ 2,9 s puis échoue fermée), `SWITCH_CHANGE_WAITS_FOR_WRITES` (2,6 s), `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS` |
-| `supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1` (non modifié par ce lot) | non exécutable localement : sous Windows PowerShell 5.1, la sortie d'erreur de `docker logs` lève `NativeCommandError` (limite d'environnement antérieure au lot, PowerShell 7 absent du poste) ; le CI l'exécute sous `pwsh` Linux |
+| `supabase/tests/payables_cheques_core/run_pg17_replay.ps1`, lancé dans un processus Windows PowerShell 5.1 neuf | 11 fichiers `PASS` ; `CONCURRENT_RESERVATION_BLOCKED` et `CONCURRENT_CONFIRMATION_BLOCKED` (la session perdante attend environ 2,7 s puis échoue fermée) ; `CONCURRENT_MERGE_SEES_RESERVATION` (la fusion attend la réservation en cours environ 2,6 s puis reste `PROPOSED`, second acteur exigé) ; `SWITCH_CHANGE_WAITS_FOR_WRITES` (2,6 s) ; `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS`. La durée mesurée est désormais celle de la seconde session elle-même (preuve d'attente du verrou), plus le temps total des deux sessions |
+| `supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1` (non modifié par ce lot) | non exécutable localement : sous Windows PowerShell 5.1, la sortie d'erreur de `docker logs` lève `NativeCommandError` (limite d'environnement antérieure au lot, PowerShell 7 absent du poste) ; le CI l'exécute sous `pwsh` Linux (vert sur `1dddbe3` selon la contre-revue) |
 | `git diff --check` | aucune erreur |
 
 Le runner du lot impose désormais l'encodage UTF-8 du tube vers `docker` (sous
@@ -136,6 +153,20 @@ Preuves de mordant (mutations temporaires sur copies, migrations du dépôt non 
 | Recontrôle de la correction de date retiré | 50 échoue (date antérieure à la signature acceptée) |
 | Alerte de débit d'une formule non émise retirée | 60 échoue |
 | Borne « signature postérieure à l'impression » retirée | 41 échoue |
+| Positions lues avec `READ` seul (sans `BANK_READ`) | 60 échoue |
+| Politique RLS des tables bancaires sans `BANK_READ` | 60 échoue |
+| Sorties par rapprochement lisibles sans `BANK_READ` | 60 échoue |
+| Éléments bancaires de la file sans `BANK_READ` | 60 échoue |
+| Contrôle d'ambiguïté sur la population complète retiré | 60 échoue (ligne concurrente acceptée) |
+| Contrôle de validité de l'unité retiré | 60 échoue (relevé en revue accepté) |
+| Contrôle émission corrigée postérieure au débit retiré | 60 échoue |
+| Motif « preuve périmée » retiré de la position | 60 échoue |
+| Position calculée sur la seule circulation au relevé (ancienne formule) | 60 échoue (chèque émis après le relevé ignoré) |
+| Couverture jamais signalée (chaîne rompue tolérée) | 60 échoue |
+| Confirmation par signatures admise sur facture bloquée | 41 échoue |
+| Plafond de déclaration non borné à la réservation sur facture bloquée | 41 échoue (allocation augmentée) |
+| Verrou des factures du fournisseur absorbé retiré (mutation appliquée puis restaurée, empreinte vérifiée) | la course réelle aboutit à une fusion `APPLIED` sans second acteur ; 78 échoue |
+| Lecture paginée arrêtée à la première page | test de pagination du service échoue |
 
 Parité SQL ↔ TypeScript : corpus communs du montant en lettres (40 montants, règles
 traditionnelles) et des grammaires bancaires (25 libellés synthétiques, dont tabulations,
@@ -193,12 +224,14 @@ Git, les tests, les journaux ou la PR.
 9. **Gouvernance** : rattacher un gouverneur à une personne exige un troisième validateur
    (validateur ≠ proposant ≠ utilisateur rattaché).
 10. **Durée des verrous** : 30 minutes par défaut, paramètre de l'interrupteur (5 à 480).
-11. **Confirmation d'émission sur facture bloquée** : admise (contrat S19, « faits déjà
-    réalisés enregistrables ») ; elle ne fait qu'engager la réservation existante du
-    paiement et n'en crée aucune. Alternative possible : refus et passage obligé par
-    l'émission déclarée en exception.
-12. **Correction de facture** : refusée sur facture bloquée ou portant un engagement ;
-    aucune validation par un second acteur dans cette version (à ratifier).
+11. **Facture bloquée — arbitrage CTO du 26 octobre 2026** : des signatures n'attestent
+    pas une émission ; la confirmation normale est refusée (`PAYABLES_INVOICE_BLOCKED`).
+    Le chèque réellement émis reste enregistrable par la voie déclarée en exception
+    (justificatif exigé), sans augmenter l'allocation (engagement au plus égal à la
+    réservation existante, sinon dépassement instruit) ni lever le blocage.
+12. **Correction de facture — arbitrage CTO** : sans allocation active, sans second
+    acteur, sous version attendue et avec historique avant/après conservé ; refusée sur
+    facture bloquée ou portant un engagement.
 13. **Doublon de virement** : une même référence bancaire (casse et blancs de bord
     ignorés) n'est déclarée qu'une fois par compte ; le contrôle est limité au compte
     (une référence identique sur un autre compte n'est pas comparée).
@@ -208,10 +241,23 @@ Git, les tests, les journaux ou la PR.
     incertaine, inutilisée, perdue, détenue pré-signée) : exception
     `UNISSUED_FORM_PRESENTED` bloquant le compte et, si un paiement est rattaché, sa
     facture ; aucune proposition.
-16. **Lecture des relevés par le domaine** : les vues `SECURITY DEFINER` exposent aux
-    détenteurs de `READ` des soldes et montants de lignes Daily v2 (jamais les libellés),
-    indépendamment des rôles de lecture Daily v2. Alternative : exiger en plus le rôle
-    de lecture Daily v2 (décision CTO).
+16. **Lecture des relevés par le domaine — arbitrage CTO** : capacité bancaire explicite
+    `BANK_READ` du domaine, attribuée et retirée comme toute capacité (proposition puis
+    validation par un autre acteur) ; aucune RLS historique modifiée.
+17. **Couverture des relevés** : prouvée par la chaîne des soldes (ouverture de chaque
+    relevé = clôture du précédent, depuis le dernier relevé au plus tard à la date de
+    reprise, relevés validés et dérivés) ; chaîne rompue ou non démontrable = position
+    indisponible. Le seuil calendaire de trois jours est supprimé.
+18. **Chèques non reflétés** : émis au plus tard à la date demandée, sans débit
+    rapproché au plus tard à la date du relevé, non annulés ni remplacés au plus tard à
+    la date demandée ; ils sont tous déduits du solde du relevé, y compris ceux émis
+    après lui.
+19. **Unicité des références** : sur toutes les lignes de débit actives du compte, quelle
+    que soit leur date ou l'état de leur relevé ; la ligne candidate doit appartenir à un
+    relevé ingéré et validé.
+20. **Fusion de fournisseurs** : verrouillage des factures du fournisseur absorbé avant
+    l'évaluation des engagements (ordre fournisseur → facture) ; une réservation en
+    cours est attendue et impose le second acteur.
 
 ## 6 bis. Revue indépendante interne
 
@@ -234,6 +280,22 @@ Revue indépendante (agent distinct, code, migrations et tests) menée avant la 
 | P3 — cycle d'impression : pas de retour après « rien imprimé », écouteur non nettoyé | corrigé : retour à l'état initial après déclaration, écouteur retiré à la fermeture déclarée et au démontage ; contrat de rendu étendu |
 | P3 — numéro de reprise absent accepté (logique NULL) | corrigé par le même durcissement JSON |
 | P3 — autres points | consignés en limites (section 8) |
+
+## 6 ter. Contre-revue CTO du 26 octobre 2026 (`GO_FIX_PAYABLES_CHEQUES_CORE`)
+
+| Constat CTO | Correction | Preuve |
+|---|---|---|
+| P1 — accès bancaire élargi par `READ` | capacité `BANK_READ` exigée par `payables_account_positions_v1`, `payables_bank_followup_lines_v1`, les politiques des tables de références et de propositions, les sorties `BANK_MATCH` et les éléments bancaires de la file ; liste des comptes sans donnée bancaire ; interface masquée sans `BANK_READ` | 60 : refus explicites, tables vides, file sans élément bancaire ; 4 mutations tuées |
+| P1 — recontrôle bancaire incomplet | unicité sur la population canonique complète recalculée depuis les libellés (aucune dépendance à la projection) ; cutoff conservé sur la proposition ; recontrôle de la date d'émission courante, de l'unité (ingérée, validée), de la référence recalculée, verrou partagé sur ligne et unité ; motif consigné | 60 : ligne concurrente postérieure → `REFERENCE_AMBIGUOUS`, émission corrigée après le débit → `ISSUE_AFTER_DEBIT`, relevé remis en revue → `UNIT_NOT_VALID`, non-proposition en revue puis reproposition une fois revalidé ; 3 mutations tuées |
+| P1 — preuve remplacée encore comptée | lecture directe de la preuve périmée (ligne inactive ou unité non validée) : motif `MATCH_EVIDENCE_STALE`, position indisponible et élément de file, avant tout balayage, sans réinterpréter le rapprochement | 60 : avant balayage, position bloquée, élément `MATCH_EVIDENCE_STALE`, rapprochement toujours `CONFIRMED` ; mutation tuée |
+| P1 — risque d'impression multiple | feuille d'impression : tout le reste du document retiré du flux (`display: none`), calque en flux normal à la taille exacte de la page, aucune `visibility` ni position fixe, aucun caractère échappable | preuve navigateur : 1 page de 170 × 95 mm (ancienne feuille : 28 pages) ; test de contrat de rendu |
+| P2 — dates de position | date propre à chaque projection, chèques non reflétés (dont émis après le relevé) déduits, position historique signalée, couverture par chaîne des soldes | 60 : chèque émis après le relevé déduit, position historique, chaîne rompue ; 2 mutations tuées ; tests de modèle |
+| P2 — fusion et paiement concurrents | verrouillage des factures du fournisseur absorbé avant l'évaluation (proposition et décision) | course réelle `CONCURRENT_MERGE_SEES_RESERVATION` + 78 ; mutation tuée |
+| P2 — registre incomplet | registre complet (circuit, reprise, exception sans paiement), consultation individuelle, actions autorisées | tests du modèle de registre |
+| P2 — troncature silencieuse | lectures paginées par pages de 1 000 avec compte exact, ordre total côté serveur ; incohérence = `PAYABLES_READ_INCOMPLETE` explicite, aucun total sur une liste partielle | tests du service ; mutation tuée |
+| Arbitrage — facture bloquée | décision 11 | 41 : confirmation refusée, déclaration sans hausse d'allocation, blocage maintenu |
+| Arbitrage — correction de facture | décision 12 | 30 : version périmée refusée, historique avant/après |
+| Arbitrage — ORABANK premier profil | inchangé : seul le profil ORABANK est ouvert ; registre et suivi multibanques | 20 (profil d'une autre banque refusé) |
 
 ## 7. Conditions de mise en service (hors développement)
 
@@ -269,10 +331,17 @@ Revue indépendante (agent distinct, code, migrations et tests) menée avant la 
   le texte serveur.
 - Une proposition de rapprochement rejetée est reproposée au passage suivant (bruit
   visible, sans effet) ; une réservation reste `RÉSERVÉE` après un dépassement instruit
-  sans allocation (la facture reste couverte, statut à arrêter avec le CTO) ; la fusion
-  de fournisseurs ne verrouille pas les factures du fournisseur absorbé ; les verrous de
-  traitement ne sont pas contrôlés par toutes les écritures (confort d'équipe, jamais
+  sans allocation (la facture reste couverte, statut à arrêter avec le CTO) ; les verrous
+  de traitement ne sont pas contrôlés par toutes les écritures (confort d'équipe, jamais
   l'intégrité, par conception).
-- Lectures de l'interface limitées par le plafond de lignes PostgREST (1 000) : suffisant
-  pour le pilote, à paginer avant un usage à volume.
+- Lectures de l'interface : paginées et complètes jusqu'à 50 000 lignes par liste ; au-delà,
+  ou si les données changent pendant la lecture, la lecture est déclarée incomplète.
+- La chaîne des soldes prouve la continuité nette des relevés, pas l'exhaustivité ligne
+  à ligne : un débit absent compensé par un crédit absent le même jour la laisse intacte
+  (le chèque concerné resterait alors en circulation, ce qui minore la position).
+- La preuve d'impression porte sur le moteur d'impression de Chromium (PDF) ; la
+  qualification sur l'imprimante cible, à l'échelle 100 %, reste à faire sous GO
+  distinct. L'interface n'a pas été exercée contre une base (aucun environnement
+  autorisé) ; le registre et la position sont couverts par des tests de modèle et de
+  service.
 - Revue indépendante obligatoire avant toute fusion ou application.

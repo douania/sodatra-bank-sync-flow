@@ -18,6 +18,7 @@ export const WORK_ITEM_LABELS: Record<string, string> = {
   TAKEOVER_TO_APPROVE: 'Lot de reprise à approuver',
   EXCEPTION_OPEN: 'Exception à instruire',
   BANK_MATCH_TO_DECIDE: 'Rapprochement bancaire à confirmer',
+  MATCH_EVIDENCE_STALE: 'Preuve bancaire d’un rapprochement remplacée ou en revue',
   SUPPLIER_MERGE_TO_VALIDATE: 'Fusion de fournisseurs à valider',
   PARAMETER_TO_VALIDATE: 'Paramètre à valider',
   CAPABILITY_TO_VALIDATE: 'Habilitation à valider',

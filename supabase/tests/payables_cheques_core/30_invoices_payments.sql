@@ -102,6 +102,15 @@ SELECT pc_test.expect_error($$SELECT public.payables_correct_invoice_v1(pc_test.
 SELECT public.payables_correct_invoice_v1(pc_test.key('corr-a2'), pc_test.id('inv_a2'), 1, 350000, NULL, DATE '2026-11-30',
   'Original papier A2', 'Montant mal saisi');
 SELECT pc_test.assert((SELECT remaining FROM pc_test.overview('inv_a2')) = 350000, 'correction before any allocation applied');
+-- Arbitrage CTO : sans allocation active, correction sans second acteur, mais
+-- toujours sous version attendue et avec historique avant/après conservé.
+SELECT pc_test.expect_error($$SELECT public.payables_correct_invoice_v1(pc_test.key('corr-a2-stale'), pc_test.id('inv_a2'), 1,
+  360000, NULL, NULL, 'Original papier A2', 'Version périmée')$$, 'PAYABLES_STALE_VERSION');
+RESET ROLE;
+SELECT pc_test.assert((SELECT count(*) FROM public.payables_events WHERE event_type = 'INVOICE_CORRECTED'
+  AND aggregate_id = pc_test.id('inv_a2') AND metadata #>> '{before,amount}' IS NOT NULL
+  AND metadata #>> '{after,amount}' = '350000') = 1, 'invoice correction history keeps before and after');
+SELECT pc_test.as_user('acc1');
 
 -- Paiements partiels successifs, aucun dépassement (§9-28, 29, 35).
 SELECT pc_test.put('pay_b1a', (public.payables_create_cheque_request_v1(pc_test.key('pay-b1a'), pc_test.id('inv_b1'),

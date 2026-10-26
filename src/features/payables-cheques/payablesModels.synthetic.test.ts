@@ -7,20 +7,27 @@ import {
   dueBucket,
   groupInvoicesByDue,
   indicativeDisplay,
+  positionDates,
+  positionKindLabel,
+  reasonLabel,
   type AccountPositionRow,
   type InvoiceOverviewRow,
 } from './operationalPositionModel';
 import { payablesErrorCode, payablesErrorMessage, toPayablesError } from './payablesErrors';
 import { validatePayablesRuntimeTarget } from './payablesRuntimeTarget';
-import { buildWorkQueue } from './payablesWorkQueueModel';
+import { buildWorkQueue, WORK_ITEM_LABELS } from './payablesWorkQueueModel';
+import { allowedExitKinds, buildChequeRegister } from './chequeRegisterModel';
+import type { ChequeFormRow, IssuanceRow } from './payablesChequesTypes';
 
 function position(overrides: Partial<AccountPositionRow> = {}): AccountPositionRow {
   return {
-    account_id: 'a', bank: 'BDK', account_alias: 'Compte fictif', currency: 'XOF', last_statement_date: '2026-10-05',
+    account_id: 'a', bank: 'BDK', account_alias: 'Compte fictif', currency: 'XOF', as_of: '2026-10-26', is_historical: false,
+    current_state_date: '2026-10-26', last_statement_date: '2026-10-05',
     bank_balance: 5_000_000, balance_status: 'AVAILABLE', register_status: 'COMPLETE', takeover_cutoff: '2026-09-30',
-    bank_qualified: true, circulation_count: 1, circulation_amount: 40_000, circulation_unknown_count: 0,
-    circulation_at_statement_amount: 40_000, engaged_not_debited_amount: 40_000, transfers_pending_count: 1,
-    transfers_pending_amount: 1000, pending_bank_items: 0, open_blocking_exceptions: 0, coverage_gap_days: 3,
+    bank_qualified: true, coverage_status: 'PROVEN', coverage_issue_date: null, circulation_count: 1, circulation_amount: 40_000,
+    circulation_unknown_count: 0, circulation_at_statement_amount: 40_000, unreflected_cheques_count: 1,
+    unreflected_cheques_amount: 40_000, engaged_not_debited_amount: 40_000, transfers_pending_count: 1,
+    transfers_pending_amount: 1000, pending_bank_items: 0, stale_match_evidence: 0, open_blocking_exceptions: 0,
     indicative_position: 4_960_000, indicative_reasons: [], ...overrides,
   };
 }
@@ -42,7 +49,51 @@ test('solde, circulation et position indicative : jamais un zéro de substitutio
   assert.equal(blocked.kind, 'unavailable');
   assert.match(displayText(blocked), /^Indisponible — reprise non attestée exhaustive ; suivi bancaire non à jour$/);
   // Une valeur sans motif mais aussi avec motif n'est jamais affichée.
-  assert.equal(indicativeDisplay(position({ indicative_reasons: ['COVERAGE_GAP'] })).kind, 'unavailable');
+  assert.equal(indicativeDisplay(position({ indicative_reasons: ['COVERAGE_UNPROVEN'] })).kind, 'unavailable');
+});
+
+test('chaque projection porte sa date ; une position historique n’est jamais « actuelle »', () => {
+  const dates = positionDates(position());
+  assert.equal(dates.balance, 'au relevé du 2026-10-05');
+  assert.equal(dates.circulation, 'au 2026-10-26');
+  assert.equal(dates.indicative, 'au 2026-10-26, sur le relevé du 2026-10-05');
+  assert.equal(dates.current, 'état au 2026-10-26');
+  assert.equal(positionKindLabel(position()), 'Position indicative au 2026-10-26');
+  assert.equal(positionKindLabel(position({ as_of: '2026-10-02', is_historical: true })), 'Position historique au 2026-10-02');
+  for (const code of ['COVERAGE_BROKEN', 'COVERAGE_UNPROVEN', 'MATCH_EVIDENCE_STALE']) {
+    assert.notEqual(reasonLabel(code), code, `${code} has a closed label`);
+  }
+  assert.ok(WORK_ITEM_LABELS.MATCH_EVIDENCE_STALE);
+});
+
+function form(overrides: Partial<ChequeFormRow>): ChequeFormRow {
+  return {
+    id: 'f', bank_account_id: 'acc', cheque_number: '0000001', payment_id: 'p', provenance: 'NATIVE', state: 'ISSUED',
+    presigned: false, unused_reason: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
+    row_version: 1, ...overrides,
+  };
+}
+
+test('registre : reprise et émissions sans paiement consultables, zéros conservés', () => {
+  const forms = [
+    form({ id: 'native', cheque_number: '0000003' }),
+    form({ id: 'takeover', cheque_number: '0000001', payment_id: null, provenance: 'TAKEOVER' }),
+    form({ id: 'exception', cheque_number: '0000002', payment_id: null, provenance: 'EXCEPTION' }),
+    form({ id: 'unused', cheque_number: '0000004', state: 'UNUSED' }),
+  ];
+  const issuances: IssuanceRow[] = [
+    { id: 'i1', form_id: 'takeover', revision_no: 1, path: 'TAKEOVER', issue_date: '2026-09-20', amount: 7000, recorded_at: 'x' },
+    { id: 'i2', form_id: 'exception', revision_no: 1, path: 'EXCEPTION', issue_date: '2026-10-20', amount: null, recorded_at: 'x' },
+    { id: 'i3', form_id: 'exception', revision_no: 2, path: 'EXCEPTION', issue_date: '2026-10-20', amount: 9000, recorded_at: 'y' },
+  ];
+  const circulation = buildChequeRegister(forms, issuances, [], [], 'CIRCULATION');
+  assert.deepEqual(circulation.map((e) => e.form.cheque_number), ['0000001', '0000002', '0000003']);
+  assert.equal(circulation[1].issuance?.amount, 9000, 'latest revision of the issuance');
+  assert.deepEqual(buildChequeRegister(forms, issuances, [], [], 'WITHOUT_PAYMENT').map((e) => e.form.id), ['takeover', 'exception']);
+  assert.equal(buildChequeRegister(forms, issuances, [], [], 'ALL').length, 4);
+  assert.deepEqual(allowedExitKinds(circulation[0]), ['CANCELLATION', 'CORRECTION'], 'no replacement without a payment');
+  assert.deepEqual(allowedExitKinds(circulation[2]), ['CANCELLATION', 'REPLACEMENT', 'CORRECTION']);
+  assert.deepEqual(allowedExitKinds(buildChequeRegister(forms, issuances, [], [], 'ALL')[3]), []);
 });
 
 test('échéances : inconnue conservée, aucune facture couverte comptée deux fois', () => {

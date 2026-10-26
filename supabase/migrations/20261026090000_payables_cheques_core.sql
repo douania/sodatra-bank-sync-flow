@@ -187,7 +187,7 @@ CREATE TABLE public.payables_capability_grants (
   capability         text NOT NULL CHECK (capability IN (
                        'READ','AUDIT','INVOICE_MANAGE','SUPPLIER_MANAGE','SUPPLIER_MERGE_VALIDATE',
                        'CHEQUE_PREPARE_PRINT','CHEQUE_CONFIRM_ISSUE','TRANSFER_DECLARE',
-                       'EXIT_REQUEST','EXIT_VALIDATE','BANK_FOLLOWUP','EXCEPTION_INSTRUCT',
+                       'EXIT_REQUEST','EXIT_VALIDATE','BANK_FOLLOWUP','BANK_READ','EXCEPTION_INSTRUCT',
                        'PARAM_PROPOSE','PARAM_VALIDATE')),
   action             text NOT NULL CHECK (action IN ('GRANT','REVOKE')),
   origin             text NOT NULL DEFAULT 'PROPOSAL' CHECK (origin IN ('PROPOSAL','BOOTSTRAP')),
@@ -1511,7 +1511,7 @@ BEGIN
   v_reason := payables_private.safe_text(p_reason, 'REASON', 5, 500);
   IF p_capability NOT IN ('READ','AUDIT','INVOICE_MANAGE','SUPPLIER_MANAGE','SUPPLIER_MERGE_VALIDATE',
        'CHEQUE_PREPARE_PRINT','CHEQUE_CONFIRM_ISSUE','TRANSFER_DECLARE','EXIT_REQUEST','EXIT_VALIDATE',
-       'BANK_FOLLOWUP','EXCEPTION_INSTRUCT','PARAM_PROPOSE','PARAM_VALIDATE') OR p_capability IS NULL THEN
+       'BANK_FOLLOWUP','BANK_READ','EXCEPTION_INSTRUCT','PARAM_PROPOSE','PARAM_VALIDATE') OR p_capability IS NULL THEN
     RAISE EXCEPTION 'PAYABLES_CAPABILITY_UNKNOWN';
   END IF;
   IF p_action IS NULL OR p_action NOT IN ('GRANT','REVOKE') THEN RAISE EXCEPTION 'PAYABLES_ACTION_INVALID'; END IF;
@@ -1908,6 +1908,11 @@ BEGIN
                    OR m.kept_id IN (p_absorbed_id, p_kept_id))) THEN
     RAISE EXCEPTION 'PAYABLES_PROPOSAL_ALREADY_PENDING';
   END IF;
+  -- Synchronisation avec les engagements : toute création ou modification
+  -- d'allocation verrouille sa facture ; les factures du fournisseur absorbé
+  -- sont donc verrouillées AVANT d'évaluer les engagements (ordre fixe
+  -- fournisseur → facture). Une réservation en cours est attendue, jamais ignorée.
+  PERFORM 1 FROM public.payables_invoices i WHERE i.supplier_id = p_absorbed_id ORDER BY i.id FOR UPDATE;
   SELECT EXISTS (SELECT 1 FROM public.payables_allocations a JOIN public.payables_invoices i ON i.id = a.invoice_id
                  WHERE i.supplier_id = p_absorbed_id AND a.status IN ('RESERVED','ENGAGED')) INTO v_touches;
   INSERT INTO public.payables_supplier_merges (absorbed_id, kept_id, status, touches_engagements, proposed_by, reason)
@@ -1946,6 +1951,7 @@ BEGIN
   IF v_merge.proposed_by = v_actor THEN RAISE EXCEPTION 'PAYABLES_SECOND_ACTOR_REQUIRED'; END IF;
   IF p_approve IS NULL THEN RAISE EXCEPTION 'PAYABLES_DECISION_REQUIRED'; END IF;
   PERFORM 1 FROM public.payables_suppliers s WHERE s.id IN (v_merge.absorbed_id, v_merge.kept_id) ORDER BY s.id FOR UPDATE;
+  PERFORM 1 FROM public.payables_invoices i WHERE i.supplier_id = v_merge.absorbed_id ORDER BY i.id FOR UPDATE;
   UPDATE public.payables_supplier_merges SET decided_by = v_actor, decided_at = statement_timestamp(),
          decision_reason = v_reason, status = CASE WHEN p_approve THEN status ELSE 'REJECTED' END,
          row_version = row_version + 1
@@ -2572,6 +2578,10 @@ BEGIN
   PERFORM payables_private.assert_not_future(p_issue_date, 'ISSUE_DATE');
   SELECT * INTO v_payment FROM public.payables_payments WHERE id = v_form.payment_id FOR UPDATE;
   IF v_payment.status <> 'OPEN' THEN RAISE EXCEPTION 'PAYABLES_PAYMENT_STATE_INVALID'; END IF;
+  -- Arbitrage CTO : sur facture bloquée, des signatures n'attestent pas une
+  -- émission. Le fait réel s'enregistre par la voie déclarée en exception
+  -- (justificatif exigé), sans augmenter l'allocation ni lever le blocage.
+  IF payables_private.invoice_blocked(v_payment.invoice_id) THEN RAISE EXCEPTION 'PAYABLES_INVOICE_BLOCKED'; END IF;
   v_content := payables_private.current_content(p_form_id);
   v_rule := payables_private.effective_parameter('SIGNATURE_RULE', v_form.bank_account_id::text, p_issue_date);
   IF v_rule.id IS NULL THEN RAISE EXCEPTION 'PAYABLES_SIGNATURE_RULE_NOT_MET'; END IF;
@@ -2710,13 +2720,19 @@ BEGIN
     evidence_ref, recorded_by, reason)
   VALUES (v_form.id, 1, 'EXCEPTION', p_issue_date, v_amount, p_reason_code, v_evidence, v_actor, v_reason)
   RETURNING id INTO v_issuance;
+  -- Plafond d'engagement automatique : sur facture bloquée (arbitrage CTO),
+  -- jamais au-delà de la réservation existante du paiement ; sinon le restant.
+  IF v_payment.id IS NOT NULL THEN
+    v_ceiling := CASE WHEN payables_private.invoice_blocked(v_invoice.id)
+      THEN (SELECT a.amount FROM public.payables_allocations a WHERE a.payment_id = v_payment.id AND a.status = 'RESERVED')
+      ELSE v_invoice.amount - payables_private.committed_amount(v_invoice.id, v_payment.id) END;
+  END IF;
   -- Montant inconnu sur un paiement rattaché : la facture est bloquée tant que
   -- le montant n'est pas établi (la réservation n'en est pas une preuve).
   v_exception := payables_private.open_exception(v_actor, 'ISSUED_OUTSIDE_CIRCUIT', v_reason, v_invoice.id,
     p_payment_id, v_form.id, p_bank_account_id, (v_payment.id IS NOT NULL AND v_amount IS NULL), true,
     jsonb_build_object('reason_code', p_reason_code, 'amount_known', v_amount IS NOT NULL));
   IF v_payment.id IS NOT NULL THEN
-    v_ceiling := v_invoice.amount - payables_private.committed_amount(v_invoice.id, v_payment.id);
     IF v_amount IS NOT NULL AND v_amount <= v_ceiling THEN
       UPDATE public.payables_allocations SET amount = v_amount, status = 'ENGAGED', updated_at = statement_timestamp(),
              row_version = row_version + 1
@@ -3345,7 +3361,11 @@ BEGIN
         SELECT i.* INTO v_invoice FROM public.payables_invoices i JOIN public.payables_payments p ON p.invoice_id = i.id
           WHERE p.id = v_exc.payment_id FOR UPDATE OF i;
         SELECT * INTO v_payment FROM public.payables_payments WHERE id = v_exc.payment_id FOR UPDATE;
-        IF v_amount <= v_invoice.amount - payables_private.committed_amount(v_invoice.id, v_payment.id) THEN
+        -- Facture bloquée (y compris par cette exception) : jamais au-delà de la
+        -- réservation existante (arbitrage CTO) ; sinon le restant de la facture.
+        IF v_amount <= (CASE WHEN payables_private.invoice_blocked(v_invoice.id)
+             THEN (SELECT a.amount FROM public.payables_allocations a WHERE a.payment_id = v_payment.id AND a.status = 'RESERVED')
+             ELSE v_invoice.amount - payables_private.committed_amount(v_invoice.id, v_payment.id) END) THEN
           UPDATE public.payables_allocations SET amount = v_amount, status = 'ENGAGED', updated_at = statement_timestamp(),
                  row_version = row_version + 1
            WHERE payment_id = v_payment.id AND status = 'RESERVED';
@@ -3570,8 +3590,8 @@ DECLARE v_actor uuid := payables_private.require_actor(); v_caps text[]; v_enabl
 BEGIN
   SELECT array_agg(c ORDER BY c) INTO v_caps
   FROM unnest(ARRAY['READ','AUDIT','INVOICE_MANAGE','SUPPLIER_MANAGE','SUPPLIER_MERGE_VALIDATE','CHEQUE_PREPARE_PRINT',
-    'CHEQUE_CONFIRM_ISSUE','TRANSFER_DECLARE','EXIT_REQUEST','EXIT_VALIDATE','BANK_FOLLOWUP','EXCEPTION_INSTRUCT',
-    'PARAM_PROPOSE','PARAM_VALIDATE']) c
+    'CHEQUE_CONFIRM_ISSUE','TRANSFER_DECLARE','EXIT_REQUEST','EXIT_VALIDATE','BANK_FOLLOWUP','BANK_READ',
+    'EXCEPTION_INSTRUCT','PARAM_PROPOSE','PARAM_VALIDATE']) c
   WHERE payables_private.has_capability(v_actor, c);
   SELECT rc.business_writes_enabled INTO v_enabled FROM payables_private.runtime_control rc WHERE rc.singleton;
   RETURN jsonb_build_object('user_id', v_actor, 'capabilities', coalesce(to_jsonb(v_caps), '[]'::jsonb),
@@ -3612,7 +3632,30 @@ BEGIN
   LEFT JOIN LATERAL (SELECT x.id FROM public.payables_exceptions x
                      WHERE x.invoice_id = i.id AND x.status = 'OPEN' AND x.blocks_invoice LIMIT 1) e ON true
   GROUP BY i.id, s.id
-  ORDER BY i.due_date NULLS LAST, i.created_at;
+  -- Ordre total : la lecture paginée côté client reste déterministe.
+  ORDER BY i.due_date NULLS LAST, i.created_at, i.id;
+END;
+$$;
+
+-- Comptes du registre Daily v2 (métadonnées seules : banque, alias, devise) :
+-- aucune donnée bancaire (solde, relevé, ligne) n'est exposée par cette lecture.
+CREATE FUNCTION public.payables_accounts_v1()
+RETURNS TABLE (account_id uuid, bank text, account_alias text, currency text, bank_qualified boolean)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE v_actor uuid := payables_private.require_actor();
+BEGIN
+  IF NOT (payables_private.has_capability(v_actor, 'READ') OR payables_private.has_capability(v_actor, 'AUDIT')) THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'PAYABLES_CAPABILITY_REQUIRED:READ';
+  END IF;
+  RETURN QUERY
+  SELECT r.id, r.bank, r.safe_alias, r.currency, r.bank IN ('BDK','ORA','ATB','BICIS')
+  FROM public.daily_statement_account_registry r
+  WHERE r.status = 'active'
+  ORDER BY r.bank, r.safe_alias, r.id;
 END;
 $$;
 
@@ -3627,7 +3670,7 @@ BEGIN
     'payables_persons','payables_person_links','payables_parameter_versions','payables_suppliers',
     'payables_supplier_merges','payables_invoices','payables_payments','payables_allocations',
     'payables_cheque_forms','payables_cheque_contents','payables_print_events','payables_signatures',
-    'payables_issuances','payables_deliveries','payables_exits','payables_transfer_declarations',
+    'payables_issuances','payables_deliveries','payables_transfer_declarations',
     'payables_takeover_batches','payables_takeover_items','payables_exceptions','payables_work_locks'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', v_table);
@@ -3637,6 +3680,16 @@ BEGIN
       v_table || '_read', v_table);
   END LOOP;
 END $$;
+
+-- Une sortie par rapprochement porte des dates de relevé bancaire : lisible
+-- seulement avec la capacité bancaire explicite du domaine (BANK_READ).
+ALTER TABLE public.payables_exits ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.payables_exits FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE public.payables_exits TO authenticated;
+CREATE POLICY payables_exits_read ON public.payables_exits
+  FOR SELECT TO authenticated
+  USING (public.payables_current_actor_can_read()
+         AND (kind <> 'BANK_MATCH' OR public.payables_current_actor_has_capability('BANK_READ')));
 
 ALTER TABLE public.payables_capability_grants ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.payables_capability_grants FROM PUBLIC, anon, authenticated, service_role;
@@ -3713,5 +3766,6 @@ GRANT EXECUTE ON FUNCTION public.payables_current_actor_has_capability(text) TO 
 GRANT EXECUTE ON FUNCTION public.payables_current_actor_can_read() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_my_access_v1() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_invoice_overview_v1() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.payables_accounts_v1() TO authenticated;
 
 COMMIT;

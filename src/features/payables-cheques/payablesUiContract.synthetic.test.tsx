@@ -36,6 +36,17 @@ test('le calque imprimé ne contient que les champs à remplir, en millimètres,
   assert.doesNotMatch(html, /signature|0001234|<img/i);
 });
 
+test('impression isolée sur une page : le reste du document est retiré du flux, jamais seulement masqué', () => {
+  const html = renderToStaticMarkup(<ChequePrintSheet fields={fields(250_000)} layout={profile} mode="print" />);
+  const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
+  // Aucun caractère que le rendu HTML échapperait : la règle est identique côté serveur et client.
+  assert.doesNotMatch(css, /&(gt|lt|amp|quot|#x27);/);
+  assert.match(css, /body \*:not\(\.payables-cheque-print-root\):not\(\.payables-cheque-print-root \*\) \{ display: none !important; \}/);
+  assert.match(css, /width: 170mm !important; height: 95mm !important; overflow: hidden !important;/);
+  // Un contenu masqué garde sa hauteur et un calque fixe se répète sur chaque page.
+  assert.doesNotMatch(css, /visibility:\s*hidden|position:\s*fixed/);
+});
+
 test('l’aperçu refuse un débordement au lieu de tronquer', () => {
   const html = renderToStaticMarkup(<ChequePrintSheet fields={fields(1000, 'B'.repeat(49))} layout={profile} mode="preview" />);
   assert.match(html, /role="alert"/);

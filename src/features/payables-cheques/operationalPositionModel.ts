@@ -1,29 +1,41 @@
 // Modèle de la vue opérationnelle par compte. Une valeur absente reste
 // « indisponible » avec son motif, jamais zéro ; aucune somme entre devises ;
 // la position indicative après chèques reste distincte du solde bancaire et de
-// la disponibilité nette en date de valeur (non calculée par ce lot).
+// la disponibilité nette en date de valeur (non calculée par ce lot). Chaque
+// projection est affichée avec sa propre date ; une position historique n'est
+// jamais présentée comme actuelle.
 
 export interface AccountPositionRow {
   account_id: string;
   bank: string;
   account_alias: string;
   currency: string;
+  /** Date demandée A (circulation et position indicative). */
+  as_of: string;
+  is_historical: boolean;
+  /** Date de l'état courant (engagements, virements). */
+  current_state_date: string;
+  /** Date S du dernier relevé : solde et circulation au relevé. */
   last_statement_date: string | null;
   bank_balance: number | null;
   balance_status: string;
   register_status: string;
   takeover_cutoff: string | null;
   bank_qualified: boolean;
+  coverage_status: 'PROVEN' | 'BROKEN' | 'UNPROVEN' | null;
+  coverage_issue_date: string | null;
   circulation_count: number;
   circulation_amount: number | null;
   circulation_unknown_count: number;
   circulation_at_statement_amount: number | null;
+  unreflected_cheques_count: number;
+  unreflected_cheques_amount: number | null;
   engaged_not_debited_amount: number;
   transfers_pending_count: number;
   transfers_pending_amount: number;
   pending_bank_items: number;
+  stale_match_evidence: number;
   open_blocking_exceptions: number;
-  coverage_gap_days: number | null;
   indicative_position: number | null;
   indicative_reasons: string[];
 }
@@ -60,8 +72,29 @@ const REASON_LABELS: Record<string, string> = {
   BANK_FOLLOWUP_PENDING: 'suivi bancaire non à jour',
   BLOCKING_EXCEPTION_OPEN: 'exception bloquante ouverte',
   AMOUNT_UNKNOWN: 'montant d’un chèque en circulation inconnu',
-  COVERAGE_GAP: 'trou de couverture des relevés',
+  COVERAGE_BROKEN: 'chaîne des soldes rompue (relevé manquant ou incohérent)',
+  COVERAGE_UNPROVEN: 'couverture des relevés non prouvée',
+  MATCH_EVIDENCE_STALE: 'preuve bancaire d’un rapprochement remplacée ou en revue',
 };
+
+/** Libellé daté de chaque projection : jamais de date implicite. */
+export function positionDates(row: AccountPositionRow): {
+  balance: string; circulation: string; atStatement: string; indicative: string; current: string;
+} {
+  const statement = row.last_statement_date ?? 'aucun relevé';
+  return {
+    balance: `au relevé du ${statement}`,
+    circulation: `au ${row.as_of}`,
+    atStatement: `au relevé du ${statement}`,
+    indicative: `au ${row.as_of}, sur le relevé du ${statement}`,
+    current: `état au ${row.current_state_date}`,
+  };
+}
+
+/** Une position à une date passée est historique, jamais « disponible actuel ». */
+export function positionKindLabel(row: AccountPositionRow): string {
+  return row.is_historical ? `Position historique au ${row.as_of}` : `Position indicative au ${row.as_of}`;
+}
 
 export function reasonLabel(code: string): string {
   return REASON_LABELS[code] ?? code;

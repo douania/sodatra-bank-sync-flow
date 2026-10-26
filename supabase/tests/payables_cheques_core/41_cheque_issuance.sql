@@ -293,6 +293,32 @@ SELECT public.payables_resolve_exception_v1(pc_test.key('unk-linked-amount'), pc
 SELECT pc_test.assert(NOT (SELECT blocked FROM pc_test.overview('inv_pay_unk'))
   AND (SELECT status FROM public.payables_allocations WHERE payment_id = pc_test.id('pay_unk')) = 'ENGAGED',
   'established amount within ceiling engages once and lifts the invoice block');
+-- Arbitrage CTO : sur facture bloquée, des signatures n'attestent pas une
+-- émission ; le fait réel s'enregistre en exception (justificatif), sans
+-- augmenter l'allocation ni lever le blocage.
+SELECT pc_test.as_user('acc1');
+SELECT pc_test.put('inv_blk', (public.payables_create_invoice_v1(pc_test.key('inv-blk'), pc_test.id('sup_delta'), 'REF-BLK',
+  40000, 'XOF', NULL, NULL, 'Original blk') ->> 'invoice_id')::uuid);
+SELECT pc_test.put('pay_blk', (public.payables_create_cheque_request_v1(pc_test.key('req-blk'), pc_test.id('inv_blk'),
+  pc_test.id('acct_ora'), 'ALL_PAYMENTS', 26000, true, 'Bénéficiaire synthétique blk', 'Paiement partiel') ->> 'payment_id')::uuid);
+RESET ROLE;
+SELECT pc_test.print_cheque('acc1', 'pay_blk', '0003025', DATE '2026-10-26');
+SELECT pc_test.sign('pay_blk', 'p_dir', DATE '2026-10-26');
+SELECT pc_test.as_user('acc1');
+SELECT public.payables_declare_transfer_v1(pc_test.key('trf-blk'), pc_test.id('inv_blk'), pc_test.id('acct_ora'), 'ALL_PAYMENTS',
+  20000, 'VIR-SYN-BLK', 'EXECUTED', DATE '2026-10-26', 'Avis', 'Virement au-delà du restant');
+SELECT pc_test.assert((SELECT blocked FROM pc_test.overview('inv_blk')), 'overrun transfer blocks the invoice');
+SELECT pc_test.as_user('acc2');
+SELECT pc_test.expect_error(pc_test.confirm_sql('pay_blk', DATE '2026-10-26'), 'PAYABLES_INVOICE_BLOCKED');
+SELECT public.payables_declare_issuance_exception_v1(pc_test.key('declare-blk'), pc_test.id('acct_ora'), '0003025', 30000,
+  DATE '2026-10-26', pc_test.id('pay_blk'), 'SIGNATURE_MISSING', 'Copie du chèque', 'Chèque signé remis malgré le blocage');
+SELECT pc_test.assert((SELECT count(*) = 1 AND bool_and(status = 'RESERVED') AND sum(amount) = 26000
+  FROM public.payables_allocations WHERE payment_id = pc_test.id('pay_blk')), 'no allocation increase on a blocked invoice');
+SELECT pc_test.assert((SELECT blocked FROM pc_test.overview('inv_blk'))
+  AND EXISTS (SELECT 1 FROM public.payables_exceptions WHERE payment_id = pc_test.id('pay_blk') AND kind = 'ISSUANCE_OVERRUN'
+  AND status = 'OPEN' AND blocks_invoice), 'recording the fact never lifts the block');
+SELECT pc_test.assert((SELECT state FROM public.payables_cheque_forms WHERE id = pc_test.id('form_pay_blk')) = 'ISSUED',
+  'the real issuance is recorded');
 
 -- Formule d'un paiement abandonné finalement émise : fait enregistré sans
 -- allocation, facture bloquée contre tout second paiement.

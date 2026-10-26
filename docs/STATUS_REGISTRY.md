@@ -33,8 +33,17 @@ formules pré-signées, exceptions, verrous et contrôle de version, gouvernance
 versionnée, projection des références bancaires (BDK, ORA, ATB, BICIS) et vue
 opérationnelle par compte.
 
+Contre-revue CTO du 26 octobre 2026 (FAIL ciblé sur `1dddbe3`) : corrections sous
+`GO_FIX_PAYABLES_CHEQUES_CORE` sur la même branche — capacité bancaire `BANK_READ`,
+recontrôle complet à la confirmation, preuve périmée lue immédiatement, impression
+isolée sur une page (preuve navigateur : 1 page contre 28), position datée avec
+chèques non reflétés et couverture par chaîne des soldes, fusion synchronisée (course
+réelle), registre complet, lectures paginées sans troncature, arbitrages facture
+bloquée et correction de facture.
+
 Validations locales : rejeu PostgreSQL 17 jetable et synthétique (11 fichiers
-d'assertions, courses réelles à deux sessions), 34 tests TypeScript, toutes les
+d'assertions, trois courses réelles à deux sessions), 39 tests TypeScript, preuve
+d'impression navigateur, toutes les
 suites du CI sans régression, ESLint 0 nouvel item, typecheck applicatif identique à
 la baseline (16), projet Node 0 erreur, build réussi ; rejeu agrégé des fonctions
 pures sur les fichiers réels autorisés (empreintes inchangées). Détail :

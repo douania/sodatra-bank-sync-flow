@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,12 +9,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   decideBankMatch,
   proposeBankMatches,
-  readAccountPositions,
+  readAccounts,
   readBankFollowupLines,
   scanMatchEvidence,
 } from './payablesChequesService';
 import type { PayablesAccess } from './payablesChequesTypes';
-import { Amount, Field, hasCapability, nativeSelectClass, PAYABLES_QUERY_ROOT, today, usePayablesMutation } from './payablesUi';
+import {
+  Amount, Field, hasCapability, hasReadCapability, nativeSelectClass, PAYABLES_QUERY_ROOT, today, usePayablesMutation,
+} from './payablesUi';
 
 const OUTCOME_LABELS: Record<string, string> = {
   REFERENCE: 'Référence extraite',
@@ -32,8 +35,20 @@ function monthAgo(): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Lignes, montants et rapprochements bancaires : capacité BANK_READ exigée (aussi côté serveur). */
 export function BankFollowupPanel({ access }: { access: PayablesAccess }) {
-  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'positions', today()], queryFn: () => readAccountPositions(today()) });
+  if (!hasReadCapability(access, 'BANK_READ')) {
+    return (
+      <Alert>
+        <AlertDescription>Le suivi bancaire exige l’habilitation bancaire du module (BANK_READ).</AlertDescription>
+      </Alert>
+    );
+  }
+  return <BankFollowupContent access={access} />;
+}
+
+function BankFollowupContent({ access }: { access: PayablesAccess }) {
+  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'accounts'], queryFn: readAccounts });
   const [accountId, setAccountId] = useState('');
   const [period, setPeriod] = useState({ from: monthAgo(), to: today() });
   const lines = useQuery({

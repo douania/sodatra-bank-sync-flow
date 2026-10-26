@@ -37,7 +37,7 @@ export default function PayablesCheques() {
           <TabsTrigger value="takeover">Reprise</TabsTrigger>
           <TabsTrigger value="parameters">Paramètres</TabsTrigger>
         </TabsList>
-        <TabsContent value="position"><PositionPanel /></TabsContent>
+        <TabsContent value="position"><PositionPanel access={access} /></TabsContent>
         <TabsContent value="queue"><WorkQueuePanel userId={access.user_id} /></TabsContent>
         <TabsContent value="invoices"><InvoicesPanel access={access} /></TabsContent>
         <TabsContent value="cheques"><ChequesPanel access={access} /></TabsContent>

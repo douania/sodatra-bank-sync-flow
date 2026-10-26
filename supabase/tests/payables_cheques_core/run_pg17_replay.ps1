@@ -41,9 +41,13 @@ function Start-SqlJob([string]$relativePath) {
   Start-Job -ScriptBlock {
     param($name, $path)
     $OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    # Durée propre de la session : seule preuve qu'elle a attendu un verrou.
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $path |
       docker exec -e PGOPTIONS=--client-min-messages=warning -i $name psql -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres 2>&1
-    [pscustomobject]@{ ExitCode = $LASTEXITCODE; Text = ($text -join [Environment]::NewLine) }
+    $code = $LASTEXITCODE
+    $watch.Stop()
+    [pscustomobject]@{ ExitCode = $code; Text = ($text -join [Environment]::NewLine); ElapsedMs = $watch.ElapsedMilliseconds }
   } -ArgumentList $containerName, $fullPath
 }
 
@@ -65,18 +69,32 @@ function Wait-PostgresFinalReady {
 function Invoke-Race([string]$sessionA, [string]$sessionB, [string[]]$expectedCodes, [string]$marker) {
   $jobA = Start-SqlJob "$testDir/$sessionA"
   Start-Sleep -Milliseconds 1500
-  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
   $jobB = Start-SqlJob "$testDir/$sessionB"
   $null = Wait-Job -Job $jobA, $jobB -Timeout 60
-  $stopwatch.Stop()
   $resultA = Receive-Job -Job $jobA
   $resultB = Receive-Job -Job $jobB
   Remove-Job -Job $jobA, $jobB -Force
   if ($resultA.ExitCode -ne 0) { throw "$marker winner failed`n$($resultA.Text)" }
   $matched = $expectedCodes | Where-Object { $resultB.Text -like "*$_*" }
   if ($resultB.ExitCode -eq 0 -or -not $matched) { throw "$marker loser did not fail closed`n$($resultB.Text)" }
-  if ($stopwatch.ElapsedMilliseconds -lt 2000) { throw "$marker loser did not wait for the lock ($($stopwatch.ElapsedMilliseconds) ms)" }
-  Write-Output "$marker ($($matched -join ',') after $($stopwatch.ElapsedMilliseconds) ms)"
+  if ($resultB.ElapsedMs -lt 2000) { throw "$marker loser did not wait for the lock ($($resultB.ElapsedMs) ms)" }
+  Write-Output "$marker ($($matched -join ',') after $($resultB.ElapsedMs) ms)"
+}
+
+# Course sérialisée : les deux sessions réussissent ; la seconde attend le
+# verrou de la première, et l'assertion suivante vérifie qu'elle a vu son effet.
+function Invoke-SerializedRace([string]$sessionA, [string]$sessionB, [string]$marker) {
+  $jobA = Start-SqlJob "$testDir/$sessionA"
+  Start-Sleep -Milliseconds 1500
+  $jobB = Start-SqlJob "$testDir/$sessionB"
+  $null = Wait-Job -Job $jobA, $jobB -Timeout 60
+  $resultA = Receive-Job -Job $jobA
+  $resultB = Receive-Job -Job $jobB
+  Remove-Job -Job $jobA, $jobB -Force
+  if ($resultA.ExitCode -ne 0) { throw "$marker first session failed`n$($resultA.Text)" }
+  if ($resultB.ExitCode -ne 0) { throw "$marker second session failed`n$($resultB.Text)" }
+  if ($resultB.ElapsedMs -lt 2000) { throw "$marker second session did not wait for the lock ($($resultB.ElapsedMs) ms)" }
+  Write-Output "$marker (outcome $($resultB.Text.Trim()) after $($resultB.ElapsedMs) ms)"
 }
 
 $existing = docker ps -a --filter "name=^/$containerName$" --format '{{.Names}}'
@@ -100,6 +118,8 @@ try {
   Invoke-Race '71_reserve_session_a.sql' '72_reserve_session_b.sql' @('PAYABLES_INVOICE_FULLY_ENGAGED') 'CONCURRENT_RESERVATION_BLOCKED'
   Invoke-Race '73_confirm_session_a.sql' '74_confirm_session_b.sql' @('PAYABLES_STALE_VERSION', 'PAYABLES_ISSUE_ALREADY_RECORDED') 'CONCURRENT_CONFIRMATION_BLOCKED'
   Invoke-ReplaySqlFile "$testDir/75_concurrency_assert.sql"
+  Invoke-SerializedRace '76_merge_request_session_a.sql' '77_merge_session_b.sql' 'CONCURRENT_MERGE_SEES_RESERVATION'
+  Invoke-ReplaySqlFile "$testDir/78_merge_assert.sql"
 
   # Refermeture concurrente : une écriture en cours garde le verrou partagé de
   # l'interrupteur ; la refermeture doit attendre la fin de sa transaction.

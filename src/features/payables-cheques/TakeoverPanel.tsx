@@ -5,13 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { decideTakeover, listTakeoverBatches, prepareTakeover, readAccountPositions } from './payablesChequesService';
+import { decideTakeover, listTakeoverBatches, prepareTakeover, readAccounts } from './payablesChequesService';
 import type { PayablesAccess } from './payablesChequesTypes';
 import { parseTakeoverLines } from './printFlow';
 import { Amount, Field, hasCapability, nativeSelectClass, PAYABLES_QUERY_ROOT, today, usePayablesMutation } from './payablesUi';
 
 export function TakeoverPanel({ access }: { access: PayablesAccess }) {
-  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'positions', today()], queryFn: () => readAccountPositions(today()) });
+  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'accounts'], queryFn: readAccounts });
   const batches = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'takeover'], queryFn: listTakeoverBatches });
   const [form, setForm] = useState({ accountId: '', cutoff: today(), source: '', lines: '', controlCount: '', controlTotal: '', reason: '' });
   const parsed = useMemo(() => parseTakeoverLines(form.lines), [form.lines]);

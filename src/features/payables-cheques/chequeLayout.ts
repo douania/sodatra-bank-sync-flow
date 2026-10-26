@@ -66,13 +66,26 @@ export function isLayoutFailure(result: ChequeLayoutResult): result is Extract<C
 
 export const PRINT_ROOT_CLASS = 'payables-cheque-print-root';
 
-/** Feuille d'impression : seuls les champs du calque sont visibles, page au format du profil. */
+/**
+ * Feuille d'impression isolée sur UNE page au format du profil. Le calque est
+ * rendu directement sous <body> (portail) ; tout le reste du document est
+ * retiré du flux (display: none), pas seulement masqué : un contenu masqué
+ * garde sa hauteur et produirait des pages supplémentaires, et un calque en
+ * position fixe serait répété sur chacune. Le calque est en flux normal, à la
+ * taille exacte de la page, sans marge, sans débordement ni saut de page.
+ * Aucun caractère échappé par un rendu HTML (>, <, &, guillemets) : la règle
+ * reste identique quel que soit le mode de rendu de la balise <style>.
+ */
 export function chequePrintCss(widthMm: number, heightMm: number): string {
   return `@media print {
   @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
-  body * { visibility: hidden !important; }
-  .${PRINT_ROOT_CLASS}, .${PRINT_ROOT_CLASS} * { visibility: visible !important; }
-  .${PRINT_ROOT_CLASS} { position: fixed; left: 0; top: 0; border: none !important; box-shadow: none !important; }
+  html, body { margin: 0 !important; padding: 0 !important; height: auto !important; min-height: 0 !important;
+    overflow: hidden !important; background: #fff !important; }
+  body *:not(.${PRINT_ROOT_CLASS}):not(.${PRINT_ROOT_CLASS} *) { display: none !important; }
+  .${PRINT_ROOT_CLASS} { position: relative !important; left: 0 !important; top: 0 !important; margin: 0 !important;
+    width: ${widthMm}mm !important; height: ${heightMm}mm !important; overflow: hidden !important;
+    border: none !important; box-shadow: none !important; break-before: avoid; break-after: avoid; break-inside: avoid;
+    page-break-before: avoid; page-break-after: avoid; page-break-inside: avoid; }
 }`;
 }
 

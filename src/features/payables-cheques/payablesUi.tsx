@@ -42,6 +42,11 @@ export function hasCapability(access: PayablesAccess, capability: PayablesCapabi
   return access.business_writes_enabled && access.capabilities.includes(capability);
 }
 
+/** Capacité de lecture : indépendante de l'interrupteur d'écriture. */
+export function hasReadCapability(access: PayablesAccess, capability: PayablesCapability): boolean {
+  return access.capabilities.includes(capability);
+}
+
 export function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">

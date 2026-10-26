@@ -5,18 +5,21 @@ import test from 'node:test';
 // Doubles injectés au niveau du chargement des modules (hook de résolution
 // Node), jamais par une option de l'API de production : le client Supabase et
 // la cible d'exécution sont remplacés avant le premier import du service.
-type Call = { kind: 'rpc' | 'from' | 'session'; name: string; args?: Record<string, unknown> };
+type Call = { kind: 'rpc' | 'from' | 'session' | 'range'; name: string; args?: Record<string, unknown>; range?: number[] };
+type Result = { data: unknown; error: unknown; count?: number | null };
 interface Harness {
   calls: Call[];
   verdict: { allowed: boolean; environment?: string; reason?: string };
   session: { data: { session: unknown }; error: unknown };
-  rpcResult: (name: string) => { data: unknown; error: unknown };
+  rpcResult: (name: string, range: number[] | null) => Result;
+  tableResult: (table: string, range: number[]) => Result;
 }
 const harness: Harness = {
   calls: [],
   verdict: { allowed: true, environment: 'local' },
   session: { data: { session: { user: { id: 'u' } } }, error: null },
   rpcResult: () => ({ data: { ok: true }, error: null }),
+  tableResult: () => ({ data: [], error: null, count: 0 }),
 };
 (globalThis as unknown as { __payablesHarness: Harness }).__payablesHarness = harness;
 
@@ -24,10 +27,20 @@ const supabaseStub = 'data:text/javascript,' + encodeURIComponent(`
   const h = globalThis.__payablesHarness;
   export const supabase = {
     auth: { getSession: async () => { h.calls.push({ kind: 'session', name: 'getSession' }); return h.session; } },
-    rpc: async (name, args) => { h.calls.push({ kind: 'rpc', name, args }); return h.rpcResult(name); },
+    rpc: (name, args) => {
+      h.calls.push({ kind: 'rpc', name, args });
+      return {
+        then: (resolve, reject) => Promise.resolve(h.rpcResult(name, null)).then(resolve, reject),
+        range: async (from, to) => { h.calls.push({ kind: 'range', name, range: [from, to] }); return h.rpcResult(name, [from, to]); },
+      };
+    },
     from: (table) => {
       h.calls.push({ kind: 'from', name: table });
-      const chain = { select: () => chain, order: () => chain, limit: async () => ({ data: [], error: null }) };
+      const chain = {
+        select: () => chain,
+        order: () => chain,
+        range: async (from, to) => { h.calls.push({ kind: 'range', name: table, range: [from, to] }); return h.tableResult(table, [from, to]); },
+      };
       return chain;
     },
   };`);
@@ -50,6 +63,13 @@ function reset() {
   harness.verdict = { allowed: true, environment: 'local' };
   harness.session = { data: { session: { user: { id: 'u' } } }, error: null };
   harness.rpcResult = () => ({ data: { ok: true }, error: null });
+  harness.tableResult = () => ({ data: [], error: null, count: 0 });
+}
+
+function rowsFor(range: number[], total: number): Array<{ id: number }> {
+  const rows: Array<{ id: number }> = [];
+  for (let i = range[0]; i <= Math.min(range[1], total - 1); i += 1) rows.push({ id: i });
+  return rows;
 }
 
 test('cible refusée : aucune session lue, aucun appel réseau', async () => {
@@ -108,6 +128,34 @@ test('refus serveur : vocabulaire fermé, aucune donnée sentinelle restituée',
     assert.doesNotMatch(error.message, /SENTINELLE/);
     return true;
   });
+});
+
+test('lectures paginées jusqu’à la totalité, sans troncature silencieuse', async () => {
+  reset();
+  harness.tableResult = (_table, range) => ({ data: rowsFor(range, 2500), error: null, count: 2500 });
+  const forms = await service.listForms();
+  assert.equal(forms.length, 2500);
+  assert.deepEqual(harness.calls.filter((c) => c.kind === 'range').map((c) => c.range), [[0, 999], [1000, 1999], [2000, 2999]]);
+  reset();
+  harness.rpcResult = (_name, range) => (range ? { data: rowsFor(range, 1500), error: null, count: 1500 } : { data: [], error: null });
+  assert.equal((await service.readWorkQueue()).length, 1500, 'RPC lists are paginated too');
+});
+
+test('lecture incomplète explicite : compte absent, modifié, excessif ou page vide', async () => {
+  reset();
+  harness.tableResult = (_t, range) => ({ data: rowsFor(range, 1500), error: null, count: null });
+  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' });
+  reset();
+  let calls = 0;
+  harness.tableResult = (_t, range) => ({ data: rowsFor(range, 1500), error: null, count: calls++ === 0 ? 1500 : 1501 });
+  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' }, 'data changed during the read');
+  reset();
+  harness.tableResult = (_t, range) => ({ data: rowsFor(range, 60_000), error: null, count: 60_000 });
+  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' });
+  assert.equal(harness.calls.filter((c) => c.kind === 'range').length, 1, 'stops at the first page when over the bound');
+  reset();
+  harness.tableResult = (_t, range) => ({ data: range[0] === 0 ? rowsFor(range, 1500) : [], error: null, count: 1500 });
+  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' }, 'premature empty page');
 });
 
 test('les clés de commande sont uniques par intention', () => {

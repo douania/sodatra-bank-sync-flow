@@ -6,19 +6,22 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   assignChequeForm,
   confirmIssuance,
   declareIssuanceException,
   listContents,
+  listDeliveries,
   listExits,
   listForms,
+  listIssuances,
   listParameters,
   listPayments,
   listPersons,
   listPrintEvents,
   listSignatures,
-  readAccountPositions,
+  readAccounts,
   recordDelivery,
   recordPrintIntent,
   recordPrintOutcome,
@@ -29,9 +32,18 @@ import {
   validateExit,
 } from './payablesChequesService';
 import { ChequePrintSheet } from './ChequePrintSheet';
+import {
+  allowedExitKinds,
+  buildChequeRegister,
+  PROVENANCE_LABELS,
+  REGISTER_FILTER_LABELS,
+  type RegisterEntry,
+  type RegisterFilter,
+} from './chequeRegisterModel';
 import type { ChequeContentFields } from './chequeLayout';
 import {
   ISSUANCE_EXCEPTION_REASONS,
+  type AccountRow,
   type ChequeFormRow,
   type PayablesAccess,
   type PaymentRow,
@@ -57,7 +69,9 @@ function useChequeData() {
   const persons = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'persons'], queryFn: listPersons });
   const parameters = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'parameters'], queryFn: listParameters });
   const exits = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'exits'], queryFn: listExits });
-  return { payments, forms, contents, printEvents, signatures, persons, parameters, exits };
+  const issuances = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'issuances'], queryFn: listIssuances });
+  const deliveries = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'deliveries'], queryFn: listDeliveries });
+  return { payments, forms, contents, printEvents, signatures, persons, parameters, exits, issuances, deliveries };
 }
 
 function PrintStep({ form, contentId, fields, layout, pendingEventId }: {
@@ -173,7 +187,6 @@ function ChequeRow({ payment, access, data }: { payment: PaymentRow; access: Pay
   const [signature, setSignature] = useState({ personId: '', signedOn: today() });
   const [issue, setIssue] = useState({ date: today(), presigned: false });
   const [reason, setReason] = useState('');
-  const [exitForm, setExitForm] = useState({ kind: 'CANCELLATION', beneficiary: '', amount: '', issueDate: '', evidence: '' });
   const [exceptionForm, setExceptionForm] = useState({ reasonCode: 'OTHER_OUTSIDE_CIRCUIT', amount: String(payment.amount), evidence: '' });
 
   const assignMutation = usePayablesMutation('assign-form', (key, _: void) => assignChequeForm(key, payment.id, payment.row_version,
@@ -191,13 +204,6 @@ function ChequeRow({ payment, access, data }: { payment: PaymentRow; access: Pay
     amount: /^[1-9][0-9]*$/.test(exceptionForm.amount) ? Number(exceptionForm.amount) : null, issueDate: issue.date,
     paymentId: payment.id, reasonCode: exceptionForm.reasonCode, evidenceRef: exceptionForm.evidence, reason,
   }), 'Émission déclarée en exception (aucune approbation créée).');
-  const deliveryMutation = usePayablesMutation('delivery', (key, _: void) => recordDelivery(key, form!.id, issue.date, null),
-    'Remise enregistrée.');
-  const exitMutation = usePayablesMutation('request-exit', (key, _: void) => requestExit(key, form!.id, form!.row_version, exitForm.kind,
-    exitForm.kind === 'REPLACEMENT'
-      ? { ...(exitForm.beneficiary ? { beneficiary: exitForm.beneficiary } : {}), ...(exitForm.amount ? { amount: Number(exitForm.amount) } : {}) }
-      : exitForm.kind === 'CORRECTION' ? { issue_date: exitForm.issueDate } : {},
-    exitForm.evidence, reason), 'Demande transmise pour validation par un autre comptable.');
 
   const canPrepare = hasCapability(access, 'CHEQUE_PREPARE_PRINT');
   const canConfirm = hasCapability(access, 'CHEQUE_CONFIRM_ISSUE');
@@ -294,37 +300,156 @@ function ChequeRow({ payment, access, data }: { payment: PaymentRow; access: Pay
           </div>
         )}
 
-        {form?.state === 'ISSUED' && (
-          <div className="space-y-3">
-            {canConfirm && (
-              <div className="flex gap-2">
-                <Input aria-label="Date de remise" type="date" value={issue.date} onChange={(e) => setIssue({ ...issue, date: e.target.value })} />
-                <Button variant="outline" onClick={() => deliveryMutation.mutate()}>Remise au bénéficiaire</Button>
-              </div>
-            )}
-            {hasCapability(access, 'EXIT_REQUEST') && (
-              <div className="grid gap-2 sm:grid-cols-5">
-                <select aria-label="Type de sortie" className={nativeSelectClass} value={exitForm.kind}
-                  onChange={(e) => setExitForm({ ...exitForm, kind: e.target.value })}>
-                  <option value="CANCELLATION">Annulation</option>
-                  <option value="REPLACEMENT">Remplacement</option>
-                  <option value="CORRECTION">Correction de la date d’émission</option>
-                </select>
-                {exitForm.kind === 'REPLACEMENT' && (
-                  <Input aria-label="Nouveau bénéficiaire (facultatif)" value={exitForm.beneficiary}
-                    onChange={(e) => setExitForm({ ...exitForm, beneficiary: e.target.value })} />
-                )}
-                {exitForm.kind === 'CORRECTION' && (
-                  <Input aria-label="Date réelle corrigée" type="date" value={exitForm.issueDate}
-                    onChange={(e) => setExitForm({ ...exitForm, issueDate: e.target.value })} />
-                )}
-                <Input aria-label="Justificatif de la sortie" placeholder="Justificatif" value={exitForm.evidence}
-                  onChange={(e) => setExitForm({ ...exitForm, evidence: e.target.value })} />
-                <Button variant="outline" onClick={() => exitMutation.mutate()} disabled={reason.trim().length < 5}>Demander</Button>
-              </div>
-            )}
-          </div>
+        {form?.state === 'ISSUED' && <IssuedFormActions form={form} access={access} />}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Actions sur un chèque émis en circulation, quelle que soit son origine. */
+function IssuedFormActions({ form, access }: { form: ChequeFormRow; access: PayablesAccess }) {
+  const kinds = allowedExitKinds({
+    form, issuance: null, issuanceRevisions: [], delivery: null, exits: [], hasPayment: form.payment_id !== null,
+    inCirculation: form.state === 'ISSUED',
+  });
+  const [reason, setReason] = useState('');
+  const [deliveredOn, setDeliveredOn] = useState(today());
+  const [exitForm, setExitForm] = useState({ kind: 'CANCELLATION', beneficiary: '', amount: '', issueDate: '', evidence: '' });
+  const deliveryMutation = usePayablesMutation('delivery', (key, _: void) => recordDelivery(key, form.id, deliveredOn, null),
+    'Remise enregistrée.');
+  const exitMutation = usePayablesMutation('request-exit', (key, _: void) => requestExit(key, form.id, form.row_version, exitForm.kind,
+    exitForm.kind === 'REPLACEMENT'
+      ? { ...(exitForm.beneficiary ? { beneficiary: exitForm.beneficiary } : {}), ...(exitForm.amount ? { amount: Number(exitForm.amount) } : {}) }
+      : exitForm.kind === 'CORRECTION' ? { issue_date: exitForm.issueDate } : {},
+    exitForm.evidence, reason), 'Demande transmise pour validation par un autre comptable.');
+  return (
+    <div className="space-y-3">
+      <Field label="Motif (pour les actions qui l’exigent)" htmlFor={`issued-reason-${form.id}`}>
+        <Input id={`issued-reason-${form.id}`} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Field>
+      {hasCapability(access, 'CHEQUE_CONFIRM_ISSUE') && (
+        <div className="flex gap-2">
+          <Input aria-label="Date de remise" type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} />
+          <Button variant="outline" onClick={() => deliveryMutation.mutate()}>Remise au bénéficiaire</Button>
+        </div>
+      )}
+      {hasCapability(access, 'EXIT_REQUEST') && kinds.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-5">
+          <select aria-label="Type de sortie" className={nativeSelectClass} value={exitForm.kind}
+            onChange={(e) => setExitForm({ ...exitForm, kind: e.target.value })}>
+            {kinds.includes('CANCELLATION') && <option value="CANCELLATION">Annulation</option>}
+            {kinds.includes('REPLACEMENT') && <option value="REPLACEMENT">Remplacement</option>}
+            {kinds.includes('CORRECTION') && <option value="CORRECTION">Correction de la date d’émission</option>}
+          </select>
+          {exitForm.kind === 'REPLACEMENT' && (
+            <Input aria-label="Nouveau bénéficiaire (facultatif)" value={exitForm.beneficiary}
+              onChange={(e) => setExitForm({ ...exitForm, beneficiary: e.target.value })} />
+          )}
+          {exitForm.kind === 'CORRECTION' && (
+            <Input aria-label="Date réelle corrigée" type="date" value={exitForm.issueDate}
+              onChange={(e) => setExitForm({ ...exitForm, issueDate: e.target.value })} />
+          )}
+          <Input aria-label="Justificatif de la sortie" placeholder="Justificatif" value={exitForm.evidence}
+            onChange={(e) => setExitForm({ ...exitForm, evidence: e.target.value })} />
+          <Button variant="outline" onClick={() => exitMutation.mutate()} disabled={reason.trim().length < 5}>Demander</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const EXIT_KIND_LABELS: Record<string, string> = {
+  CANCELLATION: 'Annulation', REPLACEMENT: 'Remplacement', CORRECTION: 'Correction de date', BANK_MATCH: 'Débit rapproché',
+};
+
+function RegisterDetail({ entry, access }: { entry: RegisterEntry; access: PayablesAccess }) {
+  return (
+    <div className="space-y-3 rounded border p-3" data-testid="register-detail">
+      <div className="text-sm">
+        <span className="font-medium">N° {entry.form.cheque_number}</span> · {PROVENANCE_LABELS[entry.form.provenance]} ·{' '}
+        {FORM_STATE_LABELS[entry.form.state]}{entry.hasPayment ? '' : ' · sans paiement rattaché'}
+      </div>
+      <div className="text-sm">
+        Émission : {entry.issuanceRevisions.length === 0 ? 'aucune' : entry.issuanceRevisions.map((i) =>
+          `révision ${i.revision_no} (${i.path}) le ${i.issue_date}, ${i.amount === null ? 'montant inconnu' : `${i.amount} XOF`}`).join(' ; ')}
+      </div>
+      <div className="text-sm">Remise : {entry.delivery ? `le ${entry.delivery.delivered_on}` : 'non enregistrée'}</div>
+      <div className="text-sm">
+        Sorties : {entry.exits.length === 0 ? 'aucune' : entry.exits.map((e) =>
+          `${EXIT_KIND_LABELS[e.kind] ?? e.kind} (${e.status})`).join(' ; ')}
+      </div>
+      {entry.inCirculation && <IssuedFormActions form={entry.form} access={access} />}
+    </div>
+  );
+}
+
+/** Registre complet : circuit, reprise et émissions déclarées sans paiement. */
+function ChequeRegister({ access, data, accounts }: {
+  access: PayablesAccess; data: ReturnType<typeof useChequeData>; accounts: AccountRow[];
+}) {
+  const [filter, setFilter] = useState<RegisterFilter>('CIRCULATION');
+  const [selected, setSelected] = useState<string | null>(null);
+  const entries = useMemo(() => buildChequeRegister(data.forms.data ?? [], data.issuances.data ?? [],
+    data.deliveries.data ?? [], data.exits.data ?? [], filter),
+  [data.forms.data, data.issuances.data, data.deliveries.data, data.exits.data, filter]);
+  const error = data.forms.error ?? data.issuances.error ?? data.deliveries.error ?? data.exits.error;
+  const accountLabel = (id: string) => {
+    const account = accounts.find((a) => a.account_id === id);
+    return account ? `${account.bank} — ${account.account_alias}` : id;
+  };
+  const selectedEntry = entries.find((e) => e.form.id === selected);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Registre des chèques</CardTitle>
+        <CardDescription>
+          Toutes les formules : circuit, reprise initiale et émissions déclarées sans paiement. Chaque chèque est consultable
+          individuellement ; les actions autorisées y sont proposées.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <select aria-label="Filtre du registre" className={nativeSelectClass} value={filter}
+          onChange={(e) => { setFilter(e.target.value as RegisterFilter); setSelected(null); }}>
+          {(Object.keys(REGISTER_FILTER_LABELS) as RegisterFilter[]).map((f) => (
+            <option key={f} value={f}>{REGISTER_FILTER_LABELS[f]}</option>
+          ))}
+        </select>
+        {error && <Alert variant="destructive"><AlertDescription>{(error as Error).message}</AlertDescription></Alert>}
+        {!error && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>N°</TableHead>
+                <TableHead>Compte</TableHead>
+                <TableHead>Origine</TableHead>
+                <TableHead>État</TableHead>
+                <TableHead>Émis le</TableHead>
+                <TableHead>Montant</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {entries.map((entry) => (
+                <TableRow key={entry.form.id} data-testid="register-row">
+                  <TableCell className="font-mono">{entry.form.cheque_number}</TableCell>
+                  <TableCell>{accountLabel(entry.form.bank_account_id)}</TableCell>
+                  <TableCell>{PROVENANCE_LABELS[entry.form.provenance]}{entry.hasPayment ? '' : ' (sans paiement)'}</TableCell>
+                  <TableCell>{FORM_STATE_LABELS[entry.form.state]}</TableCell>
+                  <TableCell>{entry.issuance?.issue_date ?? '—'}</TableCell>
+                  <TableCell>{entry.issuance ? <Amount value={entry.issuance.amount} /> : '—'}</TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="outline"
+                      onClick={() => setSelected(selected === entry.form.id ? null : entry.form.id)}>
+                      {selected === entry.form.id ? 'Fermer' : 'Consulter'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
+        {!error && entries.length === 0 && <p className="text-sm text-muted-foreground">Aucun chèque pour ce filtre.</p>}
+        {selectedEntry && <RegisterDetail entry={selectedEntry} access={access} />}
       </CardContent>
     </Card>
   );
@@ -332,7 +457,7 @@ function ChequeRow({ payment, access, data }: { payment: PaymentRow; access: Pay
 
 export function ChequesPanel({ access }: { access: PayablesAccess }) {
   const data = useChequeData();
-  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'positions', today()], queryFn: () => readAccountPositions(today()) });
+  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'accounts'], queryFn: readAccounts });
   const cheques = useMemo(() => (data.payments.data ?? []).filter((p) => p.mode === 'CHEQUE'
     && ['OPEN', 'ISSUED'].includes(p.status)), [data.payments.data]);
   const pendingExits = (data.exits.data ?? []).filter((e) => e.status === 'REQUESTED');
@@ -356,6 +481,8 @@ export function ChequesPanel({ access }: { access: PayablesAccess }) {
       )}
       {cheques.map((payment) => <ChequeRow key={payment.id} payment={payment} access={access} data={data} />)}
       {cheques.length === 0 && <p className="text-sm text-muted-foreground">Aucun paiement par chèque en cours.</p>}
+
+      <ChequeRegister access={access} data={data} accounts={accounts.data ?? []} />
 
       {hasCapability(access, 'EXIT_VALIDATE') && pendingExits.length > 0 && (
         <Card>

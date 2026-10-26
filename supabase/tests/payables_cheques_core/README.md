@@ -14,9 +14,11 @@ powershell -ExecutionPolicy Bypass -File supabase/tests/payables_cheques_core/ru
 
 Le runner crée un unique conteneur `postgres:17-alpine` au nom aléatoire, applique
 le shim Supabase/Daily v2 (y compris le privilège `service_role` par défaut observé
-en staging), les deux migrations et les assertions, exécute deux courses réelles à
-deux sessions et une refermeture concurrente de l'interrupteur, puis supprime le
-conteneur dans `finally`.
+en staging), les deux migrations et les assertions, exécute trois courses réelles à
+deux sessions (la durée mesurée est celle de la seconde session : preuve qu'elle a
+attendu le verrou) et une refermeture concurrente de l'interrupteur, puis supprime le
+conteneur dans `finally`. Le SQL est transmis à `docker` en UTF-8 imposé (sous Windows
+PowerShell 5.1, le tube est ASCII par défaut).
 
 | Fichier | Couverture |
 |---|---|
@@ -28,10 +30,16 @@ conteneur dans `finally`.
 | `40_cheque_print_issue.sql` | formule, contenu signable, impression, réimpression |
 | `41_cheque_issuance.sql` | formules gâchées/incertaines, signatures, émission (deux voies), remise |
 | `50_exits_takeover_exceptions.sql` | annulation, remplacement, correction, reprise, pré-signées, instruction |
-| `60_bank_followup_position.sql` | grammaires (corpus partagé), propositions, remplacements de relevé, vue par compte |
+| `60_bank_followup_position.sql` | grammaires (corpus partagé), propositions, recontrôle complet, preuve périmée, capacité `BANK_READ`, vue par compte datée, chaîne des soldes |
 | `70`–`75` | courses réelles : réservation simultanée, double confirmation |
+| `76`–`78` | course réelle : fusion de fournisseurs pendant une réservation |
 | `80_immutability_hygiene.sql` | ajout seul, immuabilité, vocabulaire fermé, refermeture |
 
 Marqueurs attendus en fin de rejeu : `PASS <fichier>` pour chaque fichier,
 `CONCURRENT_RESERVATION_BLOCKED`, `CONCURRENT_CONFIRMATION_BLOCKED`,
-`SWITCH_CHANGE_WAITS_FOR_WRITES` et `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS`.
+`CONCURRENT_MERGE_SEES_RESERVATION`, `SWITCH_CHANGE_WAITS_FOR_WRITES` et
+`PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS`.
+
+Preuve d'impression (hors CI, Chromium local, données synthétiques, aucune
+imprimante) : `npm run test:payables-cheques-print` doit afficher
+`PRINT_ISOLATION_PAGES=1` et `PRINT_ISOLATION_PAGE_MM=170x95`.

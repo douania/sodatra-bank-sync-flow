@@ -11,7 +11,7 @@ import {
   createSupplier,
   declareTransfer,
   listSuppliers,
-  readAccountPositions,
+  readAccounts,
   readInvoiceOverview,
 } from './payablesChequesService';
 import type { PayablesAccess } from './payablesChequesTypes';
@@ -24,7 +24,7 @@ function parseAmount(text: string): number | null {
 export function InvoicesPanel({ access }: { access: PayablesAccess }) {
   const suppliers = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'suppliers'], queryFn: listSuppliers });
   const invoices = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'invoices'], queryFn: readInvoiceOverview });
-  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'positions', today()], queryFn: () => readAccountPositions(today()) });
+  const accounts = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'accounts'], queryFn: readAccounts });
   const activeSuppliers = useMemo(() => (suppliers.data ?? []).filter((s) => s.status === 'ACTIVE'), [suppliers.data]);
 
   const [supplierName, setSupplierName] = useState('');
