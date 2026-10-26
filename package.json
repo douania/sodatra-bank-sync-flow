@@ -27,6 +27,7 @@
     "test:xlsx-characterization": "tsx --test src/services/xlsxUpgrade.characterization.test.ts",
     "test:build-provenance": "tsx --test src/config/buildProvenance.synthetic.test.ts",
     "test:internal-book": "tsx --test src/services/internalBookExcelParser.characterization.test.ts src/services/internalBookExcelParser.synthetic.test.ts src/services/internalBookExcelParser.validationReport.test.ts src/services/internalBookFileDetection.test.ts src/services/internalBookImportOrchestrator.test.ts src/services/internalBookImportResult.test.ts src/services/internalBookImportSelector.test.ts src/services/internalBookProcessingResultAdapter.test.ts src/services/internalBookRuntimeProcessingService.test.ts",
+    "test:payables-cheques": "tsx --test src/features/payables-cheques/*.synthetic.test.ts src/features/payables-cheques/*.synthetic.test.tsx",
     "preview": "vite preview"
   },
   "dependencies": {

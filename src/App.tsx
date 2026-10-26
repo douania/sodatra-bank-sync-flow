@@ -16,6 +16,7 @@ import DocumentUnderstanding from "./pages/DocumentUnderstanding";
 import DailyStatementV2 from "./pages/DailyStatementV2";
 import QualityControl from "./pages/QualityControl";
 import CollectionsCore from "./pages/CollectionsCore";
+import PayablesCheques from "./pages/PayablesCheques";
 import NotFound from "./pages/NotFound";
 import { useDailyV2Access } from "./features/daily-v2/dailyV2Access";
 import { DailyV2AccessFeedback } from "./features/daily-v2/session/DailyV2AccessFeedback";
@@ -23,6 +24,10 @@ import {
   CollectionsCorePilotGateProvider,
   useCollectionsCorePilotGate,
 } from "./features/collections-core/CollectionsCorePilotGate";
+import {
+  PayablesChequesGateProvider,
+  usePayablesChequesGate,
+} from "./features/payables-cheques/PayablesChequesGate";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +61,22 @@ const CollectionsCoreRoute = () => {
   return <CollectionsCore />;
 };
 
+const PayablesChequesRoute = () => {
+  const { gate } = usePayablesChequesGate();
+  if (gate.status === 'checking') {
+    return <div className="py-12 text-center text-sm text-muted-foreground">Vérification des habilitations…</div>;
+  }
+  if (gate.status === 'blocked') {
+    return (
+      <div role="alert" className="mx-auto max-w-xl rounded-lg border bg-card p-6 shadow-sm">
+        <h1 className="text-lg font-semibold">Module chèques non disponible</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{gate.reason}</p>
+      </div>
+    );
+  }
+  return <PayablesCheques />;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -64,6 +85,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <CollectionsCorePilotGateProvider>
+          <PayablesChequesGateProvider>
             <Layout>
               <Routes>
               <Route path="/" element={<Index />} />
@@ -74,12 +96,14 @@ const App = () => (
               <Route path="/upload-bulk" element={<ProtectedRoute><Navigate to="/upload" replace /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
               <Route path="/collections-remittances" element={<ProtectedRoute><CollectionsCoreRoute /></ProtectedRoute>} />
+              <Route path="/payables-cheques" element={<ProtectedRoute><PayablesChequesRoute /></ProtectedRoute>} />
               <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
               <Route path="/daily-statements" element={<ProtectedRoute><DailyV2Route /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
               </Routes>
             </Layout>
+          </PayablesChequesGateProvider>
           </CollectionsCorePilotGateProvider>
         </AuthProvider>
       </BrowserRouter>

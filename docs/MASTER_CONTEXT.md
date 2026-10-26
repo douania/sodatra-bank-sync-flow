@@ -138,6 +138,7 @@ Pas d'API bancaire directe.
 | Quality Control | `/quality-control` | `LEGACY_TO_RETIRE_OR_ISOLATE` — **consultatif** depuis Pack 0 : aucune correction validée ni persistée ; seuls les crédits bancaires explicites servent de preuve ; sans preuve exploitable, « contrôle non évaluable ». La capacité de contrôle qualité V1 reste due dans les parcours métier |
 | Reconciliation | `/reconciliation` | `LEGACY_TO_RETIRE_OR_ISOLATE` — **consultation seule** depuis Pack 0 : synchronisation Excel directe, marquage manuel effet/chèque et suppression de doublons neutralisés sur toutes les cibles (barrière d'interface, accès serveur non révoqués) |
 | Daily v2 | `/daily-statements` | Runtime et scopes serveur publiés/appliqués ; verrous staging et production observés fermés le 2026-09-07 (maître et scopes `daily`/`admin`/`backfill` à `false` ; `GO_READ_STAGING_PACK_0_DB`, `GO_PRODUCTION_PACK_0_READ_ONLY_PREFLIGHT`) ; premier pilote réel ORABANK validé avec réserves jusqu'au reporting, puis reverrouillé ; profils CSV BDK/ORA et Excel ONLINE ATB/BICIS/BIS/BRIDGE éligibles, sans qualification production générale de ces profils |
+| Factures, engagements et chèques | `/payables-cheques` | **Candidat local** (`GO_IMPLEMENT_PAYABLES_CHEQUES_CORE`, PR en brouillon) : migrations `20261026090000` et `20261026090100` **appliquées à aucun environnement** ; interrupteur serveur fermé par défaut ; garde client refusant la production ; aucune disponibilité staging ou production. Voir `docs/PAYABLES_CHEQUES_CORE_REPORT.md` |
 
 ## Modules supprimés / retirés
 

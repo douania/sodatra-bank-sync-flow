@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
 import { useCollectionsCorePilotGate } from '@/features/collections-core/CollectionsCorePilotGate';
+import { usePayablesChequesGate } from '@/features/payables-cheques/PayablesChequesGate';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
@@ -38,6 +39,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   const { user, signOut } = useAuth();
   const { canAccessPage } = useDailyV2Access();
   const { gate: collectionsCoreGate } = useCollectionsCorePilotGate();
+  const { gate: payablesGate } = usePayablesChequesGate();
 
   const showNavigation = location.pathname !== '/auth' && user;
 
@@ -52,6 +54,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Import Fichiers', href: '/upload', icon: Upload },
     { name: 'Daily v2', href: '/daily-statements', icon: CalendarDays },
     { name: 'Collections', href: '/collections-remittances', icon: Landmark },
+    { name: 'Chèques & factures', href: '/payables-cheques', icon: FileText },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
   ]
@@ -60,7 +63,8 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       (item) =>
         item.href !== '/collections-remittances' ||
         collectionsCoreGate.status === 'allowed',
-    );
+    )
+    .filter((item) => item.href !== '/payables-cheques' || payablesGate.status === 'allowed');
 
   return (
     <div className="min-h-screen bg-gray-50">

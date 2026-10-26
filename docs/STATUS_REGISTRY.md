@@ -15,6 +15,37 @@
 
 ---
 
+## PAYABLES-CHEQUES-CORE
+
+**Statut : `IN_PROGRESS` — implémenté localement, PR en brouillon, migrations appliquées à aucun environnement (2026-10-26)**
+
+Lot fonctionnel unique « Factures, engagements et chèques émis » sous
+`GO_IMPLEMENT_PAYABLES_CHEQUES_CORE` (P5), base `origin/main` `7c03b548`, branche
+`codex/payables-cheques-core`. Référence : conception canonique Pack 2B R2 et arbitrages
+CTO du 25 octobre 2026 (rapprochement multibanque par grammaires fermées, propositions
+confirmées par un comptable). SAGE et P4 ne sont pas des prérequis.
+
+Livré en local : fournisseurs et factures, allocations réservées puis engagées sous
+plafond serveur, virements déclarés, chèques (formule, contenu signable, impression
+ORABANK par intention puis résultat confirmé, signatures, émission par deux voies
+exclusives, remise), sorties hors banque à second acteur, reprise initiale attestée,
+formules pré-signées, exceptions, verrous et contrôle de version, gouvernance
+versionnée, projection des références bancaires (BDK, ORA, ATB, BICIS) et vue
+opérationnelle par compte.
+
+Validations locales : rejeu PostgreSQL 17 jetable et synthétique (11 fichiers
+d'assertions, courses réelles à deux sessions), 34 tests TypeScript, toutes les
+suites du CI sans régression, ESLint 0 nouvel item, typecheck applicatif identique à
+la baseline (16), projet Node 0 erreur, build réussi ; rejeu agrégé des fonctions
+pures sur les fichiers réels autorisés (empreintes inchangées). Détail :
+`docs/PAYABLES_CHEQUES_CORE_REPORT.md`.
+
+Non fait (GO distincts requis) : revue indépendante, merge, application staging,
+amorçage de la gouvernance, ouverture de l'interrupteur, validation du profil
+d'impression sur papier, reprise réelle, production.
+
+---
+
 ## PACK-0R-TRACEABILITY-REGULARIZATION
 
 **Statut : `CLOSED_WITH_RESERVE` à la fusion de cette entrée (décision CTO du 2026-10-23 ; réserve : lacunes historiques acceptées E2, E8, E9)**
