@@ -97,6 +97,23 @@ function Invoke-SerializedRace([string]$sessionA, [string]$sessionB, [string]$ma
   Write-Output "$marker (outcome $($resultB.Text.Trim()) after $($resultB.ElapsedMs) ms)"
 }
 
+# Lecture concurrente : la session A lit pendant que la session B modifie puis
+# valide ; B ne doit pas être bloquée et doit se terminer pendant la lecture de A.
+function Invoke-ConcurrentRead([string]$sessionA, [string]$sessionB, [string]$marker) {
+  $jobA = Start-SqlJob "$testDir/$sessionA"
+  Start-Sleep -Milliseconds 1000
+  $jobB = Start-SqlJob "$testDir/$sessionB"
+  $null = Wait-Job -Job $jobA, $jobB -Timeout 60
+  $resultA = Receive-Job -Job $jobA
+  $resultB = Receive-Job -Job $jobB
+  Remove-Job -Job $jobA, $jobB -Force
+  if ($resultA.ExitCode -ne 0) { throw "$marker reader failed`n$($resultA.Text)" }
+  if ($resultB.ExitCode -ne 0) { throw "$marker writer failed`n$($resultB.Text)" }
+  if ($resultA.ElapsedMs -lt 2500) { throw "$marker reader did not overlap the write ($($resultA.ElapsedMs) ms)" }
+  if ($resultB.ElapsedMs -ge 2000) { throw "$marker writer was blocked by the reader ($($resultB.ElapsedMs) ms)" }
+  Write-Output "$marker (writer committed in $($resultB.ElapsedMs) ms during a $($resultA.ElapsedMs) ms read)"
+}
+
 $existing = docker ps -a --filter "name=^/$containerName$" --format '{{.Names}}'
 if ($existing) { throw "Disposable container already exists: $containerName" }
 
@@ -120,6 +137,10 @@ try {
   Invoke-ReplaySqlFile "$testDir/75_concurrency_assert.sql"
   Invoke-SerializedRace '76_merge_request_session_a.sql' '77_merge_session_b.sql' 'CONCURRENT_MERGE_SEES_RESERVATION'
   Invoke-ReplaySqlFile "$testDir/78_merge_assert.sql"
+  Invoke-Race '79a_rebind_unit_session_a.sql' '79b_rebind_session_b.sql' @('PAYABLES_REBIND_EVIDENCE_INVALID:UNIT_NOT_VALID') 'CONCURRENT_REBIND_SEES_UNIT_REVIEW'
+  Invoke-ReplaySqlFile "$testDir/79c_rebind_assert.sql"
+  Invoke-ConcurrentRead '79d_read_session_a.sql' '79e_read_session_b.sql' 'READ_SNAPSHOT_STABLE_DURING_WRITE'
+  Invoke-ReplaySqlFile "$testDir/79f_read_assert.sql"
 
   # Refermeture concurrente : une écriture en cours garde le verrou partagé de
   # l'interrupteur ; la refermeture doit attendre la fin de sa transaction.

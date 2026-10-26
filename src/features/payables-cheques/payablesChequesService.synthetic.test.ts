@@ -130,32 +130,50 @@ test('refus serveur : vocabulaire fermé, aucune donnée sentinelle restituée',
   });
 });
 
-test('lectures paginées jusqu’à la totalité, sans troncature silencieuse', async () => {
+test('une liste = un seul appel serveur, un seul instantané (aucune pagination)', async () => {
   reset();
-  harness.tableResult = (_table, range) => ({ data: rowsFor(range, 2500), error: null, count: 2500 });
-  const forms = await service.listForms();
-  assert.equal(forms.length, 2500);
-  assert.deepEqual(harness.calls.filter((c) => c.kind === 'range').map((c) => c.range), [[0, 999], [1000, 1999], [2000, 2999]]);
-  reset();
-  harness.rpcResult = (_name, range) => (range ? { data: rowsFor(range, 1500), error: null, count: 1500 } : { data: [], error: null });
-  assert.equal((await service.readWorkQueue()).length, 1500, 'RPC lists are paginated too');
+  // Deux états successifs du serveur, à nombre de lignes constant : entre les
+  // deux, une ligne a changé de place (échéance) et un montant a changé.
+  const before = [
+    { invoice_id: 'a', due_date: '2026-11-01', amount: 1000, remaining_amount: 1000, currency: 'XOF', blocked: false },
+    { invoice_id: 'b', due_date: '2026-11-15', amount: 2000, remaining_amount: 2000, currency: 'XOF', blocked: false },
+    { invoice_id: 'c', due_date: '2026-12-01', amount: 3000, remaining_amount: 3000, currency: 'XOF', blocked: false },
+  ];
+  const after = [before[1], { ...before[0], due_date: '2026-12-15', amount: 1500, remaining_amount: 1500 }, before[2]];
+  let call = 0;
+  harness.rpcResult = (name) => {
+    assert.equal(name, 'payables_read_v1');
+    call += 1;
+    return { data: call === 1 ? before : after, error: null };
+  };
+  const first = await service.readInvoiceOverview();
+  assert.equal(harness.calls.filter((c) => c.kind === 'rpc').length, 1, 'exactly one server call per list');
+  assert.equal(harness.calls.filter((c) => c.kind === 'range').length, 0, 'no pagination');
+  assert.deepEqual(first, before, 'the list is exactly one server snapshot');
+  assert.deepEqual(new Set(first.map((r) => r.invoice_id)).size, first.length, 'no row repeated');
+  assert.equal(first.reduce((sum, r) => sum + r.amount, 0), 6000, 'totals come from that single snapshot');
+  const second = await service.readInvoiceOverview();
+  assert.deepEqual(second, after, 'the next read is the next snapshot, never a mix');
+  assert.equal(second.reduce((sum, r) => sum + r.amount, 0), 6500);
 });
 
-test('lecture incomplète explicite : compte absent, modifié, excessif ou page vide', async () => {
+test('lecture : liste et arguments transmis au serveur, réponse non conforme refusée', async () => {
   reset();
-  harness.tableResult = (_t, range) => ({ data: rowsFor(range, 1500), error: null, count: null });
+  harness.rpcResult = () => ({ data: [], error: null });
+  await service.listForms();
+  await service.readAccountPositions('2026-10-02');
+  await service.readBankFollowupLines('acc', '2026-10-01', '2026-10-05');
+  assert.deepEqual(harness.calls.filter((c) => c.kind === 'rpc').map((c) => c.args), [
+    { p_list: 'forms', p_args: {} },
+    { p_list: 'positions', p_args: { as_of: '2026-10-02' } },
+    { p_list: 'followup_lines', p_args: { account_id: 'acc', from: '2026-10-01', to: '2026-10-05' } },
+  ]);
+  reset();
+  harness.rpcResult = () => ({ data: { rows: [] }, error: null });
   await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' });
   reset();
-  let calls = 0;
-  harness.tableResult = (_t, range) => ({ data: rowsFor(range, 1500), error: null, count: calls++ === 0 ? 1500 : 1501 });
-  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' }, 'data changed during the read');
-  reset();
-  harness.tableResult = (_t, range) => ({ data: rowsFor(range, 60_000), error: null, count: 60_000 });
-  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' });
-  assert.equal(harness.calls.filter((c) => c.kind === 'range').length, 1, 'stops at the first page when over the bound');
-  reset();
-  harness.tableResult = (_t, range) => ({ data: range[0] === 0 ? rowsFor(range, 1500) : [], error: null, count: 1500 });
-  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_INCOMPLETE' }, 'premature empty page');
+  harness.rpcResult = () => ({ data: null, error: { message: 'PAYABLES_READ_LIMIT_EXCEEDED' } });
+  await assert.rejects(service.listExceptions(), { code: 'PAYABLES_READ_LIMIT_EXCEEDED' });
 });
 
 test('les clés de commande sont uniques par intention', () => {

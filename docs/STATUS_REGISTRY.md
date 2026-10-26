@@ -38,11 +38,14 @@ Contre-revue CTO du 26 octobre 2026 (FAIL ciblé sur `1dddbe3`) : corrections so
 recontrôle complet à la confirmation, preuve périmée lue immédiatement, impression
 isolée sur une page (preuve navigateur : 1 page contre 28), position datée avec
 chèques non reflétés et couverture par chaîne des soldes, fusion synchronisée (course
-réelle), registre complet, lectures paginées sans troncature, arbitrages facture
-bloquée et correction de facture.
+réelle), registre complet, arbitrages facture bloquée et correction de facture.
+Contre-revue de `4fbb65f` (FAIL ciblé, deux points) : rattachement aux invariants de la
+confirmation (course réelle contre une remise en revue de l'unité) ; listes lues en un
+seul appel et un seul instantané, sans pagination (course réelle de lecture pendant
+une écriture).
 
 Validations locales : rejeu PostgreSQL 17 jetable et synthétique (11 fichiers
-d'assertions, trois courses réelles à deux sessions), 39 tests TypeScript, preuve
+d'assertions, cinq courses réelles à deux sessions), 39 tests TypeScript, preuve
 d'impression navigateur, toutes les
 suites du CI sans régression, ESLint 0 nouvel item, typecheck applicatif identique à
 la baseline (16), projet Node 0 erreur, build réussi ; rejeu agrégé des fonctions

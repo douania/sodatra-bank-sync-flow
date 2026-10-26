@@ -48,48 +48,23 @@ async function rpc<T>(name: string, args: Json = {}): Promise<T> {
   return data as T;
 }
 
-// Lectures de listes : pages de 1 000 lignes (plafond PostgREST) avec compte
-// exact, jusqu'à la totalité. Toute incohérence (compte absent ou modifié
-// pendant la lecture, page vide prématurée, volume au-delà de la borne) est une
-// lecture incomplète explicite : jamais une liste tronquée en silence, donc
-// jamais un total calculé sur une liste partielle.
-export const READ_PAGE_SIZE = 1000;
-export const READ_MAX_ROWS = 50_000;
+// Lectures de listes : une liste = UN appel serveur (payables_read_v1), lue par
+// une seule instruction SQL STABLE, donc un seul instantané. Aucune
+// pagination : une ligne ne peut ni manquer ni apparaître deux fois parce
+// qu'elle aurait bougé entre deux pages, et un total ne mélange jamais deux
+// états. Au-delà de la borne de volume, le serveur refuse explicitement
+// (PAYABLES_READ_LIMIT_EXCEEDED) ; une réponse non conforme est une lecture
+// incomplète explicite. Aucun nombre de lignes n'est pris pour preuve de
+// stabilité.
+export type ReadListName =
+  | 'suppliers' | 'payments' | 'forms' | 'contents' | 'print_events' | 'signatures' | 'exits' | 'exceptions'
+  | 'persons' | 'person_links' | 'parameters' | 'capability_grants' | 'takeover_batches' | 'issuances' | 'deliveries'
+  | 'invoice_overview' | 'accounts' | 'work_queue' | 'positions' | 'followup_lines';
 
-type PageResult = { data: unknown[] | null; error: unknown; count: number | null };
-
-function incomplete(): PayablesError {
-  return toPayablesError('PAYABLES_READ_INCOMPLETE');
-}
-
-async function readAllPages<T>(fetchPage: (from: number, to: number) => PromiseLike<PageResult>): Promise<T[]> {
-  await assertReady();
-  const rows: T[] = [];
-  let expected: number | null = null;
-  for (let from = 0; ; from += READ_PAGE_SIZE) {
-    const { data, error, count } = await fetchPage(from, from + READ_PAGE_SIZE - 1);
-    if (error) throw toPayablesError(error, 'Lecture impossible.');
-    if (typeof count !== 'number' || (expected !== null && count !== expected)) throw incomplete();
-    expected = count;
-    if (expected > READ_MAX_ROWS) throw incomplete();
-    const page = (data ?? []) as T[];
-    rows.push(...page);
-    if (rows.length >= expected) break;
-    if (page.length === 0) throw incomplete();
-  }
-  if (rows.length !== expected) throw incomplete();
-  return rows;
-}
-
-function readTable<T>(table: string, columns: string, orderBy: string, ascending = true): Promise<T[]> {
-  // Ordre total (clé + identifiant) : les pages successives ne se chevauchent pas.
-  return readAllPages<T>((from, to) => db.from(table).select(columns, { count: 'exact' })
-    .order(orderBy, { ascending }).order('id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResult>);
-}
-
-function rpcList<T>(name: string, args: Json = {}): Promise<T[]> {
-  // Les fonctions de lecture ordonnent totalement leurs lignes côté serveur.
-  return readAllPages<T>((from, to) => db.rpc(name, args, { count: 'exact' }).range(from, to) as unknown as PromiseLike<PageResult>);
+async function readList<T>(list: ReadListName, args: Json = {}): Promise<T[]> {
+  const data = await rpc<unknown>('payables_read_v1', { p_list: list, p_args: args });
+  if (!Array.isArray(data)) throw toPayablesError('PAYABLES_READ_INCOMPLETE');
+  return data as T[];
 }
 
 export function newCommandKey(scope: string): string {
@@ -99,58 +74,30 @@ export function newCommandKey(scope: string): string {
 // --- Lectures --------------------------------------------------------------
 
 export const readMyAccess = () => rpc<PayablesAccess>('payables_my_access_v1');
-export const readInvoiceOverview = () => rpcList<InvoiceOverviewRow>('payables_invoice_overview_v1');
+export const readInvoiceOverview = () => readList<InvoiceOverviewRow>('invoice_overview');
 /** Comptes du registre sans aucune donnée bancaire (droit de lecture du domaine). */
-export const readAccounts = () => rpcList<AccountRow>('payables_accounts_v1');
+export const readAccounts = () => readList<AccountRow>('accounts');
 /** Données bancaires : exige la capacité BANK_READ côté serveur. */
-export const readAccountPositions = (asOf: string | null) =>
-  rpcList<AccountPositionRow>('payables_account_positions_v1', { p_as_of: asOf });
-export const readWorkQueue = () => rpcList<WorkQueueRow>('payables_work_queue_v1');
+export const readAccountPositions = (asOf: string | null) => readList<AccountPositionRow>('positions', { as_of: asOf });
+export const readWorkQueue = () => readList<WorkQueueRow>('work_queue');
 export const readBankFollowupLines = (accountId: string, from: string, to: string) =>
-  rpcList<BankFollowupLineRow>('payables_bank_followup_lines_v1', { p_bank_account_id: accountId, p_from: from, p_to: to });
+  readList<BankFollowupLineRow>('followup_lines', { account_id: accountId, from, to });
 
-export const listSuppliers = () =>
-  readTable<SupplierRow>('payables_suppliers', 'id,canonical_name,status,merged_into_id', 'canonical_name');
-export const listPayments = () =>
-  readTable<PaymentRow>('payables_payments',
-    'id,invoice_id,mode,bank_account_id,category_code,amount,currency,is_partial,beneficiary,status,replaces_payment_id,created_by,created_at,row_version',
-    'created_at', false);
-export const listForms = () =>
-  readTable<ChequeFormRow>('payables_cheque_forms',
-    'id,bank_account_id,cheque_number,payment_id,provenance,state,presigned,unused_reason,created_at,updated_at,row_version',
-    'updated_at', false);
-export const listIssuances = () =>
-  readTable<IssuanceRow>('payables_issuances', 'id,form_id,revision_no,path,issue_date,amount,recorded_at', 'recorded_at', false);
-export const listDeliveries = () =>
-  readTable<DeliveryRow>('payables_deliveries', 'id,form_id,delivered_on', 'delivered_on', false);
-export const listContents = () =>
-  readTable<ChequeContentRow>('payables_cheque_contents', 'id,form_id,version_no,fields,content_hash,profile_version_id',
-    'version_no', false);
-export const listPrintEvents = () =>
-  readTable<PrintEventRow>('payables_print_events', 'id,form_id,content_id,kind,status,requested_at', 'requested_at', false);
-export const listSignatures = () =>
-  readTable<SignatureRow>('payables_signatures', 'id,form_id,content_id,person_id,signed_on', 'signed_on', false);
-export const listExits = () =>
-  readTable<ExitRow>('payables_exits', 'id,form_id,kind,status,requested_by,requested_at,reason,details,row_version',
-    'requested_at', false);
-export const listExceptions = () =>
-  readTable<ExceptionRow>('payables_exceptions',
-    'id,kind,status,invoice_id,payment_id,form_id,bank_account_id,blocks_invoice,blocks_account,opened_by,opened_at,reason,row_version',
-    'opened_at', false);
-export const listPersons = () =>
-  readTable<PersonRow>('payables_persons', 'id,display_name,status,proposed_by', 'display_name');
-export const listPersonLinks = () =>
-  readTable<PersonLinkRow>('payables_person_links', 'id,person_id,user_id,action,status,proposed_by', 'proposed_at', false);
-export const listParameters = () =>
-  readTable<ParameterVersionRow>('payables_parameter_versions',
-    'id,kind,subject_key,version_no,valid_from,payload,status,proposed_by', 'proposed_at', false);
-export const listCapabilityGrants = () =>
-  readTable<CapabilityGrantRow>('payables_capability_grants', 'id,user_id,capability,action,status,proposed_by',
-    'proposed_at', false);
-export const listTakeoverBatches = () =>
-  readTable<TakeoverBatchRow>('payables_takeover_batches',
-    'id,bank_account_id,cutoff_date,source_label,control_count,control_total,status,completeness_attested,prepared_by,row_version',
-    'prepared_at', false);
+export const listSuppliers = () => readList<SupplierRow>('suppliers');
+export const listPayments = () => readList<PaymentRow>('payments');
+export const listForms = () => readList<ChequeFormRow>('forms');
+export const listIssuances = () => readList<IssuanceRow>('issuances');
+export const listDeliveries = () => readList<DeliveryRow>('deliveries');
+export const listContents = () => readList<ChequeContentRow>('contents');
+export const listPrintEvents = () => readList<PrintEventRow>('print_events');
+export const listSignatures = () => readList<SignatureRow>('signatures');
+export const listExits = () => readList<ExitRow>('exits');
+export const listExceptions = () => readList<ExceptionRow>('exceptions');
+export const listPersons = () => readList<PersonRow>('persons');
+export const listPersonLinks = () => readList<PersonLinkRow>('person_links');
+export const listParameters = () => readList<ParameterVersionRow>('parameters');
+export const listCapabilityGrants = () => readList<CapabilityGrantRow>('capability_grants');
+export const listTakeoverBatches = () => readList<TakeoverBatchRow>('takeover_batches');
 
 // --- Fournisseurs, factures, paiements -----------------------------------------
 

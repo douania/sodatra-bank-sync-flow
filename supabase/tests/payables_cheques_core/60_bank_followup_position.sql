@@ -273,6 +273,7 @@ SELECT pc_test.as_user('acc4');
 SELECT pc_test.assert((public.payables_propose_bank_matches_v1(pc_test.key('prop-ora-p12c'), pc_test.id('acct_ora'), DATE '2026-10-23')
   ->> 'proposed')::int = 1, 'a revalidated statement line is proposed again');
 
+
 -- Remplacement de relevé avant confirmation : proposition invalidée.
 SELECT public.payables_propose_bank_matches_v1(pc_test.key('prop-bdk-3'), pc_test.id('acct_bdk'), DATE '2026-10-05');
 RESET ROLE;
@@ -326,7 +327,7 @@ SELECT pc_test.assert((public.payables_scan_match_evidence_v1(pc_test.key('scan-
 SELECT pc_test.assert((SELECT status FROM public.payables_bank_match_proposals WHERE id = pc_test.id('prop_bdk_chq1')) = 'CONFIRMED',
   'flagging does not rewrite the confirmed match');
 SELECT pc_test.expect_error($$SELECT public.payables_rebind_bank_match_v1(pc_test.key('rebind-bad'), pc_test.id('prop_bdk_chq1'),
-  pc_test.id('l_bdk_fee_r1'), 'Mauvaise ligne')$$, 'PAYABLES_REBIND_EVIDENCE_INVALID');
+  pc_test.id('l_bdk_fee_r1'), 'Mauvaise ligne')$$, 'PAYABLES_REBIND_EVIDENCE_INVALID:AMOUNT_MISMATCH');
 SELECT public.payables_rebind_bank_match_v1(pc_test.key('rebind-ok'), pc_test.id('prop_bdk_chq1'), pc_test.id('l_bdk_chq1_r1'),
   'Rattachement à la ligne remplaçante');
 SELECT pc_test.assert((SELECT status FROM public.payables_bank_match_proposals WHERE id = pc_test.id('prop_bdk_chq1')) = 'SUPERSEDED'
@@ -336,6 +337,40 @@ SELECT pc_test.as_user('acc2');
 SELECT public.payables_resolve_exception_v1(pc_test.key('evidence-res'),
   (SELECT id FROM public.payables_exceptions WHERE kind = 'MATCH_EVIDENCE_INACTIVE' AND status = 'OPEN'), 1, 'REBOUND_VERIFIED',
   NULL, 'Relevé remplacé contrôlé', 'Rattachement vérifié');
+RESET ROLE;
+-- Contre-revue CTO (4fbb65f) P1 : le rattachement applique les invariants de la
+-- confirmation. Relevé remplacé dont la ligne réapparaît datée AVANT l'émission.
+SELECT pc_test.as_user('acc2');
+SELECT public.payables_declare_issuance_exception_v1(pc_test.key('declare-0003033'), pc_test.id('acct_ora'), '0003033', 5500,
+  DATE '2026-10-20', NULL, 'OTHER_OUTSIDE_CIRCUIT', 'Talon du chéquier', 'Chèque synthétique pour rattachement');
+RESET ROLE;
+SELECT pc_test.put('u_ora_1021', pc_test.add_unit('acct_ora', DATE '2026-10-21', 8050000));
+SELECT pc_test.add_line(pc_test.id('u_ora_1021'), 'l_ora_rb', 'CHQ RECU COMPENSE 0003033 CHQ OCI N. 0003033', 5500);
+SELECT pc_test.as_user('acc4');
+SELECT public.payables_propose_bank_matches_v1(pc_test.key('prop-ora-rb'), pc_test.id('acct_ora'), DATE '2026-10-21');
+SELECT pc_test.assert((public.payables_decide_bank_match_v1(pc_test.key('confirm-ora-rb'), pc_test.proposal_for_line('l_ora_rb'),
+  pc_test.proposal_version(pc_test.proposal_for_line('l_ora_rb')), 'CONFIRM', NULL) ->> 'outcome') = 'CONFIRMED',
+  'match confirmed before the statement replacement');
+SELECT pc_test.put('match_ora_rb', pc_test.proposal_for_line('l_ora_rb'));
+RESET ROLE;
+UPDATE public.daily_statement_units_canonical SET status = 'superseded' WHERE id = pc_test.id('u_ora_1021');
+UPDATE public.daily_statement_lines_canonical SET is_active = false WHERE canonical_unit_id = pc_test.id('u_ora_1021');
+SELECT pc_test.put('u_ora_1019', pc_test.add_unit('acct_ora', DATE '2026-10-19', 8060000));
+SELECT pc_test.add_line(pc_test.id('u_ora_1019'), 'l_ora_rb_early', 'CHQ RECU COMPENSE 0003033 CHQ OCI N. 0003033', 5500);
+SELECT pc_test.as_user('acc4');
+SELECT pc_test.expect_error($$SELECT public.payables_rebind_bank_match_v1(pc_test.key('rebind-early'), pc_test.id('match_ora_rb'),
+  pc_test.id('l_ora_rb_early'), 'Débit antérieur à l''émission réelle')$$, 'PAYABLES_REBIND_EVIDENCE_INVALID:ISSUE_AFTER_DEBIT');
+SELECT pc_test.assert((SELECT status FROM public.payables_bank_match_proposals WHERE id = pc_test.id('match_ora_rb')) = 'CONFIRMED'
+  AND NOT EXISTS (SELECT 1 FROM public.payables_bank_match_proposals WHERE line_id = pc_test.id('l_ora_rb_early')),
+  'a refused rebind leaves the confirmed match untouched and creates nothing');
+-- Unité de la ligne candidate remise en revue : refus avec sa cause.
+RESET ROLE;
+SELECT pc_test.put('u_ora_1021b', pc_test.add_unit('acct_ora', DATE '2026-10-21', 8050000, 'needs_review'));
+SELECT pc_test.add_line(pc_test.id('u_ora_1021b'), 'l_ora_rb_review', 'CHQ RECU COMPENSE 0003033 CHQ OCI N. 0003033', 5500);
+UPDATE public.daily_statement_lines_canonical SET is_active = false WHERE id = pc_test.id('l_ora_rb_early');
+SELECT pc_test.as_user('acc4');
+SELECT pc_test.expect_error($$SELECT public.payables_rebind_bank_match_v1(pc_test.key('rebind-review'), pc_test.id('match_ora_rb'),
+  pc_test.id('l_ora_rb_review'), 'Relevé en revue')$$, 'PAYABLES_REBIND_EVIDENCE_INVALID:UNIT_NOT_VALID');
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------
@@ -411,6 +446,34 @@ SELECT pc_test.assert((SELECT count(*) FROM public.payables_accounts_v1()) = 6
   ON p.specific_name = r.specific_name WHERE r.routine_name = 'payables_accounts_v1'
   AND p.parameter_name ~ '(balance|statement|amount)'), 'account list without bank data stays readable');
 RESET ROLE;
+
+-- Contre-revue CTO (4fbb65f) P2 : lecture d'une liste en un seul appel, une
+-- seule instruction, un seul instantané ; complète au-delà de 1 000 lignes ;
+-- borne de volume explicite ; droits de l'appelant appliqués.
+INSERT INTO public.payables_suppliers (canonical_name, normalized_name, created_by)
+SELECT 'Fournisseur volume ' || g, 'FOURNISSEUR VOLUME ' || g, pc_test.id('acc1') FROM generate_series(1, 1100) g;
+SELECT pc_test.as_user('acc4');
+SELECT pc_test.assert(jsonb_array_length(public.payables_read_v1('suppliers')) = (SELECT count(*) FROM public.payables_suppliers)
+  AND jsonb_array_length(public.payables_read_v1('suppliers')) > 1000, 'a list read is complete beyond 1 000 rows');
+SELECT pc_test.assert(jsonb_array_length(public.payables_read_v1('invoice_overview'))
+  = (SELECT count(*) FROM public.payables_invoices), 'computed lists are complete too');
+SELECT pc_test.assert((SELECT count(DISTINCT e ->> 'id') = count(*) FROM jsonb_array_elements(public.payables_read_v1('forms')) e),
+  'no row repeated in a list read');
+SELECT pc_test.assert((public.payables_read_v1('positions', jsonb_build_object('as_of', '2026-10-02')) -> 0 ->> 'as_of')
+  = '2026-10-02', 'arguments reach the computed list');
+SELECT pc_test.expect_error($$SELECT public.payables_read_v1('suppliers', '{}'::jsonb, 10)$$, 'PAYABLES_READ_LIMIT_EXCEEDED');
+SELECT pc_test.expect_error($$SELECT public.payables_read_v1('payables_command_idempotency')$$, 'PAYABLES_READ_LIST_UNKNOWN');
+SELECT pc_test.as_user('acc2');
+SELECT pc_test.expect_error($$SELECT public.payables_read_v1('positions')$$, 'PAYABLES_CAPABILITY_REQUIRED:BANK_READ');
+SELECT pc_test.assert(NOT EXISTS (SELECT 1 FROM jsonb_array_elements(public.payables_read_v1('exits')) e
+  WHERE e ->> 'kind' = 'BANK_MATCH'), 'the caller''s row security applies to list reads');
+SELECT pc_test.as_user('outsider');
+SELECT pc_test.assert(jsonb_array_length(public.payables_read_v1('forms')) = 0, 'no domain read right, no rows');
+RESET ROLE;
+SELECT pc_test.assert((SELECT p.prosecdef = false AND p.provolatile = 's' FROM pg_proc p
+  WHERE p.oid = 'public.payables_read_v1(text,jsonb,integer)'::regprocedure),
+  'list read runs with the caller''s rights in one stable snapshot');
+
 SELECT pc_test.as_user('outsider');
 SELECT pc_test.expect_error($$SELECT * FROM public.payables_account_positions_v1(NULL)$$, 'PAYABLES_CAPABILITY_REQUIRED:READ');
 SELECT pc_test.expect_error($$SELECT * FROM public.payables_accounts_v1()$$, 'PAYABLES_CAPABILITY_REQUIRED:READ');

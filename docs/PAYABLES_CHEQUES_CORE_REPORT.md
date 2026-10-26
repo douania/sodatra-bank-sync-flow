@@ -1,8 +1,9 @@
 # PAYABLES-CHEQUES-CORE — Factures, engagements et chèques émis
 
 > Rapport du lot `GO_IMPLEMENT_PAYABLES_CHEQUES_CORE` (P5), complété par
-> `GO_FIX_PAYABLES_CHEQUES_CORE` (contre-revue CTO du 26 octobre 2026, FAIL ciblé
-> sur `1dddbe3`, corrections en § 6 ter). Statut : **implémenté localement, PR en
+> `GO_FIX_PAYABLES_CHEQUES_CORE` (contre-revues CTO du 26 octobre 2026 : FAIL ciblé
+> sur `1dddbe3`, corrections en § 6 ter ; FAIL ciblé sur `4fbb65f`, corrections en
+> § 6 quater). Statut : **implémenté localement, PR en
 > brouillon, migrations non appliquées**. Aucune disponibilité staging ni
 > production n'est revendiquée par ce document.
 
@@ -127,10 +128,10 @@ Environnement local : Node 22.23.1, npm 10.9.8, ESLint 9.13.0, TypeScript 5.6.3
 | `npx tsc -p tsconfig.app.json --noEmit` | baseline 16 diagnostics ; branche 16 ; **diff exact vide** |
 | `npx tsc -p tsconfig.node.json --noEmit` | 0 erreur |
 | `npm run build` | succès ; artefact `supabase/functions/mcp/index.ts` inchangé |
-| `npm run test:payables-cheques` | 39 tests, 39 réussis, 0 ignoré |
+| `npm run test:payables-cheques` | 39 tests, 39 réussis, 0 ignoré (dont lecture en un seul instantané : un appel, aucune pagination, état unique à nombre de lignes constant) |
 | `npm run test:payables-cheques-print` (preuve navigateur, Chrome sans tête local, données synthétiques, aucune imprimante) | page d'application synthétique de 400 lignes avec un élément en position fixe : **PDF d'exactement 1 page de 170 × 95 mm** ; l'ancienne feuille produisait **28 pages** sur la même page ; capture sous les règles d'impression : seuls les champs à remplir apparaissent |
 | Toutes les suites Node du CI (19 scripts `test:*`, globs Daily v2 dashboard et session, hygiène des journaux) | 22 suites, 0 échec, 0 ignoré |
-| `supabase/tests/payables_cheques_core/run_pg17_replay.ps1`, lancé dans un processus Windows PowerShell 5.1 neuf | 11 fichiers `PASS` ; `CONCURRENT_RESERVATION_BLOCKED` et `CONCURRENT_CONFIRMATION_BLOCKED` (la session perdante attend environ 2,7 s puis échoue fermée) ; `CONCURRENT_MERGE_SEES_RESERVATION` (la fusion attend la réservation en cours environ 2,6 s puis reste `PROPOSED`, second acteur exigé) ; `SWITCH_CHANGE_WAITS_FOR_WRITES` (2,6 s) ; `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS`. La durée mesurée est désormais celle de la seconde session elle-même (preuve d'attente du verrou), plus le temps total des deux sessions |
+| `supabase/tests/payables_cheques_core/run_pg17_replay.ps1`, lancé dans un processus Windows PowerShell 5.1 neuf | 11 fichiers `PASS` ; `CONCURRENT_RESERVATION_BLOCKED` et `CONCURRENT_CONFIRMATION_BLOCKED` (la session perdante attend environ 2,7 s puis échoue fermée) ; `CONCURRENT_MERGE_SEES_RESERVATION` (la fusion attend la réservation en cours environ 2,6 s puis reste `PROPOSED`, second acteur exigé) ; `CONCURRENT_REBIND_SEES_UNIT_REVIEW` (le rattachement attend la remise en revue concurrente de l'unité environ 2,7 s puis échoue fermé, `UNIT_NOT_VALID`) ; `READ_SNAPSHOT_STABLE_DURING_WRITE` (une correction de facture validée en 0,2 s pendant une lecture de 3,2 s : la lecture rend l'état d'avant, complet, sans ligne omise ni répétée, total cohérent) ; `SWITCH_CHANGE_WAITS_FOR_WRITES` (2,5 s) ; `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS`. La durée mesurée est celle de la session concernée elle-même, plus le temps total des deux sessions |
 | `supabase/tests/collection_report_controlled_activation/run_pg17_replay.ps1` (non modifié par ce lot) | non exécutable localement : sous Windows PowerShell 5.1, la sortie d'erreur de `docker logs` lève `NativeCommandError` (limite d'environnement antérieure au lot, PowerShell 7 absent du poste) ; le CI l'exécute sous `pwsh` Linux (vert sur `1dddbe3` selon la contre-revue) |
 | `git diff --check` | aucune erreur |
 
@@ -166,7 +167,11 @@ Preuves de mordant (mutations temporaires sur copies, migrations du dépôt non 
 | Confirmation par signatures admise sur facture bloquée | 41 échoue |
 | Plafond de déclaration non borné à la réservation sur facture bloquée | 41 échoue (allocation augmentée) |
 | Verrou des factures du fournisseur absorbé retiré (mutation appliquée puis restaurée, empreinte vérifiée) | la course réelle aboutit à une fusion `APPLIED` sans second acteur ; 78 échoue |
-| Lecture paginée arrêtée à la première page | test de pagination du service échoue |
+| Rattachement sans contrôle « débit postérieur ou égal à l'émission » | 60 échoue (rattachement antérieur à l'émission accepté) |
+| Rattachement sans contrôle de l'unité | 60 échoue (relevé en revue accepté) |
+| Rattachement verrouillant la ligne sans son unité (mutation appliquée puis restaurée, empreinte vérifiée) | la course réelle aboutit à un rattachement réussi pendant la remise en revue (« loser did not fail closed ») |
+| Fonction de lecture rendue `VOLATILE` (mutation appliquée puis restaurée, empreinte vérifiée) | la course de lecture voit l'écriture concurrente au milieu de la lecture ; 79f échoue |
+| Lecture client reconstituée à partir de deux appels serveur | 2 tests du service échouent |
 
 Parité SQL ↔ TypeScript : corpus communs du montant en lettres (40 montants, règles
 traditionnelles) et des grammaires bancaires (25 libellés synthétiques, dont tabulations,
@@ -258,6 +263,12 @@ Git, les tests, les journaux ou la PR.
 20. **Fusion de fournisseurs** : verrouillage des factures du fournisseur absorbé avant
     l'évaluation des engagements (ordre fournisseur → facture) ; une réservation en
     cours est attendue et impose le second acteur.
+21. **Rattachement à une ligne remplaçante** : mêmes invariants que la confirmation
+    (§ 6 quater) ; tout écart est refusé avec sa cause, l'ancien rapprochement restant
+    intact.
+22. **Lecture des listes** : un appel, une instruction `STABLE`, un instantané ; borne de
+    50 000 lignes (réductible, jamais augmentable par l'appelant) ; refus explicite
+    au-delà.
 
 ## 6 bis. Revue indépendante interne
 
@@ -292,10 +303,23 @@ Revue indépendante (agent distinct, code, migrations et tests) menée avant la 
 | P2 — dates de position | date propre à chaque projection, chèques non reflétés (dont émis après le relevé) déduits, position historique signalée, couverture par chaîne des soldes | 60 : chèque émis après le relevé déduit, position historique, chaîne rompue ; 2 mutations tuées ; tests de modèle |
 | P2 — fusion et paiement concurrents | verrouillage des factures du fournisseur absorbé avant l'évaluation (proposition et décision) | course réelle `CONCURRENT_MERGE_SEES_RESERVATION` + 78 ; mutation tuée |
 | P2 — registre incomplet | registre complet (circuit, reprise, exception sans paiement), consultation individuelle, actions autorisées | tests du modèle de registre |
-| P2 — troncature silencieuse | lectures paginées par pages de 1 000 avec compte exact, ordre total côté serveur ; incohérence = `PAYABLES_READ_INCOMPLETE` explicite, aucun total sur une liste partielle | tests du service ; mutation tuée |
+| P2 — troncature silencieuse | d'abord une pagination avec compte exact, insuffisante (voir § 6 quater) ; remplacée par une lecture en un seul instantané | § 6 quater |
 | Arbitrage — facture bloquée | décision 11 | 41 : confirmation refusée, déclaration sans hausse d'allocation, blocage maintenu |
 | Arbitrage — correction de facture | décision 12 | 30 : version périmée refusée, historique avant/après |
 | Arbitrage — ORABANK premier profil | inchangé : seul le profil ORABANK est ouvert ; registre et suivi multibanques | 20 (profil d'une autre banque refusé) |
+
+## 6 quater. Contre-revue CTO de `4fbb65f` (`GO_FIX_PAYABLES_CHEQUES_CORE` reconduit)
+
+| Constat CTO | Correction | Preuve |
+|---|---|---|
+| P1 — recontrôle incomplet du rattachement bancaire | `payables_rebind_bank_match_v1` applique les invariants de la confirmation : verrou partagé sur la ligne ET son unité, unité ingérée et validée, compte, devise, montant, référence recalculée depuis le libellé, débit postérieur ou égal à l'émission réelle courante, non-consommation, unicité sur la population canonique complète ; la cause est consignée (`PAYABLES_REBIND_EVIDENCE_INVALID:<cause>`) | 60 : rattachement antérieur à l'émission → `ISSUE_AFTER_DEBIT`, unité en revue → `UNIT_NOT_VALID`, rapprochement d'origine intact ; course réelle `CONCURRENT_REBIND_SEES_UNIT_REVIEW` ; 3 mutations tuées |
+| P2 — pagination complète ≠ lecture cohérente | plus aucune pagination : chaque liste est lue par un seul appel `payables_read_v1`, une seule instruction SQL `STABLE` (un seul instantané), aux droits de l'appelant (RLS et contrôles `READ`/`BANK_READ` inchangés) ; ordre fixé côté serveur ; au-delà de 50 000 lignes, refus explicite (`PAYABLES_READ_LIMIT_EXCEEDED`) ; aucun nombre de lignes n'est pris pour preuve de stabilité | course réelle `READ_SNAPSHOT_STABLE_DURING_WRITE` : facture déplacée (échéance) et montant modifié pendant la lecture, à nombre constant → état d'avant, complet, sans omission ni répétition, total cohérent ; 60 : lecture complète au-delà de 1 000 lignes, borne, liste inconnue, droits ; tests du service ; 2 mutations tuées |
+
+Portée de la cohérence : chaque liste est cohérente en elle-même et les totaux
+affichés viennent soit d'une seule liste (factures par échéance), soit du serveur en
+une instruction (position par compte). Deux listes lues par deux appels distincts
+(par exemple formules et émissions dans le registre) reflètent deux instants
+successifs ; aucun total n'est calculé en les combinant.
 
 ## 7. Conditions de mise en service (hors développement)
 
@@ -334,8 +358,9 @@ Revue indépendante (agent distinct, code, migrations et tests) menée avant la 
   sans allocation (la facture reste couverte, statut à arrêter avec le CTO) ; les verrous
   de traitement ne sont pas contrôlés par toutes les écritures (confort d'équipe, jamais
   l'intégrité, par conception).
-- Lectures de l'interface : paginées et complètes jusqu'à 50 000 lignes par liste ; au-delà,
-  ou si les données changent pendant la lecture, la lecture est déclarée incomplète.
+- Lectures de l'interface : une liste par appel, en un seul instantané, complète jusqu'à
+  50 000 lignes ; au-delà, refus explicite. Deux listes distinctes reflètent deux
+  instants successifs (aucun total ne les combine).
 - La chaîne des soldes prouve la continuité nette des relevés, pas l'exhaustivité ligne
   à ligne : un débit absent compensé par un crédit absent le même jour la laisse intacte
   (le chèque concerné resterait alors en circulation, ce qui minore la position).

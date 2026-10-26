@@ -519,9 +519,12 @@ BEGIN
 END;
 $$;
 
--- Rattachement explicite à la ligne remplaçante : revérifie compte, devise,
--- montant ET référence, unicité et non-consommation. L'ancien rapprochement est
--- conservé (SUPERSEDED), jamais effacé.
+-- Rattachement explicite à la ligne remplaçante : mêmes invariants que la
+-- confirmation (ligne active de débit, unité ingérée et validée sous verrou
+-- partagé, compte, devise, montant, référence recalculée depuis le libellé,
+-- débit postérieur ou égal à l'émission réelle courante, unicité sur la
+-- population canonique complète, non-consommation). L'ancien rapprochement est
+-- conservé (SUPERSEDED), jamais effacé. Tout écart est refusé avec sa cause.
 CREATE FUNCTION public.payables_rebind_bank_match_v1(
   p_command_key text, p_match_id uuid, p_new_line_id uuid, p_reason text
 )
@@ -535,7 +538,7 @@ DECLARE
   v_cmd constant text := 'REBIND_BANK_MATCH';
   v_replay jsonb; v_old public.payables_bank_match_proposals; v_form public.payables_cheque_forms; v_line record;
   v_ref public.payables_bank_line_references; v_issuance public.payables_issuances; v_new uuid; v_reason text;
-  v_old_active boolean;
+  v_old_active boolean; v_extract record; v_failure text;
 BEGIN
   PERFORM payables_private.assert_business_writes_enabled();
   PERFORM payables_private.require_capability(v_actor, 'BANK_FOLLOWUP');
@@ -550,26 +553,41 @@ BEGIN
   IF v_old.status <> 'CONFIRMED' THEN RAISE EXCEPTION 'PAYABLES_MATCH_STATE_INVALID'; END IF;
   SELECT l.is_active INTO v_old_active FROM public.daily_statement_lines_canonical l WHERE l.id = v_old.line_id;
   IF v_old_active THEN RAISE EXCEPTION 'PAYABLES_MATCH_EVIDENCE_STILL_ACTIVE'; END IF;
-  SELECT l.id, l.is_active, l.direction, l.debit_amount, l.currency, l.accounting_date, l.value_date, u.bank, u.account_registry_id
+  -- Verrou partagé sur la ligne ET son unité, comme à la confirmation : un
+  -- remplacement ou une remise en revue concurrents de Daily v2 attendent la
+  -- fin du rattachement, ou le rattachement relit leur effet validé.
+  SELECT l.id, l.is_active, l.direction, l.debit_amount, l.currency, l.accounting_date, l.value_date,
+         l.description_sanitized, u.bank, u.account_registry_id, u.status AS unit_status,
+         u.validation_status AS unit_validation
     INTO v_line
     FROM public.daily_statement_lines_canonical l
     JOIN public.daily_statement_units_canonical u ON u.id = l.canonical_unit_id
-   WHERE l.id = p_new_line_id FOR SHARE OF l;
-  IF v_line.id IS NULL OR NOT v_line.is_active OR v_line.direction <> 'debit'
-     OR v_line.account_registry_id <> v_form.bank_account_id OR v_line.currency <> 'XOF'
-     OR v_line.debit_amount <> v_old.amount OR NOT payables_private.line_unit_admissible(p_new_line_id) THEN
-    RAISE EXCEPTION 'PAYABLES_REBIND_EVIDENCE_INVALID';
-  END IF;
+   WHERE l.id = p_new_line_id FOR SHARE OF l, u;
+  v_failure := CASE
+    WHEN v_line.id IS NULL OR NOT v_line.is_active OR v_line.direction <> 'debit' THEN 'LINE_INACTIVE'
+    WHEN v_line.unit_status <> 'ingested' OR v_line.unit_validation <> 'valid' THEN 'UNIT_NOT_VALID'
+    WHEN v_line.account_registry_id <> v_form.bank_account_id THEN 'ACCOUNT_MISMATCH'
+    WHEN v_line.currency <> 'XOF' THEN 'CURRENCY_NOT_SUPPORTED'
+    WHEN v_line.debit_amount <> v_old.amount THEN 'AMOUNT_MISMATCH'
+    END;
+  IF v_failure IS NOT NULL THEN RAISE EXCEPTION 'PAYABLES_REBIND_EVIDENCE_INVALID:%', v_failure; END IF;
   PERFORM payables_private.refresh_references(v_actor, v_form.bank_account_id, v_line.accounting_date, v_line.accounting_date);
   SELECT * INTO v_ref FROM public.payables_bank_line_references r
    WHERE r.line_id = p_new_line_id AND r.grammar_version = payables_private.cheque_grammar_version(v_line.bank);
+  SELECT * INTO v_extract FROM payables_private.extract_cheque_reference(v_line.bank, v_line.description_sanitized);
   v_issuance := payables_private.current_issuance(v_form.id);
-  IF v_ref.id IS NULL OR v_ref.outcome <> 'REFERENCE' OR v_ref.reference_text <> v_form.cheque_number
-     OR v_issuance.amount IS DISTINCT FROM v_line.debit_amount
-     OR EXISTS (SELECT 1 FROM public.payables_bank_match_proposals m WHERE m.line_id = p_new_line_id AND m.status = 'CONFIRMED')
-     OR payables_private.unique_reference_line(v_form.bank_account_id, v_form.cheque_number) IS DISTINCT FROM p_new_line_id THEN
-    RAISE EXCEPTION 'PAYABLES_REBIND_EVIDENCE_INVALID';
-  END IF;
+  v_failure := CASE
+    WHEN v_ref.id IS NULL OR v_ref.outcome <> 'REFERENCE' OR v_ref.reference_text IS DISTINCT FROM v_form.cheque_number
+         OR v_extract.outcome IS DISTINCT FROM 'REFERENCE' OR v_extract.reference_text IS DISTINCT FROM v_form.cheque_number
+         THEN 'REFERENCE_CHANGED'
+    WHEN v_issuance.amount IS DISTINCT FROM v_line.debit_amount THEN 'AMOUNT_MISMATCH'
+    WHEN v_issuance.issue_date IS NULL OR v_issuance.issue_date > v_line.accounting_date THEN 'ISSUE_AFTER_DEBIT'
+    WHEN EXISTS (SELECT 1 FROM public.payables_bank_match_proposals m WHERE m.line_id = p_new_line_id AND m.status = 'CONFIRMED')
+         THEN 'ALREADY_CONSUMED'
+    WHEN payables_private.unique_reference_line(v_form.bank_account_id, v_form.cheque_number) IS DISTINCT FROM p_new_line_id
+         THEN 'REFERENCE_AMBIGUOUS'
+    END;
+  IF v_failure IS NOT NULL THEN RAISE EXCEPTION 'PAYABLES_REBIND_EVIDENCE_INVALID:%', v_failure; END IF;
   UPDATE public.payables_bank_match_proposals SET status = 'SUPERSEDED', row_version = row_version + 1 WHERE id = p_match_id;
   UPDATE public.payables_exits SET status = 'REVOKED', row_version = row_version + 1
    WHERE match_id = p_match_id AND kind = 'BANK_MATCH' AND status = 'VALIDATED';
@@ -972,6 +990,80 @@ BEGIN
 END;
 $$;
 
+-- Lecture cohérente d'une liste pour l'interface (contre-revue CTO de 4fbb65f) :
+-- UN appel, UNE instruction, donc UN instantané. La fonction est STABLE : toutes
+-- ses requêtes voient l'instantané de l'instruction appelante, jamais un état
+-- plus récent. Elle s'exécute avec les droits de l'appelant (SECURITY INVOKER) :
+-- les politiques RLS du domaine et les contrôles des fonctions de lecture
+-- (READ, BANK_READ) s'appliquent tels quels. Aucune pagination, aucun nombre de
+-- lignes pris pour preuve de stabilité ; au-delà de la borne de volume (50 000,
+-- réductible mais jamais augmentable par l'appelant), refus explicite plutôt
+-- qu'une liste tronquée.
+CREATE FUNCTION public.payables_read_v1(p_list text, p_args jsonb DEFAULT '{}'::jsonb, p_limit integer DEFAULT 50000)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_limit constant integer := least(greatest(coalesce(p_limit, 50000), 1), 50000);
+  v_args jsonb := coalesce(p_args, '{}'::jsonb);
+  v_table text; v_order text; v_count bigint; v_rows jsonb;
+BEGIN
+  -- Listes de tables : la clé de tri est figée ici (jamais fournie par l'appelant).
+  CASE p_list
+    WHEN 'suppliers' THEN v_table := 'payables_suppliers'; v_order := 't.canonical_name, t.id';
+    WHEN 'payments' THEN v_table := 'payables_payments'; v_order := 't.created_at DESC, t.id';
+    WHEN 'forms' THEN v_table := 'payables_cheque_forms'; v_order := 't.updated_at DESC, t.id';
+    WHEN 'contents' THEN v_table := 'payables_cheque_contents'; v_order := 't.version_no DESC, t.id';
+    WHEN 'print_events' THEN v_table := 'payables_print_events'; v_order := 't.requested_at DESC, t.id';
+    WHEN 'signatures' THEN v_table := 'payables_signatures'; v_order := 't.signed_on DESC, t.id';
+    WHEN 'exits' THEN v_table := 'payables_exits'; v_order := 't.requested_at DESC, t.id';
+    WHEN 'exceptions' THEN v_table := 'payables_exceptions'; v_order := 't.opened_at DESC, t.id';
+    WHEN 'persons' THEN v_table := 'payables_persons'; v_order := 't.display_name, t.id';
+    WHEN 'person_links' THEN v_table := 'payables_person_links'; v_order := 't.proposed_at DESC, t.id';
+    WHEN 'parameters' THEN v_table := 'payables_parameter_versions'; v_order := 't.proposed_at DESC, t.id';
+    WHEN 'capability_grants' THEN v_table := 'payables_capability_grants'; v_order := 't.proposed_at DESC, t.id';
+    WHEN 'takeover_batches' THEN v_table := 'payables_takeover_batches'; v_order := 't.prepared_at DESC, t.id';
+    WHEN 'issuances' THEN v_table := 'payables_issuances'; v_order := 't.recorded_at DESC, t.id';
+    WHEN 'deliveries' THEN v_table := 'payables_deliveries'; v_order := 't.delivered_on DESC, t.id';
+    ELSE v_table := NULL;
+  END CASE;
+  IF v_table IS NOT NULL THEN
+    EXECUTE format('SELECT count(*) FROM public.%I', v_table) INTO v_count;
+    IF v_count > v_limit THEN RAISE EXCEPTION 'PAYABLES_READ_LIMIT_EXCEEDED'; END IF;
+    EXECUTE format('SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY %s), ''[]''::jsonb) FROM public.%I t', v_order, v_table)
+      INTO v_rows;
+    RETURN v_rows;
+  END IF;
+  -- Listes calculées : l'ordre total des fonctions de lecture est conservé.
+  CASE p_list
+    WHEN 'invoice_overview' THEN
+      SELECT count(*), coalesce(jsonb_agg(to_jsonb(t) - 'ordinality' ORDER BY t.ordinality), '[]'::jsonb)
+        INTO v_count, v_rows FROM public.payables_invoice_overview_v1() WITH ORDINALITY t;
+    WHEN 'accounts' THEN
+      SELECT count(*), coalesce(jsonb_agg(to_jsonb(t) - 'ordinality' ORDER BY t.ordinality), '[]'::jsonb)
+        INTO v_count, v_rows FROM public.payables_accounts_v1() WITH ORDINALITY t;
+    WHEN 'work_queue' THEN
+      SELECT count(*), coalesce(jsonb_agg(to_jsonb(t) - 'ordinality' ORDER BY t.ordinality), '[]'::jsonb)
+        INTO v_count, v_rows FROM public.payables_work_queue_v1() WITH ORDINALITY t;
+    WHEN 'positions' THEN
+      SELECT count(*), coalesce(jsonb_agg(to_jsonb(t) - 'ordinality' ORDER BY t.ordinality), '[]'::jsonb)
+        INTO v_count, v_rows FROM public.payables_account_positions_v1((v_args->>'as_of')::date) WITH ORDINALITY t;
+    WHEN 'followup_lines' THEN
+      SELECT count(*), coalesce(jsonb_agg(to_jsonb(t) - 'ordinality' ORDER BY t.ordinality), '[]'::jsonb)
+        INTO v_count, v_rows
+        FROM public.payables_bank_followup_lines_v1((v_args->>'account_id')::uuid, (v_args->>'from')::date,
+          (v_args->>'to')::date) WITH ORDINALITY t;
+    ELSE
+      RAISE EXCEPTION 'PAYABLES_READ_LIST_UNKNOWN';
+  END CASE;
+  IF v_count > v_limit THEN RAISE EXCEPTION 'PAYABLES_READ_LIMIT_EXCEEDED'; END IF;
+  RETURN v_rows;
+END;
+$$;
+
 -- --------------------------------------------------------------------------
 -- 6. RLS, droits et surface d'API
 -- --------------------------------------------------------------------------
@@ -1050,5 +1142,6 @@ GRANT EXECUTE ON FUNCTION public.payables_rebind_bank_match_v1(text,uuid,uuid,te
 GRANT EXECUTE ON FUNCTION public.payables_work_queue_v1() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_account_positions_v1(date) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.payables_bank_followup_lines_v1(uuid,date,date) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.payables_read_v1(text,jsonb,integer) TO authenticated;
 
 COMMIT;
