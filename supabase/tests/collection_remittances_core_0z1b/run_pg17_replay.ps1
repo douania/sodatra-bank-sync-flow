@@ -78,6 +78,8 @@ try {
 
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/33_concurrency_assert.sql'
   Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/40_post_and_negative.sql'
+  Invoke-ReplaySqlFile 'supabase/migrations/20260806000000_collection_remittances_core_phase_b_safe_read.sql'
+  Invoke-ReplaySqlFile 'supabase/tests/collection_remittances_core_0z1b/50_phase_b_safe_read.sql'
 
   $summary = docker exec $containerName psql -At -U postgres -d postgres -c @"
 select concat_ws('|',
@@ -87,6 +89,7 @@ select concat_ws('|',
   'cutovers='||(select count(*) from public.collection_events where event_type='SYSTEM_OF_RECORD_CUTOVER'));
 "@
   Write-Output "REPLAY_SUMMARY=$summary"
+  Write-Output 'COLLECTION_PHASE_B_SAFE_READ_PG17_PASS'
   Write-Output 'ALL_COLLECTION_REMITTANCES_CORE_0Z1B_PG17_PASS'
 }
 finally {
