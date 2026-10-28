@@ -5,13 +5,25 @@ export const PAYABLES_CAPABILITIES = [
 ] as const;
 export type PayablesCapability = (typeof PAYABLES_CAPABILITIES)[number];
 
+/** Capacités de gouvernance héritées : conservées dans l'historique, sans aucun effet. */
+export const PAYABLES_RETIRED_CAPABILITIES: readonly PayablesCapability[] = ['PARAM_PROPOSE', 'PARAM_VALIDATE'];
+/** Capacités que l'administrateur du module peut attribuer ou retirer. */
+export const PAYABLES_ASSIGNABLE_CAPABILITIES: readonly PayablesCapability[] =
+  PAYABLES_CAPABILITIES.filter((c) => !PAYABLES_RETIRED_CAPABILITIES.includes(c));
+
 export interface PayablesAccess {
   user_id: string;
   capabilities: PayablesCapability[];
   person_id: string | null;
   business_writes_enabled: boolean;
   export_enabled: boolean;
+  /** Fourni par le serveur seul (autorité désignée par l'opérateur), jamais déduit du navigateur. */
+  governance_model: 'SINGLE_ADMIN';
+  admin_configured: boolean;
+  is_admin: boolean;
 }
+
+export type DecisionOrigin = 'PROPOSAL' | 'BOOTSTRAP' | 'ADMIN';
 
 export interface SupplierRow {
   id: string;
@@ -138,6 +150,7 @@ export interface PersonRow {
   id: string;
   display_name: string;
   status: 'PROPOSED' | 'ACTIVE' | 'REJECTED';
+  origin: Exclude<DecisionOrigin, 'BOOTSTRAP'>;
   proposed_by: string;
 }
 
@@ -149,6 +162,7 @@ export interface ParameterVersionRow {
   valid_from: string;
   payload: Record<string, unknown>;
   status: 'PROPOSED' | 'VALIDATED' | 'REJECTED';
+  origin: Exclude<DecisionOrigin, 'BOOTSTRAP'>;
   proposed_by: string;
 }
 
@@ -158,6 +172,8 @@ export interface CapabilityGrantRow {
   capability: PayablesCapability;
   action: 'GRANT' | 'REVOKE';
   status: 'PROPOSED' | 'VALIDATED' | 'REJECTED';
+  origin: DecisionOrigin;
+  decision_seq: number | null;
   proposed_by: string | null;
 }
 
@@ -167,6 +183,8 @@ export interface PersonLinkRow {
   user_id: string;
   action: 'LINK' | 'UNLINK';
   status: 'PROPOSED' | 'VALIDATED' | 'REJECTED';
+  origin: Exclude<DecisionOrigin, 'BOOTSTRAP'>;
+  decision_seq: number | null;
   proposed_by: string;
 }
 

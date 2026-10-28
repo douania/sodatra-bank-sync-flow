@@ -419,8 +419,10 @@ SELECT pc_test.assert((SELECT last_statement_date = DATE '2026-10-02' AND circul
   AND indicative_position = 4990000
   FROM public.payables_account_positions_v1(DATE '2026-10-02') WHERE account_id = pc_test.id('acct_bdk')),
   'as-of date limits statements and circulation; a historical position is flagged as such');
-SELECT pc_test.assert(NOT (SELECT is_historical FROM pos WHERE account_id = pc_test.id('acct_bdk')),
-  'a position at today is not historical');
+-- Date du jour du serveur (paramètre absent) et non une date figée : l'assertion
+-- ne dépend pas du jour d'exécution du rejeu.
+SELECT pc_test.assert(NOT (SELECT is_historical FROM public.payables_account_positions_v1(NULL)
+  WHERE account_id = pc_test.id('acct_bdk')), 'a position at today is not historical');
 SELECT pc_test.expect_error($$SELECT * FROM public.payables_account_positions_v1(DATE '2099-01-01')$$, 'PAYABLES_FUTURE_DATE_FORBIDDEN');
 -- File de travail partagée : éléments, ancienneté, verrous visibles.
 SELECT pc_test.assert(EXISTS (SELECT 1 FROM public.payables_work_queue_v1() WHERE item_type = 'EXCEPTION_OPEN')
