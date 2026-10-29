@@ -303,6 +303,7 @@ Windows PowerShell 5.1.
 | `npm run test:payables-cheques-print` | `PRINT_ISOLATION_PAGES=1`, `PRINT_ISOLATION_PAGE_MM=170x95` |
 | Autres suites Node du CI (21 commandes) | toutes réussies, 0 échec, 0 ignoré |
 | `run_pg17_replay.ps1` dans un processus `powershell -NoProfile -File` neuf | voir § 6.1 |
+| CI GitHub (Node 20) | premier passage en échec sur `9a37f2d` : le test d'interaction lisait un `navigator` global absent sous Node 20. Corrigé dans le DOM du test (`9e7dc41`), échec reproduit puis corrigé localement en retirant `navigator` ; aucun code de production touché |
 
 ### 6.1 Rejeu PostgreSQL 17 en deux scénarios
 
