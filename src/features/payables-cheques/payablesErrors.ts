@@ -14,6 +14,27 @@ const MESSAGES: Record<string, string> = {
   PAYABLES_PROPOSAL_ALREADY_PENDING: 'Une proposition est déjà en attente pour cet élément.',
   PAYABLES_PROPOSAL_STATE_INVALID: 'Cette proposition n’est plus en attente.',
   PAYABLES_VALIDITY_OVERLAP: 'La date d’effet doit être postérieure à la dernière version validée.',
+  PAYABLES_ADMIN_REQUIRED: 'Seul l’administrateur du module peut faire cette modification.',
+  PAYABLES_ADMIN_SELF_TARGET_FORBIDDEN:
+    'L’administrateur ne statue ni sur ses propres droits ni sur son propre rattachement.',
+  PAYABLES_LEGACY_GOVERNANCE_DISABLED:
+    'L’ancienne gouvernance à deux acteurs est désactivée : l’administrateur du module décide.',
+  PAYABLES_CAPABILITY_RETIRED: 'Cette capacité de l’ancienne gouvernance est retirée.',
+  PAYABLES_CAPABILITY_UNCHANGED: 'Cette habilitation est déjà dans l’état demandé.',
+  PAYABLES_CAPABILITY_UNKNOWN: 'Capacité inconnue.',
+  PAYABLES_USER_UNKNOWN: 'Compte utilisateur inconnu.',
+  PAYABLES_PERSON_DUPLICATE: 'Une personne active porte déjà ce nom.',
+  PAYABLES_PERSON_NOT_ACTIVE: 'La personne n’est pas active.',
+  PAYABLES_LINK_CONFLICT: 'Ce compte ou cette personne est déjà rattaché.',
+  PAYABLES_LINK_STATE_INVALID: 'Ce rattachement n’est pas en vigueur.',
+  PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE:
+    'Ce compte a préparé un chèque encore en cours : terminez-le ou déclarez-le inutilisé avant de changer son rattachement.',
+  PAYABLES_ADMIN_IDENTITY_TARGET_INVALID: 'Seule l’identité de l’administrateur en fonction est établie par l’opérateur.',
+  PAYABLES_NO_INDEPENDENT_SIGNATORY:
+    'Étape refusée avant toute formule consommée : aucun signataire admissible ne resterait distinct des préparateurs de ce chèque. Faites-la faire par une autre personne, complétez les signataires du compte, ou abandonnez la demande.',
+  PAYABLES_EXPECTED_VERSION_REQUIRED: 'La version attendue du paramètre est requise.',
+  PAYABLES_LEGACY_PROPOSAL_OWN: 'Une proposition héritée de l’administrateur lui-même reste en l’état, sans effet.',
+  PAYABLES_LEGACY_PROPOSAL_KIND_INVALID: 'Type de proposition inconnu.',
   PAYABLES_SUPPLIER_DUPLICATE: 'Un fournisseur de même nom existe déjà : utilisez-le.',
   PAYABLES_SUPPLIER_MERGED: 'Ce fournisseur a été fusionné : utilisez le fournisseur conservé.',
   PAYABLES_REFERENCE_INVALID: 'La référence doit être saisie exactement, sans espace au début ni à la fin.',
@@ -44,7 +65,8 @@ const MESSAGES: Record<string, string> = {
   PAYABLES_SIGNATURE_VERSION_MISMATCH: 'La signature porte sur une version antérieure du chèque.',
   PAYABLES_SIGNATURE_AFTER_ISSUE: 'Une signature est postérieure à la date d’émission.',
   PAYABLES_SIGNATURE_BEFORE_PRINT: 'La date de signature précède l’impression de cette version du chèque.',
-  PAYABLES_PREPARER_NOT_LINKED: 'Le préparateur n’est pas rattaché à une personne vérifiée.',
+  PAYABLES_PREPARER_NOT_LINKED:
+    'Un préparateur n’est pas rattaché à une personne vérifiée : faites d’abord établir ce rattachement.',
   PAYABLES_PRESIGNED_FORM_USE_DISABLED: 'L’utilisation d’une formule pré-signée est désactivée.',
   PAYABLES_ISSUE_ALREADY_RECORDED: 'L’émission de ce chèque est déjà enregistrée.',
   PAYABLES_FUTURE_DATE_FORBIDDEN: 'Une date future n’est pas admise.',

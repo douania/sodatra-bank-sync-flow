@@ -15,9 +15,57 @@
 
 ---
 
+## PAYABLES-CHEQUES-SINGLE-ADMIN
+
+**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; contre-revue CTO du 2026-10-28 (`FAIL` ciblé sur `52b3dd0`) traitée sous `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN`, reconduit le 2026-10-29 pour le dernier blocage sur `fd860b1` (circuit comptable conservé), en attente de nouvelle contre-revue ; migration `20261028090000` appliquée à aucun environnement**
+
+Lot `GO_IMPLEMENT_PAYABLES_CHEQUES_SINGLE_ADMIN`, base `origin/main` `6c9f8ed`, branche
+`codex/payables-cheques-single-admin`. Décision métier : un administrateur unique du
+module, désigné par l'opérateur, gère seul habilitations, personnes, rattachements et
+paramètres versionnés, sans second approbateur ; les comptables opérationnels ne
+proposent ni ne valident rien en gouvernance ; le dirigeant reste seul signataire.
+La proposition antérieure « deux comptables gestionnaires, dirigeant troisième
+valideur » est retirée et n'a pas été exécutée.
+
+Livré en local : autorité administrative dans le schéma privé (désignation, remplacement
+et retrait par fonction opérateur, journalisés deux fois ; sans désignation,
+administration fermée) ; droits implicites de l'administrateur liés à l'autorité ;
+capacités `PARAM_PROPOSE`/`PARAM_VALIDATE` et gouvernance à deux acteurs neutralisées ;
+cinq fonctions d'administration indépendantes de l'interrupteur métier, idempotentes,
+tracées, à version attendue pour les paramètres ; clôture des propositions héritées ;
+révocation sérialisée avec les écritures en cours du titulaire ; rattachement d'un
+préparateur figé tant que son chèque circule ; panneau Paramètres réservé à
+l'administrateur reconnu par le serveur. Correctif de contre-revue : identité
+personnelle de l'administrateur distincte de l'autorité, établie par l'opérateur et
+non réassignable par lui ; précontrôles du circuit refusant, avant toute formule
+consommée, une préparation que la voie normale ne pourrait pas confirmer (préparateur
+non rattaché, aucun signataire admissible distinct des préparateurs) ; résultat réel
+d'impression toujours enregistrable ; version de référence attachée au brouillon de
+paramètre (conflit signalé, aucune avance silencieuse) ; lectures en chargement, en
+échec avec reprise ou vides distinguées. Circuit comptable conservé (arbitrage CTO du
+2026-10-29) : le comptable prépare et imprime, le signataire autorisé distinct signe
+physiquement, le même comptable enregistre la signature et confirme ; la règle
+d'indépendance du contrôleur, ajoutée puis jugée hors circuit, est retirée. Contrôles
+financiers existants et garde de production inchangés. Limite documentée : l'application
+ne certifie pas l'identité physique (double compte, signataire fictif).
+
+Validations locales : rejeu PostgreSQL 17 en deux scénarios (mise à niveau d'un domaine
+rempli sous l'ancienne gouvernance ; installation neuve avec les suites financières 30
+à 80 sous la nouvelle gouvernance, un seul cas déplacé vers le refus en amont), sept
+courses réelles nouvelles, preuves de mordant par mutations (migration et interface),
+revues indépendantes ; tests TypeScript du module dont un test d'interaction en rendu
+client ; lint et typecheck identiques à la baseline ; build. Détail :
+`docs/PAYABLES_CHEQUES_SINGLE_ADMIN_REPORT.md`.
+
+Non fait (GO distincts requis) : merge, application staging ou production, désignation
+réelle de l'administrateur et établissement réel de son identité, attribution réelle de
+droits, paramétrage, ouverture du module, activation de la garde de production.
+
+---
+
 ## PAYABLES-CHEQUES-CORE
 
-**Statut : `IN_PROGRESS` — implémenté localement, PR en brouillon, migrations appliquées à aucun environnement (2026-10-26)**
+**Statut : `IN_PROGRESS` — code fusionné (PR #151, `6c9f8ed`, 2026-10-26) ; migrations installées sur staging le 2026-10-27 et, selon le relevé CTO du 2026-10-27 (non relu par ce registre), en production, module fermé ; aucune mise en service**
 
 Lot fonctionnel unique « Factures, engagements et chèques émis » sous
 `GO_IMPLEMENT_PAYABLES_CHEQUES_CORE` (P5), base `origin/main` `7c03b548`, branche
@@ -52,9 +100,9 @@ la baseline (16), projet Node 0 erreur, build réussi ; rejeu agrégé des fonct
 pures sur les fichiers réels autorisés (empreintes inchangées). Détail :
 `docs/PAYABLES_CHEQUES_CORE_REPORT.md`.
 
-Non fait (GO distincts requis) : revue indépendante, merge, application staging,
-amorçage de la gouvernance, ouverture de l'interrupteur, validation du profil
-d'impression sur papier, reprise réelle, production.
+Non fait (GO distincts requis) : amorçage de la gouvernance (remplacé par le modèle
+administrateur unique, entrée ci-dessus), ouverture de l'interrupteur, qualification
+du profil d'impression sur une formule originale, reprise réelle, mise en service.
 
 ---
 

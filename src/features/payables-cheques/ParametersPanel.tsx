@@ -1,26 +1,42 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  decideCapability,
-  decideParameter,
-  decidePerson,
-  decidePersonLink,
+  adminCreatePerson,
+  adminRejectLegacyProposal,
+  adminSetCapability,
+  adminSetParameter,
+  adminSetPersonLink,
   listCapabilityGrants,
   listParameters,
   listPersonLinks,
   listPersons,
-  proposeCapability,
-  proposeParameter,
-  proposePerson,
-  proposePersonLink,
 } from './payablesChequesService';
-import { PAYABLES_CAPABILITIES, type PayablesAccess } from './payablesChequesTypes';
-import { Field, hasCapability, nativeSelectClass, PAYABLES_QUERY_ROOT, shortId, today, usePayablesMutation } from './payablesUi';
+import { PAYABLES_ASSIGNABLE_CAPABILITIES, type PayablesAccess } from './payablesChequesTypes';
+import { PayablesError } from './payablesErrors';
+import {
+  adminState,
+  currentLinks,
+  editParameterDraft,
+  effectiveGrants,
+  expectedParameterVersion,
+  legacyPendingProposals,
+  parameterDraftConflict,
+  parameterDraftExpectedVersion,
+  readState,
+  rebaseParameterDraft,
+  reloadParameterDraft,
+  savedParameterDraft,
+  type LegacyProposal,
+  type ParameterDraft,
+  type ParameterDraftFields,
+} from './payablesAdminModel';
+import { Field, nativeSelectClass, PAYABLES_QUERY_ROOT, shortId, today, usePayablesMutation } from './payablesUi';
 
 const PAYLOAD_TEMPLATES: Record<string, string> = {
   CATEGORY: JSON.stringify({ code: 'ALL_PAYMENTS', label: 'Tous règlements', state: 'ACTIVE' }, null, 2),
@@ -41,154 +57,271 @@ const PAYLOAD_TEMPLATES: Record<string, string> = {
 };
 
 export function ParametersPanel({ access }: { access: PayablesAccess }) {
+  const queryClient = useQueryClient();
   const persons = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'persons'], queryFn: listPersons });
   const links = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'person-links'], queryFn: listPersonLinks });
   const grants = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'grants'], queryFn: listCapabilityGrants });
   const parameters = useQuery({ queryKey: [PAYABLES_QUERY_ROOT, 'parameters'], queryFn: listParameters });
-  const canPropose = hasCapability(access, 'PARAM_PROPOSE');
-  const canValidate = hasCapability(access, 'PARAM_VALIDATE');
+  // Autorité reconnue par le serveur seul ; indépendante de l'interrupteur métier.
+  const state = adminState(access);
+  const isAdmin = state === 'ADMIN';
+  // Une lecture en cours ou en échec n'est jamais présentée comme une liste vide,
+  // et suspend les décisions qui en dépendent.
+  const reads = [
+    { key: 'persons', label: 'Personnes', query: persons },
+    { key: 'person-links', label: 'Rattachements', query: links },
+    { key: 'grants', label: 'Habilitations', query: grants },
+    { key: 'parameters', label: 'Paramètres', query: parameters },
+  ] as const;
+  const personsReady = readState(persons) === 'READY';
+  const linksReady = readState(links) === 'READY';
+  const grantsState = readState(grants);
+  const parametersReady = readState(parameters) === 'READY';
+  const allReady = reads.every((r) => readState(r.query) === 'READY');
 
   const [personName, setPersonName] = useState('');
   const [link, setLink] = useState({ personId: '', userId: '' });
-  const [grant, setGrant] = useState({ userId: '', capability: 'READ', action: 'GRANT' as 'GRANT' | 'REVOKE' });
-  const [param, setParam] = useState({ kind: 'CATEGORY', subjectKey: 'ALL_PAYMENTS', validFrom: today(),
-    payload: PAYLOAD_TEMPLATES.CATEGORY, evidenceRef: '' });
+  const [grant, setGrant] = useState({ userId: '', capability: 'READ' });
+  const [draft, setDraft] = useState<ParameterDraft>({ kind: 'CATEGORY', subjectKey: 'ALL_PAYMENTS', validFrom: today(),
+    payload: PAYLOAD_TEMPLATES.CATEGORY, evidenceRef: '', baseVersion: null, knownBases: {} });
   const [reason, setReason] = useState('');
-  const payloadValid = (() => { try { return typeof JSON.parse(param.payload) === 'object'; } catch { return false; } })();
+  const parameterRows = parameters.data ?? [];
+  const editDraft = (patch: Partial<ParameterDraftFields>) => setDraft((d) => editParameterDraft(d, patch, parameterRows));
+  const payloadValid = (() => { try { return typeof JSON.parse(draft.payload) === 'object'; } catch { return false; } })();
+  // La version de référence appartient au brouillon : jamais avancée en silence par un rafraîchissement.
+  const conflict = parameterDraftConflict(draft, parameterRows);
+  const expectedVersion = parameterDraftExpectedVersion(draft, parameterRows);
+  const referenceVersion = draft.baseVersion ?? expectedParameterVersion(parameterRows, draft.kind, draft.subjectKey);
+  const reasonValid = reason.trim().length >= 5;
 
-  const personMutation = usePayablesMutation('propose-person', (key, _: void) => proposePerson(key, personName, reason), 'Personne proposée.');
-  const linkMutation = usePayablesMutation('propose-link', (key, _: void) => proposePersonLink(key, link.personId, link.userId, 'LINK', reason),
-    'Rattachement proposé.');
-  const grantMutation = usePayablesMutation('propose-grant', (key, _: void) => proposeCapability(key, grant.userId, grant.capability,
-    grant.action, reason), 'Habilitation proposée.');
-  const paramMutation = usePayablesMutation('propose-param', (key, _: void) => proposeParameter(key, {
-    kind: param.kind, subjectKey: param.subjectKey, validFrom: param.validFrom, payload: JSON.parse(param.payload),
-    evidenceRef: param.evidenceRef || null, reason,
-  }), 'Version de paramètre proposée.');
-  const decision = usePayablesMutation('decide-governance', (key, input: { type: string; id: string; approve: boolean }) => {
-    if (input.type === 'person') return decidePerson(key, input.id, input.approve, reason);
-    if (input.type === 'link') return decidePersonLink(key, input.id, input.approve, reason);
-    if (input.type === 'grant') return decideCapability(key, input.id, input.approve, reason);
-    return decideParameter(key, input.id, input.approve, reason);
-  }, 'Décision enregistrée.');
+  const personMutation = usePayablesMutation('admin-person', (key, _: void) => adminCreatePerson(key, personName, reason),
+    'Personne créée.');
+  const linkMutation = usePayablesMutation('admin-link', (key, input: { link: boolean }) =>
+    adminSetPersonLink(key, link.personId, link.userId, input.link, reason), 'Rattachement enregistré.');
+  const grantMutation = usePayablesMutation('admin-grant', (key, input: { grant: boolean }) =>
+    adminSetCapability(key, grant.userId, grant.capability, input.grant, reason), 'Habilitation enregistrée.');
+  const paramMutation = usePayablesMutation('admin-param', async (key, input: { expectedVersionNo: number }) => {
+    const sent = { kind: draft.kind, subjectKey: draft.subjectKey };
+    try {
+      const result = await adminSetParameter(key, {
+        kind: draft.kind, subjectKey: draft.subjectKey, validFrom: draft.validFrom, payload: JSON.parse(draft.payload),
+        evidenceRef: draft.evidenceRef || null, expectedVersionNo: input.expectedVersionNo, reason,
+      });
+      // La version enregistrée devient la référence du brouillon : pas de faux conflit sur sa propre décision.
+      const saved = Number(result.version_no);
+      if (Number.isInteger(saved)) setDraft((d) => savedParameterDraft(d, sent.kind, sent.subjectKey, saved));
+      return result;
+    } catch (error) {
+      // Version concurrente vue par le serveur : relecture, le conflit s'affiche sur le brouillon conservé.
+      if (error instanceof PayablesError && error.code === 'PAYABLES_STALE_VERSION') {
+        void queryClient.invalidateQueries({ queryKey: [PAYABLES_QUERY_ROOT, 'parameters'] });
+      }
+      throw error;
+    }
+  }, 'Version de paramètre enregistrée.');
+  const closeMutation = usePayablesMutation('admin-close-legacy', (key, item: LegacyProposal) =>
+    adminRejectLegacyProposal(key, item.kind, item.id, reason), 'Proposition héritée close.');
 
-  const pending: { type: string; id: string; by: string; label: string; content?: string }[] = [
-    ...(persons.data ?? []).filter((p) => p.status === 'PROPOSED').map((p) => ({ type: 'person', id: p.id, by: p.proposed_by,
-      label: `Personne : ${p.display_name}` })),
-    ...(links.data ?? []).filter((l) => l.status === 'PROPOSED').map((l) => ({ type: 'link', id: l.id, by: l.proposed_by,
-      label: `Rattachement ${l.action} : personne ${shortId(l.person_id)} ↔ compte ${shortId(l.user_id)}` })),
-    ...(grants.data ?? []).filter((g) => g.status === 'PROPOSED').map((g) => ({ type: 'grant', id: g.id, by: g.proposed_by,
-      label: `Habilitation ${g.action} ${g.capability} → ${shortId(g.user_id)}` })),
-    ...(parameters.data ?? []).filter((v) => v.status === 'PROPOSED').map((v) => ({ type: 'param', id: v.id, by: v.proposed_by,
-      label: `${v.kind} ${v.subject_key} v${v.version_no} à partir du ${v.valid_from}`,
-      // Le valideur voit le contenu exact proposé : jamais de validation à l'aveugle.
-      content: JSON.stringify(v.payload, null, 2) })),
-  ];
+  const rights = effectiveGrants(grants.data ?? []);
+  const linkedPerson = currentLinks(links.data ?? []);
+  const personName_ = (id: string) => (persons.data ?? []).find((p) => p.id === id)?.display_name ?? shortId(id);
+  const legacy = legacyPendingProposals({
+    persons: persons.data ?? [], links: links.data ?? [], grants: grants.data ?? [], parameters: parameterRows,
+  });
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Gouvernance et paramètres versionnés</CardTitle>
+          <CardTitle>Administration du module</CardTitle>
           <CardDescription>
-            Toute modification est proposée par un habilité et validée par un autre ; aucune auto-attribution ; aucune
-            version modifiée en place. L’administration technique ne donne aucun droit métier.
+            L’administrateur du module, désigné par l’opérateur, attribue et retire les habilitations, gère les personnes,
+            leurs rattachements et les paramètres versionnés. Chaque décision est tracée ; les versions décidées restent
+            immuables. Les écritures métier restent soumises à l’interrupteur serveur et aux contrôles financiers.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Field label="Motif commun aux propositions et décisions" htmlFor="gov-reason">
-            <Input id="gov-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
-          {canPropose && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-2">
-                <Field label="Nouvelle personne" htmlFor="gov-person">
-                  <Input id="gov-person" value={personName} onChange={(e) => setPersonName(e.target.value)} />
-                </Field>
-                <Button size="sm" onClick={() => personMutation.mutate()} disabled={personName.trim().length < 2 || reason.trim().length < 5}>
-                  Proposer la personne
+          {state === 'NOT_CONFIGURED' && (
+            <Alert><AlertDescription>Aucun administrateur n’est désigné : l’administration du module est fermée.</AlertDescription></Alert>
+          )}
+          {state === 'NOT_ADMIN' && (
+            <Alert><AlertDescription>Consultation seule : l’administration est réservée à l’administrateur du module.</AlertDescription></Alert>
+          )}
+          {isAdmin && !access.business_writes_enabled && (
+            <Alert>
+              <AlertDescription>
+                Écritures métier fermées : l’administration reste possible, aucune opération financière ne l’est.
+              </AlertDescription>
+            </Alert>
+          )}
+          {isAdmin && access.person_id === null && (
+            <Alert>
+              <AlertDescription>
+                Votre identité personnelle n’est pas encore établie par l’opérateur : vous administrez le module, mais aucune
+                préparation de chèque ne vous est ouverte avant ce rattachement.
+              </AlertDescription>
+            </Alert>
+          )}
+          {reads.filter((r) => readState(r.query) === 'ERROR').map((r) => (
+            <Alert key={r.key} variant="destructive">
+              <AlertDescription className="flex flex-wrap items-center gap-2">
+                <span>
+                  {`Lecture « ${r.label} » impossible : ${r.query.error?.message ?? 'erreur inconnue'} Les décisions qui en dépendent sont suspendues ; votre saisie est conservée.`}
+                </span>
+                <Button size="sm" variant="outline" disabled={r.query.isFetching} onClick={() => void r.query.refetch()}>
+                  Réessayer
                 </Button>
-              </div>
-              <div className="space-y-2">
-                <Field label="Rattacher une personne à un compte utilisateur" htmlFor="gov-link-person">
-                  <select id="gov-link-person" className={nativeSelectClass} value={link.personId}
-                    onChange={(e) => setLink({ ...link, personId: e.target.value })}>
-                    <option value="">Personne…</option>
-                    {(persons.data ?? []).filter((p) => p.status === 'ACTIVE').map((p) => <option key={p.id} value={p.id}>{p.display_name}</option>)}
-                  </select>
-                </Field>
-                <Input aria-label="Identifiant du compte utilisateur" placeholder="Identifiant du compte utilisateur" value={link.userId}
-                  onChange={(e) => setLink({ ...link, userId: e.target.value.trim() })} />
-                <Button size="sm" onClick={() => linkMutation.mutate()} disabled={!link.personId || !link.userId || reason.trim().length < 5}>
-                  Proposer le rattachement
-                </Button>
-              </div>
-              <div className="space-y-2">
-                <Field label="Habilitation" htmlFor="gov-grant-user">
-                  <Input id="gov-grant-user" placeholder="Identifiant du compte utilisateur" value={grant.userId}
-                    onChange={(e) => setGrant({ ...grant, userId: e.target.value.trim() })} />
-                </Field>
-                <div className="flex gap-2">
+              </AlertDescription>
+            </Alert>
+          ))}
+          {reads.some((r) => readState(r.query) === 'LOADING') && (
+            <p className="text-sm text-muted-foreground">Chargement des données d’administration…</p>
+          )}
+          {isAdmin && (
+            <>
+              <Field label="Motif de la décision (tracé au journal)" htmlFor="admin-reason">
+                <Input id="admin-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+              </Field>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-2">
+                  <Field label="Nouvelle personne" htmlFor="admin-person">
+                    <Input id="admin-person" value={personName} onChange={(e) => setPersonName(e.target.value)} />
+                  </Field>
+                  <Button size="sm" onClick={() => personMutation.mutate()}
+                    disabled={!personsReady || personName.trim().length < 2 || !reasonValid}>
+                    Créer la personne
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  <Field label="Rattachement d’une personne à un compte utilisateur" htmlFor="admin-link-person">
+                    <select id="admin-link-person" className={nativeSelectClass} value={link.personId}
+                      onChange={(e) => setLink({ ...link, personId: e.target.value })}>
+                      <option value="">Personne…</option>
+                      {(persons.data ?? []).filter((p) => p.status === 'ACTIVE').map((p) => <option key={p.id} value={p.id}>{p.display_name}</option>)}
+                    </select>
+                  </Field>
+                  <Input aria-label="Identifiant du compte utilisateur" placeholder="Identifiant du compte utilisateur" value={link.userId}
+                    onChange={(e) => setLink({ ...link, userId: e.target.value.trim() })} />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => linkMutation.mutate({ link: true })}
+                      disabled={!personsReady || !linksReady || !link.personId || !link.userId || !reasonValid}>
+                      Rattacher
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => linkMutation.mutate({ link: false })}
+                      disabled={!personsReady || !linksReady || !link.personId || !link.userId || !reasonValid}>
+                      Détacher
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Field label="Habilitation" htmlFor="admin-grant-user">
+                    <Input id="admin-grant-user" placeholder="Identifiant du compte utilisateur" value={grant.userId}
+                      onChange={(e) => setGrant({ ...grant, userId: e.target.value.trim() })} />
+                  </Field>
                   <select aria-label="Capacité" className={nativeSelectClass} value={grant.capability}
                     onChange={(e) => setGrant({ ...grant, capability: e.target.value })}>
-                    {PAYABLES_CAPABILITIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {PAYABLES_ASSIGNABLE_CAPABILITIES.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
-                  <select aria-label="Action" className={nativeSelectClass} value={grant.action}
-                    onChange={(e) => setGrant({ ...grant, action: e.target.value as 'GRANT' | 'REVOKE' })}>
-                    <option value="GRANT">Attribuer</option>
-                    <option value="REVOKE">Retirer</option>
-                  </select>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => grantMutation.mutate({ grant: true })}
+                      disabled={grantsState !== 'READY' || !grant.userId || !reasonValid}>
+                      Attribuer
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => grantMutation.mutate({ grant: false })}
+                      disabled={grantsState !== 'READY' || !grant.userId || !reasonValid}>
+                      Retirer
+                    </Button>
+                  </div>
                 </div>
-                <Button size="sm" onClick={() => grantMutation.mutate()} disabled={!grant.userId || reason.trim().length < 5}>
-                  Proposer
-                </Button>
-              </div>
-              <div className="space-y-2">
-                <div className="grid grid-cols-3 gap-2">
-                  <select aria-label="Type de paramètre" className={nativeSelectClass} value={param.kind}
-                    onChange={(e) => setParam({ ...param, kind: e.target.value, payload: PAYLOAD_TEMPLATES[e.target.value] })}>
-                    {Object.keys(PAYLOAD_TEMPLATES).map((k) => <option key={k} value={k}>{k}</option>)}
-                  </select>
-                  <Input aria-label="Clé du paramètre" value={param.subjectKey} onChange={(e) => setParam({ ...param, subjectKey: e.target.value })} />
-                  <Input aria-label="Date d’effet" type="date" value={param.validFrom} onChange={(e) => setParam({ ...param, validFrom: e.target.value })} />
+                <div className="space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <select aria-label="Type de paramètre" className={nativeSelectClass} value={draft.kind} disabled={!parametersReady}
+                      onChange={(e) => editDraft({ kind: e.target.value, payload: PAYLOAD_TEMPLATES[e.target.value] })}>
+                      {Object.keys(PAYLOAD_TEMPLATES).map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                    <Input aria-label="Clé du paramètre" value={draft.subjectKey} disabled={!parametersReady}
+                      onChange={(e) => editDraft({ subjectKey: e.target.value })} />
+                    <Input aria-label="Date d’effet" type="date" value={draft.validFrom} disabled={!parametersReady}
+                      onChange={(e) => editDraft({ validFrom: e.target.value })} />
+                  </div>
+                  <Textarea aria-label="Contenu (JSON)" rows={8} className="font-mono text-xs" value={draft.payload}
+                    disabled={!parametersReady} onChange={(e) => editDraft({ payload: e.target.value })} />
+                  <Input aria-label="Pièce justificative" placeholder="Pièce justificative (pouvoirs, essai papier…)"
+                    value={draft.evidenceRef} disabled={!parametersReady} onChange={(e) => editDraft({ evidenceRef: e.target.value })} />
+                  {conflict && (
+                    <Alert variant="destructive">
+                      <AlertDescription className="space-y-2">
+                        <p>
+                          {`La version ${conflict.current} de ce paramètre a été enregistrée depuis le début de votre saisie, fondée sur la version ${conflict.base}. Relisez-la : rien n’est envoyé tant que vous n’avez pas choisi.`}
+                        </p>
+                        {conflict.latest && (
+                          <pre className="max-h-40 overflow-auto rounded bg-muted p-2 text-xs">{JSON.stringify(conflict.latest.payload, null, 2)}</pre>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setDraft((d) => reloadParameterDraft(d, parameterRows))}>
+                            {`Recharger la saisie depuis la version ${conflict.current}`}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setDraft((d) => rebaseParameterDraft(d, parameterRows))}>
+                            {`Conserver ma saisie sur la version ${conflict.current}`}
+                          </Button>
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {`Nouvelle version sur la version ${referenceVersion} relue : une version enregistrée entre-temps est signalée ici et refusée par le serveur, jamais écrasée.`}
+                  </p>
+                  <Button size="sm" onClick={() => { if (expectedVersion !== null) paramMutation.mutate({ expectedVersionNo: expectedVersion }); }}
+                    disabled={!parametersReady || expectedVersion === null || !payloadValid || !reasonValid}>
+                    Enregistrer la version
+                  </Button>
                 </div>
-                <Textarea aria-label="Contenu (JSON)" rows={8} className="font-mono text-xs" value={param.payload}
-                  onChange={(e) => setParam({ ...param, payload: e.target.value })} />
-                <Input aria-label="Pièce justificative" placeholder="Pièce justificative (pouvoirs, essai papier…)" value={param.evidenceRef}
-                  onChange={(e) => setParam({ ...param, evidenceRef: e.target.value })} />
-                <Button size="sm" onClick={() => paramMutation.mutate()} disabled={!payloadValid || reason.trim().length < 5}>
-                  Proposer la version
-                </Button>
               </div>
-            </div>
+            </>
           )}
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle>Propositions en attente</CardTitle></CardHeader>
-        <CardContent className="space-y-2">
-          {pending.length === 0 && <p className="text-sm text-muted-foreground">Aucune proposition en attente.</p>}
-          {pending.map((item) => (
-            <div key={`${item.type}:${item.id}`} className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge variant="outline">{item.type}</Badge> {item.label}
-              {canValidate && item.by !== access.user_id && (
-                <>
-                  <Button size="sm" disabled={reason.trim().length < 5} onClick={() => decision.mutate({ type: item.type, id: item.id, approve: true })}>
-                    Valider
-                  </Button>
-                  <Button size="sm" variant="outline" disabled={reason.trim().length < 5}
-                    onClick={() => decision.mutate({ type: item.type, id: item.id, approve: false })}>Refuser</Button>
-                </>
-              )}
-              {item.content && (
-                <pre aria-label="Contenu proposé" className="w-full overflow-x-auto rounded bg-muted p-2 font-mono text-xs">
-                  {item.content}
-                </pre>
-              )}
+        <CardHeader><CardTitle>Habilitations et rattachements en vigueur</CardTitle></CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {grantsState === 'LOADING' && <p className="text-muted-foreground">Chargement des habilitations…</p>}
+          {grantsState === 'ERROR' && (
+            <p className="text-destructive">Habilitations indisponibles : la lecture a échoué, aucune liste n’est affichée.</p>
+          )}
+          {grantsState === 'READY' && rights.size === 0 && <p className="text-muted-foreground">Aucune habilitation attribuée.</p>}
+          {grantsState === 'READY' && [...rights.entries()].map(([userId, caps]) => (
+            <div key={userId} className="flex flex-wrap items-center gap-2">
+              <span className="font-mono">{shortId(userId)}</span>
+              {linksReady && linkedPerson.has(userId) && <span>({personName_(linkedPerson.get(userId) as string)})</span>}
+              {!linksReady && <span className="text-muted-foreground">(rattachement indisponible)</span>}
+              {caps.map((c) => <Badge key={c} variant="outline">{c}</Badge>)}
             </div>
           ))}
         </CardContent>
       </Card>
+      {legacy.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Propositions héritées en attente</CardTitle>
+            <CardDescription>
+              Issues de l’ancienne gouvernance, sans effet : elles ne sont plus validables et peuvent seulement être closes
+              par l’administrateur.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {legacy.map((item) => (
+              <div key={`${item.kind}:${item.id}`} className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge variant="outline">{item.kind}</Badge> {item.label}
+                {isAdmin && item.proposedBy !== access.user_id && (
+                  <Button size="sm" variant="outline" disabled={!allReady || !reasonValid} onClick={() => closeMutation.mutate(item)}>
+                    Clore
+                  </Button>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

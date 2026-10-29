@@ -213,25 +213,34 @@ export const decideBankMatch = (key: string, proposalId: string, version: number
   });
 export const scanMatchEvidence = (key: string) => rpc<Json>('payables_scan_match_evidence_v1', { p_command_key: key });
 
-// --- Gouvernance et paramètres ---------------------------------------------------
+// --- Administration du module (administrateur unique) ----------------------------
+// Aucune identité, aucun rôle ni aucune autorité n'est transmis par le client :
+// le serveur reconnaît l'administrateur désigné par l'opérateur à partir de la
+// session (auth.uid()) et refuse tout autre appelant. Ces décisions ne dépendent
+// pas de l'interrupteur des écritures métier, qui reste seul à ouvrir les
+// opérations financières.
 
-export const proposeCapability = (key: string, userId: string, capability: string, action: 'GRANT' | 'REVOKE', reason: string) =>
-  rpc<Json>('payables_propose_capability_v1', { p_command_key: key, p_user_id: userId, p_capability: capability, p_action: action, p_reason: reason });
-export const decideCapability = (key: string, proposalId: string, approve: boolean, reason: string) =>
-  rpc<Json>('payables_decide_capability_v1', { p_command_key: key, p_proposal_id: proposalId, p_approve: approve, p_reason: reason });
-export const proposePerson = (key: string, displayName: string, reason: string) =>
-  rpc<Json>('payables_propose_person_v1', { p_command_key: key, p_display_name: displayName, p_reason: reason });
-export const decidePerson = (key: string, personId: string, approve: boolean, reason: string) =>
-  rpc<Json>('payables_decide_person_v1', { p_command_key: key, p_person_id: personId, p_approve: approve, p_reason: reason });
-export const proposePersonLink = (key: string, personId: string, userId: string, action: 'LINK' | 'UNLINK', reason: string) =>
-  rpc<Json>('payables_propose_person_link_v1', { p_command_key: key, p_person_id: personId, p_user_id: userId, p_action: action, p_reason: reason });
-export const decidePersonLink = (key: string, linkId: string, approve: boolean, reason: string) =>
-  rpc<Json>('payables_decide_person_link_v1', { p_command_key: key, p_link_id: linkId, p_approve: approve, p_reason: reason });
-export const proposeParameter = (key: string, input: {
-  kind: string; subjectKey: string; validFrom: string; payload: Json; evidenceRef: string | null; reason: string;
-}) => rpc<Json>('payables_propose_parameter_v1', {
+export const adminSetCapability = (key: string, userId: string, capability: string, grant: boolean, reason: string) =>
+  rpc<Json>('payables_admin_set_capability_v1', {
+    p_command_key: key, p_user_id: userId, p_capability: capability, p_grant: grant, p_reason: reason,
+  });
+export const adminCreatePerson = (key: string, displayName: string, reason: string) =>
+  rpc<Json>('payables_admin_create_person_v1', { p_command_key: key, p_display_name: displayName, p_reason: reason });
+export const adminSetPersonLink = (key: string, personId: string, userId: string, link: boolean, reason: string) =>
+  rpc<Json>('payables_admin_set_person_link_v1', {
+    p_command_key: key, p_person_id: personId, p_user_id: userId, p_link: link, p_reason: reason,
+  });
+/** Version attendue : dernier numéro connu (0 si aucun) ; une version concurrente est refusée, jamais écrasée. */
+export const adminSetParameter = (key: string, input: {
+  kind: string; subjectKey: string; validFrom: string; payload: Json; evidenceRef: string | null; expectedVersionNo: number;
+  reason: string;
+}) => rpc<Json>('payables_admin_set_parameter_v1', {
   p_command_key: key, p_kind: input.kind, p_subject_key: input.subjectKey, p_valid_from: input.validFrom,
-  p_payload: input.payload, p_evidence_ref: input.evidenceRef, p_reason: input.reason,
+  p_payload: input.payload, p_evidence_ref: input.evidenceRef, p_expected_version_no: input.expectedVersionNo,
+  p_reason: input.reason,
 });
-export const decideParameter = (key: string, versionId: string, approve: boolean, reason: string) =>
-  rpc<Json>('payables_decide_parameter_v1', { p_command_key: key, p_version_id: versionId, p_approve: approve, p_reason: reason });
+export const adminRejectLegacyProposal = (key: string, kind: 'CAPABILITY' | 'PERSON' | 'PERSON_LINK' | 'PARAMETER',
+  proposalId: string, reason: string) =>
+  rpc<Json>('payables_admin_reject_legacy_proposal_v1', {
+    p_command_key: key, p_kind: kind, p_proposal_id: proposalId, p_reason: reason,
+  });

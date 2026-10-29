@@ -182,3 +182,60 @@ test('les clés de commande sont uniques par intention', () => {
   assert.notEqual(a, b);
   assert.match(a, /^scope:[0-9a-f-]{36}$/);
 });
+
+test('administration : RPC exactes, aucune identité ni autorité transmise par le client', async () => {
+  reset();
+  await service.adminSetCapability('k-7', 'u-target', 'CHEQUE_PREPARE_PRINT', true, 'Rôle opérationnel');
+  await service.adminCreatePerson('k-8', 'Comptable fictif', 'Création');
+  await service.adminSetPersonLink('k-9', 'p', 'u-target', false, 'Retrait');
+  await service.adminSetParameter('k-10', {
+    kind: 'CATEGORY', subjectKey: 'ALL_PAYMENTS', validFrom: '2026-11-01', payload: { code: 'ALL_PAYMENTS' }, evidenceRef: null,
+    expectedVersionNo: 3, reason: 'Nouvelle version',
+  });
+  await service.adminRejectLegacyProposal('k-11', 'PARAMETER', 'v', 'Proposition héritée close');
+  const rpcs = harness.calls.filter((c) => c.kind === 'rpc');
+  assert.deepEqual(rpcs.map((c) => c.name), [
+    'payables_admin_set_capability_v1', 'payables_admin_create_person_v1', 'payables_admin_set_person_link_v1',
+    'payables_admin_set_parameter_v1', 'payables_admin_reject_legacy_proposal_v1',
+  ]);
+  assert.deepEqual(rpcs[0].args, {
+    p_command_key: 'k-7', p_user_id: 'u-target', p_capability: 'CHEQUE_PREPARE_PRINT', p_grant: true, p_reason: 'Rôle opérationnel',
+  });
+  assert.equal(rpcs[2].args?.p_link, false);
+  assert.equal(rpcs[3].args?.p_expected_version_no, 3, 'the known version travels with every parameter change');
+  for (const call of rpcs) {
+    for (const key of Object.keys(call.args ?? {})) {
+      assert.doesNotMatch(key, /actor|admin|role|email|claim|metadata|session/, `${call.name} sends no caller identity (${key})`);
+    }
+  }
+  // Session lue avant chaque appel : l'autorité est déterminée par le serveur.
+  assert.equal(harness.calls.filter((c) => c.kind === 'session').length, 5);
+});
+
+test('administration : cible refusée ou session absente, aucun appel réseau', async () => {
+  reset();
+  harness.verdict = { allowed: false, reason: 'Le module chèques reste interdit en production.' };
+  await assert.rejects(service.adminSetCapability('k-12', 'u', 'READ', true, 'Motif'), { code: 'PAYABLES_TARGET_REJECTED' });
+  assert.deepEqual(harness.calls, []);
+  reset();
+  harness.session = { data: { session: null }, error: null };
+  await assert.rejects(service.adminCreatePerson('k-13', 'Personne', 'Motif'), { code: 'PAYABLES_AUTH_REQUIRED' });
+  assert.deepEqual(harness.calls.map((c) => c.kind), ['session']);
+});
+
+test('administration : refus serveur traduit en vocabulaire fermé', async () => {
+  reset();
+  harness.rpcResult = () => ({ data: null, error: { message: 'PAYABLES_ADMIN_REQUIRED détail interne SENTINELLE' } });
+  await assert.rejects(service.adminSetCapability('k-14', 'u', 'READ', true, 'Motif'), (error: Error & { code?: string }) => {
+    assert.equal(error.code, 'PAYABLES_ADMIN_REQUIRED');
+    assert.equal(error.message, 'Seul l’administrateur du module peut faire cette modification.');
+    return true;
+  });
+});
+
+test('l’ancienne gouvernance à deux acteurs n’est plus appelée par le client', () => {
+  for (const legacy of ['proposeCapability', 'decideCapability', 'proposePerson', 'decidePerson', 'proposePersonLink',
+    'decidePersonLink', 'proposeParameter', 'decideParameter']) {
+    assert.equal((service as Record<string, unknown>)[legacy], undefined, `${legacy} removed`);
+  }
+});
