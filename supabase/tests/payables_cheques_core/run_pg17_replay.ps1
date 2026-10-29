@@ -185,6 +185,7 @@ function Invoke-SingleAdminSuites {
   Invoke-Race '93a_admin_revoke_holder_session_a.sql' '93b_revoked_write_session_b.sql' @('PAYABLES_CAPABILITY_REQUIRED:INVOICE_MANAGE') 'WRITE_WAITS_FOR_INFLIGHT_REVOCATION'
   Invoke-Race '94_admin_grant_session_a.sql' '95_admin_grant_session_b.sql' @('PAYABLES_CAPABILITY_UNCHANGED') 'CONCURRENT_ADMIN_DECISION_SERIALIZED'
   Invoke-Race '95a_link_prep_session_a.sql' '95b_link_change_session_b.sql' @('PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE') 'LINK_CHANGE_WAITS_FOR_INFLIGHT_PREPARATION'
+  Invoke-Race '95c_admin_prep_session_a.sql' '95d_operator_identity_session_b.sql' @('PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE') 'IDENTITY_CHANGE_WAITS_FOR_INFLIGHT_PREPARATION'
   Invoke-SerializedRace '96_admin_write_session_a.sql' '97_operator_withdraw_session_b.sql' 'AUTHORITY_WITHDRAWAL_WAITS_FOR_ADMIN_WRITE'
   Invoke-ReplaySqlFile "$testDir/98_authority_withdraw_assert.sql"
   Invoke-SerializedRace '99a_admin_decision_session_a.sql' '99b_operator_replace_session_b.sql' 'AUTHORITY_REPLACEMENT_WAITS_FOR_ADMIN_DECISION'

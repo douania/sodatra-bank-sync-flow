@@ -52,11 +52,99 @@ export function currentLinks(rows: PersonLinkRow[]): Map<string, string> {
   return links;
 }
 
-/** Dernier numéro de version connu d'un paramètre (0 si aucun) : version attendue par le serveur. */
+/** Dernier numéro de version connu d'un paramètre (0 si aucun). */
 export function expectedParameterVersion(rows: ParameterVersionRow[], kind: string, subjectKey: string): number {
   return rows
     .filter((v) => v.kind === kind && v.subject_key === subjectKey)
     .reduce((max, v) => Math.max(max, v.version_no), 0);
+}
+
+/** État d'une lecture : en cours, en échec (données absentes ou périmées) ou disponible, vide comprise. */
+export type ReadState = 'LOADING' | 'ERROR' | 'READY';
+
+export function readState(query: { isPending: boolean; isError: boolean }): ReadState {
+  if (query.isError) return 'ERROR';
+  return query.isPending ? 'LOADING' : 'READY';
+}
+
+/**
+ * Brouillon d'une nouvelle version de paramètre. La version de référence d'un
+ * paramètre visé est celle connue la première fois que la saisie le vise ;
+ * elle ne suit jamais le cache ensuite, même si la saisie quitte ce paramètre
+ * puis y revient : une version enregistrée entre-temps devient un conflit à
+ * lever explicitement.
+ */
+export interface ParameterDraft {
+  kind: string;
+  subjectKey: string;
+  validFrom: string;
+  payload: string;
+  evidenceRef: string;
+  /** Référence du paramètre visé ; null tant que rien n'est saisi. */
+  baseVersion: number | null;
+  /** Référence retenue pour chaque paramètre déjà visé par cette saisie. */
+  knownBases: Record<string, number>;
+}
+
+export type ParameterDraftFields = Omit<ParameterDraft, 'baseVersion' | 'knownBases'>;
+
+const draftTarget = (kind: string, subjectKey: string) => `${kind}|${subjectKey}`;
+
+function withBase(draft: ParameterDraft, base: number): ParameterDraft {
+  return { ...draft, baseVersion: base, knownBases: { ...draft.knownBases, [draftTarget(draft.kind, draft.subjectKey)]: base } };
+}
+
+export function editParameterDraft(draft: ParameterDraft, patch: Partial<ParameterDraftFields>,
+  rows: ParameterVersionRow[]): ParameterDraft {
+  const next = { ...draft, ...patch };
+  const retargeted = next.kind !== draft.kind || next.subjectKey !== draft.subjectKey;
+  if (draft.baseVersion !== null && !retargeted) return next;
+  const known = next.knownBases[draftTarget(next.kind, next.subjectKey)];
+  return withBase(next, known ?? expectedParameterVersion(rows, next.kind, next.subjectKey));
+}
+
+/** Référence fixée par une décision enregistrée sur ce paramètre (pas de faux conflit sur sa propre version). */
+export function savedParameterDraft(draft: ParameterDraft, kind: string, subjectKey: string, versionNo: number): ParameterDraft {
+  const knownBases = { ...draft.knownBases, [draftTarget(kind, subjectKey)]: versionNo };
+  const current = draft.kind === kind && draft.subjectKey === subjectKey;
+  return { ...draft, knownBases, baseVersion: current ? versionNo : draft.baseVersion };
+}
+
+export interface ParameterDraftConflict {
+  base: number;
+  current: number;
+  latest: ParameterVersionRow | null;
+}
+
+/** Version enregistrée depuis le début de la saisie : conflit, jamais avancée en silence. */
+export function parameterDraftConflict(draft: ParameterDraft, rows: ParameterVersionRow[]): ParameterDraftConflict | null {
+  if (draft.baseVersion === null) return null;
+  const current = expectedParameterVersion(rows, draft.kind, draft.subjectKey);
+  if (current === draft.baseVersion) return null;
+  const latest = rows.find((v) => v.kind === draft.kind && v.subject_key === draft.subjectKey && v.version_no === current) ?? null;
+  return { base: draft.baseVersion, current, latest };
+}
+
+/** Confirmation explicite : la saisie, inchangée, porte désormais sur la dernière version relue. */
+export function rebaseParameterDraft(draft: ParameterDraft, rows: ParameterVersionRow[]): ParameterDraft {
+  return withBase(draft, expectedParameterVersion(rows, draft.kind, draft.subjectKey));
+}
+
+/** Rechargement : contenu de la dernière version, justificatif à fournir de nouveau. */
+export function reloadParameterDraft(draft: ParameterDraft, rows: ParameterVersionRow[]): ParameterDraft {
+  const conflict = parameterDraftConflict(draft, rows);
+  const current = expectedParameterVersion(rows, draft.kind, draft.subjectKey);
+  return withBase({
+    ...draft,
+    payload: conflict?.latest ? JSON.stringify(conflict.latest.payload, null, 2) : draft.payload,
+    evidenceRef: '',
+  }, current);
+}
+
+/** Version attendue transmise au serveur : celle du brouillon ; aucun envoi tant qu'un conflit n'est pas levé. */
+export function parameterDraftExpectedVersion(draft: ParameterDraft, rows: ParameterVersionRow[]): number | null {
+  if (parameterDraftConflict(draft, rows)) return null;
+  return draft.baseVersion ?? expectedParameterVersion(rows, draft.kind, draft.subjectKey);
 }
 
 export type LegacyProposalKind = 'CAPABILITY' | 'PERSON' | 'PERSON_LINK' | 'PARAMETER';

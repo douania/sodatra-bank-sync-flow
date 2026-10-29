@@ -99,9 +99,24 @@ SELECT pc_test.expect_error($$SELECT public.payables_record_delivery_v1(pc_test.
   DATE '2026-10-26', NULL)$$, 'PAYABLES_DELIVERY_ALREADY_RECORDED');
 RESET ROLE;
 
+-- Préparateur sans rattachement : avec les précontrôles du circuit (migration
+-- administrateur unique), la demande est refusée d'emblée et aucune formule
+-- n'est consommée ; sans eux, le chèque se prépare et sa confirmation est
+-- refusée (contrôle de la confirmation conservé dans les deux cas).
+CREATE FUNCTION pc_test.circuit_prechecks_installed()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT to_regprocedure('payables_private.assert_cheque_confirmable(uuid,text,numeric,uuid,uuid,uuid)') IS NOT NULL
+$$;
+GRANT EXECUTE ON FUNCTION pc_test.circuit_prechecks_installed() TO authenticated;
+
 -- Jeu de paiements dédiés aux contrôles d'admissibilité (préparateur acc1 sauf mention).
 SELECT pc_test.new_payment('acc1', 'pay_prep', 'sup_delta', 10000, 'acct_ora');
-SELECT pc_test.new_payment('acc4', 'pay_unlinked', 'sup_delta', 11000, 'acct_ora');
+RESET ROLE;
+SELECT pc_test.new_payment('acc4', 'pay_unlinked', 'sup_delta', 11000, 'acct_ora')
+WHERE NOT pc_test.circuit_prechecks_installed();
+SELECT pc_test.expect_error($$SELECT pc_test.new_payment('acc4', 'pay_unlinked', 'sup_delta', 11000, 'acct_ora')$$,
+  'PAYABLES_PREPARER_NOT_LINKED') WHERE pc_test.circuit_prechecks_installed();
+RESET ROLE;
 SELECT pc_test.new_payment('acc1', 'pay_absent', 'sup_delta', 12000, 'acct_ora');
 SELECT pc_test.new_payment('acc1', 'pay_pending', 'sup_delta', 13000, 'acct_ora');
 SELECT pc_test.new_payment('acc1', 'pay_revoked', 'sup_delta', 14000, 'acct_ora');
@@ -112,7 +127,7 @@ SELECT pc_test.new_payment('acc1', 'pay_relax', 'sup_delta', 18000, 'acct_ora');
 SELECT pc_test.new_payment('acc1', 'pay_ceiling', 'sup_delta', 60000000, 'acct_ora');
 SELECT pc_test.new_payment('acc1', 'pay_over', 'sup_delta', 100000, 'acct_ora');
 SELECT pc_test.print_cheque('acc1', 'pay_prep', '0003001', DATE '2026-10-20');
-SELECT pc_test.print_cheque('acc4', 'pay_unlinked', '0003002', DATE '2026-10-20');
+SELECT pc_test.print_cheque('acc4', 'pay_unlinked', '0003002', DATE '2026-10-20') WHERE NOT pc_test.circuit_prechecks_installed();
 SELECT pc_test.print_cheque('acc1', 'pay_absent', '0003003', DATE '2026-10-20');
 SELECT pc_test.print_cheque('acc1', 'pay_pending', '0003004', DATE '2026-10-20');
 SELECT pc_test.print_cheque('acc1', 'pay_revoked', '0003005', DATE '2026-05-20');
@@ -173,8 +188,9 @@ SELECT public.payables_record_print_outcome_v1(pc_test.key('outcome-prep-adjust'
 SELECT pc_test.sign('pay_prep_adjust', 'p_acc1', DATE '2026-10-26');
 SELECT pc_test.expect_error(pc_test.confirm_sql('pay_prep_adjust', DATE '2026-10-26'), 'PAYABLES_SIGNATORY_IS_PREPARER');
 -- Préparateur sans rattachement vérifié : aucune comparaison sur un nom libre.
-SELECT pc_test.sign('pay_unlinked', 'p_dir', DATE '2026-10-26');
-SELECT pc_test.expect_error(pc_test.confirm_sql('pay_unlinked', DATE '2026-10-26'), 'PAYABLES_PREPARER_NOT_LINKED');
+SELECT pc_test.sign('pay_unlinked', 'p_dir', DATE '2026-10-26') WHERE NOT pc_test.circuit_prechecks_installed();
+SELECT pc_test.expect_error(pc_test.confirm_sql('pay_unlinked', DATE '2026-10-26'), 'PAYABLES_PREPARER_NOT_LINKED')
+WHERE NOT pc_test.circuit_prechecks_installed();
 -- S27 : plafond absent ; S28 : signataire en attente de confirmation.
 SELECT pc_test.sign('pay_absent', 'p_sig2', DATE '2026-10-26');
 SELECT pc_test.expect_error(pc_test.confirm_sql('pay_absent', DATE '2026-10-26'), 'PAYABLES_SIGNATORY_NOT_ADMISSIBLE');

@@ -29,6 +29,13 @@ const MESSAGES: Record<string, string> = {
   PAYABLES_LINK_STATE_INVALID: 'Ce rattachement n’est pas en vigueur.',
   PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE:
     'Ce compte a préparé un chèque encore en cours : terminez-le ou déclarez-le inutilisé avant de changer son rattachement.',
+  PAYABLES_ADMIN_IDENTITY_TARGET_INVALID: 'Seule l’identité de l’administrateur en fonction est établie par l’opérateur.',
+  PAYABLES_NO_INDEPENDENT_SIGNATORY:
+    'Étape refusée avant toute formule consommée : aucun signataire admissible ne resterait distinct des préparateurs de ce chèque. Faites-la faire par une autre personne, complétez les signataires du compte, ou abandonnez la demande.',
+  PAYABLES_NO_INDEPENDENT_CONTROLLER:
+    'Étape refusée avant toute formule consommée : aucun compte habilité, rattaché et distinct des préparateurs ne pourrait enregistrer les signatures et confirmer ce chèque.',
+  PAYABLES_CONTROLLER_NOT_INDEPENDENT:
+    'Les signatures et la confirmation d’un chèque sont enregistrées par une personne rattachée, distincte de ses préparateurs.',
   PAYABLES_EXPECTED_VERSION_REQUIRED: 'La version attendue du paramètre est requise.',
   PAYABLES_LEGACY_PROPOSAL_OWN: 'Une proposition héritée de l’administrateur lui-même reste en l’état, sans effet.',
   PAYABLES_LEGACY_PROPOSAL_KIND_INVALID: 'Type de proposition inconnu.',
@@ -62,7 +69,8 @@ const MESSAGES: Record<string, string> = {
   PAYABLES_SIGNATURE_VERSION_MISMATCH: 'La signature porte sur une version antérieure du chèque.',
   PAYABLES_SIGNATURE_AFTER_ISSUE: 'Une signature est postérieure à la date d’émission.',
   PAYABLES_SIGNATURE_BEFORE_PRINT: 'La date de signature précède l’impression de cette version du chèque.',
-  PAYABLES_PREPARER_NOT_LINKED: 'Le préparateur n’est pas rattaché à une personne vérifiée.',
+  PAYABLES_PREPARER_NOT_LINKED:
+    'Un préparateur n’est pas rattaché à une personne vérifiée : faites d’abord établir ce rattachement.',
   PAYABLES_PRESIGNED_FORM_USE_DISABLED: 'L’utilisation d’une formule pré-signée est désactivée.',
   PAYABLES_ISSUE_ALREADY_RECORDED: 'L’émission de ce chèque est déjà enregistrée.',
   PAYABLES_FUTURE_DATE_FORBIDDEN: 'Une date future n’est pas admise.',

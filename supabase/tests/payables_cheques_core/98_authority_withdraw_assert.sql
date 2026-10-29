@@ -19,13 +19,10 @@ SELECT pc_test.expect_error($$SELECT public.payables_admin_create_person_v1(pc_t
 SELECT pc_test.as_user('cpt_b');
 SELECT pc_test.assert((public.payables_my_access_v1() -> 'capabilities') ? 'EXIT_REQUEST', 'past decisions remain effective');
 RESET ROLE;
-SELECT pc_test.assert((SELECT count(*) FROM payables_private.admin_authority_events WHERE new_admin_user_id IS NULL) = 1,
-  'withdrawal journaled');
--- Un utilisateur rattaché à une personne n'est jamais désigné, quel que soit le chemin.
-SELECT pc_test.expect_error($$SELECT payables_private.set_module_admin(NULL, pc_test.id('acc1'), 'Designation of a linked accountant')$$,
-  'PAYABLES_ADMIN_DESIGNEE_LINKED');
-SELECT pc_test.expect_error($$UPDATE payables_private.admin_authority SET admin_user_id = pc_test.id('acc1'),
-  change_reason = 'Direct designation of a linked accountant'$$, 'PAYABLES_ADMIN_DESIGNEE_LINKED');
+SELECT pc_test.assert((SELECT count(*) FROM payables_private.admin_authority_events
+  WHERE previous_admin_user_id = pc_test.id('dg') AND new_admin_user_id IS NULL) = 1, 'withdrawal journaled');
+-- Le retrait de l'autorité ne touche pas l'identité personnelle établie par l'opérateur.
+SELECT pc_test.assert(payables_private.person_of_user(pc_test.id('dg')) = pc_test.id('p_dirigeant'), 'identity survives the withdrawal');
 -- Nouvelle désignation pour la course suivante.
 SELECT payables_private.set_module_admin(NULL, pc_test.id('dg'), 'Synthetic redesignation of the module administrator');
 SELECT 'PASS 98_authority_withdraw_assert' AS marker;

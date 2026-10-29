@@ -23,7 +23,10 @@ nom aléatoire, supprimé dans `finally` :
   suite administrateur unique (90 à 99c) ;
 - **fresh** : les trois migrations sur une base neuve, désignation opérateur (11), les
   mêmes outils de gouvernance réalisés par l'administrateur (21), les suites
-  financières 30 à 80 inchangées et leurs courses, puis la suite 90 à 99c.
+  financières 30 à 80 et leurs courses, puis la suite 90 à 99c. Seul le cas du
+  préparateur non rattaché de 41 change de point d'arrêt : refusé dès la demande par
+  les précontrôles du circuit au lieu de l'être à la confirmation (contrôle conservé,
+  toujours prouvé dans le scénario upgrade).
 
 Chaque course réelle à deux sessions mesure la durée de la seconde session : preuve
 qu'elle a attendu le verrou. Le SQL est transmis à `docker` en UTF-8 imposé (sous Windows
@@ -48,11 +51,12 @@ PowerShell 5.1, le tube est ASCII par défaut).
 | `05_single_admin_users.sql` | identités synthétiques du modèle administrateur unique |
 | `11_single_admin_fresh.sql` | installation neuve : administration fermée sans désignation, gouvernance héritée désactivée, désignation opérateur |
 | `21_single_admin_governance_setup.sql` | outils de `20_governance` réalisés par l'administrateur, même état final, règles de contenu inchangées |
-| `84_single_admin_upgrade_snapshot.sql` / `85_single_admin_upgrade.sql` | mise à niveau : lignes, historique et définitions hors gouvernance identiques ; `PARAM_*` sans effet ; propositions héritées closes |
-| `90_single_admin.sql` | administration sans second approbateur module fermé, non-élévation, capacités héritées, revendications falsifiées, révocation sur session ouverte, seul signataire, traces et immuabilité, rejeu et version attendue |
+| `84_single_admin_upgrade_snapshot.sql` / `85_single_admin_upgrade.sql` | mise à niveau : lignes, historique et définitions hors gouvernance identiques ; `PARAM_*` sans effet ; propositions héritées closes ; désigné déjà rattaché gardant son identité ; préparateur hérité jamais rattaché (première identité, puis confirmation normale) et compte détaché sous l'ancienne gouvernance (identité figée) |
+| `90_single_admin.sql` | administration sans second approbateur module fermé, non-élévation, capacités héritées, revendications falsifiées, révocation sur session ouverte, seul signataire, identité de l'administrateur établie par l'opérateur et non réassignable, précontrôles du circuit (préparateur non rattaché, seul signataire admissible préparateur, compte sans règle, déclarant d'un résultat), traces et immuabilité, rejeu et version attendue |
 | `91`–`93b` | courses réelles : révocation pendant une écriture du titulaire, puis écriture pendant une révocation |
 | `94`–`95` | course réelle : deux décisions administratives identiques |
 | `95a`–`95b` | course réelle : changement de rattachement pendant une préparation du titulaire |
+| `95c`–`95d` | course réelle : retrait opérateur de l'identité de l'administrateur pendant une de ses préparations |
 | `96`–`99c` | courses réelles : retrait puis remplacement de l'administrateur pendant son usage ; refermeture |
 
 Marqueurs attendus en fin de rejeu : `PASS <fichier>` pour chaque fichier,
@@ -61,7 +65,7 @@ Marqueurs attendus en fin de rejeu : `PASS <fichier>` pour chaque fichier,
 `READ_SNAPSHOT_STABLE_DURING_WRITE`, `SWITCH_CHANGE_WAITS_FOR_WRITES`,
 `REVOCATION_WAITS_FOR_INFLIGHT_WRITE`, `WRITE_WAITS_FOR_INFLIGHT_REVOCATION`,
 `CONCURRENT_ADMIN_DECISION_SERIALIZED`, `LINK_CHANGE_WAITS_FOR_INFLIGHT_PREPARATION`,
-`AUTHORITY_WITHDRAWAL_WAITS_FOR_ADMIN_WRITE`,
+`IDENTITY_CHANGE_WAITS_FOR_INFLIGHT_PREPARATION`, `AUTHORITY_WITHDRAWAL_WAITS_FOR_ADMIN_WRITE`,
 `AUTHORITY_REPLACEMENT_WAITS_FOR_ADMIN_DECISION` (dans chacun des deux scénarios),
 `PAYABLES_CHEQUES_SCENARIO_PASS upgrade`, `PAYABLES_CHEQUES_SCENARIO_PASS fresh` et
 `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS`.

@@ -2,6 +2,46 @@
 -- migration administrateur unique, après toute la recette sous l'ancienne
 -- gouvernance. Le même relevé est refait par 85 après la migration.
 
+-- États hérités que l'ancienne gouvernance permettait (85) :
+--   - un compte rattaché prépare un chèque jusqu'à l'intention d'impression, puis
+--     est détaché alors que ce chèque circule : son identité reste figée et le
+--     résultat de l'impression reste enregistrable par un autre préparateur ;
+--   - un compte jamais rattaché imprime un chèque, sans signature enregistrée :
+--     une première identité peut lui être donnée.
+INSERT INTO auth.users (id, email) VALUES ('10000000-0000-4000-8000-000000000056', 'comptable.d@synthetic.invalid'),
+  ('10000000-0000-4000-8000-000000000057', 'comptable.e@synthetic.invalid');
+INSERT INTO pc_test.ids (name, id) VALUES ('cpt_d', '10000000-0000-4000-8000-000000000056'),
+  ('cpt_e', '10000000-0000-4000-8000-000000000057');
+UPDATE payables_private.runtime_control
+   SET business_writes_enabled = true, change_reason = 'Open synthetic window for the legacy identity fixture';
+SELECT pc_test.grant_cap('gov_a', 'gov_b', u, c) FROM unnest(ARRAY['cpt_d','cpt_e']) u, unnest(ARRAY['READ','CHEQUE_PREPARE_PRINT']) c;
+SELECT pc_test.make_person('p_cpt_d', 'Comptable D synthétique');
+SELECT pc_test.link_person('p_cpt_d', 'cpt_d', 'gov_a', 'gov_b');
+SELECT pc_test.new_payment('cpt_d', 'pay_legacy_d', 'sup_delta', 9000, 'acct_ora');
+SELECT pc_test.as_user('cpt_d');
+SELECT pc_test.put('form_legacy_d', (public.payables_assign_cheque_form_v1(pc_test.key('assign-legacy-d'), pc_test.id('pay_legacy_d'),
+  pc_test.payment_version(pc_test.id('pay_legacy_d')), '0005101', 'ORA_CHQ_170X95', DATE '2026-10-27') ->> 'form_id')::uuid);
+SELECT pc_test.put('pe_legacy_d', (public.payables_record_print_intent_v1(pc_test.key('intent-legacy-d'), pc_test.id('form_legacy_d'),
+  pc_test.form_version(pc_test.id('form_legacy_d')), pc_test.content_of(pc_test.id('form_legacy_d')), 'Impression héritée')
+  ->> 'print_event_id')::uuid);
+SELECT pc_test.new_payment('cpt_e', 'pay_legacy_e', 'sup_delta', 8000, 'acct_ora');
+SELECT pc_test.print_cheque('cpt_e', 'pay_legacy_e', '0005102', DATE '2026-10-27');
+SELECT pc_test.as_user('gov_a');
+SELECT pc_test.put('unlink_cpt_d', (public.payables_propose_person_link_v1(pc_test.key('unlink:p_cpt_d'), pc_test.id('p_cpt_d'),
+  pc_test.id('cpt_d'), 'UNLINK', 'Retrait hérité') ->> 'link_id')::uuid);
+SELECT pc_test.as_user('gov_b');
+SELECT public.payables_decide_person_link_v1(pc_test.key('unlink-ok:p_cpt_d'), pc_test.id('unlink_cpt_d'), true, 'Validation héritée');
+RESET ROLE;
+UPDATE payables_private.runtime_control
+   SET business_writes_enabled = false, change_reason = 'Close synthetic window after the legacy identity fixture';
+SELECT pc_test.assert(payables_private.person_of_user(pc_test.id('cpt_d')) IS NULL
+  AND (SELECT state FROM public.payables_cheque_forms WHERE id = pc_test.id('form_legacy_d')) = 'PRINT_PENDING',
+  'legacy fixture: unlinked while its print is pending');
+SELECT pc_test.assert(payables_private.person_of_user(pc_test.id('cpt_e')) IS NULL
+  AND (SELECT state FROM public.payables_cheque_forms WHERE id = pc_test.id('form_pay_legacy_e')) = 'PRINTED'
+  AND NOT EXISTS (SELECT 1 FROM public.payables_signatures WHERE form_id = pc_test.id('form_pay_legacy_e')),
+  'legacy fixture: never-linked preparer with a printed, unsigned cheque');
+
 -- Contenu de chaque table du domaine (empreinte de toutes les lignes, colonne
 -- « origin » ajoutée par la migration exclue des trois tables qui la reçoivent)
 -- et définition de chaque objet hors gouvernance.

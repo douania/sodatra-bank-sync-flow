@@ -3,9 +3,17 @@ import test from 'node:test';
 import {
   adminState,
   currentLinks,
+  editParameterDraft,
   effectiveGrants,
   expectedParameterVersion,
   legacyPendingProposals,
+  parameterDraftConflict,
+  parameterDraftExpectedVersion,
+  readState,
+  rebaseParameterDraft,
+  reloadParameterDraft,
+  savedParameterDraft,
+  type ParameterDraft,
 } from './payablesAdminModel';
 import {
   PAYABLES_ASSIGNABLE_CAPABILITIES,
@@ -80,4 +88,53 @@ test('propositions héritées : seules celles restées en attente, de chaque typ
     grants: [{ ...grant('g1', 'u-a', 'AUDIT', 'GRANT', null, 'PROPOSED'), origin: 'PROPOSAL', proposed_by: 'u-y' }],
   });
   assert.deepEqual(legacy.map((l) => [l.kind, l.id, l.proposedBy]), [['PERSON', 'p1', 'u-x'], ['CAPABILITY', 'g1', 'u-y']]);
+});
+
+test('rattachement établi par l’opérateur : sans auteur applicatif, il compte comme identité en vigueur', () => {
+  const links = currentLinks([{ id: 'l1', person_id: 'p-dg', user_id: 'u-dg', action: 'LINK', status: 'VALIDATED', origin: 'OPERATOR',
+    decision_seq: 9, proposed_by: null }]);
+  assert.equal(links.get('u-dg'), 'p-dg');
+});
+
+test('états de lecture : un échec, même avec des données anciennes, n’est jamais une liste disponible', () => {
+  assert.equal(readState({ isPending: true, isError: false }), 'LOADING');
+  assert.equal(readState({ isPending: false, isError: true }), 'ERROR');
+  assert.equal(readState({ isPending: false, isError: false }), 'READY');
+});
+
+test('brouillon de paramètre : référence fixée à la saisie, conflit si une version arrive, jamais d’avance silencieuse', () => {
+  const version = (no: number, label: string): ParameterVersionRow => ({
+    id: `v${no}`, kind: 'CATEGORY', subject_key: 'ALL_PAYMENTS', version_no: no, valid_from: `2026-0${no}-01`,
+    payload: { label }, status: 'VALIDATED', origin: 'ADMIN', proposed_by: 'u-dg',
+  });
+  const v1 = [version(1, 'v1')];
+  const v2 = [version(1, 'v1'), version(2, 'v2')];
+  const start: ParameterDraft = { kind: 'CATEGORY', subjectKey: 'ALL_PAYMENTS', validFrom: '2026-10-28', payload: '{}',
+    evidenceRef: '', baseVersion: null, knownBases: {} };
+  // Rien de saisi : la version connue du moment fait foi.
+  assert.equal(parameterDraftExpectedVersion(start, v1), 1);
+  const typed = editParameterDraft(start, { payload: '{"label":"ma saisie"}' }, v1);
+  assert.equal(typed.baseVersion, 1);
+  assert.equal(editParameterDraft(typed, { evidenceRef: 'Pièce' }, v2).baseVersion, 1, 'later edits keep the reference');
+  // v2 publiée ailleurs : conflit, aucune version attendue transmissible.
+  assert.deepEqual(parameterDraftConflict(typed, v2), { base: 1, current: 2, latest: v2[1] });
+  assert.equal(parameterDraftExpectedVersion(typed, v2), null);
+  // Levée explicite : confirmation (saisie conservée) ou rechargement (contenu de v2, justificatif à refournir).
+  const rebased = rebaseParameterDraft(typed, v2);
+  assert.equal(rebased.payload, typed.payload);
+  assert.equal(parameterDraftExpectedVersion(rebased, v2), 2);
+  const reloaded = reloadParameterDraft({ ...typed, evidenceRef: 'Pièce' }, v2);
+  assert.deepEqual(JSON.parse(reloaded.payload), { label: 'v2' });
+  assert.equal(reloaded.evidenceRef, '');
+  assert.equal(parameterDraftExpectedVersion(reloaded, v2), 2);
+  // Changer de paramètre visé fixe la référence de ce nouveau paramètre ; y revenir rend la sienne
+  // (revue indépendante P2-2 : retaper la clé ne refonde jamais le brouillon en silence).
+  const elsewhere = editParameterDraft(typed, { subjectKey: 'ALL_PAYMENTSX' }, v2);
+  assert.equal(elsewhere.baseVersion, 0);
+  const back = editParameterDraft(elsewhere, { subjectKey: 'ALL_PAYMENTS' }, v2);
+  assert.equal(back.baseVersion, 1);
+  assert.deepEqual(parameterDraftConflict(back, v2), { base: 1, current: 2, latest: v2[1] });
+  // Sa propre décision fixe la référence du paramètre enregistré.
+  assert.equal(savedParameterDraft(back, 'CATEGORY', 'ALL_PAYMENTS', 3).baseVersion, 3);
+  assert.equal(savedParameterDraft(elsewhere, 'CATEGORY', 'ALL_PAYMENTS', 3).knownBases['CATEGORY|ALL_PAYMENTS'], 3);
 });

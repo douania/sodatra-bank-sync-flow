@@ -183,9 +183,10 @@ export interface PersonLinkRow {
   user_id: string;
   action: 'LINK' | 'UNLINK';
   status: 'PROPOSED' | 'VALIDATED' | 'REJECTED';
-  origin: Exclude<DecisionOrigin, 'BOOTSTRAP'>;
+  /** OPERATOR : identité de l'administrateur établie par l'opérateur, sans auteur applicatif. */
+  origin: Exclude<DecisionOrigin, 'BOOTSTRAP'> | 'OPERATOR';
   decision_seq: number | null;
-  proposed_by: string;
+  proposed_by: string | null;
 }
 
 export interface TakeoverBatchRow {

@@ -27,9 +27,23 @@
 --     versions décidées immuables ; historique et données existants conservés ;
 --   - une révocation attend la fin des écritures en cours du titulaire et
 --     s'applique à son appel suivant, même avec une session déjà ouverte ;
+--   - autorité administrative et identité personnelle sont distinctes : le
+--     rattachement de l'administrateur à sa personne est établi par
+--     l'opérateur, tracé, et jamais modifiable par l'administrateur lui-même ;
+--   - précontrôles du circuit (GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN) : une
+--     préparation qui rendrait le chèque non confirmable par la voie normale
+--     (préparateur non rattaché, aucun signataire admissible distinct des
+--     préparateurs, aucun contrôleur indépendant) est refusée avant toute
+--     formule consommée ; un résultat d'impression, fait réel, reste toujours
+--     enregistrable par un déclarant qui n'en est pas la cause ;
+--   - contrôle indépendant : les signatures sont enregistrées et l'émission
+--     confirmée par un compte rattaché, distinct des préparateurs (compte et
+--     personne) ; nul ne contrôle un chèque qu'il a préparé ;
 --   - aucun contrôle financier modifié : montants, allocations, versions,
 --     signatures, preuve bancaire et validations par un autre acteur des
---     transitions financières restent ceux des deux migrations précédentes.
+--     transitions financières restent ceux des deux migrations précédentes ;
+--     les précontrôles et le contrôle indépendant s'ajoutent sans en retirer
+--     aucun.
 -- ============================================================================
 
 BEGIN;
@@ -93,12 +107,9 @@ BEGIN
      OR btrim(NEW.change_reason) = btrim(OLD.change_reason) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'PAYABLES_ADMIN_AUTHORITY_NEW_SAFE_REASON_REQUIRED';
   END IF;
-  -- L'administrateur n'est jamais rattaché à une personne : ses droits implicites
-  -- de préparation ne peuvent alors jamais passer la règle « signataire ≠
-  -- préparateur » (préparateur non rattaché refusé à la confirmation).
-  IF NEW.admin_user_id IS NOT NULL AND payables_private.person_of_user(NEW.admin_user_id) IS NOT NULL THEN
-    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'PAYABLES_ADMIN_DESIGNEE_LINKED';
-  END IF;
+  -- L'identité personnelle du désigné reste celle de son rattachement en
+  -- vigueur, établi par un tiers (opérateur, administrateur précédent ou
+  -- ancienne gouvernance à deux acteurs) ; l'autorité ne la modifie pas.
   -- Les droits implicites de l'administrateur sortant cessent après ses
   -- écritures en cours, jamais au milieu de l'une d'elles, quel que soit le
   -- chemin de modification (fonction opérateur ou mise à jour directe).
@@ -274,18 +285,25 @@ ALTER TABLE public.payables_persons ADD CONSTRAINT payables_persons_lifecycle CH
       AND decided_at IS NOT NULL)
 );
 
+-- Rattachements : en plus, l'origine OPERATOR, réservée à l'identité de
+-- l'administrateur établie par l'opérateur (aucun auteur applicatif : auteur et
+-- décideur vides, trace au journal). Les autres origines gardent un auteur
+-- explicite, jamais le titulaire du compte.
 ALTER TABLE public.payables_person_links ADD COLUMN origin text NOT NULL DEFAULT 'PROPOSAL'
-  CONSTRAINT payables_person_links_origin_check CHECK (origin IN ('PROPOSAL','ADMIN'));
+  CONSTRAINT payables_person_links_origin_check CHECK (origin IN ('PROPOSAL','ADMIN','OPERATOR'));
+ALTER TABLE public.payables_person_links ALTER COLUMN proposed_by DROP NOT NULL;
 ALTER TABLE public.payables_person_links DROP CONSTRAINT payables_person_links_lifecycle;
 ALTER TABLE public.payables_person_links ADD CONSTRAINT payables_person_links_lifecycle CHECK (
-  proposed_by <> user_id AND (
+  (origin IN ('PROPOSAL','ADMIN') AND proposed_by IS NOT NULL AND proposed_by <> user_id AND (
     (origin = 'PROPOSAL' AND (
        (status = 'PROPOSED' AND decided_by IS NULL AND decided_at IS NULL AND decision_seq IS NULL)
        OR (status = 'REJECTED' AND decided_by IS NOT NULL AND decided_by <> proposed_by AND decision_seq IS NULL)
        OR (status = 'VALIDATED' AND decided_by IS NOT NULL AND decided_by <> proposed_by
            AND decided_by <> user_id AND decision_seq IS NOT NULL)))
     OR (origin = 'ADMIN' AND status = 'VALIDATED' AND decided_by IS NOT NULL AND decided_by = proposed_by
-        AND decided_at IS NOT NULL AND decision_seq IS NOT NULL))
+        AND decided_at IS NOT NULL AND decision_seq IS NOT NULL)))
+  OR (origin = 'OPERATOR' AND status = 'VALIDATED' AND proposed_by IS NULL AND decided_by IS NULL
+      AND decided_at IS NOT NULL AND decision_seq IS NOT NULL)
 );
 
 ALTER TABLE public.payables_parameter_versions ADD COLUMN origin text NOT NULL DEFAULT 'PROPOSAL'
@@ -438,6 +456,102 @@ AS $$
                                    AND (e.requested_by = p_user OR e.outcome_by = p_user))))
 $$;
 
+-- Préparateurs (comptes) d'un chèque au sens de la confirmation, plus l'acteur ;
+-- une impression en attente compte déjà (son résultat fera de son demandeur un
+-- préparateur).
+CREATE FUNCTION payables_private.cheque_preparers(p_payment uuid, p_form uuid, p_actor uuid)
+RETURNS uuid[]
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT coalesce(array_agg(DISTINCT x.u), '{}'::uuid[]) FROM (
+    SELECT p_actor AS u
+    UNION SELECT p.created_by FROM public.payables_payments p WHERE p.id = p_payment
+    UNION SELECT f.created_by FROM public.payables_cheque_forms f WHERE f.id = p_form
+    UNION SELECT c.created_by FROM public.payables_cheque_contents c WHERE c.form_id = p_form
+    UNION SELECT e.requested_by FROM public.payables_print_events e
+           WHERE e.form_id = p_form AND e.status IN ('PENDING','PRINTED','UNCERTAIN')
+    UNION SELECT e.outcome_by FROM public.payables_print_events e
+           WHERE e.form_id = p_form AND e.status IN ('PRINTED','UNCERTAIN')
+  ) x WHERE x.u IS NOT NULL
+$$;
+
+-- L'identité d'un préparateur ne change pas tant qu'un chèque qu'il a préparé
+-- peut encore être confirmé (la règle « signataire ≠ préparateur » se résout à
+-- la confirmation sur les rattachements courants). Seul reste possible
+-- l'établissement d'une première identité, pour un compte jamais rattaché
+-- (aucune personne antérieure n'a pu servir à ses préparations) et tant
+-- qu'aucune signature n'est enregistrée sur ses chèques en cours : l'identité
+-- n'est jamais choisie au vu des signataires.
+CREATE FUNCTION payables_private.identity_change_frozen(p_user uuid, p_link boolean)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT payables_private.user_prepares_pending_cheque(p_user)
+     AND (NOT p_link
+          OR EXISTS (SELECT 1 FROM public.payables_person_links l WHERE l.user_id = p_user AND l.status = 'VALIDATED')
+          OR EXISTS (SELECT 1 FROM public.payables_signatures s
+                     JOIN public.payables_cheque_forms f ON f.id = s.form_id
+                     WHERE f.provenance = 'NATIVE' AND f.state IN ('ASSIGNED','PRINT_PENDING','PRINTED','PRINT_UNCERTAIN')
+                       AND p_user = ANY (payables_private.cheque_preparers(f.payment_id, f.id, NULL))))
+$$;
+
+-- Identité personnelle de l'administrateur : établie ou retirée par
+-- l'opérateur seul, sous GO d'environnement, jamais par l'administrateur. Elle
+-- relie son compte à la personne qui le représente dans les contrôles
+-- financiers (préparateur, signataire). Règles d'un rattachement : une personne
+-- par compte, un compte par personne, identité figée tant qu'un chèque qu'il a
+-- préparé circule. Seul l'administrateur en fonction est visé.
+CREATE FUNCTION payables_private.set_module_admin_identity(
+  p_admin_user uuid, p_person_id uuid, p_link boolean, p_reason text
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v_admin uuid; v_reason text; v_action text; v_id uuid;
+BEGIN
+  v_reason := payables_private.safe_text(p_reason, 'REASON', 8, 240);
+  SELECT a.admin_user_id INTO v_admin FROM payables_private.admin_authority a WHERE a.singleton FOR SHARE;
+  IF v_admin IS NULL OR p_admin_user IS NULL OR v_admin <> p_admin_user THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'PAYABLES_ADMIN_IDENTITY_TARGET_INVALID';
+  END IF;
+  IF p_link IS NULL THEN RAISE EXCEPTION 'PAYABLES_ACTION_INVALID'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.payables_persons p WHERE p.id = p_person_id AND p.status = 'ACTIVE') THEN
+    RAISE EXCEPTION 'PAYABLES_PERSON_NOT_ACTIVE';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('payables:person-link', 0));
+  PERFORM pg_advisory_xact_lock(hashtextextended('payables:capability-user:' || p_admin_user::text, 0));
+  IF p_link AND (payables_private.person_of_user(p_admin_user) IS NOT NULL
+                 OR payables_private.user_of_person(p_person_id) IS NOT NULL) THEN
+    RAISE EXCEPTION 'PAYABLES_LINK_CONFLICT';
+  END IF;
+  IF NOT p_link AND payables_private.person_of_user(p_admin_user) IS DISTINCT FROM p_person_id THEN
+    RAISE EXCEPTION 'PAYABLES_LINK_STATE_INVALID';
+  END IF;
+  IF payables_private.identity_change_frozen(p_admin_user, p_link) THEN
+    RAISE EXCEPTION 'PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE';
+  END IF;
+  v_action := CASE WHEN p_link THEN 'LINK' ELSE 'UNLINK' END;
+  INSERT INTO public.payables_person_links (person_id, user_id, action, status, origin, proposed_by, decided_by,
+    decided_at, decision_seq, reason, decision_reason)
+  VALUES (p_person_id, p_admin_user, v_action, 'VALIDATED', 'OPERATOR', NULL, NULL, statement_timestamp(),
+    nextval('payables_private.decision_seq'), v_reason, v_reason)
+  RETURNING id INTO v_id;
+  PERFORM payables_private.append_event(NULL, 'SET_MODULE_ADMIN_IDENTITY',
+    CASE WHEN p_link THEN 'ADMIN_IDENTITY_LINKED' ELSE 'ADMIN_IDENTITY_UNLINKED' END, 'PERSON_LINK', v_id,
+    gen_random_uuid(), v_reason, NULL, jsonb_build_object('person_id', p_person_id, 'user_id', p_admin_user,
+      'action', v_action, 'session_actor', session_user));
+  RETURN v_id;
+END;
+$$;
+
+COMMENT ON FUNCTION payables_private.set_module_admin_identity(uuid, uuid, boolean, text) IS
+  'Opérateur uniquement, sous GO d''environnement : rattache (ou détache) l''administrateur en fonction à la personne qui le représente.';
+
 CREATE FUNCTION public.payables_admin_set_capability_v1(
   p_command_key text, p_user_id uuid, p_capability text, p_grant boolean, p_reason text
 )
@@ -542,27 +656,25 @@ BEGIN
   IF p_user_id IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users u WHERE u.id = p_user_id) THEN
     RAISE EXCEPTION 'PAYABLES_USER_UNKNOWN';
   END IF;
-  -- L'administrateur ne se rattache jamais lui-même : il ne peut pas se faire
-  -- passer pour un préparateur distinct du signataire.
+  -- L'administrateur ne se rattache ni ne se détache jamais lui-même : son
+  -- identité personnelle est établie par l'opérateur
+  -- (payables_private.set_module_admin_identity), jamais choisie par lui.
   IF p_user_id = v_actor THEN RAISE EXCEPTION 'PAYABLES_ADMIN_SELF_TARGET_FORBIDDEN'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.payables_persons p WHERE p.id = p_person_id AND p.status = 'ACTIVE') THEN
     RAISE EXCEPTION 'PAYABLES_PERSON_NOT_ACTIVE';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('payables:person-link', 0));
-  -- La règle « signataire ≠ préparateur » se résout à la confirmation sur les
-  -- rattachements courants : l'identité d'un préparateur ne change pas tant
-  -- qu'un chèque qu'il a préparé peut encore être confirmé. Sérialisé avec ses
-  -- préparations en cours (même verrou que ses écritures).
+  -- Sérialisé avec les préparations en cours du titulaire (même verrou que ses écritures).
   PERFORM pg_advisory_xact_lock(hashtextextended('payables:capability-user:' || p_user_id::text, 0));
-  IF payables_private.user_prepares_pending_cheque(p_user_id) THEN
-    RAISE EXCEPTION 'PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE';
-  END IF;
   IF p_link AND (payables_private.person_of_user(p_user_id) IS NOT NULL
                  OR payables_private.user_of_person(p_person_id) IS NOT NULL) THEN
     RAISE EXCEPTION 'PAYABLES_LINK_CONFLICT';
   END IF;
   IF NOT p_link AND payables_private.person_of_user(p_user_id) IS DISTINCT FROM p_person_id THEN
     RAISE EXCEPTION 'PAYABLES_LINK_STATE_INVALID';
+  END IF;
+  IF payables_private.identity_change_frozen(p_user_id, p_link) THEN
+    RAISE EXCEPTION 'PAYABLES_LINK_IN_USE_BY_PENDING_CHEQUE';
   END IF;
   v_action := CASE WHEN p_link THEN 'LINK' ELSE 'UNLINK' END;
   INSERT INTO public.payables_person_links (person_id, user_id, action, status, origin, proposed_by, decided_by,
@@ -716,7 +828,221 @@ END;
 $$;
 
 -- --------------------------------------------------------------------------
--- 6. Droits : fermés par défaut, API d'administration ouverte à authenticated
+-- 6. Précontrôles du circuit de préparation (aucune formule consommée en vain)
+-- --------------------------------------------------------------------------
+-- La confirmation normale (payables_confirm_issuance_v1, inchangée) exige que
+-- chaque préparateur soit rattaché à une personne et que les signatures
+-- requises viennent de signataires admissibles autres que les préparateurs.
+-- S'y ajoute un contrôle indépendant (revue indépendante P1-1) : les
+-- signatures sont enregistrées et l'émission confirmée par un compte rattaché
+-- qui n'est ni un préparateur ni la même personne qu'un préparateur ; nul ne
+-- contrôle un chèque qu'il a préparé, administrateur compris.
+-- Chaque étape de préparation vérifie d'avance, avec les paramètres et les
+-- habilitations en vigueur ce jour, que ces conditions restent réunissables une
+-- fois l'acteur compté parmi les préparateurs ; sinon l'étape est refusée et
+-- rien n'est écrit : aucune formule n'est assignée, imprimée ni gâchée pour un
+-- chèque que la voie normale ne pourrait pas confirmer. Une restriction ne vaut
+-- que pour l'opération concernée (par exemple le seul signataire admissible
+-- d'un compte ne prépare pas un chèque de ce compte) ; le droit de préparer
+-- reste entier ailleurs. La confirmation garde tous ses contrôles.
+
+-- Contrôleur indépendant : compte rattaché, qui n'est ni l'un des préparateurs
+-- ni rattaché à la même personne que l'un d'eux.
+CREATE FUNCTION payables_private.controller_independent(p_user uuid, p_preparers uuid[])
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT p_user IS NOT NULL AND NOT (p_user = ANY (p_preparers))
+     AND payables_private.person_of_user(p_user) IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM unnest(p_preparers) u
+                     WHERE payables_private.person_of_user(u) = payables_private.person_of_user(p_user))
+$$;
+
+-- Conditions non réunissables pour une confirmation normale, chacune évaluée
+-- indépendamment des autres (tableau vide sinon) : préparateurs rattachés,
+-- signataires admissibles distincts des préparateurs, contrôleur indépendant.
+CREATE FUNCTION payables_private.cheque_confirmability_issues(
+  p_account uuid, p_category text, p_amount numeric, p_payment uuid, p_form uuid, p_actor uuid
+)
+RETURNS text[]
+LANGUAGE plpgsql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_on constant date := payables_private.today();
+  v_preparers uuid[]; v_persons uuid[]; v_rule public.payables_parameter_versions; v_required integer;
+  v_available integer; v_issues text[] := '{}';
+BEGIN
+  v_preparers := payables_private.cheque_preparers(p_payment, p_form, p_actor);
+  SELECT array_agg(payables_private.person_of_user(u)) INTO v_persons FROM unnest(v_preparers) u;
+  IF v_persons IS NULL OR EXISTS (SELECT 1 FROM unnest(v_persons) p WHERE p IS NULL) THEN
+    v_issues := v_issues || 'PAYABLES_PREPARER_NOT_LINKED'::text;
+  END IF;
+  v_rule := payables_private.effective_parameter('SIGNATURE_RULE', p_account::text, v_on);
+  v_required := (v_rule.payload->>'required_signatures')::integer;
+  SELECT count(*) INTO v_available FROM public.payables_persons s
+   WHERE s.status = 'ACTIVE' AND NOT (s.id = ANY (coalesce(array_remove(v_persons, NULL), '{}'::uuid[])))
+     AND payables_private.signatory_version_if_admissible(s.id, p_account, p_category, p_amount, v_on) IS NOT NULL;
+  IF v_rule.id IS NULL OR v_required IS NULL OR v_available < v_required THEN
+    v_issues := v_issues || 'PAYABLES_NO_INDEPENDENT_SIGNATORY'::text;
+  END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM (SELECT a.admin_user_id AS u FROM payables_private.admin_authority a WHERE a.singleton
+                      UNION SELECT g.user_id FROM public.payables_capability_grants g
+                             WHERE g.capability = 'CHEQUE_CONFIRM_ISSUE' AND g.status = 'VALIDATED') c
+       WHERE c.u IS NOT NULL AND payables_private.has_capability(c.u, 'CHEQUE_CONFIRM_ISSUE')
+         AND payables_private.controller_independent(c.u, v_preparers)) THEN
+    v_issues := v_issues || 'PAYABLES_NO_INDEPENDENT_CONTROLLER'::text;
+  END IF;
+  RETURN v_issues;
+END;
+$$;
+
+CREATE FUNCTION payables_private.assert_cheque_confirmable(
+  p_account uuid, p_category text, p_amount numeric, p_payment uuid, p_form uuid, p_actor uuid
+)
+RETURNS void
+LANGUAGE plpgsql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v_issues text[] := payables_private.cheque_confirmability_issues(p_account, p_category, p_amount, p_payment, p_form, p_actor);
+BEGIN
+  IF cardinality(v_issues) > 0 THEN RAISE EXCEPTION '%', v_issues[1]; END IF;
+END;
+$$;
+
+-- Demande de chèque (le remplacement issu d'une sortie validée est contrôlé à
+-- l'assignation de sa formule : la validation de la sortie reste inchangée).
+CREATE FUNCTION payables_private.precheck_cheque_request()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  PERFORM payables_private.assert_cheque_confirmable(NEW.bank_account_id, NEW.category_code, NEW.amount, NULL, NULL,
+    NEW.created_by);
+  RETURN NEW;
+END;
+$$;
+
+-- Assignation, révision ou ajustement d'une formule native : chaque nouvelle
+-- version du contenu signable.
+CREATE FUNCTION payables_private.precheck_cheque_content()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v_form public.payables_cheque_forms; v_payment public.payables_payments;
+BEGIN
+  SELECT * INTO v_form FROM public.payables_cheque_forms f WHERE f.id = NEW.form_id;
+  SELECT * INTO v_payment FROM public.payables_payments p WHERE p.id = v_form.payment_id;
+  IF v_form.provenance = 'NATIVE' AND v_payment.mode = 'CHEQUE' AND v_payment.status = 'OPEN' THEN
+    PERFORM payables_private.assert_cheque_confirmable(v_payment.bank_account_id, v_payment.category_code,
+      v_payment.amount, v_payment.id, v_form.id, NEW.created_by);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- Intention d'impression : son demandeur, avant toute impression physique.
+-- Résultat imprimé ou incertain : un fait s'enregistre, et n'est refusé que si
+-- c'est le déclarant lui-même qui ferait défaut à l'une des conditions, alors
+-- qu'elle était réunie sans lui (comparaison condition par condition : une
+-- cause passagère étrangère au déclarant ne masque pas la sienne). Le demandeur
+-- de l'impression, déjà compté, peut toujours déclarer ; la formule reste en
+-- attente sans rien perdre, et aucune libération n'est possible d'ici là. Un
+-- chèque devenu non confirmable pour une autre cause (paramètre changé,
+-- préparateur hérité non rattaché) s'enregistre ; la confirmation le refuse et
+-- la voie d'exception existante s'applique.
+CREATE FUNCTION payables_private.precheck_print_event()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v_form public.payables_cheque_forms; v_payment public.payables_payments; v_with text[]; v_without text[];
+  v_caused text;
+BEGIN
+  SELECT * INTO v_form FROM public.payables_cheque_forms f WHERE f.id = NEW.form_id;
+  SELECT * INTO v_payment FROM public.payables_payments p WHERE p.id = v_form.payment_id;
+  IF v_form.provenance = 'NATIVE' AND v_payment.mode = 'CHEQUE' AND v_payment.status = 'OPEN' THEN
+    IF TG_OP = 'INSERT' THEN
+      PERFORM payables_private.assert_cheque_confirmable(v_payment.bank_account_id, v_payment.category_code,
+        v_payment.amount, v_payment.id, v_form.id, NEW.requested_by);
+    ELSE
+      v_with := payables_private.cheque_confirmability_issues(v_payment.bank_account_id, v_payment.category_code,
+        v_payment.amount, v_payment.id, v_form.id, NEW.outcome_by);
+      v_without := payables_private.cheque_confirmability_issues(v_payment.bank_account_id, v_payment.category_code,
+        v_payment.amount, v_payment.id, v_form.id, NULL);
+      SELECT i INTO v_caused FROM unnest(v_with) i WHERE NOT (i = ANY (v_without)) LIMIT 1;
+      IF v_caused IS NOT NULL THEN RAISE EXCEPTION '%', v_caused; END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- Contrôle indépendant : enregistrement d'une signature et confirmation par la
+-- voie normale. Les signatures déjà enregistrées sont revérifiées à la
+-- confirmation.
+CREATE FUNCTION payables_private.check_cheque_controller()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v_form public.payables_cheque_forms; v_preparers uuid[];
+BEGIN
+  SELECT * INTO v_form FROM public.payables_cheque_forms f WHERE f.id = NEW.form_id;
+  IF v_form.provenance = 'NATIVE' THEN
+    v_preparers := payables_private.cheque_preparers(v_form.payment_id, v_form.id, NULL);
+    IF NOT payables_private.controller_independent(NEW.recorded_by, v_preparers) THEN
+      RAISE EXCEPTION 'PAYABLES_CONTROLLER_NOT_INDEPENDENT';
+    END IF;
+    IF TG_TABLE_NAME = 'payables_issuances' AND EXISTS (
+         SELECT 1 FROM public.payables_signatures s
+          WHERE s.content_id = (payables_private.current_content(v_form.id)).id
+            AND NOT payables_private.controller_independent(s.recorded_by, v_preparers)) THEN
+      RAISE EXCEPTION 'PAYABLES_CONTROLLER_NOT_INDEPENDENT';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER payables_payments_precheck_request
+BEFORE INSERT ON public.payables_payments
+FOR EACH ROW WHEN (NEW.mode = 'CHEQUE' AND NEW.status = 'OPEN' AND NEW.replaces_payment_id IS NULL)
+EXECUTE FUNCTION payables_private.precheck_cheque_request();
+
+CREATE TRIGGER payables_cheque_contents_precheck
+BEFORE INSERT ON public.payables_cheque_contents
+FOR EACH ROW EXECUTE FUNCTION payables_private.precheck_cheque_content();
+
+CREATE TRIGGER payables_print_events_precheck_intent
+BEFORE INSERT ON public.payables_print_events
+FOR EACH ROW EXECUTE FUNCTION payables_private.precheck_print_event();
+
+CREATE TRIGGER payables_print_events_precheck_outcome
+BEFORE UPDATE ON public.payables_print_events
+FOR EACH ROW WHEN (OLD.status = 'PENDING' AND NEW.status IN ('PRINTED','UNCERTAIN'))
+EXECUTE FUNCTION payables_private.precheck_print_event();
+
+CREATE TRIGGER payables_signatures_controller
+BEFORE INSERT ON public.payables_signatures
+FOR EACH ROW EXECUTE FUNCTION payables_private.check_cheque_controller();
+
+-- Confirmation initiale seulement : une correction de date (révision suivante)
+-- relève de la validation de sortie par un autre acteur, inchangée.
+CREATE TRIGGER payables_issuances_controller
+BEFORE INSERT ON public.payables_issuances
+FOR EACH ROW WHEN (NEW.path = 'NORMAL' AND NEW.revision_no = 1)
+EXECUTE FUNCTION payables_private.check_cheque_controller();
+
+-- --------------------------------------------------------------------------
+-- 7. Droits : fermés par défaut, API d'administration ouverte à authenticated
 -- --------------------------------------------------------------------------
 
 REVOKE ALL ON FUNCTION payables_private.prepare_admin_authority_change() FROM PUBLIC, anon, authenticated, service_role;
@@ -724,6 +1050,19 @@ REVOKE ALL ON FUNCTION payables_private.append_admin_authority_event() FROM PUBL
 REVOKE ALL ON FUNCTION payables_private.set_module_admin(uuid, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.require_admin(uuid) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.user_prepares_pending_cheque(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.identity_change_frozen(uuid, boolean) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.set_module_admin_identity(uuid, uuid, boolean, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.cheque_preparers(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.controller_independent(uuid, uuid[]) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.cheque_confirmability_issues(uuid, text, numeric, uuid, uuid, uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.assert_cheque_confirmable(uuid, text, numeric, uuid, uuid, uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.check_cheque_controller() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.precheck_cheque_request() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.precheck_cheque_content() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION payables_private.precheck_print_event() FROM PUBLIC, anon, authenticated, service_role;
 
 REVOKE ALL ON FUNCTION public.payables_admin_set_capability_v1(text,uuid,text,boolean,text)
   FROM PUBLIC, anon, authenticated, service_role;

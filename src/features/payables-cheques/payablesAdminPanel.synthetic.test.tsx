@@ -52,6 +52,27 @@ function render(access: Access, seed: { grants?: unknown[]; persons?: unknown[] 
 
 const ADMIN_CONTROLS = ['Créer la personne', 'Rattacher', 'Attribuer', 'Retirer', 'Enregistrer la version'];
 
+// Lectures dans un état choisi : seedées (prêtes), déjà en échec (sans nouvelle tentative au
+// montage, sans réseau), ou absentes (en cours). L'échec réel puis la reprise sont rejoués en
+// rendu client par payablesAdminPanelInteraction.synthetic.test.tsx.
+async function renderReads(access: Access, reads: Partial<Record<'persons' | 'person-links' | 'grants' | 'parameters',
+  unknown[] | 'ERROR' | 'LOADING'>>): Promise<string> {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, staleTime: Infinity } } });
+  for (const [key, value] of Object.entries(reads)) {
+    if (value === 'LOADING') continue;
+    if (value === 'ERROR') {
+      await client.prefetchQuery({ queryKey: [PAYABLES_QUERY_ROOT, key],
+        queryFn: () => Promise.reject(new Error('Lecture incomplète (réponse non conforme) : rechargez ; aucun total n’est affiché.')) });
+    } else {
+      client.setQueryData([PAYABLES_QUERY_ROOT, key], value);
+    }
+  }
+  return renderToStaticMarkup(
+    <QueryClientProvider client={client}><ParametersPanel access={access} /></QueryClientProvider>,
+  );
+}
+const disabledButton = (html: string, label: string) => new RegExp(`<button[^>]*disabled=""[^>]*>${label}</button>`).test(html);
+
 test('administrateur désigné : formulaires disponibles pendant que les écritures métier restent fermées', () => {
   const html = render({ ...baseAccess, is_admin: true, business_writes_enabled: false });
   for (const label of ADMIN_CONTROLS) assert.match(html, new RegExp(`>${label}<`), label);
@@ -91,6 +112,48 @@ test('droits en vigueur et propositions héritées : affichés ; seul l’admini
   const reader = render({ ...baseAccess, user_id: 'u-acc', capabilities: ['READ'] }, { grants });
   assert.match(reader, /Propositions héritées en attente/);
   assert.doesNotMatch(reader, />Clore</);
+});
+
+test('lecture des habilitations en échec : erreur et reprise affichées, jamais « aucune habilitation », décisions suspendues', async () => {
+  // Une proposition héritée en attente : sa clôture dépend de toutes les lectures.
+  const legacyPerson = { id: 'p1', display_name: 'Personne en attente', status: 'PROPOSED', origin: 'PROPOSAL', proposed_by: 'u-x' };
+  const html = await renderReads({ ...baseAccess, is_admin: true },
+    { persons: [legacyPerson], 'person-links': [], grants: 'ERROR', parameters: [] });
+  assert.match(html, /Lecture « Habilitations » impossible : Lecture incomplète/);
+  assert.match(html, />Réessayer</);
+  assert.match(html, /Habilitations indisponibles : la lecture a échoué, aucune liste n’est affichée\./);
+  assert.doesNotMatch(html, /Aucune habilitation attribuée/);
+  assert.ok(disabledButton(html, 'Attribuer') && disabledButton(html, 'Retirer'), 'grant decisions suspended');
+  assert.match(html, /Propositions héritées en attente/);
+  assert.ok(disabledButton(html, 'Clore'), 'closing a legacy proposal waits for every read');
+});
+
+test('lecture des rattachements en échec : les droits restent listés, jamais sans le signaler', async () => {
+  const grants = [{ id: 'g1', user_id: 'aaaaaaaa-0000-4000-8000-000000000001', capability: 'READ', action: 'GRANT', status: 'VALIDATED',
+    origin: 'ADMIN', decision_seq: 1, proposed_by: baseAccess.user_id }];
+  const html = await renderReads({ ...baseAccess, is_admin: true }, { persons: [], 'person-links': 'ERROR', grants, parameters: [] });
+  assert.match(html, /Lecture « Rattachements » impossible/);
+  assert.match(html, /aaaaaaaa/);
+  assert.match(html, /\(rattachement indisponible\)/);
+  assert.ok(disabledButton(html, 'Rattacher') && disabledButton(html, 'Détacher'), 'link decisions suspended');
+});
+
+test('lecture en cours : chargement affiché, ni liste vide ni décision', async () => {
+  const html = await renderReads({ ...baseAccess, is_admin: true }, { persons: [], 'person-links': [], grants: 'LOADING', parameters: 'LOADING' });
+  assert.match(html, /Chargement des habilitations…/);
+  assert.match(html, /Chargement des données d’administration…/);
+  assert.doesNotMatch(html, /Aucune habilitation attribuée/);
+  assert.ok(disabledButton(html, 'Enregistrer la version'), 'no parameter decision without a read of the versions');
+});
+
+test('liste réellement vide : « Aucune habilitation attribuée. » ; identité de l’administrateur signalée si non établie', async () => {
+  const empty = await renderReads({ ...baseAccess, is_admin: true }, { persons: [], 'person-links': [], grants: [], parameters: [] });
+  assert.match(empty, /Aucune habilitation attribuée\./);
+  assert.doesNotMatch(empty, /impossible|Chargement/);
+  assert.match(empty, /Votre identité personnelle n’est pas encore établie par l’opérateur/);
+  const linked = await renderReads({ ...baseAccess, is_admin: true, person_id: '20000000-0000-4000-8000-000000000051' },
+    { persons: [], 'person-links': [], grants: [], parameters: [] });
+  assert.doesNotMatch(linked, /identité personnelle n’est pas encore établie/);
 });
 
 test('le panneau n’appelle que l’API d’administration et ne lit l’autorité que du serveur', () => {

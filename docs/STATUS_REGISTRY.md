@@ -17,7 +17,7 @@
 
 ## PAYABLES-CHEQUES-SINGLE-ADMIN
 
-**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; migration `20261028090000` appliquée à aucun environnement (2026-10-28)**
+**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; contre-revue CTO du 2026-10-28 (`FAIL` ciblé sur `52b3dd0`) traitée sous `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN`, en attente de nouvelle contre-revue ; migration `20261028090000` appliquée à aucun environnement**
 
 Lot `GO_IMPLEMENT_PAYABLES_CHEQUES_SINGLE_ADMIN`, base `origin/main` `6c9f8ed`, branche
 `codex/payables-cheques-single-admin`. Décision métier : un administrateur unique du
@@ -33,20 +33,32 @@ administration fermée) ; droits implicites de l'administrateur liés à l'autor
 capacités `PARAM_PROPOSE`/`PARAM_VALIDATE` et gouvernance à deux acteurs neutralisées ;
 cinq fonctions d'administration indépendantes de l'interrupteur métier, idempotentes,
 tracées, à version attendue pour les paramètres ; clôture des propositions héritées ;
-révocation sérialisée avec les écritures en cours du titulaire ; administrateur jamais
-rattaché et rattachement d'un préparateur figé tant que son chèque circule ; panneau Paramètres
-réservé à l'administrateur reconnu par le serveur. Contrôles financiers et garde de
-production inchangés.
+révocation sérialisée avec les écritures en cours du titulaire ; rattachement d'un
+préparateur figé tant que son chèque circule ; panneau Paramètres réservé à
+l'administrateur reconnu par le serveur. Correctif de contre-revue : identité
+personnelle de l'administrateur distincte de l'autorité, établie par l'opérateur et
+non réassignable par lui ; précontrôles du circuit refusant, avant toute formule
+consommée, une préparation que la voie normale ne pourrait pas confirmer (préparateur
+non rattaché, aucun signataire admissible ou contrôleur distinct des préparateurs) ;
+contrôle indépendant (nul n'enregistre les signatures ni ne confirme un chèque qu'il a
+préparé) ; résultat réel d'impression toujours enregistrable ; version de
+référence attachée au brouillon de paramètre (conflit signalé, aucune avance
+silencieuse) ; lectures en chargement, en échec avec reprise ou vides distinguées.
+Contrôles financiers existants et garde de production inchangés. Décision CTO demandée
+sur la confiance accordée aux identités administrées (une même personne avec deux
+comptes, ou un signataire alias).
 
 Validations locales : rejeu PostgreSQL 17 en deux scénarios (mise à niveau d'un domaine
 rempli sous l'ancienne gouvernance ; installation neuve avec les suites financières 30
-à 80 inchangées sous la nouvelle gouvernance), six courses réelles nouvelles, preuves
-de mordant par mutations, revue indépendante (aucun P1 ; deux P2 corrigés) ; tests TypeScript du module ; lint et typecheck identiques à
-la baseline ; build. Détail : `docs/PAYABLES_CHEQUES_SINGLE_ADMIN_REPORT.md`.
+à 80 sous la nouvelle gouvernance, un seul cas déplacé vers le refus en amont), sept
+courses réelles nouvelles, preuves de mordant par mutations (migration et interface),
+revues indépendantes ; tests TypeScript du module dont un test d'interaction en rendu
+client ; lint et typecheck identiques à la baseline ; build. Détail :
+`docs/PAYABLES_CHEQUES_SINGLE_ADMIN_REPORT.md`.
 
 Non fait (GO distincts requis) : merge, application staging ou production, désignation
-réelle de l'administrateur, attribution réelle de droits, paramétrage, ouverture du
-module, activation de la garde de production.
+réelle de l'administrateur et établissement réel de son identité, attribution réelle de
+droits, paramétrage, ouverture du module, activation de la garde de production.
 
 ---
 
