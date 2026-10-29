@@ -1,14 +1,15 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { currentPayablesRuntimeVerdict, isRuntimeRefused } from './payablesRuntimeTarget';
+import { currentPayablesRuntimeVerdict, isRuntimeRefused, type PayablesRuntimeMode } from './payablesRuntimeTarget';
 import { readMyAccess } from './payablesChequesService';
+import { isModuleClosed, moduleOpening } from './payablesAdminModel';
 import type { PayablesAccess } from './payablesChequesTypes';
 
 export type PayablesGateState =
   | { status: 'checking' }
   | { status: 'blocked'; reason: string }
-  | { status: 'allowed'; access: PayablesAccess };
+  | { status: 'allowed'; access: PayablesAccess; mode: PayablesRuntimeMode };
 
 const PayablesChequesGateContext = createContext<{ gate: PayablesGateState; refresh: () => void }>({
   gate: { status: 'checking' },
@@ -35,12 +36,14 @@ export function PayablesChequesGateProvider({ children }: { children: React.Reac
       setGate({ status: 'blocked', reason: 'Une session authentifiée est requise.' });
       return () => { current = false; };
     }
+    // Même règle que le service : seul un verdict « full » hors production ouvre le module complet.
+    const mode: PayablesRuntimeMode = verdict.environment === 'production' || verdict.mode !== 'full' ? 'admin-only' : 'full';
     setGate({ status: 'checking' });
     readMyAccess()
       .then((access) => {
         if (!current) return;
-        const canRead = access.capabilities.includes('READ') || access.capabilities.includes('AUDIT');
-        setGate(canRead ? { status: 'allowed', access } : { status: 'blocked', reason: 'Aucune habilitation de lecture sur ce module.' });
+        const opening = moduleOpening(mode, access);
+        setGate(isModuleClosed(opening) ? { status: 'blocked', reason: opening.reason } : { status: 'allowed', access, mode });
       })
       .catch((error: Error) => {
         if (current) setGate({ status: 'blocked', reason: error.message });

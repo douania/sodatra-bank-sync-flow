@@ -26,13 +26,30 @@ const supabaseStub = 'data:text/javascript,' + encodeURIComponent(`
     rpc: (name, args) => globalThis.__payablesTestRpc(name, args),
   };`);
 const targetStub = 'data:text/javascript,' + encodeURIComponent(`
-  export function currentPayablesRuntimeVerdict() { return { allowed: true, environment: 'local' }; }
+  export function currentPayablesRuntimeVerdict() {
+    return globalThis.__payablesTestVerdict ?? { allowed: true, environment: 'local', mode: 'full' };
+  }
   export function isRuntimeRefused(v) { return v.allowed === false; }`);
+// Session vue par la garde réelle : utilisateur authentifié synthétique.
+const authStub = 'data:text/javascript,' + encodeURIComponent(`
+  const auth = { user: { id: 'synthetic' }, loading: false };
+  export function useAuth() { return auth; }`);
+// Garde lue par la page : état fourni par le test ; la décision d'ouverture est testée à part.
+const gateStub = 'data:text/javascript,' + encodeURIComponent(`
+  export function usePayablesChequesGate() { return { gate: globalThis.__payablesTestGate, refresh() {} }; }`);
 register('data:text/javascript,' + encodeURIComponent(`
   export function resolve(specifier, context, nextResolve) {
     if (specifier === '@/integrations/supabase/client') return { shortCircuit: true, url: ${JSON.stringify(supabaseStub)} };
-    if (specifier === './payablesRuntimeTarget' && context.parentURL && context.parentURL.includes('payablesChequesService')) {
+    if (specifier === './payablesRuntimeTarget' && context.parentURL
+      && (context.parentURL.includes('payablesChequesService') || context.parentURL.includes('PayablesChequesGate'))) {
       return { shortCircuit: true, url: ${JSON.stringify(targetStub)} };
+    }
+    if (specifier === '@/contexts/AuthContext' && context.parentURL && context.parentURL.includes('PayablesChequesGate')) {
+      return { shortCircuit: true, url: ${JSON.stringify(authStub)} };
+    }
+    if (specifier === '@/features/payables-cheques/PayablesChequesGate' && context.parentURL
+      && context.parentURL.includes('pages/PayablesCheques')) {
+      return { shortCircuit: true, url: ${JSON.stringify(gateStub)} };
     }
     return nextResolve(specifier, context);
   }`));
@@ -390,4 +407,171 @@ test('version concurrente vue par le serveur : relecture, conflit affiché, sais
   assert.ok(button(ui.container, 'Enregistrer la version').disabled);
   assert.equal(field(ui.container, 'Contenu (JSON)').value, '{"label":"Ma saisie"}');
   await ui.unmount();
+});
+
+// --- Production : administration seule -------------------------------------
+// Verdict de production fourni au service (la liste blanche est donc active) et
+// garde de page fournie par le test ; la page réelle et ses panneaux réels sont montés.
+const ADMIN_LISTS = ['capability_grants', 'parameters', 'person_links', 'persons'];
+const productionVerdict = { allowed: true, environment: 'production', mode: 'admin-only' };
+
+async function mountPage() {
+  const { default: PayablesCheques } = await import('../../pages/PayablesCheques');
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  const container = fakeDocument.createElement('div');
+  fakeDocument.body.appendChild(container);
+  const root = createRoot(container as unknown as DomRoot);
+  await act(async () => {
+    root.render(<QueryClientProvider client={client}><PayablesCheques /></QueryClientProvider>);
+  });
+  await settle();
+  return { client, container, unmount: () => act(() => root.unmount()) };
+}
+
+test('production, administration seule : seul le panneau d’administration est monté, seules ses quatre listes sont lues', async () => {
+  rpcCalls.length = 0;
+  testGlobal.__payablesTestVerdict = productionVerdict;
+  testGlobal.__payablesTestGate = { status: 'allowed', access: adminAccess, mode: 'admin-only' };
+  rpcHandler = (name) => (name === 'payables_read_v1'
+    ? { data: [], error: null }
+    : { data: null, error: { message: 'PAYABLES_TEST_NO_NETWORK' } });
+  const ui = await mountPage();
+  try {
+    assert.match(text(ui.container), /Administration du module chèques/);
+    assert.match(text(ui.container), /Production : administration seule/);
+    assert.ok(button(ui.container, 'Créer la personne'), 'the administration panel is mounted');
+    assert.equal(descendants(ui.container).filter((el) => el.getAttribute('role') === 'tab').length, 0, 'no other panel tab');
+    assert.ok(rpcCalls.length > 0, 'the administration lists are read');
+    for (const call of rpcCalls) {
+      assert.equal(call.name, 'payables_read_v1', `no other server call (${call.name})`);
+      assert.deepEqual(call.args.p_args, {});
+    }
+    assert.deepEqual([...new Set(rpcCalls.map((c) => String(c.args.p_list)))].sort(), ADMIN_LISTS);
+  } finally {
+    await ui.unmount();
+    delete testGlobal.__payablesTestVerdict;
+    delete testGlobal.__payablesTestGate;
+  }
+});
+
+test('production, administration seule : une décision de l’administrateur part vers sa seule fonction serveur', async () => {
+  rpcCalls.length = 0;
+  testGlobal.__payablesTestVerdict = productionVerdict;
+  testGlobal.__payablesTestGate = { status: 'allowed', access: adminAccess, mode: 'admin-only' };
+  rpcHandler = (name) => (name === 'payables_read_v1'
+    ? { data: [], error: null }
+    : { data: { ok: true }, error: null });
+  const ui = await mountPage();
+  try {
+    await type(field(ui.container, 'admin-reason'), 'Motif synthétique');
+    await type(field(ui.container, 'admin-person'), 'Personne fictive');
+    await click(button(ui.container, 'Créer la personne'));
+    const writes = rpcCalls.filter((c) => c.name !== 'payables_read_v1');
+    assert.deepEqual(writes.map((c) => c.name), ['payables_admin_create_person_v1']);
+    assert.equal(writes[0].args.p_display_name, 'Personne fictive');
+  } finally {
+    await ui.unmount();
+    delete testGlobal.__payablesTestVerdict;
+    delete testGlobal.__payablesTestGate;
+  }
+});
+
+test('page en administration seule, liste blanche coupée : aucun autre panneau ne lit quoi que ce soit', async () => {
+  // Verdict « full » vu par le service : seule la page empêche les autres panneaux de demander leurs listes.
+  rpcCalls.length = 0;
+  testGlobal.__payablesTestGate = { status: 'allowed', access: { ...adminAccess, capabilities: ['READ', 'AUDIT', 'BANK_READ'] }, mode: 'admin-only' };
+  rpcHandler = (name) => (name === 'payables_read_v1'
+    ? { data: [], error: null }
+    : { data: null, error: { message: 'PAYABLES_TEST_NO_NETWORK' } });
+  const ui = await mountPage();
+  try {
+    assert.deepEqual([...new Set(rpcCalls.map((c) => `${c.name}:${String(c.args.p_list)}`))].sort(),
+      ADMIN_LISTS.map((l) => `payables_read_v1:${l}`));
+    assert.doesNotMatch(text(ui.container), /Registre des chèques|File de travail|Position bancaire|Suivi bancaire/);
+  } finally {
+    await ui.unmount();
+    delete testGlobal.__payablesTestGate;
+  }
+});
+
+test('page : mode de garde inattendu traité comme administration seule', async () => {
+  rpcCalls.length = 0;
+  testGlobal.__payablesTestGate = { status: 'allowed', access: adminAccess };
+  rpcHandler = (name) => (name === 'payables_read_v1'
+    ? { data: [], error: null }
+    : { data: null, error: { message: 'PAYABLES_TEST_NO_NETWORK' } });
+  const ui = await mountPage();
+  try {
+    assert.match(text(ui.container), /Administration du module chèques/);
+    assert.equal(descendants(ui.container).filter((el) => el.getAttribute('role') === 'tab').length, 0);
+    assert.deepEqual([...new Set(rpcCalls.map((c) => String(c.args.p_list)))].sort(), ADMIN_LISTS);
+  } finally {
+    await ui.unmount();
+    delete testGlobal.__payablesTestGate;
+  }
+});
+
+test('production, garde fermée (utilisateur non administrateur) : rien n’est monté, aucun appel', async () => {
+  rpcCalls.length = 0;
+  testGlobal.__payablesTestVerdict = productionVerdict;
+  testGlobal.__payablesTestGate = { status: 'blocked', reason: 'Réservé à l’administrateur désigné.' };
+  const ui = await mountPage();
+  try {
+    assert.equal(ui.container.childNodes.length, 0);
+    assert.deepEqual(rpcCalls, []);
+  } finally {
+    await ui.unmount();
+    delete testGlobal.__payablesTestVerdict;
+    delete testGlobal.__payablesTestGate;
+  }
+});
+
+// --- Garde réelle : mode de la cible et autorité reconnue par le serveur ---------
+async function gateFor(verdict: unknown, access: Access) {
+  rpcCalls.length = 0;
+  testGlobal.__payablesTestVerdict = verdict;
+  rpcHandler = (name) => (name === 'payables_my_access_v1'
+    ? { data: access, error: null }
+    : { data: null, error: { message: 'PAYABLES_TEST_NO_NETWORK' } });
+  const { PayablesChequesGateProvider, usePayablesChequesGate } = await import('./PayablesChequesGate');
+  let seen: unknown = null;
+  const Probe = () => { seen = usePayablesChequesGate().gate; return null; };
+  const container = fakeDocument.createElement('div');
+  fakeDocument.body.appendChild(container);
+  const root = createRoot(container as unknown as DomRoot);
+  await act(async () => { root.render(<PayablesChequesGateProvider><Probe /></PayablesChequesGateProvider>); });
+  await settle();
+  await act(() => root.unmount());
+  delete testGlobal.__payablesTestVerdict;
+  return seen as { status: string; mode?: string; reason?: string };
+}
+const accountant: Access = { ...adminAccess, is_admin: false, capabilities: ['READ', 'AUDIT', 'SUPPLIER_MANAGE', 'CHEQUE_CONFIRM_ISSUE'] };
+
+test('garde réelle, production : l’administrateur reconnu ouvre l’administration seule', async () => {
+  const gate = await gateFor(productionVerdict, { ...adminAccess, capabilities: ['READ'] });
+  assert.equal(gate.status, 'allowed');
+  assert.equal(gate.mode, 'admin-only');
+  assert.deepEqual(rpcCalls.map((c) => c.name), ['payables_my_access_v1'], 'the server decides, once');
+});
+
+test('garde réelle, production : un comptable, même habilité, reste dehors', async () => {
+  const gate = await gateFor(productionVerdict, accountant);
+  assert.equal(gate.status, 'blocked');
+  assert.match(String(gate.reason), /réservé à l’administrateur désigné/);
+});
+
+test('garde réelle, verdict incohérent (production « full ») : traité comme administration seule', async () => {
+  const gate = await gateFor({ allowed: true, environment: 'production', mode: 'full' }, accountant);
+  assert.equal(gate.status, 'blocked');
+  const admin = await gateFor({ allowed: true, environment: 'production', mode: 'full' }, { ...adminAccess, capabilities: ['READ'] });
+  assert.equal(admin.mode, 'admin-only');
+});
+
+test('garde réelle, non-régression local : module complet sur lecture', async () => {
+  const gate = await gateFor({ allowed: true, environment: 'local', mode: 'full' }, accountant);
+  assert.equal(gate.status, 'allowed');
+  assert.equal(gate.mode, 'full');
+  const refused = await gateFor({ allowed: false, reason: 'Le module chèques reste interdit en production.' }, accountant);
+  assert.equal(refused.status, 'blocked');
+  assert.deepEqual(rpcCalls, [], 'refused target: no server call');
 });

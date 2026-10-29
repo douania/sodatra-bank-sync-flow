@@ -15,6 +15,45 @@
 
 ---
 
+## PAYABLES-CHEQUES-PRODUCTION-ADMIN-ACCESS
+
+**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; aucun déploiement, drapeau positionné nulle part**
+
+Lot `GO_IMPLEMENT_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ACCESS`, base `main` `a9702cb`, branche
+`codex/payables-cheques-production-admin-access`.
+
+Production refusée par défaut. Le drapeau de build `VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY`
+ouvre le mode « administration seule » sur le projet de production exact. Dans ce mode :
+
+- le service applique une liste blanche fermée : lecture des accès, quatre listes
+  d'administration, cinq fonctions d'administration ; tout autre appel est refusé avant
+  la session et le réseau ;
+- la page monte le seul panneau d'administration, pour le seul administrateur reconnu
+  par le serveur.
+
+Local et staging sont inchangés. Migrations, Auth/RLS, dépendances, contrôles financiers et
+`.env` sont inchangés.
+
+Validations locales :
+
+- 88 tests du module ;
+- 23 mutants tués ;
+- nouveaux tests en échec sur la base ;
+- lint et typecheck identiques à la base ;
+- build ;
+- revue indépendante sans P1.
+
+Prérequis non remplis avant toute activation :
+
+- installation de `20261028090000` en production ;
+- désignation et identité de l'administrateur ;
+- build et déploiement sous GO ;
+- décision CTO sur les lectures serveur, non restreintes par le mode.
+
+Détail : `docs/PAYABLES_CHEQUES_PRODUCTION_ADMIN_ACCESS.md`.
+
+---
+
 ## PAYABLES-CHEQUES-SINGLE-ADMIN
 
 **Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; contre-revue CTO du 2026-10-28 (`FAIL` ciblé sur `52b3dd0`) traitée sous `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN`, reconduit le 2026-10-29 pour le dernier blocage sur `fd860b1` (circuit comptable conservé), en attente de nouvelle contre-revue ; migration `20261028090000` appliquée à aucun environnement**
