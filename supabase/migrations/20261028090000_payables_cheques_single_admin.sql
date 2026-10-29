@@ -33,17 +33,18 @@
 --   - précontrôles du circuit (GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN) : une
 --     préparation qui rendrait le chèque non confirmable par la voie normale
 --     (préparateur non rattaché, aucun signataire admissible distinct des
---     préparateurs, aucun contrôleur indépendant) est refusée avant toute
---     formule consommée ; un résultat d'impression, fait réel, reste toujours
---     enregistrable par un déclarant qui n'en est pas la cause ;
---   - contrôle indépendant : les signatures sont enregistrées et l'émission
---     confirmée par un compte rattaché, distinct des préparateurs (compte et
---     personne) ; nul ne contrôle un chèque qu'il a préparé ;
+--     préparateurs) est refusée avant toute formule consommée ; un résultat
+--     d'impression, fait réel, reste toujours enregistrable par un déclarant
+--     qui n'en est pas la cause ;
+--   - circuit comptable conservé (arbitrage CTO du 29 octobre) : le comptable
+--     prépare et imprime, le signataire autorisé distinct du préparateur signe
+--     physiquement, le même comptable peut enregistrer cette signature et
+--     confirmer l'émission réelle ; enregistrer une signature ne confère aucun
+--     pouvoir de signature ;
 --   - aucun contrôle financier modifié : montants, allocations, versions,
 --     signatures, preuve bancaire et validations par un autre acteur des
 --     transitions financières restent ceux des deux migrations précédentes ;
---     les précontrôles et le contrôle indépendant s'ajoutent sans en retirer
---     aucun.
+--     les précontrôles s'ajoutent sans en retirer aucun.
 -- ============================================================================
 
 BEGIN;
@@ -833,36 +834,22 @@ $$;
 -- La confirmation normale (payables_confirm_issuance_v1, inchangée) exige que
 -- chaque préparateur soit rattaché à une personne et que les signatures
 -- requises viennent de signataires admissibles autres que les préparateurs.
--- S'y ajoute un contrôle indépendant (revue indépendante P1-1) : les
--- signatures sont enregistrées et l'émission confirmée par un compte rattaché
--- qui n'est ni un préparateur ni la même personne qu'un préparateur ; nul ne
--- contrôle un chèque qu'il a préparé, administrateur compris.
--- Chaque étape de préparation vérifie d'avance, avec les paramètres et les
--- habilitations en vigueur ce jour, que ces conditions restent réunissables une
--- fois l'acteur compté parmi les préparateurs ; sinon l'étape est refusée et
+-- L'enregistrement d'une signature et la confirmation de l'émission réelle
+-- restent ouverts à tout détenteur de CHEQUE_CONFIRM_ISSUE, préparateur compris
+-- (arbitrage CTO du 29 octobre) : enregistrer une signature ne confère aucun
+-- pouvoir de signature, et le signataire accepté reste distinct des préparateurs.
+-- Chaque étape de préparation vérifie d'avance, avec les paramètres en vigueur
+-- ce jour, que ces conditions restent réunissables une fois l'acteur compté
+-- parmi les préparateurs ; sinon l'étape est refusée et
 -- rien n'est écrit : aucune formule n'est assignée, imprimée ni gâchée pour un
 -- chèque que la voie normale ne pourrait pas confirmer. Une restriction ne vaut
 -- que pour l'opération concernée (par exemple le seul signataire admissible
 -- d'un compte ne prépare pas un chèque de ce compte) ; le droit de préparer
 -- reste entier ailleurs. La confirmation garde tous ses contrôles.
 
--- Contrôleur indépendant : compte rattaché, qui n'est ni l'un des préparateurs
--- ni rattaché à la même personne que l'un d'eux.
-CREATE FUNCTION payables_private.controller_independent(p_user uuid, p_preparers uuid[])
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SET search_path = pg_catalog, pg_temp
-AS $$
-  SELECT p_user IS NOT NULL AND NOT (p_user = ANY (p_preparers))
-     AND payables_private.person_of_user(p_user) IS NOT NULL
-     AND NOT EXISTS (SELECT 1 FROM unnest(p_preparers) u
-                     WHERE payables_private.person_of_user(u) = payables_private.person_of_user(p_user))
-$$;
-
 -- Conditions non réunissables pour une confirmation normale, chacune évaluée
--- indépendamment des autres (tableau vide sinon) : préparateurs rattachés,
--- signataires admissibles distincts des préparateurs, contrôleur indépendant.
+-- indépendamment de l'autre (tableau vide sinon) : préparateurs rattachés,
+-- signataires admissibles distincts des préparateurs.
 CREATE FUNCTION payables_private.cheque_confirmability_issues(
   p_account uuid, p_category text, p_amount numeric, p_payment uuid, p_form uuid, p_actor uuid
 )
@@ -888,14 +875,6 @@ BEGIN
      AND payables_private.signatory_version_if_admissible(s.id, p_account, p_category, p_amount, v_on) IS NOT NULL;
   IF v_rule.id IS NULL OR v_required IS NULL OR v_available < v_required THEN
     v_issues := v_issues || 'PAYABLES_NO_INDEPENDENT_SIGNATORY'::text;
-  END IF;
-  IF NOT EXISTS (
-       SELECT 1 FROM (SELECT a.admin_user_id AS u FROM payables_private.admin_authority a WHERE a.singleton
-                      UNION SELECT g.user_id FROM public.payables_capability_grants g
-                             WHERE g.capability = 'CHEQUE_CONFIRM_ISSUE' AND g.status = 'VALIDATED') c
-       WHERE c.u IS NOT NULL AND payables_private.has_capability(c.u, 'CHEQUE_CONFIRM_ISSUE')
-         AND payables_private.controller_independent(c.u, v_preparers)) THEN
-    v_issues := v_issues || 'PAYABLES_NO_INDEPENDENT_CONTROLLER'::text;
   END IF;
   RETURN v_issues;
 END;
@@ -985,33 +964,6 @@ BEGIN
 END;
 $$;
 
--- Contrôle indépendant : enregistrement d'une signature et confirmation par la
--- voie normale. Les signatures déjà enregistrées sont revérifiées à la
--- confirmation.
-CREATE FUNCTION payables_private.check_cheque_controller()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE v_form public.payables_cheque_forms; v_preparers uuid[];
-BEGIN
-  SELECT * INTO v_form FROM public.payables_cheque_forms f WHERE f.id = NEW.form_id;
-  IF v_form.provenance = 'NATIVE' THEN
-    v_preparers := payables_private.cheque_preparers(v_form.payment_id, v_form.id, NULL);
-    IF NOT payables_private.controller_independent(NEW.recorded_by, v_preparers) THEN
-      RAISE EXCEPTION 'PAYABLES_CONTROLLER_NOT_INDEPENDENT';
-    END IF;
-    IF TG_TABLE_NAME = 'payables_issuances' AND EXISTS (
-         SELECT 1 FROM public.payables_signatures s
-          WHERE s.content_id = (payables_private.current_content(v_form.id)).id
-            AND NOT payables_private.controller_independent(s.recorded_by, v_preparers)) THEN
-      RAISE EXCEPTION 'PAYABLES_CONTROLLER_NOT_INDEPENDENT';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
 CREATE TRIGGER payables_payments_precheck_request
 BEFORE INSERT ON public.payables_payments
 FOR EACH ROW WHEN (NEW.mode = 'CHEQUE' AND NEW.status = 'OPEN' AND NEW.replaces_payment_id IS NULL)
@@ -1030,17 +982,6 @@ BEFORE UPDATE ON public.payables_print_events
 FOR EACH ROW WHEN (OLD.status = 'PENDING' AND NEW.status IN ('PRINTED','UNCERTAIN'))
 EXECUTE FUNCTION payables_private.precheck_print_event();
 
-CREATE TRIGGER payables_signatures_controller
-BEFORE INSERT ON public.payables_signatures
-FOR EACH ROW EXECUTE FUNCTION payables_private.check_cheque_controller();
-
--- Confirmation initiale seulement : une correction de date (révision suivante)
--- relève de la validation de sortie par un autre acteur, inchangée.
-CREATE TRIGGER payables_issuances_controller
-BEFORE INSERT ON public.payables_issuances
-FOR EACH ROW WHEN (NEW.path = 'NORMAL' AND NEW.revision_no = 1)
-EXECUTE FUNCTION payables_private.check_cheque_controller();
-
 -- --------------------------------------------------------------------------
 -- 7. Droits : fermés par défaut, API d'administration ouverte à authenticated
 -- --------------------------------------------------------------------------
@@ -1054,12 +995,10 @@ REVOKE ALL ON FUNCTION payables_private.identity_change_frozen(uuid, boolean) FR
 REVOKE ALL ON FUNCTION payables_private.set_module_admin_identity(uuid, uuid, boolean, text)
   FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.cheque_preparers(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION payables_private.controller_independent(uuid, uuid[]) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.cheque_confirmability_issues(uuid, text, numeric, uuid, uuid, uuid)
   FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.assert_cheque_confirmable(uuid, text, numeric, uuid, uuid, uuid)
   FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION payables_private.check_cheque_controller() FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.precheck_cheque_request() FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.precheck_cheque_content() FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION payables_private.precheck_print_event() FROM PUBLIC, anon, authenticated, service_role;

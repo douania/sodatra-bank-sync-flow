@@ -17,7 +17,7 @@
 
 ## PAYABLES-CHEQUES-SINGLE-ADMIN
 
-**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; contre-revue CTO du 2026-10-28 (`FAIL` ciblé sur `52b3dd0`) traitée sous `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN`, en attente de nouvelle contre-revue ; migration `20261028090000` appliquée à aucun environnement**
+**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; contre-revue CTO du 2026-10-28 (`FAIL` ciblé sur `52b3dd0`) traitée sous `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN`, reconduit le 2026-10-29 pour le dernier blocage sur `fd860b1` (circuit comptable conservé), en attente de nouvelle contre-revue ; migration `20261028090000` appliquée à aucun environnement**
 
 Lot `GO_IMPLEMENT_PAYABLES_CHEQUES_SINGLE_ADMIN`, base `origin/main` `6c9f8ed`, branche
 `codex/payables-cheques-single-admin`. Décision métier : un administrateur unique du
@@ -39,14 +39,15 @@ l'administrateur reconnu par le serveur. Correctif de contre-revue : identité
 personnelle de l'administrateur distincte de l'autorité, établie par l'opérateur et
 non réassignable par lui ; précontrôles du circuit refusant, avant toute formule
 consommée, une préparation que la voie normale ne pourrait pas confirmer (préparateur
-non rattaché, aucun signataire admissible ou contrôleur distinct des préparateurs) ;
-contrôle indépendant (nul n'enregistre les signatures ni ne confirme un chèque qu'il a
-préparé) ; résultat réel d'impression toujours enregistrable ; version de
-référence attachée au brouillon de paramètre (conflit signalé, aucune avance
-silencieuse) ; lectures en chargement, en échec avec reprise ou vides distinguées.
-Contrôles financiers existants et garde de production inchangés. Décision CTO demandée
-sur la confiance accordée aux identités administrées (une même personne avec deux
-comptes, ou un signataire alias).
+non rattaché, aucun signataire admissible distinct des préparateurs) ; résultat réel
+d'impression toujours enregistrable ; version de référence attachée au brouillon de
+paramètre (conflit signalé, aucune avance silencieuse) ; lectures en chargement, en
+échec avec reprise ou vides distinguées. Circuit comptable conservé (arbitrage CTO du
+2026-10-29) : le comptable prépare et imprime, le signataire autorisé distinct signe
+physiquement, le même comptable enregistre la signature et confirme ; la règle
+d'indépendance du contrôleur, ajoutée puis jugée hors circuit, est retirée. Contrôles
+financiers existants et garde de production inchangés. Limite documentée : l'application
+ne certifie pas l'identité physique (double compte, signataire fictif).
 
 Validations locales : rejeu PostgreSQL 17 en deux scénarios (mise à niveau d'un domaine
 rempli sous l'ancienne gouvernance ; installation neuve avec les suites financières 30

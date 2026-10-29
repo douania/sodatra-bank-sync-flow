@@ -315,6 +315,58 @@ SELECT pc_test.assert(NOT (public.payables_my_access_v1() -> 'capabilities') ?| 
        AND payload ->> 'person_id' = pc_test.id('p_cpt_b')::text) = 0, 'recording a signature confers no signing power');
 RESET ROLE;
 
+-- Circuit comptable retenu (arbitrage CTO du 29 octobre) : le comptable prépare
+-- et imprime ; le dirigeant, signataire admissible distinct du préparateur, signe
+-- physiquement ; le même comptable enregistre cette signature puis confirme
+-- l'émission réelle. L'impression seule ne vaut jamais émission, et le
+-- préparateur ne devient jamais lui-même le signataire accepté.
+SELECT pc_test.as_user('dg');
+SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-cap:cpt_a:CHEQUE_CONFIRM_ISSUE'), pc_test.id('cpt_a'),
+  'CHEQUE_CONFIRM_ISSUE', true, 'Enregistrement des signatures et confirmation');
+RESET ROLE;
+SELECT pc_test.sa_printed_cheque('cpt_a', 'circuit', pc_test.id('sa_supplier'), 64500, '0091000020');
+SELECT pc_test.put('sa_pay_circuit', (SELECT payment_id FROM public.payables_cheque_forms WHERE id = pc_test.id('sa_form_circuit')));
+SELECT pc_test.assert((SELECT state FROM public.payables_cheque_forms WHERE id = pc_test.id('sa_form_circuit')) = 'PRINTED'
+  AND NOT EXISTS (SELECT 1 FROM public.payables_issuances WHERE form_id = pc_test.id('sa_form_circuit'))
+  AND (SELECT status FROM public.payables_payments WHERE id = pc_test.id('sa_pay_circuit')) = 'OPEN'
+  AND (SELECT string_agg(status, ',') FROM public.payables_allocations WHERE payment_id = pc_test.id('sa_pay_circuit')) = 'RESERVED',
+  'printing alone is never an issuance');
+SELECT pc_test.as_user('cpt_a');
+SELECT pc_test.expect_error(pc_test.sa_confirm_sql('circuit'), 'PAYABLES_SIGNATURE_RULE_NOT_MET');
+SELECT public.payables_record_signature_v1(pc_test.key('sa-sign-circuit'), pc_test.id('sa_form_circuit'),
+  pc_test.content_of(pc_test.id('sa_form_circuit')), pc_test.id('p_dirigeant'), pc_test.dakar_today(), NULL);
+SELECT pc_test.put('sa_iss_circuit', (public.payables_confirm_issuance_v1(pc_test.key('sa-confirm:circuit'),
+  pc_test.id('sa_form_circuit'), pc_test.form_version(pc_test.id('sa_form_circuit')), pc_test.dakar_today(), false)
+  ->> 'issuance_id')::uuid);
+SELECT pc_test.assert((public.payables_confirm_issuance_v1(pc_test.key('sa-confirm:circuit'), pc_test.id('sa_form_circuit'),
+  pc_test.form_version(pc_test.id('sa_form_circuit')) - 1, pc_test.dakar_today(), false) ->> 'replayed')::boolean,
+  'confirmation replay returns the stored result');
+SELECT pc_test.expect_error($$SELECT public.payables_confirm_issuance_v1(pc_test.key('sa-confirm-circuit-again'),
+  pc_test.id('sa_form_circuit'), pc_test.form_version(pc_test.id('sa_form_circuit')), pc_test.dakar_today(), false)$$,
+  'PAYABLES_ISSUE_ALREADY_RECORDED');
+RESET ROLE;
+SELECT pc_test.assert((SELECT count(*) FROM public.payables_issuances WHERE form_id = pc_test.id('sa_form_circuit')) = 1
+  AND (SELECT count(*) = 1 AND bool_and(status = 'ENGAGED') AND sum(amount) = 64500 FROM public.payables_allocations
+       WHERE payment_id = pc_test.id('sa_pay_circuit'))
+  AND (SELECT status FROM public.payables_payments WHERE id = pc_test.id('sa_pay_circuit')) = 'ISSUED'
+  AND (SELECT state FROM public.payables_cheque_forms WHERE id = pc_test.id('sa_form_circuit')) = 'ISSUED',
+  'one issuance and one engaged allocation');
+SELECT pc_test.assert((SELECT recorded_by FROM public.payables_issuances WHERE id = pc_test.id('sa_iss_circuit')) = pc_test.id('cpt_a')
+  AND (SELECT recorded_by FROM public.payables_signatures WHERE form_id = pc_test.id('sa_form_circuit')) = pc_test.id('cpt_a')
+  AND (SELECT person_id FROM public.payables_signatures WHERE form_id = pc_test.id('sa_form_circuit')) = pc_test.id('p_dirigeant'),
+  'the preparing accountant recorded the director''s signature and confirmed');
+SELECT pc_test.assert(NOT EXISTS (SELECT 1 FROM public.payables_parameter_versions WHERE kind = 'SIGNATORY'
+  AND payload ->> 'person_id' = pc_test.id('p_cpt_a')::text), 'recording a signature still confers no signing power');
+-- Le préparateur ne devient pas le signataire accepté, même s'il enregistre lui-même sa signature.
+SELECT pc_test.sa_printed_cheque('cpt_a', 'circuit_self', pc_test.id('sa_supplier'), 21500, '0091000021');
+SELECT pc_test.as_user('cpt_a');
+SELECT public.payables_record_signature_v1(pc_test.key('sa-sign-circuit-self'), pc_test.id('sa_form_circuit_self'),
+  pc_test.content_of(pc_test.id('sa_form_circuit_self')), pc_test.id('p_cpt_a'), pc_test.dakar_today(), NULL);
+SELECT pc_test.expect_error(pc_test.sa_confirm_sql('circuit_self'), 'PAYABLES_SIGNATORY_IS_PREPARER');
+RESET ROLE;
+SELECT pc_test.assert(NOT EXISTS (SELECT 1 FROM public.payables_issuances WHERE form_id = pc_test.id('sa_form_circuit_self')),
+  'a cheque signed by its preparer is never issued by the normal path');
+
 -- ---------------------------------------------------------------------------
 -- Identité personnelle de l'administrateur (contre-revue CTO F1) : distincte
 -- de l'autorité, établie par l'opérateur seul, jamais modifiable par lui. Son
@@ -499,24 +551,6 @@ SELECT pc_test.as_user('dg');
 SELECT pc_test.put('sa_pe_duo', (public.payables_record_print_intent_v1(pc_test.key('sa-intent-duo'), pc_test.id('sa_form_duo'),
   pc_test.form_version(pc_test.id('sa_form_duo')), pc_test.content_of(pc_test.id('sa_form_duo')), 'Impression')
   ->> 'print_event_id')::uuid);
--- Revue indépendante (cause passagère) : un instant sans contrôleur habilité,
--- cause étrangère au déclarant, ne masque pas la sienne ; chaque condition est
--- comparée avec et sans lui.
-RESET ROLE;
-CREATE TABLE pc_test.sa_confirmers AS
-  SELECT DISTINCT g.user_id FROM public.payables_capability_grants g
-  WHERE g.capability = 'CHEQUE_CONFIRM_ISSUE' AND payables_private.has_capability(g.user_id, 'CHEQUE_CONFIRM_ISSUE');
-GRANT SELECT ON pc_test.sa_confirmers TO authenticated;
-SELECT pc_test.assert((SELECT count(*) FROM pc_test.sa_confirmers) >= 2, 'several confirmers');
-SELECT pc_test.as_user('dg');
-SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-confirm-off-duo:' || user_id), user_id, 'CHEQUE_CONFIRM_ISSUE',
-  false, 'Retrait temporaire') FROM pc_test.sa_confirmers;
-SELECT pc_test.as_user('cpt_c');
-SELECT pc_test.expect_error($$SELECT public.payables_record_print_outcome_v1(pc_test.key('sa-outcome-duo-c-tmp'), pc_test.id('sa_pe_duo'),
-  'PRINTED', NULL)$$, 'PAYABLES_NO_INDEPENDENT_SIGNATORY');
-SELECT pc_test.as_user('dg');
-SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-confirm-on-duo:' || user_id), user_id, 'CHEQUE_CONFIRM_ISSUE',
-  true, 'Rétablissement') FROM pc_test.sa_confirmers;
 SELECT pc_test.as_user('cpt_c');
 SELECT pc_test.expect_error($$SELECT public.payables_record_print_outcome_v1(pc_test.key('sa-outcome-duo-c'), pc_test.id('sa_pe_duo'),
   'PRINTED', NULL)$$, 'PAYABLES_NO_INDEPENDENT_SIGNATORY');
@@ -529,78 +563,22 @@ SELECT pc_test.assert((public.payables_confirm_issuance_v1(pc_test.key('sa-confi
   pc_test.form_version(pc_test.id('sa_form_duo')), pc_test.dakar_today(), false) ->> 'issuance_id') IS NOT NULL,
   'printed by the administrator, signed by the other signatory, issued');
 RESET ROLE;
-
--- Revue indépendante P1-1 : nul ne contrôle un chèque qu'il a préparé. Même avec
--- une seconde personne qu'il déclarerait signataire, l'administrateur ne mène
--- pas seul un chèque jusqu'à l'émission : il n'enregistre pas les signatures et
--- ne confirme pas ; un compte non rattaché ne contrôle pas non plus.
+-- Un préparateur qui est lui-même signataire admissible du compte n'est jamais le
+-- signataire accepté de son chèque, même s'il enregistre sa signature et confirme.
 SELECT pc_test.as_user('dg');
-SELECT pc_test.put('p_decoy', (public.payables_admin_create_person_v1(pc_test.key('sa-person-decoy'),
-  'Dirigeant suppléant synthétique', 'Seconde personne') ->> 'person_id')::uuid);
-SELECT public.payables_admin_set_parameter_v1(pc_test.key('sa-decoy-sig'), 'SIGNATORY',
-  pc_test.id('p_decoy')::text || '|' || pc_test.id('acct_ora_duo')::text, pc_test.dakar_today(),
-  jsonb_build_object('person_id', pc_test.id('p_decoy'), 'account_registry_id', pc_test.id('acct_ora_duo'), 'state', 'ACTIVE',
-    'categories', jsonb_build_array('*'), 'ceiling', jsonb_build_object('kind', 'UNLIMITED')),
-  'Pouvoirs synthétiques', 0, 'Seconde personne signataire');
-SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-cap:admin:CHEQUE_CONFIRM_ISSUE'), pc_test.id('admin'),
-  'CHEQUE_CONFIRM_ISSUE', true, 'Contrôleur sans rattachement');
+SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-cap:cpt_c:CHEQUE_CONFIRM_ISSUE'), pc_test.id('cpt_c'),
+  'CHEQUE_CONFIRM_ISSUE', true, 'Enregistrement des signatures et confirmation');
 RESET ROLE;
-SELECT pc_test.sa_printed_cheque('dg', 'decoy', pc_test.id('sa_supplier'), 61000, '0092000002', 'acct_ora_duo', 'PILOT_ADMIN');
-SELECT pc_test.as_user('dg');
-SELECT pc_test.expect_error($$SELECT public.payables_record_signature_v1(pc_test.key('sa-sign-decoy-dg'), pc_test.id('sa_form_decoy'),
-  pc_test.content_of(pc_test.id('sa_form_decoy')), pc_test.id('p_decoy'), pc_test.dakar_today(), NULL)$$,
-  'PAYABLES_CONTROLLER_NOT_INDEPENDENT');
-SELECT pc_test.as_user('admin');
-SELECT pc_test.expect_error($$SELECT public.payables_record_signature_v1(pc_test.key('sa-sign-decoy-admin'), pc_test.id('sa_form_decoy'),
-  pc_test.content_of(pc_test.id('sa_form_decoy')), pc_test.id('p_decoy'), pc_test.dakar_today(), NULL)$$,
-  'PAYABLES_CONTROLLER_NOT_INDEPENDENT');
-SELECT pc_test.as_user('cpt_b');
-SELECT public.payables_record_signature_v1(pc_test.key('sa-sign-decoy-b'), pc_test.id('sa_form_decoy'),
-  pc_test.content_of(pc_test.id('sa_form_decoy')), pc_test.id('p_decoy'), pc_test.dakar_today(), NULL);
-SELECT pc_test.as_user('dg');
-SELECT pc_test.expect_error(pc_test.sa_confirm_sql('decoy'), 'PAYABLES_CONTROLLER_NOT_INDEPENDENT');
--- Défense en profondeur : une signature d'un préparateur écrite hors API est
--- refusée ; déjà présente (état hérité, simulé ici hors déclencheurs), elle
--- fait refuser la confirmation, même demandée par un autre compte.
+SELECT pc_test.sa_printed_cheque('cpt_c', 'duo_self', pc_test.id('sa_supplier'), 18500, '0092000003', 'acct_ora_duo', 'PILOT_ADMIN');
+SELECT pc_test.as_user('cpt_c');
+SELECT public.payables_record_signature_v1(pc_test.key('sa-sign-duo-self'), pc_test.id('sa_form_duo_self'),
+  pc_test.content_of(pc_test.id('sa_form_duo_self')), pc_test.id('p_cpt_c'), pc_test.dakar_today(), NULL);
+SELECT pc_test.expect_error(pc_test.sa_confirm_sql('duo_self'), 'PAYABLES_SIGNATORY_IS_PREPARER');
 RESET ROLE;
-SELECT pc_test.expect_error($$INSERT INTO public.payables_signatures (form_id, content_id, person_id, signed_on, recorded_by)
-  VALUES (pc_test.id('sa_form_decoy'), pc_test.content_of(pc_test.id('sa_form_decoy')), pc_test.id('p_cpt_c'),
-  pc_test.dakar_today(), pc_test.id('dg'))$$, 'PAYABLES_CONTROLLER_NOT_INDEPENDENT');
-SET session_replication_role = replica;
-INSERT INTO public.payables_signatures (form_id, content_id, person_id, signed_on, recorded_by)
-VALUES (pc_test.id('sa_form_decoy'), pc_test.content_of(pc_test.id('sa_form_decoy')), pc_test.id('p_cpt_c'),
-  pc_test.dakar_today(), pc_test.id('dg'));
-SET session_replication_role = origin;
-SELECT pc_test.as_user('cpt_b');
-SELECT pc_test.expect_error(pc_test.sa_confirm_sql('decoy'), 'PAYABLES_CONTROLLER_NOT_INDEPENDENT');
-RESET ROLE;
-SELECT pc_test.assert(NOT EXISTS (SELECT 1 FROM public.payables_issuances WHERE form_id = pc_test.id('sa_form_decoy')),
-  'a cheque the administrator prepared is never controlled by him');
--- Sans contrôleur indépendant habilité, la préparation est refusée d'emblée.
-DELETE FROM pc_test.sa_confirmers;
-INSERT INTO pc_test.sa_confirmers
-  SELECT DISTINCT g.user_id FROM public.payables_capability_grants g
-  WHERE g.capability = 'CHEQUE_CONFIRM_ISSUE' AND payables_private.has_capability(g.user_id, 'CHEQUE_CONFIRM_ISSUE');
-SELECT pc_test.assert((SELECT count(*) FROM pc_test.sa_confirmers) >= 2, 'several confirmers before the check');
-SELECT pc_test.as_user('dg');
-SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-confirm-off:' || user_id), user_id, 'CHEQUE_CONFIRM_ISSUE', false,
-  'Retrait temporaire') FROM pc_test.sa_confirmers;
-SELECT pc_test.put('sa_inv_noctl', (public.payables_create_invoice_v1(pc_test.key('sa-inv-noctl'), pc_test.id('sa_supplier'),
-  'SA-REF-NOCTL', 14000, 'XOF', NULL, NULL, 'Original sans contrôleur') ->> 'invoice_id')::uuid);
-SELECT pc_test.expect_error($$SELECT public.payables_create_cheque_request_v1(pc_test.key('sa-req-noctl'), pc_test.id('sa_inv_noctl'),
-  pc_test.id('acct_ora_duo'), 'PILOT_ADMIN', NULL, false, 'Bénéficiaire synthétique', 'Sans contrôleur')$$,
-  'PAYABLES_NO_INDEPENDENT_CONTROLLER');
-SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-confirm-on:' || user_id), user_id, 'CHEQUE_CONFIRM_ISSUE', true,
-  'Rétablissement') FROM pc_test.sa_confirmers;
--- Formule de l'essai : déclarée inutilisée, demande abandonnée ; plus rien ne circule pour l'administrateur.
-SELECT public.payables_record_unused_form_v1(pc_test.key('sa-unused-decoy'), pc_test.id('sa_form_decoy'),
-  pc_test.form_version(pc_test.id('sa_form_decoy')), 'Essai de contrôle');
-RESET ROLE;
-SELECT pc_test.put('sa_pay_decoy', (SELECT payment_id FROM public.payables_cheque_forms WHERE id = pc_test.id('sa_form_decoy')));
-SELECT pc_test.as_user('dg');
-SELECT public.payables_abandon_payment_v1(pc_test.key('sa-abandon-decoy'), pc_test.id('sa_pay_decoy'),
-  pc_test.payment_version(pc_test.id('sa_pay_decoy')), 'Essai de contrôle');
-RESET ROLE;
+SELECT pc_test.assert(payables_private.signatory_version_if_admissible(pc_test.id('p_cpt_c'), pc_test.id('acct_ora_duo'),
+    'PILOT_ADMIN', 18500, pc_test.dakar_today()) IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM public.payables_issuances WHERE form_id = pc_test.id('sa_form_duo_self')),
+  'an admissible signatory who prepared the cheque is never its accepted signatory');
 
 -- Revue indépendante P2-1 : un résultat d'impression est un fait et s'enregistre,
 -- refusé seulement à un déclarant qui en serait la cause. Incertain : le seul
@@ -668,6 +646,14 @@ SELECT public.payables_admin_set_parameter_v1(pc_test.key('sa-rev-sig-v2'), 'SIG
   jsonb_build_object('person_id', pc_test.id('p_dirigeant'), 'account_registry_id', pc_test.id('acct_ora_rev'), 'state', 'SUSPENDED',
     'categories', jsonb_build_array('*'), 'ceiling', jsonb_build_object('kind', 'UNLIMITED')),
   'Suspension synthétique', 1, 'Pouvoirs suspendus');
+-- La cause étrangère (pouvoirs suspendus) ne masque pas celle d'un déclarant
+-- non rattaché : chaque condition est comparée avec et sans lui.
+SELECT pc_test.as_user('dg');
+SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-cap:admin:CHEQUE_PREPARE_PRINT'), pc_test.id('admin'),
+  'CHEQUE_PREPARE_PRINT', true, 'Compte non rattaché');
+SELECT pc_test.as_user('admin');
+SELECT pc_test.expect_error($$SELECT public.payables_record_print_outcome_v1(pc_test.key('sa-outcome-rev-unlinked'),
+  pc_test.id('sa_pe_rev'), 'PRINTED', NULL)$$, 'PAYABLES_PREPARER_NOT_LINKED');
 SELECT pc_test.as_user('cpt_a');
 SELECT public.payables_record_print_outcome_v1(pc_test.key('sa-outcome-rev'), pc_test.id('sa_pe_rev'), 'PRINTED', NULL);
 SELECT pc_test.as_user('cpt_b');
@@ -682,9 +668,9 @@ SELECT pc_test.assert((SELECT state FROM public.payables_cheque_forms WHERE id =
   AND (SELECT status FROM public.payables_allocations WHERE payment_id = pc_test.id('sa_pay_rev')) = 'RESERVED',
   'a printed cheque is recorded as printed and keeps its reservation');
 
--- Revue indépendante P2-A : le contrôle indépendant ne vise que la confirmation
--- initiale. Une correction de date reste la décision de sortie d'un autre
--- acteur que le demandeur (règle inchangée), y compris quand il a préparé le chèque.
+-- Validations des sorties inchangées : une correction de date est décidée par un
+-- autre acteur que son demandeur, jamais par le demandeur lui-même, et s'ajoute
+-- comme révision ; le validateur peut être le préparateur du chèque.
 SELECT pc_test.as_user('cpt_a');
 SELECT pc_test.put('sa_inv_corr', (public.payables_create_invoice_v1(pc_test.key('sa-inv-corr'), pc_test.id('sa_supplier'),
   'SA-REF-CORR', 26000, 'XOF', NULL, NULL, 'Original correction') ->> 'invoice_id')::uuid);
@@ -710,6 +696,8 @@ SELECT public.payables_admin_set_capability_v1(pc_test.key('sa-cap:cpt_a:EXIT_VA
 SELECT pc_test.put('sa_exit_corr', (public.payables_request_exit_v1(pc_test.key('sa-exit-corr'), pc_test.id('sa_form_corr'),
   pc_test.form_version(pc_test.id('sa_form_corr')), 'CORRECTION', jsonb_build_object('issue_date', pc_test.dakar_today() - 1),
   'Talon du chéquier', 'Date réelle d''émission') ->> 'exit_id')::uuid);
+SELECT pc_test.expect_error($$SELECT public.payables_validate_exit_v1(pc_test.key('sa-exit-corr-self'), pc_test.id('sa_exit_corr'),
+  pc_test.exit_version(pc_test.id('sa_exit_corr')), true, 'Auto validation')$$, 'PAYABLES_SECOND_ACTOR_REQUIRED');
 SELECT pc_test.as_user('cpt_a');
 SELECT public.payables_validate_exit_v1(pc_test.key('sa-exit-corr-ok'), pc_test.id('sa_exit_corr'),
   pc_test.exit_version(pc_test.id('sa_exit_corr')), true, 'Correction validée');

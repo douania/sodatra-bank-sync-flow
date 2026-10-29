@@ -2,7 +2,8 @@
 
 > Rapport des lots `GO_IMPLEMENT_PAYABLES_CHEQUES_SINGLE_ADMIN` puis
 > `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN` (contre-revue CTO du 28 octobre 2026, `FAIL`
-> ciblé sur `52b3dd0`). Statut : **développé et testé localement, PR en brouillon ;
+> ciblé sur `52b3dd0`), reconduit le 29 octobre pour le dernier blocage sur `fd860b1`
+> (circuit comptable conservé). Statut : **développé et testé localement, PR en brouillon ;
 > migration appliquée à aucun environnement**. Aucun accès Supabase, staging,
 > production ni Lovable ; aucune désignation, aucune identité établie, aucune
 > attribution réelle, aucune ouverture du module.
@@ -13,8 +14,8 @@
 |---|---|
 | Base | `origin/main` = `6c9f8ed411ff2551b7ec6a960c86093aa8cb521e` (revérifiée par `git fetch` aux deux préflights, inchangée) |
 | Branche | `codex/payables-cheques-single-admin`, worktree isolé ; le checkout `C:\Users\DELL\Projects\sodatra-bank-sync-flow` n'a pas été touché |
-| GO | `GO_IMPLEMENT_PAYABLES_CHEQUES_SINGLE_ADMIN` (niveau très approfondi), puis `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN` (même branche, même PR) |
-| Tête contre-revue | `52b3dd0c6e9489162080f937dc6070c321b5257b` (verdict `FAIL` ciblé : F1 P1, F2 P2, F3 P2) |
+| GO | `GO_IMPLEMENT_PAYABLES_CHEQUES_SINGLE_ADMIN` (niveau très approfondi), puis `GO_FIX_PAYABLES_CHEQUES_SINGLE_ADMIN` (même branche, même PR), reconduit le 29 octobre |
+| Têtes contre-revues | `52b3dd0c6e9489162080f937dc6070c321b5257b` (verdict `FAIL` ciblé : F1 P1, F2 P2, F3 P2) ; `fd860b1447045a8745c8a3081ec8a7ef6b9f7c48` (dernier blocage : contrôle indépendant à retirer) |
 | Hors GO (non fait) | merge, toute application distante, désignation ou identité réelle, attribution réelle, création ou invitation d'utilisateur, ouverture, publication, modification de la garde de production |
 
 ## 2. Décision métier mise en œuvre
@@ -34,12 +35,27 @@
   de préparer du dirigeant ; sa désignation comme signataire de son propre chef est
   admise, avec pouvoirs justifiés et décision tracée, sans lui permettre de
   s'auto-contrôler sur un chèque ni de créer une preuve bancaire ; correction de
-  l'assertion datée du test 60 ratifiée.
+  l'assertion datée du test 60 ratifiée. Depuis l'arbitrage du 29 octobre,
+  « s'auto-contrôler » s'entend ainsi : le préparateur d'un chèque, administrateur
+  compris, n'en est jamais le signataire accepté. Il peut en revanche, comme tout
+  détenteur de `CHEQUE_CONFIRM_ISSUE`, enregistrer la signature d'un autre signataire
+  admissible puis confirmer.
+- Arbitrage CTO du 29 octobre, **circuit comptable conservé, sans validation comptable
+  ajoutée** :
+  1. le comptable prépare et imprime le chèque ;
+  2. le signataire autorisé, distinct du préparateur, contrôle les pièces et signe
+     physiquement ;
+  3. le même comptable peut enregistrer cette signature puis confirmer l'émission réelle.
+
+  Enregistrer une signature ne confère aucun pouvoir de signature. L'administrateur
+  reste responsable des identités, habilitations et pouvoirs déclarés ; justificatifs et
+  décisions sont tracés ; l'application en contrôle la cohérence sans prétendre
+  certifier l'identité physique (§ 11).
 
 Les contrôles financiers existants ne changent pas : paiements, annulations,
 remplacements, rapprochements, signatures et leurs validations par un autre acteur
-restent ceux des deux migrations précédentes. Les précontrôles (§ 3.3) et le contrôle
-indépendant (§ 3.4) s'y ajoutent sans en retirer aucun.
+restent ceux des deux migrations précédentes. Les précontrôles (§ 3.3) s'y ajoutent sans
+en retirer aucun.
 
 ## 3. Ce qui est développé
 
@@ -124,9 +140,7 @@ indépendant (§ 3.4) s'y ajoutent sans en retirer aucun.
   - `PAYABLES_PREPARER_NOT_LINKED` si un préparateur n'est pas rattaché ;
   - `PAYABLES_NO_INDEPENDENT_SIGNATORY` si les signataires admissibles distincts des
     préparateurs sont en nombre inférieur à la règle du compte, ou si aucune règle n'est
-    en vigueur ;
-  - `PAYABLES_NO_INDEPENDENT_CONTROLLER` si aucun compte habilité à confirmer n'est à la
-    fois rattaché et distinct des préparateurs (§ 3.4).
+    en vigueur.
 - Une restriction ne vaut que pour l'opération concernée. Le dirigeant, seul signataire
   du compte pilote, ne prépare pas un chèque de ce compte. Il prépare normalement sur un
   compte où un autre signataire est admissible : son droit de préparer reste entier.
@@ -134,8 +148,9 @@ indépendant (§ 3.4) s'y ajoutent sans en retirer aucun.
   seconde vérification) :
   - un résultat imprimé ou incertain n'est refusé que si c'est le déclarant lui-même qui
     ferait défaut à l'une des conditions, alors qu'elle était réunie sans lui. La
-    comparaison se fait condition par condition : une cause passagère étrangère au
-    déclarant, comme un instant sans contrôleur habilité, ne masque pas la sienne ;
+    comparaison se fait condition par condition : une cause étrangère au déclarant, par
+    exemple des pouvoirs suspendus entre l'intention et le résultat, ne masque pas la
+    sienne, par exemple un déclarant non rattaché ;
   - le demandeur de l'impression, déjà compté, peut toujours déclarer. La formule reste
     en attente sans rien perdre, et aucune libération n'est possible d'ici là ;
   - le seul signataire ne devient donc pas déclarant d'une impression incertaine. Sinon,
@@ -147,35 +162,30 @@ indépendant (§ 3.4) s'y ajoutent sans en retirer aucun.
 - La confirmation garde tous ses contrôles ; ils restent prouvés dans le scénario upgrade
   et par 41.
 
-### 3.4 Contrôle indépendant (revue indépendante P1-1)
+### 3.4 Circuit comptable conservé (arbitrage CTO du 29 octobre)
 
-- Nul ne contrôle un chèque qu'il a préparé. Les signatures sont enregistrées
-  (`payables_signatures`) et l'émission confirmée par la voie normale
-  (`payables_issuances`, chemin `NORMAL`) par un compte qui remplit trois conditions :
-  - il est rattaché à une personne ;
-  - il n'est pas l'un des préparateurs ;
-  - il n'est pas rattaché à la même personne que l'un d'eux.
+- L'enregistrement d'une signature et la confirmation de l'émission réelle restent
+  ouverts à tout détenteur de `CHEQUE_CONFIRM_ISSUE`, préparateur compris. Le comptable qui
+  a préparé et imprimé enregistre la signature du dirigeant puis confirme.
+- Le contrôle porte sur la personne qui signe :
+  - le signataire accepté est admissible ;
+  - il est distinct de tous les préparateurs ;
+  - la signature n'est pas antérieure à l'impression de la version signable ; ce
+    contrôle est fait à l'enregistrement de la signature ;
+  - la signature n'est pas postérieure à la date d'émission ; ce contrôle est fait à la
+    confirmation.
 
-  Sinon : `PAYABLES_CONTROLLER_NOT_INDEPENDENT`.
-- À la confirmation, les signatures déjà enregistrées sur la version signable sont
-  revérifiées. Une signature d'un préparateur, écrite hors API ou héritée, fait donc
-  refuser la confirmation.
-- Sans cette règle, l'administrateur rattaché pouvait mener seul un chèque jusqu'à
-  l'émission. Il lui suffisait de créer une seconde personne, de la déclarer signataire,
-  de préparer, d'enregistrer la signature puis de confirmer. Désormais, il lui faut au
-  moins une autre personne rattachée pour enregistrer et confirmer.
-- Elle ne vise que la **confirmation initiale** (révision 1). Une correction de date
-  reste la décision de sortie d'un autre acteur que le demandeur, règle inchangée, même
-  si ce validateur a préparé le chèque.
-- C'est une règle de séparation **ajoutée** : aucune règle existante n'est retirée. La
-  voie d'exception existante reste inchangée : elle déclare un fait réel, avec
-  justificatif, et sa résolution exige déjà un autre acteur. Le dirigeant signataire peut
-  enregistrer et confirmer un chèque préparé par un comptable. Les flux suivants ont été
-  rejoués par la seconde vérification :
-  - deux signatures requises, enregistrées par deux personnes ;
-  - un remplaçant demandé par le dirigeant, validé, préparé et confirmé par d'autres.
-- Limite : un compte qui a enregistré une signature, puis est détaché avant la
-  confirmation, la bloque tant qu'il n'est pas rattaché de nouveau.
+  Ces contrôles sont ceux des deux migrations installées, inchangés.
+- Enregistrer une signature ne confère aucun pouvoir de signature. Une signature
+  enregistrée au nom du préparateur est refusée à la confirmation
+  (`PAYABLES_SIGNATORY_IS_PREPARER`).
+- L'impression seule ne vaut jamais émission : formule imprimée, réservation intacte,
+  aucune émission tant que la confirmation n'a pas abouti.
+- La règle d'indépendance du contrôleur, ajoutée après la première revue indépendante,
+  est **retirée**, avec le précontrôle qui l'accompagnait, leurs fonctions, déclencheurs
+  et messages. Elle ajoutait une validation comptable que le circuit retenu exclut.
+- Les validations indépendantes déjà acquises restent inchangées : annulations,
+  remplacements, corrections, exceptions.
 
 ### 3.5 Gouvernance héritée neutralisée
 
@@ -267,7 +277,7 @@ décidées restent immuables (déclencheurs inchangés).
 
 | Constat | Traitement | Preuves |
 |---|---|---|
-| F1 (P1) — impression d'un chèque ensuite non confirmable ; administrateur jamais rattachable ; comptable non rattaché bloqué de même | identité distincte de l'autorité, établie par l'opérateur et non réassignable (§ 3.2) ; précontrôles avant toute formule consommée (§ 3.3) ; première identité possible pour un préparateur hérité | 90 (identité, refus d'avance, droit de préparer conservé ailleurs, déclarant d'un résultat, compte sans règle, comptable non rattaché) ; 85 (désigné rattaché, préparateurs hérités) ; 41 (cas non rattaché refusé dès la demande) ; course 95c–95d ; 25 mutants tués (§ 6.2) |
+| F1 (P1) — impression d'un chèque ensuite non confirmable ; administrateur jamais rattachable ; comptable non rattaché bloqué de même | identité distincte de l'autorité, établie par l'opérateur et non réassignable (§ 3.2) ; précontrôles avant toute formule consommée (§ 3.3) ; première identité possible pour un préparateur hérité | 90 (identité, refus d'avance, droit de préparer conservé ailleurs, déclarant d'un résultat, compte sans règle, comptable non rattaché) ; 85 (désigné rattaché, préparateurs hérités) ; 41 (cas non rattaché refusé dès la demande) ; course 95c–95d ; 19 mutants tués (§ 6.2) |
 | F2 (P2) — version attendue avancée en silence | version de référence du brouillon, conflit signalé, envoi bloqué, levée explicite (§ 3.8) | test d'interaction : saisie sur v1, cache passé à v2, enregistrement tenté, aucun appel ; confirmation explicite puis envoi avec la version 2 ; rechargement ; clé retapée ; refus serveur d'une version périmée ; test du modèle ; 7 mutants tués |
 | F3 (P2) — lecture en échec présentée comme liste vide | états distincts, reprise, décisions suspendues, saisie conservée (§ 3.8) | rendu statique (échec, chargement, vide) ; test d'interaction : échec réel, « Réessayer », reprise réussie, saisie intacte ; rattachements indisponibles signalés ; 3 mutants tués |
 
@@ -308,7 +318,7 @@ Windows PowerShell 5.1.
 ### 6.1 Rejeu PostgreSQL 17 en deux scénarios
 
 `PAYABLES_CHEQUES_CORE_PG17_REPLAY_PASS` : 40 marqueurs `PASS`, 13 courses par
-scénario, attentes mesurées entre 2,56 et 2,69 s.
+scénario, attentes mesurées entre 2,55 et 2,69 s.
 
 - **upgrade** : recette complète sous l'ancienne gouvernance (10 à 80 et ses cinq
   courses, dont 41 avec le contrôle « préparateur non rattaché » à la confirmation),
@@ -345,7 +355,7 @@ scénario, attentes mesurées entre 2,56 et 2,69 s.
 Chaque mutant est une copie de la migration altérée sur un seul point, ou une copie du
 panneau ou du modèle d'interface. Il est rejoué avec les mêmes fichiers et, pour la
 migration, les mêmes courses, sur une base jetable ; le dépôt n'est pas modifié. La
-migration non mutée passe le même harnais dans les deux scénarios. **Les 42 mutants de
+migration non mutée passe le même harnais dans les deux scénarios. **Les 36 mutants de
 la migration et les 10 mutants d'interface sont tués**, chacun par le contrôle attendu.
 
 | Mutant de la migration | Tué par |
@@ -383,15 +393,9 @@ la migration et les 10 mutants d'interface sont tués**, chacun par le contrôle
 | identité opérateur non figée | course 95c–95d : le retrait aboutit malgré la préparation |
 | rattachement sans auteur admis hors origine opérateur | 90 : proposition sans auteur insérée |
 | première identité admise après une signature | 85 : identité donnée au préparateur hérité dont le chèque est signé |
-| signature par un préparateur non contrôlée | 90 : signature de la seconde personne enregistrée par l'administrateur préparateur |
-| confirmation par un préparateur non contrôlée | 90 : confirmation par l'administrateur préparateur |
-| contrôleur non rattaché admis | 90 : signature enregistrée par un compte non rattaché |
-| signatures déjà enregistrées non revérifiées | 90 : confirmation malgré une signature héritée d'un préparateur |
-| existence d'un contrôleur indépendant non vérifiée | 90 : demande acceptée sans aucun contrôleur |
 | résultat d'impression toujours filtré | 90 : fait réel refusé après un paramètre changé ; 85 : impression héritée |
-| cause comparée globalement, non condition par condition | 90 : déclarant accepté pendant une cause passagère |
+| cause comparée globalement, non condition par condition | 90 : déclarant non rattaché accepté sur un chèque déjà non confirmable |
 | résultat incertain jamais filtré | 90 : incertitude déclarée par le seul signataire acceptée |
-| contrôle indépendant étendu aux corrections de date | 90 : correction validée par le préparateur refusée |
 
 | Mutant d'interface | Tué par |
 |---|---|
@@ -431,6 +435,9 @@ date du jour du serveur ; son intention est inchangée. Correction ratifiée par
 | F1. aucun parcours non confirmable jusqu'à l'impression, identité fiable | § 4 |
 | F2. aucune avance silencieuse de la version attendue | § 4 |
 | F3. échec, chargement et vide distincts, reprise | § 4 |
+| Circuit comptable (29 octobre) : le comptable prépare, imprime, enregistre la signature du dirigeant et confirme ; une seule émission, une seule allocation engagée | 90 « circuit » (échoue sur `fd860b1` à l'enregistrement de la signature, passe ici) |
+| Le préparateur ne devient pas le signataire accepté ; l'impression seule ne vaut pas émission | 90 « circuit », « circuit_self » et « duo_self » (signataire admissible du compte, préparateur, refusé) ; 41 |
+| Contrôles financiers et validations des sorties effectifs | 30 à 80 ; 90 (correction de date : auto-validation refusée, validation par un autre acteur) |
 
 ## 9. Revues indépendantes
 
@@ -457,11 +464,11 @@ exécution, puis seconde vérification des corrections par le même agent.
 
 | Constat | Traitement |
 |---|---|
-| P1-1 — l'administrateur rattaché mène seul un chèque jusqu'à l'émission avec une seconde personne qu'il déclare signataire | **corrigé** : contrôle indépendant (§ 3.4) ; 90 ; 5 mutants tués |
-| P1 résiduel — une même personne avec deux comptes, ou une personne alias contrôlée par un collègue de bonne foi | **décision CTO demandée** (§ 11) : relève de la confiance accordée à l'administrateur sur les identités et les signataires |
+| P1-1 — l'administrateur rattaché mène seul un chèque jusqu'à l'émission avec une seconde personne qu'il déclare signataire | corrigé d'abord par un contrôle indépendant, puis **retiré sur arbitrage CTO du 29 octobre** : circuit comptable conservé, limite documentée (§ 11) |
+| P1 résiduel — une même personne avec deux comptes, ou une personne alias contrôlée par un collègue de bonne foi | **arbitré par le CTO** : limite documentée (§ 11) |
 | P2-1 — résultat réel d'une impression refusé après un paramètre changé, ou pour un préparateur hérité | **corrigé** : règle de cause (§ 3.3) ; 90 ; 85 |
 | P2-2 — retaper la clé refondait le brouillon en silence | **corrigé** : référence propre à chaque paramètre visé ; modèle et interaction |
-| P2-A (seconde vérification) — contrôle indépendant bloquant les corrections de date | **corrigé** : confirmation initiale seulement ; 90 ; mutant tué |
+| P2-A (seconde vérification) — contrôle indépendant bloquant les corrections de date | **sans objet** depuis le retrait ; 90 garde la correction validée par un autre acteur |
 | P2-B (seconde vérification) — incertain déclaré par le seul signataire, chèque perdu si retrouvé imprimé | **corrigé** : règle de cause appliquée à l'incertain ; 90 (incertain retrouvé imprimé puis confirmé) ; mutant tué |
 | P3-1 — version périmée refusée par le serveur sans conflit affiché | **corrigé** : relecture et conflit ; interaction |
 | P3-2 — précontrôle limité aux paramètres du jour | **réserve** (§ 11) |
@@ -469,13 +476,38 @@ exécution, puis seconde vérification des corrections par le même agent.
 | P3-4 — première identité choisie au vu des signatures | **corrigé** : refusée dès qu'une signature est enregistrée ; 85 ; mutant tué |
 | P3-5 — assertions de test vides, affichage des rattachements indisponibles | **corrigé** |
 | N3 (seconde vérification) — règle de cause masquée par une cause passagère | **corrigé** : comparaison condition par condition ; 90 ; mutant tué |
-| N4 (seconde vérification) — enregistreur d'une signature détaché avant la confirmation | **réserve** (§ 3.4), réversible |
+| N4 (seconde vérification) — enregistreur d'une signature détaché avant la confirmation | **sans objet** depuis le retrait |
 
 Constats sains confirmés : migrations appliquées identiques à `6c9f8ed` ; nouvelles
 fonctions révoquées, chemin épinglé, aucun nouveau `SECURITY DEFINER` ; identité de
 l'administrateur non réassignable ; précontrôles couvrant demande, assignation,
 révision, ajustement, intention et résultat ; étape refusée sans aucune écriture ;
 sérialisation des rattachements avec les préparations ; correctifs F2 et F3.
+
+### 9.3 Retrait du contrôle indépendant (29 octobre)
+
+Revue par un agent distinct, en lecture seule, sur le diff depuis `fd860b1`, avec un
+rejeu complet et deux mutants qui lui sont propres. Verdict : **aucun P1 ni P2**,
+cinq P3.
+
+| Constat | Traitement |
+|---|---|
+| P3-1 — section 9.3 non rédigée | **corrigé** |
+| P3-2 — § 2 promettant encore que l'administrateur ne s'auto-contrôle pas | **corrigé** : sens précisé (§ 2) |
+| P3-3 — contrôle « signature postérieure à l'impression » attribué à la confirmation | **corrigé** (§ 3.4) |
+| P3-4 — le précontrôle retiré vérifiait aussi qu'un confirmateur existe | **réserve** (§ 11) : conséquence du retrait ordonné |
+| P3-5 — cas fort non couvert dans 90 : préparateur signataire admissible | **ajouté** : 90 « duo_self » |
+
+Constats sains confirmés :
+- retrait complet : aucune référence restante aux fonctions, déclencheurs et messages
+  retirés ; liste blanche de 85 à jour ;
+- rien d'autre retiré ni affaibli : règle de cause, précontrôles de rattachement et de
+  signataire, première identité, figements, identité de l'administrateur, fonction de
+  confirmation ;
+- fichiers protégés sans diff par rapport à `6c9f8ed` ;
+- tests nouveaux non vides ;
+- preuve avant/après confirmée : la migration de `fd860b1` échoue sur le test
+  « circuit », dans `check_cheque_controller`, à l'enregistrement de la signature.
 
 ## 10. Procédure future d'amorçage et de révocation (non exécutée)
 
@@ -518,27 +550,21 @@ Sous un GO d'environnement distinct, cible exacte vérifiée, module fermé :
   relues par ces lots : migrations installées en production, module fermé, aucun droit ni
   paramètre, aucun utilisateur sous les trois adresses communiquées, compte ORABANK
   courant actif en XOF au registre.
-- **Décision CTO demandée — confiance dans les identités administrées.**
-  - Depuis le correctif, aucun **compte** ne prépare et ne contrôle seul un chèque, et
-    l'administrateur ne peut ni choisir ni modifier sa propre identité.
-  - Il garde en revanche, comme décidé, la main sur les rattachements des autres
-    comptes, les habilitations et les signataires (justificatif exigé, décisions
-    tracées).
-  - Une même **personne** peut donc encore contourner « signataire ≠ préparateur ».
-    Deux cas ont été reproduits par la revue :
-    - un second compte, par exemple ouvert par l'inscription libre de l'application, que
-      l'administrateur rattache à une nouvelle personne et habilite à confirmer ;
-    - une personne alias qu'il déclare signataire, un collègue de bonne foi enregistrant
-      la signature.
-  - Le système ne peut pas le détecter seul : la fausse déclaration resterait visible au
-    journal et dans les paramètres, et le contrôle ultime est la vérification de la
-    signature par la banque.
-  - Options possibles, non développées faute d'arbitrage :
-    - rattachement par l'opérateur, comme pour l'administrateur, de tout compte habilité
-      à confirmer ;
-    - attestation par l'opérateur des signataires autres que l'administrateur ;
-    - fermeture de l'inscription libre pour ces comptes ;
-    - acceptation du risque, avec revue périodique du journal par un tiers.
+- **Limite documentée (arbitrage CTO du 29 octobre) — confiance dans les identités
+  administrées.**
+  - L'administrateur reste responsable des identités, habilitations et pouvoirs
+    déclarés ; justificatifs et décisions sont tracés.
+  - L'application en contrôle la cohérence sans prétendre certifier l'identité physique.
+  - Ne sont donc pas traités par l'application :
+    - un second compte d'une même personne, par exemple ouvert par l'inscription libre
+      puis rattaché et habilité par l'administrateur ;
+    - un signataire fictif ou alias déclaré par l'administrateur ;
+    - une signature enregistrée au nom d'une autre personne que le signataire réel.
+  - Aucun second valideur administratif, aucune attestation systématique par
+    l'opérateur et aucune modification globale d'Auth ne sont introduits pour ces
+    scénarios.
+  - Contrôles qui demeurent : le journal et les paramètres tracés, les justificatifs de
+    pouvoirs, et la vérification de la signature par la banque.
 - **Précontrôles** :
   - ils utilisent les paramètres en vigueur le jour de l'étape. Un changement ultérieur
     de paramètre (signataire révoqué, plafond abaissé, règle durcie) peut encore rendre
@@ -553,7 +579,13 @@ Sous un GO d'environnement distinct, cible exacte vérifiée, module fermé :
     avant cette date (précontrôle aux paramètres du jour) ;
   - un chèque hérité déjà signé et préparé par un compte jamais rattaché ne reçoit pas
     de première identité. Il sort par la formule déclarée inutilisée ou par la voie
-    d'exception.
+    d'exception ;
+  - les précontrôles ne vérifient plus qu'un compte habilité à confirmer existe. Ce
+    contrôle faisait partie de la règle retirée sur ordre du CTO. Exemple : si
+    l'autorité de l'administrateur est retirée, ses droits implicites cessent ; si
+    l'interrupteur métier est ouvert et qu'aucun compte ne détient explicitement
+    `CHEQUE_CONFIRM_ISSUE`, un chèque peut être préparé et imprimé, puis attendre qu'un
+    administrateur attribue ce droit.
 - **Ancienne gouvernance** :
   - ses fonctions restent exécutables et refusent toujours ; une suppression ultérieure
     demanderait une migration dédiée ;

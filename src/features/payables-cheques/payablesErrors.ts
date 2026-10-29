@@ -32,10 +32,6 @@ const MESSAGES: Record<string, string> = {
   PAYABLES_ADMIN_IDENTITY_TARGET_INVALID: 'Seule l’identité de l’administrateur en fonction est établie par l’opérateur.',
   PAYABLES_NO_INDEPENDENT_SIGNATORY:
     'Étape refusée avant toute formule consommée : aucun signataire admissible ne resterait distinct des préparateurs de ce chèque. Faites-la faire par une autre personne, complétez les signataires du compte, ou abandonnez la demande.',
-  PAYABLES_NO_INDEPENDENT_CONTROLLER:
-    'Étape refusée avant toute formule consommée : aucun compte habilité, rattaché et distinct des préparateurs ne pourrait enregistrer les signatures et confirmer ce chèque.',
-  PAYABLES_CONTROLLER_NOT_INDEPENDENT:
-    'Les signatures et la confirmation d’un chèque sont enregistrées par une personne rattachée, distincte de ses préparateurs.',
   PAYABLES_EXPECTED_VERSION_REQUIRED: 'La version attendue du paramètre est requise.',
   PAYABLES_LEGACY_PROPOSAL_OWN: 'Une proposition héritée de l’administrateur lui-même reste en l’état, sans effet.',
   PAYABLES_LEGACY_PROPOSAL_KIND_INVALID: 'Type de proposition inconnu.',

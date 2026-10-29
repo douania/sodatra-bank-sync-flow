@@ -10,9 +10,9 @@ SELECT pc_test.assert(NOT EXISTS (
 -- Seuls apparaissent les objets du modèle administrateur unique.
 SELECT pc_test.assert(NOT EXISTS (
   SELECT 1 FROM pc_test.upgrade_digest() d WHERE NOT EXISTS (SELECT 1 FROM pc_test.upgrade_snapshot s WHERE s.item = d.item)
-    AND d.item !~ '^function:(payables_private\.(set_module_admin|require_admin|prepare_admin_authority_change|append_admin_authority_event|user_prepares_pending_cheque|identity_change_frozen|set_module_admin_identity|cheque_preparers|controller_independent|cheque_confirmability_issues|assert_cheque_confirmable|precheck_cheque_request|precheck_cheque_content|precheck_print_event|check_cheque_controller)|payables_admin_(set_capability|create_person|set_person_link|set_parameter|reject_legacy_proposal)_v1)\('
+    AND d.item !~ '^function:(payables_private\.(set_module_admin|require_admin|prepare_admin_authority_change|append_admin_authority_event|user_prepares_pending_cheque|identity_change_frozen|set_module_admin_identity|cheque_preparers|cheque_confirmability_issues|assert_cheque_confirmable|precheck_cheque_request|precheck_cheque_content|precheck_print_event)|payables_admin_(set_capability|create_person|set_person_link|set_parameter|reject_legacy_proposal)_v1)\('
     AND d.item !~ '^trigger:admin_authority(_events)?\.payables_admin_authority_'
-    AND d.item !~ '^trigger:(payables_payments\.payables_payments_precheck_request|payables_cheque_contents\.payables_cheque_contents_precheck|payables_print_events\.payables_print_events_precheck_(intent|outcome)|payables_signatures\.payables_signatures_controller|payables_issuances\.payables_issuances_controller)$'
+    AND d.item !~ '^trigger:(payables_payments\.payables_payments_precheck_request|payables_cheque_contents\.payables_cheque_contents_precheck|payables_print_events\.payables_print_events_precheck_(intent|outcome))$'
     AND d.item !~ '^constraint:admin_authority(_events)?\.'
     AND d.item !~ '^constraint:payables_(persons|person_links|parameter_versions)\.payables_(persons|person_links|parameter_versions)_origin_check$'),
   'only single-admin objects are new');
