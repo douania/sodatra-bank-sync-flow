@@ -191,6 +191,10 @@ const fakeDocument = new FakeDocument();
 testGlobal.window = globalThis;
 testGlobal.document = fakeDocument;
 testGlobal.HTMLIFrameElement = class FakeIFrame {};
+// Node 20 (CI) n'a pas de navigator global ; react-dom le lit dès qu'un DOM est présent.
+if (typeof testGlobal.navigator === 'undefined') {
+  Object.defineProperty(globalThis, 'navigator', { value: { userAgent: 'node' }, configurable: true });
+}
 testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
 // Le lanceur de tests compile le JSX en React.createElement (transformation classique).
 testGlobal.React = React;
