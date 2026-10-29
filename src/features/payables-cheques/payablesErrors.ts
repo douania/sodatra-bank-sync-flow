@@ -3,6 +3,10 @@
 
 const MESSAGES: Record<string, string> = {
   PAYABLES_AUTH_REQUIRED: 'Une session authentifiée est requise.',
+  PAYABLES_ADMIN_ONLY_CALL_REFUSED:
+    'En production, seul le panneau d’administration est ouvert : cette opération est refusée avant tout envoi.',
+  PAYABLES_ADMIN_ONLY_ACCESS_REQUIRED:
+    'En production, ce module est réservé à l’administrateur désigné : seul son panneau d’administration est ouvert.',
   PAYABLES_DOMAIN_READ_ONLY: 'Le module est fermé en écriture sur ce serveur.',
   PAYABLES_CAPABILITY_REQUIRED: 'Votre compte ne détient pas l’habilitation nécessaire.',
   PAYABLES_SECOND_ACTOR_REQUIRED: 'Cette validation doit être faite par une autre personne.',

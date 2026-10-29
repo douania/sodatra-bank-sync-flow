@@ -16,7 +16,7 @@ const supabaseStub = 'data:text/javascript,' + encodeURIComponent(`
     rpc: () => Promise.resolve({ data: null, error: { message: 'PAYABLES_TEST_NO_NETWORK' } }),
   };`);
 const targetStub = 'data:text/javascript,' + encodeURIComponent(`
-  export function currentPayablesRuntimeVerdict() { return { allowed: true, environment: 'local' }; }
+  export function currentPayablesRuntimeVerdict() { return { allowed: true, environment: 'local', mode: 'full' }; }
   export function isRuntimeRefused(v) { return v.allowed === false; }`);
 register('data:text/javascript,' + encodeURIComponent(`
   export function resolve(specifier, context, nextResolve) {
@@ -165,7 +165,14 @@ test('le panneau n’appelle que l’API d’administration et ne lit l’autori
   assert.doesNotMatch(service, /payables_(propose|decide)_(capability|person|person_link|parameter)_v1/);
 });
 
-test('la garde de cible d’exécution est inchangée : la production reste refusée', () => {
+test('la garde de cible d’exécution refuse la production sans le drapeau dédié', () => {
   const target = readFileSync(new URL('./payablesRuntimeTarget.ts', import.meta.url), 'utf8');
-  assert.match(target, /if \(hostname === PRODUCTION_HOST \|\| input\.projectId === PAYABLES_PRODUCTION_PROJECT_REF\) \{\s+return \{ allowed: false, reason: 'Le module chèques reste interdit en production\.' \};/);
+  // Premier contrôle sur la production : refus tant que le drapeau d'administration seule n'est pas exactement « true ».
+  assert.match(target, /if \(hostname === PRODUCTION_HOST \|\| input\.projectId === PAYABLES_PRODUCTION_PROJECT_REF\) \{\s+if \(!adminOnly\) return \{ allowed: false, reason: 'Le module chèques reste interdit en production\.' \};/);
+  assert.match(target, /const adminOnly = input\.productionAdminOnly === 'true';/);
+  // La production ne s'ouvre qu'en administration seule.
+  assert.equal((target.match(/environment: 'production'/g) ?? []).length, 2);
+  assert.match(target, /return \{ allowed: true, environment: 'production', mode: 'admin-only' \};/);
+  // Drapeau de build dédié, lu sous ce seul nom.
+  assert.match(target, /productionAdminOnly: import\.meta\.env\.VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY,/);
 });

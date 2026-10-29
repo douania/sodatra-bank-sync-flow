@@ -9,14 +9,14 @@ type Call = { kind: 'rpc' | 'from' | 'session' | 'range'; name: string; args?: R
 type Result = { data: unknown; error: unknown; count?: number | null };
 interface Harness {
   calls: Call[];
-  verdict: { allowed: boolean; environment?: string; reason?: string };
+  verdict: { allowed: boolean; environment?: string; mode?: string; reason?: string };
   session: { data: { session: unknown }; error: unknown };
   rpcResult: (name: string, range: number[] | null) => Result;
   tableResult: (table: string, range: number[]) => Result;
 }
 const harness: Harness = {
   calls: [],
-  verdict: { allowed: true, environment: 'local' },
+  verdict: { allowed: true, environment: 'local', mode: 'full' },
   session: { data: { session: { user: { id: 'u' } } }, error: null },
   rpcResult: () => ({ data: { ok: true }, error: null }),
   tableResult: () => ({ data: [], error: null, count: 0 }),
@@ -60,7 +60,7 @@ const service = await import('./payablesChequesService');
 
 function reset() {
   harness.calls.length = 0;
-  harness.verdict = { allowed: true, environment: 'local' };
+  harness.verdict = { allowed: true, environment: 'local', mode: 'full' };
   harness.session = { data: { session: { user: { id: 'u' } } }, error: null };
   harness.rpcResult = () => ({ data: { ok: true }, error: null });
   harness.tableResult = () => ({ data: [], error: null, count: 0 });

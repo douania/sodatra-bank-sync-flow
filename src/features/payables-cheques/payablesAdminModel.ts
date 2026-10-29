@@ -12,6 +12,8 @@ import {
   type PersonLinkRow,
   type PersonRow,
 } from './payablesChequesTypes';
+import { payablesErrorMessage } from './payablesErrors';
+import type { PayablesRuntimeMode } from './payablesRuntimeTarget';
 
 export type AdminState = 'NOT_CONFIGURED' | 'ADMIN' | 'NOT_ADMIN';
 
@@ -19,6 +21,29 @@ export type AdminState = 'NOT_CONFIGURED' | 'ADMIN' | 'NOT_ADMIN';
 export function adminState(access: PayablesAccess): AdminState {
   if (!access.admin_configured) return 'NOT_CONFIGURED';
   return access.is_admin ? 'ADMIN' : 'NOT_ADMIN';
+}
+
+export type ModuleOpening = { open: true } | { open: false; reason: string };
+
+// Type guard explicite (projet non strict, docs/BASELINES.md §3).
+export function isModuleClosed(opening: ModuleOpening): opening is Extract<ModuleOpening, { open: false }> {
+  return opening.open === false;
+}
+
+/**
+ * Ouverture du module selon le mode de la cible. Module complet : droit de
+ * lecture ou d'audit. Administration seule (production) : administrateur
+ * reconnu par le serveur, quelles que soient les autres capacités.
+ */
+export function moduleOpening(mode: PayablesRuntimeMode, access: PayablesAccess): ModuleOpening {
+  if (mode === 'admin-only') {
+    // Booléens stricts de la réponse serveur : toute autre valeur garde le module fermé.
+    return access.admin_configured === true && access.is_admin === true
+      ? { open: true }
+      : { open: false, reason: payablesErrorMessage('PAYABLES_ADMIN_ONLY_ACCESS_REQUIRED') };
+  }
+  const canRead = access.capabilities.includes('READ') || access.capabilities.includes('AUDIT');
+  return canRead ? { open: true } : { open: false, reason: 'Aucune habilitation de lecture sur ce module.' };
 }
 
 /** Capacités en vigueur par utilisateur : dernière décision validée, capacités retirées exclues. */

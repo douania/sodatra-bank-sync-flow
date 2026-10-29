@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
-import { PayablesError, toPayablesError } from './payablesErrors';
+import { PayablesError, payablesErrorMessage, toPayablesError } from './payablesErrors';
 import { currentPayablesRuntimeVerdict, isRuntimeRefused } from './payablesRuntimeTarget';
 import type { AccountPositionRow, InvoiceOverviewRow } from './operationalPositionModel';
 import type { WorkQueueRow } from './payablesWorkQueueModel';
@@ -33,16 +33,48 @@ const db = supabase as unknown as SupabaseClient;
 
 type Json = Record<string, unknown>;
 
-/** Toute opération vérifie la cible d'exécution puis la session avant le réseau. */
-async function assertReady(): Promise<void> {
+// Mode « administration seule » (production) : liste blanche fermée. Lecture des
+// accès, quatre listes d'administration, cinq fonctions d'administration ; tout
+// autre appel est refusé avant le réseau. L'autorité reste vérifiée par le serveur.
+export const ADMIN_ONLY_READ_LISTS: readonly ReadListName[] = ['persons', 'person_links', 'capability_grants', 'parameters'];
+export const ADMIN_ONLY_RPCS: readonly string[] = [
+  'payables_my_access_v1',
+  'payables_admin_set_capability_v1',
+  'payables_admin_create_person_v1',
+  'payables_admin_set_person_link_v1',
+  'payables_admin_set_parameter_v1',
+  'payables_admin_reject_legacy_proposal_v1',
+];
+
+export function isAdminOnlyCallAllowed(name: string, args: Json): boolean {
+  if (name === 'payables_read_v1') {
+    const keys = Object.keys(args).sort();
+    const listArgs = args.p_args;
+    return keys.length === 2 && keys[0] === 'p_args' && keys[1] === 'p_list'
+      && ADMIN_ONLY_READ_LISTS.includes(args.p_list as ReadListName)
+      && typeof listArgs === 'object' && listArgs !== null && !Array.isArray(listArgs) && Object.keys(listArgs).length === 0;
+  }
+  return ADMIN_ONLY_RPCS.includes(name);
+}
+
+/**
+ * Toute opération vérifie la cible d'exécution, puis, hors module complet, la
+ * liste blanche, puis la session : un refus intervient avant tout appel réseau.
+ */
+async function assertReady(name: string, args: Json): Promise<void> {
   const verdict = currentPayablesRuntimeVerdict();
   if (isRuntimeRefused(verdict)) throw new PayablesError('PAYABLES_TARGET_REJECTED', verdict.reason);
+  // Seul un verdict explicite « full » hors production ouvre le module complet.
+  const restricted = verdict.environment === 'production' || verdict.mode !== 'full';
+  if (restricted && !isAdminOnlyCallAllowed(name, args)) {
+    throw new PayablesError('PAYABLES_ADMIN_ONLY_CALL_REFUSED', payablesErrorMessage('PAYABLES_ADMIN_ONLY_CALL_REFUSED'));
+  }
   const { data, error } = await db.auth.getSession();
   if (error || !data.session) throw new PayablesError('PAYABLES_AUTH_REQUIRED', 'Une session authentifiée est requise.');
 }
 
 async function rpc<T>(name: string, args: Json = {}): Promise<T> {
-  await assertReady();
+  await assertReady(name, args);
   const { data, error } = await db.rpc(name, args);
   if (error) throw toPayablesError(error);
   return data as T;

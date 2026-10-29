@@ -14,6 +14,27 @@ export default function PayablesCheques() {
   const { gate } = usePayablesChequesGate();
   if (gate.status !== 'allowed') return null;
   const { access } = gate;
+  // Administration seule (production) : seul le panneau d'administration est
+  // monté ; aucun autre panneau n'est rendu, donc aucune de ses lectures n'est lancée.
+  if (gate.mode !== 'full') {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-2xl font-bold">Administration du module chèques</h1>
+          <p className="text-sm text-muted-foreground">
+            Personnes, rattachements, habilitations et paramètres, décidés par l’administrateur désigné.
+          </p>
+        </div>
+        <Alert>
+          <AlertDescription>
+            Production : administration seule. Factures, chèques, suivi bancaire et exports restent fermés ;
+            chaque décision est vérifiée par le serveur.
+          </AlertDescription>
+        </Alert>
+        <ParametersPanel access={access} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <div>
