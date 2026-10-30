@@ -100,11 +100,14 @@ pour transmettre les variables `VITE_*` au build : le fichier doit être au
 dépôt, sous ce nom exact. Un `.env.production` versionné **n'est pas lu** par
 ce build — constat vérifié le 29 juillet 2026 sur le preview reconstruit, où
 les variables restaient compilées à `undefined`. Ce fichier ne contient que
-les **trois** valeurs publiques frontend :
+cette **liste fermée** de quatre variables publiques frontend, dans cet ordre :
 
 - `VITE_SUPABASE_URL` ;
 - `VITE_SUPABASE_PUBLISHABLE_KEY` ;
-- `VITE_SUPABASE_PROJECT_ID`.
+- `VITE_SUPABASE_PROJECT_ID` ;
+- `VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY`, avec la seule valeur `true`
+  (arbitrage CTO `GO_IMPLEMENT_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY_BUILD_FLAG`,
+  option A, exception strictement limitée à ce drapeau).
 
 Ce que cette clé est, exactement :
 
@@ -117,6 +120,70 @@ Ce que cette clé est, exactement :
   et ne donne accès à rien qui ne soit déjà ouvert au rôle `anon` ;
 - les droits effectifs dépendent **des grants, des policies RLS, d'Auth/JWT et
   des surfaces API exposées** (tables, vues, RPC, Storage, Edge Functions).
+
+Ce que le drapeau `VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY=true` est,
+exactement :
+
+- une valeur **publique** de build, compilée dans le bundle ; ce n'est ni un
+  secret ni une clé, et il **ne confère aucun privilège** ;
+- il ne fait qu'autoriser, côté client, le mode « administration seule » du
+  module chèques, et seulement si la cible est exactement la production
+  (`https://leakcdbbawzysfqyqsnr.supabase.co`, project ID
+  `leakcdbbawzysfqyqsnr`) sans drapeau local ni staging : toute autre cible
+  et toute combinaison contradictoire restent refusées par la garde de cible
+  existante, et toute autre valeur que `true` laisse le module refusé en
+  production ;
+- dans ce mode, l'interface n'est ouverte qu'à l'administrateur que le
+  **serveur** reconnaît, ne monte que le panneau d'administration et refuse
+  avant le réseau tout appel hors de la liste blanche ; l'autorisation
+  effective reste celle du serveur (autorité administrative, capacités, RLS),
+  et les écritures métier et exports restent soumis à l'interrupteur serveur ;
+- il ne lève donc aucune des limites serveur connues : l'administrateur garde
+  les lectures que lui donnent ses capacités, par l'API, interface ou non.
+
+Builds locales : `.env.local` prime sur `.env`, mais une variable absente de
+`.env.local` est héritée de `.env`. Deux cas :
+
+- build locale qui **vise la production** (aucun `.env.local`, ou un
+  `.env.local` qui conserve la cible de production) : elle hérite du drapeau et
+  ouvre, depuis le poste, le même mode « administration seule » de production
+  que la build publiée, sous la même autorisation serveur (seul
+  l'administrateur reconnu y accède) ;
+- build locale ou staging qui **vise une autre cible** : elle doit
+  **neutraliser** le drapeau dans son `.env.local`
+  (`VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY=` vide) ; à défaut, la garde de
+  cible refuse le module (« Le mode administration seule est réservé au projet
+  de production »).
+
+Aucun `.env.local` n'est versionné ni modifié par ce contrat.
+
+Conservation par Lovable **non acquise** : la normalisation native de `.env`
+par Lovable (`CLAUDE.md` §7bis) porte sur les trois valeurs Supabase ; qu'elle
+conserve la quatrième ligne n'est pas démontré. Avant toute publication, il
+faut vérifier en lecture seule que le `.env` du projet Lovable de production
+contient la ligne, puis, après publication, que le bundle servi la compile à
+`true`. Sans cette preuve, la publication n'est pas qualifiée ; un drapeau
+perdu échoue en sécurité (module refusé en production). Une normalisation qui
+retirerait ou modifierait cette ligne sort de la liste blanche de `CLAUDE.md`
+§7bis : elle impose l'arrêt, et non le verdict
+`PASS_WITH_EXPECTED_LOVABLE_NORMALIZATION`. L'aperçu Lovable du projet de
+production compile lui aussi le drapeau dès que la fusion est synchronisée,
+sous la même autorisation serveur.
+
+Confinement et retour arrière, deux mesures distinctes :
+
+- **confinement serveur** : retirer l'autorité administrative
+  (`payables_private.set_module_admin(<titulaire>, NULL, <motif>)`), par
+  l'opérateur sous GO de production dédié ; l'administration se ferme aussitôt
+  pour tout le monde, interface publiée ou non. Ce retrait ne révoque pas les
+  habilitations que l'administrateur aurait déjà attribuées à d'autres comptes,
+  lectures comprises : leur retrait relève de décisions distinctes ;
+- **retour arrière du frontend** : retirer le drapeau de `.env` par une PR
+  revue, puis republier sous un GO de publication distinct ; le module
+  redevient refusé en production. La restauration d'une version dans Lovable
+  (qui pousserait un commit vers `main` hors revue) et la dépublication du site
+  (qui couperait toute l'application) ne sont pas des voies de retour arrière
+  prévues par ce contrat ; leur usage relèverait d'une décision CTO.
 
 Constat d'exposition daté — **29 juillet 2026** : sur les surfaces
 effectivement testées à cette date (tables métier héritées et tables Daily v2,
@@ -133,6 +200,10 @@ anonyme** avant d'être considérée comme sûre.
 Interdits dans ce fichier, sans exception :
 - `service_role`, `sb_secret_*` ou toute clé backend/privilégiée ;
 - toute variable non `VITE_` ;
+- toute variable hors de la liste fermée ci-dessus, notamment tout autre
+  drapeau de module (`VITE_PAYABLES_CHEQUES_LOCAL_ENABLED`,
+  `VITE_PAYABLES_CHEQUES_STAGING_ENABLED`, `VITE_COLLECTIONS_CORE_*`…) ;
+- toute autre valeur que `true` pour `VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY` ;
 - toute valeur d'un projet autre que la production autorisée ;
 - toute donnée bancaire.
 

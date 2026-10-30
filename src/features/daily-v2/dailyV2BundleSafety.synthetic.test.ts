@@ -44,15 +44,22 @@ test('Daily v2 application uses the existing Supabase client and never creates a
 });
 
 // Le build frontend de production reçoit sa configuration Vite par ce seul
-// fichier versionné. Ces assertions sont statiques : elles ne comparent jamais
-// la valeur de la clé et ne l'écrivent dans aucun message d'échec.
-test('the production build env carries exactly the three public frontend values', () => {
+// fichier versionné. Liste fermée (docs/SECURITY_CONTRACT.md section 6) : les
+// trois valeurs Supabase publiques et le seul drapeau public du mode
+// « administration seule » du module chèques. Ces assertions sont statiques :
+// elles ne comparent jamais la valeur de la clé et ne l'écrivent dans aucun
+// message d'échec.
+test('the production build env carries exactly the closed list of public frontend values', () => {
   // Lovable ne lit que `.env` versionné : `.env.production` n'est pas un canal
   // valide et doit rester absent pour écarter toute ambiguïté de configuration.
   assert.equal(existsSync('.env.production'), false, '.env.production must not exist');
   const env = readFileSync('.env', 'utf8');
+  // Le parseur de Vite (dotenv) traite un CR isolé comme une fin de ligne : il
+  // permettrait de glisser une affectation dans une ligne d'apparence conforme.
+  // Seules les fins de ligne LF et CRLF sont donc admises.
+  assert.doesNotMatch(env, /\r(?!\n)|\u2028|\u2029/, '.env must only use LF or CRLF line endings');
   const assignments = env
-    .split('\n')
+    .split(/\r?\n/)
     .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'));
   const names = assignments.map((line) => line.split('=')[0]);
 
@@ -60,9 +67,27 @@ test('the production build env carries exactly the three public frontend values'
     'VITE_SUPABASE_URL',
     'VITE_SUPABASE_PUBLISHABLE_KEY',
     'VITE_SUPABASE_PROJECT_ID',
+    'VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY',
   ]);
+  // Chaque ligne d'affectation a exactement sa forme attendue, sans rien après
+  // la valeur ; assert.ok n'attache jamais la ligne (ni la clé) à l'échec.
+  const EXACT_LINES: Record<string, RegExp> = {
+    VITE_SUPABASE_URL: /^VITE_SUPABASE_URL=https:\/\/leakcdbbawzysfqyqsnr\.supabase\.co$/,
+    VITE_SUPABASE_PUBLISHABLE_KEY: /^VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_[A-Za-z0-9_-]{20,}$/,
+    VITE_SUPABASE_PROJECT_ID: /^VITE_SUPABASE_PROJECT_ID=leakcdbbawzysfqyqsnr$/,
+    VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY: /^VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY=true$/,
+  };
+  for (const line of assignments) {
+    const name = line.split('=')[0];
+    assert.ok(EXACT_LINES[name]?.test(line) === true, `${name} must have exactly its expected form`);
+  }
   assert.match(env, /^VITE_SUPABASE_URL=https:\/\/leakcdbbawzysfqyqsnr\.supabase\.co$/m);
   assert.match(env, /^VITE_SUPABASE_PROJECT_ID=leakcdbbawzysfqyqsnr$/m);
+
+  // Seul drapeau admis, avec la seule valeur `true` ; aucun drapeau local ou
+  // staging, qui rendrait la cible contradictoire.
+  assert.match(env, /^VITE_PAYABLES_CHEQUES_PRODUCTION_ADMIN_ONLY=true$/m);
+  assert.doesNotMatch(env, /^\s*VITE_(PAYABLES_CHEQUES_(LOCAL|STAGING)_ENABLED|COLLECTIONS_CORE_[A-Z_]+)\s*=/m);
 
   // Clé API publishable moderne présente, sans jamais exposer sa valeur.
   const key = /^VITE_SUPABASE_PUBLISHABLE_KEY=(.+)$/m.exec(env)?.[1] ?? '';
