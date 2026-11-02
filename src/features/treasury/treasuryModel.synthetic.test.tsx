@@ -10,6 +10,7 @@ import {
   defaultAsOf,
   ERROR_MESSAGES,
   formatAmount,
+  freshnessLabel,
   parseTreasuryBalances,
   presentConsolidation,
   reasonLabel,
@@ -33,9 +34,15 @@ function account(overrides: Record<string, unknown>) {
     bank: 'ORA', currency: 'XOF', alias: 'ORA principal', status: 'AVAILABLE', reasons: [],
     balance_at_date: '1300.00', observed_balance: null, source_format: 'structured_bank_statement_csv',
     qualification: 'QUALIFIED', qualification_evidence: 'preuve synthétique',
-    dates: { bank_date_covered: '2026-10-07', age_days: 26, balance_source_day: '2026-10-07' },
-    sources: [{ kind: 'CANONICAL_UNIT', day: '2026-10-07', ingested_at: '2026-10-08T08:00:00+00:00',
-      export_ingested_at: '2026-10-08T07:59:00+00:00', source_format: 'structured_bank_statement_csv' }],
+    dates: { bank_date_covered: '2026-10-07', age_days: 26, bank_date_observed: '2026-10-07', balance_source_day: '2026-10-07' },
+    sources: [
+      { kind: 'CANONICAL_UNIT', role: 'CLOSING', unit_id: '40000000-0000-4000-8000-000000000007',
+        export_id: '50000000-0000-4000-8000-000000000001', day: '2026-10-07', ingested_at: '2026-10-08T08:00:00+00:00',
+        export_ingested_at: '2026-10-08T07:59:00+00:00', source_format: 'structured_bank_statement_csv' },
+      { kind: 'CLOSURE_LATER_LINE', export_id: '5a000000-0000-4000-8000-000000000002', delivery: 'duplicate',
+        later_line_day: '2026-10-08', export_ingested_at: '2026-10-09T07:00:00+00:00' },
+      { kind: 'CHAIN_LINK', day: '2026-10-07', link: 'OK', reference_day: '2026-10-06' },
+    ],
     value_dates: { total_lines: 3, lines_with_value_date: 2 },
     ...overrides,
   };
@@ -54,7 +61,7 @@ function result(overrides: Record<string, unknown> = {}, consolidation: Record<s
         expected_account_id: '30000000-0000-4000-8000-000000000002', registry_account_id: null, bank: 'NSIA',
         alias: 'NSIA principal', status: 'NOT_COVERED', reasons: ['BANK_WITHOUT_FORMAT'], balance_at_date: null,
         source_format: null, qualification: 'NO_FORMAT', qualification_evidence: null,
-        dates: { bank_date_covered: null, age_days: null, balance_source_day: null }, sources: [],
+        dates: { bank_date_covered: null, age_days: null, bank_date_observed: null, balance_source_day: null }, sources: [],
         value_dates: { total_lines: 0, lines_with_value_date: 0 },
       }),
     ],
@@ -77,6 +84,11 @@ test('le contrat de réponse est vérifié strictement', () => {
     result({}, { amount: 1300 }),
     result({ accounts: [account({ balance_at_date: '1 300' })] }),
     result({ accounts: [account({ status: 'DISPONIBLE' })] }),
+    result({ accounts: [account({ dates: { bank_date_covered: null, age_days: null, balance_source_day: null } })] }),
+    result({ accounts: [account({ sources: [{ kind: 'CLOSURE_LATER_LINE', delivery: 'duplicate',
+      later_line_day: '2026-10-08', export_ingested_at: '2026-10-09T07:00:00+00:00' }] })] }),
+    result({ accounts: [account({ sources: [{ kind: 'CHAIN_LINK', day: '2026-10-07', link: 'PEUT-ETRE', reference_day: null }] })] }),
+    result({ accounts: [account({ sources: [{ kind: 'AUTRE_PREUVE' }] })] }),
     null,
   ]) {
     assert.throws(() => parseTreasuryBalances(broken), (error: unknown) =>
@@ -162,6 +174,69 @@ test('la vue montre les comptes non couverts sans les additionner ni inventer de
   assert.match(html, /ne doit pas être lu comme un total/);
   assert.match(html, /date comptable/);
   assert.doesNotMatch(html, /Fund Applied/);
+});
+
+test('les preuves de clôture et de continuité sont rendues avec leurs références et leurs dates', () => {
+  const html = renderToStaticMarkup(<TreasuryBalancesView result={parseTreasuryBalances(result({
+    accounts: [
+      account({}),
+      account({
+        expected_account_id: '30000000-0000-4000-8000-000000000004', dates: { bank_date_covered: '2026-10-04',
+          age_days: 29, bank_date_observed: '2026-10-04', balance_source_day: '2026-10-05' },
+        sources: [
+          { kind: 'CANONICAL_UNIT', role: 'OPENING', unit_id: '40000000-0000-4000-8000-000000000005',
+            export_id: '5b000000-0000-4000-8000-000000000003', day: '2026-10-05', ingested_at: null,
+            export_ingested_at: '2026-10-06T07:00:00+00:00', source_format: 'structured_bank_statement_csv' },
+          { kind: 'CHAIN_LINK', day: '2026-10-05', link: 'CONTINUOUS_GAP', reference_day: '2026-10-01' },
+          { kind: 'DECLARED_PERIOD', export_id: '5b000000-0000-4000-8000-000000000003', period_start: '2026-10-04',
+            period_end: '2026-10-05', closed_until: '2026-10-04', export_ingested_at: '2026-10-06T07:00:00+00:00' },
+        ],
+      }),
+      account({
+        expected_account_id: '30000000-0000-4000-8000-000000000005',
+        sources: [
+          { kind: 'CANONICAL_UNIT', role: 'CLOSING', unit_id: '40000000-0000-4000-8000-000000000001',
+            export_id: '5c000000-0000-4000-8000-000000000004', day: '2026-10-01', ingested_at: null,
+            export_ingested_at: '2026-10-02T07:00:00+00:00', source_format: 'structured_bank_statement_csv' },
+          { kind: 'CLOSURE_NEXT_OPENING', unit_id: '40000000-0000-4000-8000-000000000002',
+            export_id: '5d000000-0000-4000-8000-000000000005', day: '2026-10-02', ingested_at: null,
+            export_ingested_at: '2026-10-04T07:00:00+00:00' },
+          { kind: 'CHAIN_LINK', day: '2026-10-01', link: 'ANCHOR', reference_day: null },
+        ],
+      }),
+    ],
+  }))} />);
+  assert.match(html, /Clôture du relevé du 2026-10-07 \(fichier 50000000\)/);
+  assert.match(html, /Clôture prouvée par le fichier 5a000000 \(relivraison, ligne ultérieure du 2026-10-08\) — importé le 2026-10-09T07:00:00\+00:00/);
+  assert.match(html, /Ouverture du 2026-10-07 : égale au solde prouvé du 2026-10-06/);
+  assert.match(html, /Ouverture du relevé du 2026-10-05 \(fichier 5b000000\)/);
+  assert.match(html, /Ouverture du 2026-10-05 : égale à la clôture du 2026-10-01/);
+  assert.match(html, /Période déclarée 2026-10-04 → 2026-10-05 \(close jusqu’au 2026-10-04, fichier 5b000000\)/);
+  assert.match(html, /Clôture confirmée par l’ouverture du 2026-10-02 \(fichier 5d000000\) — importé le 2026-10-04T07:00:00\+00:00/);
+  assert.match(html, /Ouverture du 2026-10-01 : premier relevé de la chaîne/);
+});
+
+test('une date seulement observée n’est jamais présentée comme couverte', () => {
+  const blocked = parseTreasuryBalances(result({
+    accounts: [account({
+      status: 'BLOCKED', reasons: ['CHAIN_BROKEN'], balance_at_date: null, sources: [],
+      dates: { bank_date_covered: null, age_days: null, bank_date_observed: '2026-10-02', balance_source_day: '2026-10-02' },
+    })],
+  })).accounts[0];
+  assert.equal(freshnessLabel(blocked), 'Aucune date bancaire couverte · dernière date observée, non validée : 2026-10-02');
+  const partial = parseTreasuryBalances(result({
+    accounts: [account({ dates: { bank_date_covered: '2026-10-01', age_days: 32, bank_date_observed: '2026-10-04',
+      balance_source_day: '2026-10-01' } })],
+  })).accounts[0];
+  assert.equal(freshnessLabel(partial), 'Couvert jusqu’au 2026-10-01 (il y a 32 jours) · dernière date observée, non validée : 2026-10-04');
+  const fresh = parseTreasuryBalances(result()).accounts[0];
+  assert.equal(freshnessLabel(fresh), 'Couvert jusqu’au 2026-10-07 (il y a 26 jours)');
+  const html = renderToStaticMarkup(<TreasuryBalancesView result={parseTreasuryBalances(result({ accounts: [account({
+    status: 'BLOCKED', reasons: ['CHAIN_BROKEN'], balance_at_date: null, sources: [],
+    dates: { bank_date_covered: null, age_days: null, bank_date_observed: '2026-10-02', balance_source_day: '2026-10-02' },
+  })] }))} />);
+  assert.match(html, /Aucune date bancaire couverte · dernière date observée, non validée : 2026-10-02/);
+  assert.doesNotMatch(html, /Couvert jusqu’au 2026-10-02/);
 });
 
 test('BIS : la devise XOF est corroborée par les en-têtes obligatoires du profil', () => {

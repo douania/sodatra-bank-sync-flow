@@ -52,10 +52,11 @@ SELECT tr_test.seed_export('e_bicis_prov', 'bicis_prov', 'structured_bank_statem
 SELECT tr_test.seed_unit('e_bicis_prov', '2026-10-01', 300, 310);
 SELECT tr_test.seed_unit('e_bicis_prov', '2026-10-02', 310, 320, p_staging_status => 'provisional', p_canonical => false);
 
--- 6. ORA : devise des relevés contradictoire avec le registre.
+-- 6. ORA : devise des relevés contradictoire avec le registre ; période déclarée
+-- dès le 29/09, reportée en arrière depuis l'unité du 01.
 SELECT tr_test.seed_registry('ora_cur', 'ORA', 'XOF', 'TR ORA devise');
 SELECT tr_test.seed_export('e_ora_cur', 'ora_cur', 'structured_bank_statement_csv', 'structured-csv-0b',
-  '2026-10-01', '2026-10-02', '2026-10-03');
+  '2026-09-29', '2026-10-02', '2026-10-03');
 SELECT tr_test.seed_unit('e_ora_cur', '2026-10-01', 10, 20, p_unit_currency => 'EUR');
 SELECT tr_test.seed_unit('e_ora_cur', '2026-10-02', 20, 30, p_unit_currency => 'EUR');
 
@@ -142,7 +143,8 @@ SELECT tr_test.seed_unit('e_ora_oldparser', '2026-10-02', 20, 30);
 
 -- 21. ORA : les journées 02-03 ne sont déclarées sans mouvement que par un
 -- export à revoir (identité de compte non corroborée) ; les journées 05-07, que
--- par un export dont une journée livrée est à revoir.
+-- par un export dont une journée livrée est à revoir. Ces mêmes fichiers sont les
+-- seuls à porter une ligne postérieure au 01 et au 04 : ils ne les closent pas.
 SELECT tr_test.seed_registry('ora_identity', 'ORA', 'XOF', 'TR ORA identité');
 SELECT tr_test.seed_export('e_ora_id1', 'ora_identity', 'structured_bank_statement_csv', 'structured-csv-0b',
   '2026-10-01', '2026-10-01', '2026-10-02');
@@ -163,13 +165,16 @@ SELECT tr_test.seed_redelivery('e_ora_id_review', 'u_ora_id_04', p_validation =>
   p_codes => ARRAY['RUNNING_BALANCE_CHAIN_INCOHERENT']);
 SELECT tr_test.seed_redelivery('e_ora_id_review', 'u_ora_id_08');
 
--- 22. ORA : la journée suivant D, retenue mais à revoir, ouvre sur un autre solde.
+-- 22. ORA : la journée suivant D, retenue mais à revoir (livrée par un autre
+-- fichier), ouvre sur un autre solde.
 SELECT tr_test.seed_registry('ora_next', 'ORA', 'XOF', 'TR ORA suivante à revoir');
 SELECT tr_test.seed_export('e_ora_next', 'ora_next', 'structured_bank_statement_csv', 'structured-csv-0b',
   '2026-10-01', '2026-10-03', '2026-10-04');
 SELECT tr_test.seed_unit('e_ora_next', '2026-10-01', 100, 200);
-SELECT tr_test.seed_unit('e_ora_next', '2026-10-02', 500, 600, p_validation => 'needs_review');
 SELECT tr_test.seed_unit('e_ora_next', '2026-10-03', 600, 610);
+SELECT tr_test.seed_export('e_ora_next2', 'ora_next', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', '2026-10-03');
+SELECT tr_test.seed_unit('e_ora_next2', '2026-10-02', 500, 600, p_validation => 'needs_review');
 
 -- 23. ATB Excel : un même fichier du vendredi 02 au mardi 06 ; le lundi ouvre
 -- sur un autre solde que la clôture du vendredi, sans ligne le week-end.
@@ -216,6 +221,103 @@ SELECT tr_test.seed_unit('e_ora_tail_a', '2026-10-01', 10, 20);
 SELECT tr_test.seed_export('e_ora_tail_b', 'ora_tail', 'structured_bank_statement_csv', 'structured-csv-0b',
   '2026-10-04', '2026-10-05', NULL);
 SELECT tr_test.seed_unit('e_ora_tail_b', '2026-10-05', 20, 30);
+
+-- 27. ORA (constat CTO P1) : le 02, disputé par une version en attente, ouvre sur
+-- 9000 après une clôture de 1400 ; les journées suivantes sont continues.
+SELECT tr_test.seed_registry('ora_dispute', 'ORA', 'XOF', 'TR ORA rupture disputée');
+SELECT tr_test.seed_export('e_ora_dispute', 'ora_dispute', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-04', '2026-10-05');
+SELECT tr_test.seed_unit('e_ora_dispute', '2026-10-01', 1300, 1400);
+SELECT tr_test.seed_unit('e_ora_dispute', '2026-10-02', 9000, 9100);
+SELECT tr_test.seed_unit('e_ora_dispute', '2026-10-03', 9100, 9200);
+SELECT tr_test.seed_unit('e_ora_dispute', '2026-10-04', 9200, 9300);
+SELECT tr_test.seed_export('e_ora_dispute2', 'ora_dispute', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', '2026-10-03');
+SELECT tr_test.seed_unit('e_ora_dispute2', '2026-10-02', 9000, 9110, p_staging_status => 'needs_review', p_canonical => false);
+
+-- 28. ORA : le 02 retenu est continu, mais une version en attente le clôt
+-- autrement ; le 03 s'appuie sur sa clôture non résolue.
+SELECT tr_test.seed_registry('ora_pending_mid', 'ORA', 'XOF', 'TR ORA appui disputé');
+SELECT tr_test.seed_export('e_ora_pending_mid', 'ora_pending_mid', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-04', '2026-10-05');
+SELECT tr_test.seed_unit('e_ora_pending_mid', '2026-10-01', 100, 200);
+SELECT tr_test.seed_unit('e_ora_pending_mid', '2026-10-02', 200, 300);
+SELECT tr_test.seed_unit('e_ora_pending_mid', '2026-10-03', 300, 400);
+SELECT tr_test.seed_unit('e_ora_pending_mid', '2026-10-04', 400, 410);
+SELECT tr_test.seed_export('e_ora_pending_mid2', 'ora_pending_mid', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', '2026-10-03');
+SELECT tr_test.seed_unit('e_ora_pending_mid2', '2026-10-02', 200, 310, p_staging_status => 'needs_review', p_canonical => false);
+
+-- 29. ORA : le 02 n'est livré que par une version non retenue ; le 03 ouvre sur
+-- la clôture du 01 en enjambant cette journée non résolue.
+SELECT tr_test.seed_registry('ora_staged_mid', 'ORA', 'XOF', 'TR ORA journée enjambée');
+SELECT tr_test.seed_export('e_ora_staged_mid', 'ora_staged_mid', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-04', '2026-10-05');
+SELECT tr_test.seed_unit('e_ora_staged_mid', '2026-10-01', 100, 200);
+SELECT tr_test.seed_unit('e_ora_staged_mid', '2026-10-03', 200, 300);
+SELECT tr_test.seed_unit('e_ora_staged_mid', '2026-10-04', 300, 310);
+SELECT tr_test.seed_export('e_ora_staged_mid2', 'ora_staged_mid', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', '2026-10-03');
+SELECT tr_test.seed_unit('e_ora_staged_mid2', '2026-10-02', 200, 250, p_staging_status => 'staged', p_canonical => false);
+
+-- 30. ORA : le 02 n'est pas prouvé ; le 03 est prouvé sans mouvement par le second
+-- fichier ; l'ouverture du 04 (500) contredit la clôture du 01 (200). Le report
+-- arrière du 03 vient de cette ouverture : il ne prouve pas la continuité.
+SELECT tr_test.seed_registry('ora_back', 'ORA', 'XOF', 'TR ORA report arrière');
+SELECT tr_test.seed_export('e_ora_back_a', 'ora_back', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-01', '2026-10-02');
+SELECT tr_test.seed_unit('e_ora_back_a', '2026-10-01', 100, 200);
+SELECT tr_test.seed_export('e_ora_back_b', 'ora_back', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-03', '2026-10-05', '2026-10-06');
+SELECT tr_test.seed_unit('e_ora_back_b', '2026-10-04', 500, 510);
+SELECT tr_test.seed_unit('e_ora_back_b', '2026-10-05', 510, 520);
+
+-- 31. ORA : le 02 n'est livré que par une version à revoir, AVANT le premier
+-- relevé retenu (04) ; la période 01-05 est déclarée et prouvée par l'autre fichier.
+SELECT tr_test.seed_registry('ora_lead_pending', 'ORA', 'XOF', 'TR ORA disputée en amont');
+SELECT tr_test.seed_export('e_ora_lead_pending', 'ora_lead_pending', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-05', '2026-10-06');
+SELECT tr_test.seed_unit('e_ora_lead_pending', '2026-10-04', 900, 1000);
+SELECT tr_test.seed_unit('e_ora_lead_pending', '2026-10-05', 1000, 1010);
+SELECT tr_test.seed_export('e_ora_lead_pending2', 'ora_lead_pending', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', '2026-10-03');
+SELECT tr_test.seed_unit('e_ora_lead_pending2', '2026-10-02', 100, 200, p_staging_status => 'needs_review', p_canonical => false);
+
+-- 32. ORA : le 01 n'est livré que par une version à revoir, veille du premier relevé retenu (02).
+SELECT tr_test.seed_registry('ora_first_pending', 'ORA', 'XOF', 'TR ORA disputée avant la série');
+SELECT tr_test.seed_export('e_ora_first_pending', 'ora_first_pending', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-03', '2026-10-04');
+SELECT tr_test.seed_unit('e_ora_first_pending', '2026-10-02', 900, 1000);
+SELECT tr_test.seed_unit('e_ora_first_pending', '2026-10-03', 1000, 1010);
+SELECT tr_test.seed_export('e_ora_first_pending2', 'ora_first_pending', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-01', '2026-10-02');
+SELECT tr_test.seed_unit('e_ora_first_pending2', '2026-10-01', 100, 200, p_staging_status => 'needs_review', p_canonical => false);
+
+-- 33. ORA : le 01 est clos par l'ouverture égale du 04, à travers des journées
+-- prouvées sans mouvement par un troisième fichier ; un quatrième fichier, sans
+-- ligne, ne prouve rien.
+SELECT tr_test.seed_registry('ora_prov', 'ORA', 'XOF', 'TR ORA preuve de continuité');
+SELECT tr_test.seed_export('e_ora_prov_a', 'ora_prov', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-01', '2026-10-02');
+SELECT tr_test.seed_unit('e_ora_prov_a', '2026-10-01', 100, 200);
+SELECT tr_test.seed_export('e_ora_prov_b', 'ora_prov', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-04', '2026-10-04', '2026-10-05');
+SELECT tr_test.put('u_ora_prov_04', tr_test.seed_unit('e_ora_prov_b', '2026-10-04', 200, 250));
+SELECT tr_test.seed_export('e_ora_prov_c', 'ora_prov', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-04', '2026-10-05');
+SELECT tr_test.seed_redelivery('e_ora_prov_c', 'u_ora_prov_04');
+SELECT tr_test.seed_export('e_ora_prov_d', 'ora_prov', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-03', '2026-10-05', NULL);
+
+-- 34. BIS Excel : la première journée retenue n'a pas de solde dérivable ; les
+-- suivantes sont complètes. Cette journée ne se résoudra pas : elle n'empêche pas
+-- l'ancrage de la chaîne sur le 04.
+SELECT tr_test.seed_registry('bis_nobal_first', 'BIS', 'XOF', 'TR BIS sans solde initial');
+SELECT tr_test.seed_export('e_bis_nobal_first', 'bis_nobal_first', 'structured_bank_statement_xls', 'structured-excel-0q/bis-online-xls-v1',
+  '2026-10-03', '2026-10-05', NULL);
+SELECT tr_test.seed_unit('e_bis_nobal_first', '2026-10-03', NULL, NULL, p_aggregates => 'unavailable');
+SELECT tr_test.seed_unit('e_bis_nobal_first', '2026-10-04', 500, 510);
+SELECT tr_test.seed_unit('e_bis_nobal_first', '2026-10-05', 510, 520);
 
 SET session_replication_role = origin;
 SELECT tr_test.assert_seed_consistent();

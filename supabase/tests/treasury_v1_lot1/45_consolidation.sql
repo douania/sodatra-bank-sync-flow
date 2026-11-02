@@ -9,7 +9,9 @@ SELECT public.treasury_admin_retire_expected_account_v1(tr_test.key('c-retire-' 
 FROM unnest(ARRAY['x_bdk_break', 'x_bis_gap', 'x_bicis_prov', 'x_ora_cur', 'x_bridge_inactive', 'x_eur_acc', 'x_ora_review',
                   'x_bdk_noref', 'x_ora_conflict', 'x_ora_lead', 'x_ora_nostmt', 'x_ora_after', 'x_bdk_intraday',
                   'x_ora_contest', 'x_ora_oldparser', 'x_ora_identity', 'x_ora_next', 'x_atb_weekend', 'x_ora_cont',
-                  'x_ora_reset', 'x_ora_tail', 'x_nsia', 'x_bdk_future']) n;
+                  'x_ora_reset', 'x_ora_tail', 'x_ora_dispute', 'x_ora_pending_mid', 'x_ora_staged_mid', 'x_ora_back',
+                  'x_ora_lead_pending', 'x_ora_first_pending', 'x_ora_prov', 'x_bis_nobal_first', 'x_nsia',
+                  'x_bdk_future']) n;
 RESET ROLE;
 
 -- Comptes du registre restés hors inventaire : la ligne reste partielle.

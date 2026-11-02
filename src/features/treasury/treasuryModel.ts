@@ -15,16 +15,42 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const dateTime = z.string().min(10);
 
 const observedSchema = z.object({ balance: amountText, date: isoDate });
+// Preuves effectivement utilisées pour le solde de D, avec leurs références.
 const sourceSchema = z.union([
   z.object({
     kind: z.literal('CANONICAL_UNIT'),
+    role: z.enum(['CLOSING', 'OPENING']),
+    unit_id: z.string().uuid(),
+    export_id: z.string().uuid(),
     day: isoDate,
     ingested_at: dateTime.nullable(),
     export_ingested_at: dateTime.nullable(),
     source_format: z.string().nullable(),
   }),
   z.object({
+    kind: z.literal('CLOSURE_LATER_LINE'),
+    export_id: z.string().uuid(),
+    delivery: z.enum(['promoted', 'duplicate']),
+    later_line_day: isoDate,
+    export_ingested_at: dateTime,
+  }),
+  z.object({
+    kind: z.literal('CLOSURE_NEXT_OPENING'),
+    unit_id: z.string().uuid(),
+    export_id: z.string().uuid(),
+    day: isoDate,
+    ingested_at: dateTime.nullable(),
+    export_ingested_at: dateTime,
+  }),
+  z.object({
+    kind: z.literal('CHAIN_LINK'),
+    day: isoDate,
+    link: z.enum(['OK', 'CONTINUOUS_GAP', 'ANCHOR', 'BREAK', 'UNPROVEN']),
+    reference_day: isoDate.nullable(),
+  }),
+  z.object({
     kind: z.literal('DECLARED_PERIOD'),
+    export_id: z.string().uuid(),
     period_start: isoDate,
     period_end: isoDate,
     closed_until: isoDate,
@@ -48,6 +74,7 @@ const accountSchema = z.object({
   dates: z.object({
     bank_date_covered: isoDate.nullable(),
     age_days: z.number().int().nullable(),
+    bank_date_observed: isoDate.nullable(),
     balance_source_day: isoDate.nullable(),
   }),
   sources: z.array(sourceSchema),
@@ -239,12 +266,21 @@ export function presentConsolidation(result: TreasuryBalances): ConsolidationPre
   };
 }
 
+/**
+ * Date couverte = dernière date dont le solde serait rendu disponible ; une date
+ * seulement observée (solde dérivé, non validé) est montrée à part.
+ */
 export function freshnessLabel(account: TreasuryAccount): string {
   const covered = account.dates.bank_date_covered;
-  if (!covered) return 'Aucune date bancaire couverte';
+  const observed = account.dates.bank_date_observed;
   const age = account.dates.age_days;
-  if (age === null) return `Couvert jusqu’au ${covered}`;
-  return `Couvert jusqu’au ${covered} (${age === 0 ? 'aujourd’hui' : `il y a ${age} jour${age > 1 ? 's' : ''}`})`;
+  let label = 'Aucune date bancaire couverte';
+  if (covered && age === null) label = `Couvert jusqu’au ${covered}`;
+  if (covered && age !== null) {
+    label = `Couvert jusqu’au ${covered} (${age === 0 ? 'aujourd’hui' : `il y a ${age} jour${age > 1 ? 's' : ''}`})`;
+  }
+  if (observed && observed !== covered) return `${label} · dernière date observée, non validée : ${observed}`;
+  return label;
 }
 
 export function valueDateLabel(account: TreasuryAccount, windowDays: number): string {
@@ -265,9 +301,35 @@ export function defaultAsOf(now: Date): string {
   return previous.toISOString().slice(0, 10);
 }
 
+/** Référence courte d'un fichier ou d'une journée importés (identifiant interne, sans donnée bancaire). */
+function shortRef(id: string): string {
+  return id.slice(0, 8);
+}
+
+const LINK_LABELS: Record<Extract<TreasurySource, { kind: 'CHAIN_LINK' }>['link'], string> = {
+  OK: 'égale au solde prouvé du',
+  CONTINUOUS_GAP: 'égale à la clôture du',
+  ANCHOR: 'premier relevé de la chaîne',
+  BREAK: 'contredite par le solde prouvé du',
+  UNPROVEN: 'continuité non prouvée depuis le',
+};
+
 export function sourceLabel(source: TreasurySource): string {
-  if (source.kind === 'CANONICAL_UNIT') {
-    return `Relevé du ${source.day} — importé le ${source.export_ingested_at ?? 'inconnu'}, journée intégrée le ${source.ingested_at ?? 'inconnu'}`;
+  switch (source.kind) {
+    case 'CANONICAL_UNIT':
+      return `${source.role === 'CLOSING' ? 'Clôture' : 'Ouverture'} du relevé du ${source.day} (fichier ${shortRef(source.export_id)})`
+        + ` — importé le ${source.export_ingested_at ?? 'inconnu'}, journée intégrée le ${source.ingested_at ?? 'inconnu'}`;
+    case 'CLOSURE_LATER_LINE':
+      return `Clôture prouvée par le fichier ${shortRef(source.export_id)}`
+        + ` (${source.delivery === 'duplicate' ? 'relivraison' : 'livraison'}, ligne ultérieure du ${source.later_line_day})`
+        + ` — importé le ${source.export_ingested_at}`;
+    case 'CLOSURE_NEXT_OPENING':
+      return `Clôture confirmée par l’ouverture du ${source.day} (fichier ${shortRef(source.export_id)})`
+        + ` — importé le ${source.export_ingested_at}`;
+    case 'CHAIN_LINK':
+      return `Ouverture du ${source.day} : ${LINK_LABELS[source.link]}${source.reference_day ? ` ${source.reference_day}` : ''}`;
+    case 'DECLARED_PERIOD':
+      return `Période déclarée ${source.period_start} → ${source.period_end} (close jusqu’au ${source.closed_until},`
+        + ` fichier ${shortRef(source.export_id)}) — importée le ${source.export_ingested_at}`;
   }
-  return `Période déclarée ${source.period_start} → ${source.period_end} (close jusqu’au ${source.closed_until}) — importée le ${source.export_ingested_at}`;
 }

@@ -2,6 +2,7 @@
 
 **GO :** `GO_IMPLEMENT_TREASURY_V1_LOT1_BANK_BALANCES` — développement local, sur la base du
 cadrage trésorerie R3 (`PASS_WITH_RESERVES`, hors dépôt).
+**Correctif :** `GO_FIX_TREASURY_V1_LOT1_BANK_BALANCES`, après la contre-revue CTO `FAIL` sur `96be87d` (§ 5 ter).
 **Base :** `origin/main` `49afcefba199a1a163c3bc1b1487f87e7b026850` (vérifiée avant travail).
 **Branche :** `codex/treasury-v1-lot1-bank-balances`, worktree isolé. **Aucun merge.**
 **Environnements :** aucun. PostgreSQL 17 local jetable uniquement ; fixtures synthétiques.
@@ -18,7 +19,8 @@ déclarés, des remises ni des facilités.
 | Qualification | `treasury_private.bank_format_qualifications`, en ajout seul et journalisée, écrite **uniquement** par `treasury_private.set_bank_format_qualification`, sans aucun privilège d'exécution pour l'API. La migration ne pose **aucune** qualification. Les tests posent des statuts dans leur seule base jetable. |
 | Solde historique à D | `public.treasury_balances_at_v1(date)`, une seule instruction SQL `STABLE`. |
 | Couverture et motifs | Statuts `AVAILABLE` / `NOT_COVERED` / `BLOCKED` / `OUT_OF_SCOPE`, motifs fermés (§ 3). |
-| Dates | Date bancaire couverte, ingestion de **chaque** source utilisée (unité canonique et son export, exports de période déclarée) et instant de lecture, séparés. Ancienneté en jours, fuseau Africa/Dakar. |
+| Dates | Date bancaire couverte (dernière date que la lecture rendrait disponible), date seulement observée, ingestion de **chaque** source utilisée et instant de lecture, séparés. Ancienneté en jours sur la date couverte, fuseau Africa/Dakar. |
+| Sources | Preuves effectivement utilisées pour le solde de D, avec références et dates : unité source, fichier qui prouve sa clôture ou unité suivante qui la confirme, contrôle de chaîne de son ouverture, périodes déclarées des journées reportées (§ 3). |
 | Consolidation | XOF seule, `COMPLETE` / `PARTIAL` / `BLOCKED`, avec les comptes manquants nommés. Un sous-total partiel n'est jamais présenté comme un total ; aucun montant sans compte disponible. |
 | Dates de valeur | Lignes avec date de valeur sur les 90 jours précédant D, par compte (mesure seule). |
 | Accès | Lecture par `payables_private.require_bank_read` (READ ou AUDIT, puis BANK_READ), inchangé. Inventaire par `payables_private.require_admin`, inchangé. Aucun rôle, aucune RLS existante, aucune règle Auth modifiés. |
@@ -39,9 +41,11 @@ Faits complémentaires :
 - une journée est provisoire à partir de la date de référence de l'export (ou, pour ORA sans référence, son dernier jour) ;
 - la base ne conserve **ni** la provenance de la période **ni** les soldes déclarés de l'export.
 
-Règle appliquée (table `treasury_private.supported_formats`, figée) : une journée sans mouvement n'est couverte que si une période **déclarée** d'un export remplit toutes les conditions suivantes :
-- l'export est valide, produit par une version de parseur prise en charge, et ne porte aucun motif de revue (par exemple `ACCOUNT_IDENTITY_NOT_CORROBORATED`) ;
-- il est entièrement accepté : aucune journée livrée en conflit, en attente, à revoir ou en échec, aucune journée livrée non valide ou portant un motif de revue ;
+**Fichier digne de preuve.** Un export ne prouve quelque chose (clôture d'une journée, absence de mouvement) que s'il remplit toutes les conditions suivantes :
+- il est valide, produit par une version de parseur prise en charge, et ne porte aucun motif de revue (par exemple `ACCOUNT_IDENTITY_NOT_CORROBORATED`) ;
+- il est entièrement accepté : aucune journée livrée en conflit, en attente, à revoir ou en échec, aucune journée livrée non valide ou portant un motif de revue.
+
+Règle appliquée (table `treasury_private.supported_formats`, figée) : une journée sans mouvement n'est couverte que si une période **déclarée** d'un fichier digne de preuve remplit en outre les conditions suivantes :
 - la journée y est close : le fichier porte une ligne datée **après** elle (et au plus tard le jour de son dépôt, heure de Dakar) ; aucune journée n'est close par un fichier sans ligne ultérieure ;
 - aucune autre livraison de la journée ne la dispute (mouvement livré non retenu, version en attente ou en conflit).
 
@@ -73,18 +77,27 @@ Sans elles, les journées sans mouvement des comptes Excel (week-ends compris) r
 | Journée non close (voir ci-dessous) | `DAY_NOT_CLOSED` | `NOT_COVERED` |
 
 Une unité retenue n'est **close** que si l'une de ces preuves existe :
-- (a) un fichier qui en livre le contenu exact porte une ligne datée après elle, et au plus tard le jour de son dépôt ;
+- (a) un fichier digne de preuve (§ 2) qui en livre le contenu exact porte une ligne datée après elle, et au plus tard le jour de son dépôt ;
 - (b) la journée suivante qui n'est pas prouvée sans mouvement est une unité retenue dont l'ouverture égale sa clôture.
 
 Une journée sans unité est provisoire (`PROVISIONAL_DAY`), disputée si une livraison non retenue existe (`DAY_CONTESTED`), sans mouvement si elle est prouvée (§ 2), sinon non prouvée (`DAY_WITHOUT_PROOF`).
 
-**Chaîne des soldes jusqu'à D.** Chaque ouverture est comparée au solde prouvé de la veille ou, à défaut, à la **dernière clôture canonique connue**, quelle que soit la nature de cette unité (à revoir, disputée, non close, version de parseur non prise en charge). L'ancrage est la toute première unité canonique de clôture connue ; il n'y a aucun réancrage silencieux.
+**Chaîne des soldes jusqu'à D.** L'ouverture de **toute** unité canonique est contrôlée, quelle que soit la nature de sa journée : disputée, en conflit, à revoir, version de parseur non prise en charge, non close. La dispute d'une journée ne masque donc jamais la contradiction qu'elle porte (constat CTO P1).
+
+L'ouverture est comparée, dans cet ordre :
+- au solde de la veille **prouvé en avant** : clôture d'une unité close, reportée à travers des journées prouvées sans mouvement. Un report arrière n'est jamais une référence, car il vient de l'ouverture contrôlée elle-même ;
+- à défaut, à la **dernière clôture canonique connue**, quelle que soit la nature de cette unité. L'ancrage est la toute première unité canonique de clôture connue ; il n'y a aucun réancrage silencieux.
+
+Une journée est **non résolue** si elle est en conflit, disputée, provisoire, à revoir ou d'une version de parseur non prise en charge. Une unité retenue sans solde dérivé ne se résoudra pas : elle compte comme une journée non prouvée, à travers laquelle la continuité n'est admise que si les soldes concordent. Une continuité qui s'appuie sur la clôture d'une journée non résolue, ou qui en enjambe une, n'est pas prouvée, même si les montants concordent. Il en va de même du premier ancrage de la chaîne quand une journée non résolue le précède : l'historique d'un compte commence à sa première unité retenue, à sa première période déclarée probante ou à sa première livraison non remplacée, la plus ancienne des trois. L'incertitude se propage ainsi à toutes les dates postérieures jusqu'à la résolution de cette journée dans Daily v2.
 
 | Situation | Statut |
 |---|---|
-| Ouverture différente de la clôture prouvée de la veille, à D ou avant | `BLOCKED` (`CHAIN_BROKEN`) |
-| Discontinuité avec la dernière clôture canonique connue, à travers des journées non prouvées ou une unité non retenue, à D ou avant | `NOT_COVERED` (`CHAIN_UNPROVEN`) |
-| Continuité à travers des journées non prouvées | Acceptée ; ces journées elles-mêmes restent non couvertes |
+| Ouverture différente du solde prouvé en avant de la veille, à D ou avant, journée disputée comprise | `BLOCKED` (`CHAIN_BROKEN`) |
+| Discontinuité avec la dernière clôture canonique connue, à travers des journées non prouvées, à D ou avant | `NOT_COVERED` (`CHAIN_UNPROVEN`) |
+| Continuité appuyée sur une journée non résolue, ou qui en enjambe une, ou premier ancrage précédé d'une telle journée, à D ou avant | `NOT_COVERED` (`CHAIN_UNPROVEN`), jusqu'à résolution |
+| Solde de D reporté en arrière depuis une unité dont l'ouverture n'est pas prouvée continue | `NOT_COVERED` (`CHAIN_UNPROVEN`) : le contrôle de l'unité qui fournit le solde compte |
+| Solde de D reporté en arrière depuis une unité d'une autre devise | `BLOCKED` (`CURRENCY_CONTRADICTION`) : la devise est contrôlée jusqu'à l'unité qui fournit le solde |
+| Continuité à travers des journées non prouvées, sans journée non résolue | Acceptée ; ces journées elles-mêmes restent non couvertes |
 
 **Contrôle après D.** Le solde de D, reporté ou non, est comparé à **toute ouverture connue** de la première journée suivante qui en porte une :
 - unité canonique, quelle que soit sa nature ;
@@ -108,6 +121,24 @@ Avec la règle de clôture ci-dessus, un D clos suivi d'un écart sans ligne est
 Statut `BLOCKED` : `CURRENCY_CONTRADICTION`, `CHAIN_BROKEN`, `CHAIN_BROKEN_AFTER_DATE`, `DAY_CONFLICT`. Un test TypeScript relève les motifs dans la migration elle-même et exige un libellé pour chacun.
 
 **Disponibilité.** `AVAILABLE` exige le format `QUALIFIED` ; `PILOT` et `SUSPENDED` rendent le compte non couvert. Hors `AVAILABLE`, le solde à D est **null**. Le dernier solde observé est rendu à part (`observed_balance`) et n'entre dans aucun calcul.
+
+**Une seule définition par journée.** Chaque journée X de l'historique d'un compte est évaluée comme si elle était la date D : contradictions et incertitudes cumulées jusqu'à X (ou jusqu'à l'unité qui fournit son solde), contrôle de la première ouverture connue après X. La date D demandée et la date couverte lisent cette même évaluation.
+
+**Dates rendues** (constat CTO P2) :
+- `bank_date_covered` : dernière date que la lecture rendrait `AVAILABLE`, qualification et devise comprises ; `age_days` est calculé sur elle ;
+- `bank_date_observed` : dernière date dont un solde est dérivé, même non validé (rupture, incertitude, format non qualifié). Elle est affichée à part, jamais comme une couverture.
+
+Un test vérifie, pour chaque compte et chaque date de l'historique de test, que la date couverte est exactement la dernière date rendue disponible.
+
+**Sources rendues pour le solde de D** (constat CTO P2), avec références (identifiants internes du fichier et de la journée, sans donnée bancaire) et dates :
+
+| Source | Contenu |
+|---|---|
+| `CANONICAL_UNIT` | unité qui fournit le solde, rôle `CLOSING` (clôture) ou `OPENING` (report arrière depuis l'ouverture) ; fichier, ingestion de la journée et du fichier |
+| `CLOSURE_LATER_LINE` | chaque fichier digne de preuve qui prouve la clôture : livraison ou relivraison, date de la ligne ultérieure, dépôt |
+| `CLOSURE_NEXT_OPENING` | à défaut, unité suivante dont l'ouverture égale la clôture : journée, fichier, dépôt |
+| `CHAIN_LINK` | contrôle de l'ouverture de l'unité source : résultat et journée de référence (unité dont la clôture a été comparée, ou dernière clôture retenue) |
+| `DECLARED_PERIOD` | chaque période déclarée qui prouve au moins une journée sans mouvement utilisée : journées reportées jusqu'à D, journées entre l'unité source et l'ouverture qui confirme sa clôture, journées entre la clôture comparée et l'unité source ; fichier, période, clôture, dépôt |
 
 **Instantané.** Toute la lecture est une seule instruction SQL `STABLE`, appelée par une fonction `STABLE` : elle s'exécute avec l'instantané de la requête appelante. Démontré par une course réelle (§ 5).
 
@@ -144,16 +175,18 @@ Inchangés :
 | `npx tsc -p tsconfig.app.json --noEmit` | 16 diagnostics, diff exact vide |
 | `npx tsc -p tsconfig.node.json --noEmit` | 0 |
 | `npm run build` | PASS ; artefact MCP non modifié |
-| `npm run test:treasury-balances` | 20/20 (également sans `navigator`, comme sous Node 20) |
+| `npm run test:treasury-balances` | 22/22 (également sans `navigator`, comme sous Node 20) |
 | Suites existantes (20 scripts `test:*`) | toutes PASS : CSV 132, CSV E2B 49, Excel 20, Daily v2 application 106, Daily v2 reporting 70, Collections 27, auth 3, BDK PDF 27, garde d'upload 14, financier atomique 25, verrouillage 2, préflight 56, rapports multibanques 49 (dont identité bancaire), contrôle qualité 8, isolation legacy 4, xlsx 6, provenance de build 12, internal book 90, chèques 88 |
 | Rejeu PostgreSQL 17, scénario **upgrade** | chaîne de 47 migrations, données existantes, migration du lot, puis toutes les suites : PASS |
 | Comparaison de surface (upgrade) | 99 ajouts, tous objets du lot ; 0 objet existant modifié ou retiré ; seuls nouveaux accès : `EXECUTE` des cinq fonctions publiques pour `authenticated` |
 | Rejeu PostgreSQL 17, scénario **fresh** | 48 migrations, puis toutes les suites : PASS |
-| Course d'instantané (les deux scénarios) | l'écrivain attend que la lecture soit active, valide en ~210 ms et vérifie qu'elle l'est encore (lecture de ~3,3 s) ; la lecture rend exactement l'état antérieur ; une nouvelle lecture voit l'état postérieur |
-| Mordant SQL (`-Mutants`, désormais exécuté en CI) | 30/30 mutants tués + m04 (lecture rendue volatile) tué par la course |
-| Mordant TypeScript (`treasuryMutation.proof.ts`, local) | 15/15 mutants tués, fichiers restaurés à l'identique |
+| Course d'instantané (les deux scénarios) | l'écrivain attend que la lecture soit active, valide en ~210 ms et vérifie qu'elle l'est encore (lecture de ~3,2 s) ; la lecture rend exactement l'état antérieur ; une nouvelle lecture voit l'état postérieur |
+| Mordant SQL (`-Mutants`, exécuté en CI) | 49/49 mutants tués + m04 (lecture rendue volatile) tué par la course ; les mutants de chaîne m32 à m36 et m45 à m47 changent tous le statut rendu |
+| Mordant TypeScript (`treasuryMutation.proof.ts`, local) | 18/18 mutants tués, fichiers restaurés à l'identique |
 
-**Cas couverts par les tests SQL** (26 scénarios synthétiques).
+Les résultats ci-dessus sont ceux du code corrigé après la contre-revue CTO (§ 5 ter).
+
+**Cas couverts par les tests SQL** (34 scénarios synthétiques, plus la reproduction exacte du constat CTO P1).
 - **Couverture :**
   - positive : unité close, journée sans mouvement d'une période déclarée dont le fichier porte une ligne ultérieure, journées antérieures au premier mouvement, journée prouvée avant l'ouverture suivante ;
   - absence de preuve : période déduite, après la dernière ligne, période déclarée au-delà de la dernière ligne, export non entièrement accepté, export à revoir, export dont une journée livrée est à revoir, ligne datée après le dépôt, date de référence saisie.
@@ -164,9 +197,11 @@ Inchangés :
   - journée disputée, en conflit ou en attente ; version de parseur non prise en charge ;
   - chaîne rompue à D ; solde de D contredit après D (unité, report, journée suivante à revoir) ; écart inexpliqué dans un même fichier ;
   - chaîne non prouvée, sans réancrage après une journée disputée ;
+  - rupture portée par une journée disputée, bloquante aux dates postérieures ; continuité appuyée sur une journée disputée, ou enjambant une journée livrée non retenue ; premier ancrage précédé d'une journée disputée, dans l'historique ou avant le premier relevé ; report arrière depuis une ouverture non continue ou d'une autre devise ;
+  - clôture refusée quand elle ne repose que sur un fichier d'identité non corroborée ou dont une journée livrée est à revoir ;
   - solde non dérivable, relevé à revoir.
 - **Comptes :** compte absent du registre, compte inactif, NSIA sans format, devise contradictoire, hors périmètre.
-- **Valeurs :** solde historique, aucun zéro par défaut, dates et fraîcheur, sources, dates de valeur.
+- **Valeurs :** solde historique, aucun zéro par défaut, dates et fraîcheur (date couverte égale à la dernière date disponible pour tous les comptes, date observée à part, couverture nulle en pilote), preuves de clôture et de continuité rendues avec leurs références, dates de valeur.
 - **Qualification :** non qualifié, pilote, suspendu.
 - **Inventaire :** non attesté, comptes hors inventaire.
 - **Consolidation :** partielle, complète, bloquée.
@@ -174,7 +209,7 @@ Inchangés :
 - **Administration :** autorité unique, idempotence, clé réutilisée, ajout seul.
 - **Isolation :** aucune donnée de paiement ni legacy lue.
 
-**Cas couverts par les tests TypeScript.** Garde d'environnement, refus avant tout appel, contrat de réponse, libellés de tous les motifs émis par la migration, cache lié à la session (utilisateur dans la clé, aucune lecture sans session, aucun cache conservé), une clé de commande par décision (double envoi rejoué à l'identique, même si une autre décision est envoyée entre-temps ou si le panneau est masqué), identité ATB.
+**Cas couverts par les tests TypeScript.** Garde d'environnement, refus avant tout appel, contrat de réponse (sources et dates comprises), libellés de tous les motifs émis par la migration, affichage des preuves avec leurs références, date observée jamais présentée comme couverte, cache lié à la session (utilisateur dans la clé, aucune lecture sans session, aucun cache conservé), une clé de commande par décision (double envoi rejoué à l'identique, même si une autre décision est envoyée entre-temps ou si le panneau est masqué), identité ATB.
 
 ## 5 bis. Revues indépendantes et traitement
 
@@ -210,21 +245,58 @@ Deux revues indépendantes ont été menées avant tout commit.
 | **N6 (P3)** Une seule décision en attente était mémorisée, et dans l'état du composant. | Une clé par décision en attente, conservée au niveau du module ; mutants t13 et t15. |
 | **N7 (P3)** Les documents partagés réécrivaient les lignes de statut du module chèques. | Lignes hors lot rétablies à l'identique de la base ; seules les entrées du lot sont ajoutées. |
 
+## 5 ter. Contre-revue CTO sur `96be87d` et traitement
+
+Verdict CTO : `FAIL` sur `96be87d` (CI verte, suite TypeScript 20/20, cas reproduit sur PostgreSQL 17). Corrections réalisées sous `GO_FIX_TREASURY_V1_LOT1_BANK_BALANCES`, même branche, même périmètre de fichiers. Les trois constats ont d'abord été reproduits à l'identique sur PostgreSQL 17 local avec le scénario fourni.
+
+| Constat | Traitement |
+|---|---|
+| **P1** Une journée intermédiaire disputée désactivait le contrôle de sa propre ouverture ; la journée suivante redevenait disponible (clôture 1400, ouverture 9000, puis 9200 rendu `AVAILABLE` sans motif). | L'ouverture de toute unité canonique est contrôlée, quelle que soit la nature de sa journée. Une continuité appuyée sur une journée non résolue, ou qui en enjambe une, reste `CHAIN_UNPROVEN` jusqu'à sa résolution. Le report arrière n'est plus une référence de contrôle, et le contrôle de l'unité qui fournit un solde reporté compte (§ 3). Le scénario CTO exact rend désormais `BLOCKED` (`CHAIN_BROKEN`, `CHAIN_UNPROVEN`) au 22. Scénarios isolés : ORA rupture disputée, appui disputé, journée enjambée, report arrière. Mutants m32 à m36, qui changent tous le statut. |
+| **P2** Le fichier ultérieur qui prouve la clôture n'apparaissait pas parmi les sources (ORA, 7 octobre). | Sources `CLOSURE_LATER_LINE` (chaque fichier probant), `CLOSURE_NEXT_OPENING`, `CHAIN_LINK` ; références de fichier et de journée ajoutées à `CANONICAL_UNIT` et `DECLARED_PERIOD`, avec leur rôle (clôture ou ouverture). Périodes déclarées limitées aux journées effectivement reportées. Au 7 octobre : unité du 07, fichier suivant (relivraison, ligne du 10), contrôle d'ouverture contre le 06. Mutants m37 et m38 ; côté interface, t17 et t18. |
+| **P2** Un compte bloqué pour rupture affichait sa journée comme « couverte » (seul le solde dérivé était vérifié). | `bank_date_covered` = dernière date que la lecture rendrait `AVAILABLE` ; `bank_date_observed` rendue et affichée à part, jamais comme une couverture. Une même évaluation par journée sert D et la date couverte. Un test de propriété le vérifie sur tous les comptes de test et sur 42 dates. Mutants m39 à m41 ; côté interface, t16. |
+
+**Troisième revue indépendante**, sur ces corrections avant commit. Verdict : `FAIL`, avec un P1 de la même famille que le constat CTO, exécuté sur PostgreSQL 17. Tous les points sont corrigés dans les mêmes fichiers.
+
+| Constat | Traitement |
+|---|---|
+| **P1** Une journée non résolue **avant** le premier ancrage de la chaîne était ignorée : le premier relevé retenu restait un ancrage, et une livraison disputée antérieure au premier relevé sortait de l'historique (rendue `NO_STATEMENT`). | Premier ancrage non prouvé si une journée non résolue le précède. L'historique commence aussi à la première livraison non remplacée. Scénarios ORA « disputée en amont » et « disputée avant la série » ; mutants m46 et m47. |
+| **P2** La clôture par ligne ultérieure était acceptée d'un fichier à revoir, d'identité non corroborée, de version de parseur non prise en charge ou non entièrement accepté. | Une seule définition du fichier digne de preuve, commune à la clôture et à l'absence de mouvement (§ 2). Scénario ORA identité : le 01 et le 04, clos seulement par ces fichiers, deviennent `DAY_NOT_CLOSED` ; mutant m42. |
+| **P2** Un report arrière ne contrôlait pas la devise de l'unité qui le fournit. | Devise contrôlée jusqu'à cette unité. Scénario ORA devise étendu à une période déclarée antérieure ; mutant m45. |
+| **P2** Les périodes déclarées qui portent une clôture confirmée par l'ouverture suivante n'étaient pas rendues. | Rendues ; scénario ORA « preuve de continuité » ; mutant m43. |
+| P3 Une période qui ne prouve aucune journée pouvait être rendue ; la référence du contrôle d'ouverture était la veille, pas l'unité comparée ; motif `FORMAT_NOT_QUALIFIED` rendu avant le premier relevé d'un format qualifié. | Période sans preuve exclue (m44). Référence = unité dont la clôture a été comparée, et période qui prouve les journées intermédiaires rendue (m48, m49). Format du premier relevé retenu lu pour la qualification. |
+
+**Relecture de la seconde passe** par le même relecteur. Verdict : `PASS_WITH_RESERVES`. Les six contre-exemples sont corrigés, réexécutés sur PostgreSQL 17. Aucun nouveau cas de solde rendu `AVAILABLE` sans preuve n'a été trouvé. Les réserves portent sur un excès de prudence :
+- **Unité sans solde dérivable** : elle était comptée comme non résolue, alors qu'elle ne se résoudra jamais ; placée avant le premier ancrage, elle bloquait le compte définitivement. **Corrigé** : elle compte comme une journée non prouvée, comme avant la contre-revue. Scénario BIS « sans solde initial », mutant m50.
+- **Clôture exigeant un fichier entièrement accepté** : une seule journée en attente dans un fichier lui retire la valeur de preuve de clôture pour ses autres journées. Choix prudent conservé, **soumis à l'arbitrage CTO** (voir § 6).
+- **Livraisons en attente antérieures au premier relevé** : elles bloquent jusqu'à leur sortie de l'état vivant. Le chemin de résolution Daily v2 est à confirmer en exploitation (voir § 6).
+
+**Attentes modifiées, et pourquoi.**
+- Le scénario « ORA contesté » attendait `AVAILABLE` 40 au 04, lendemain d'une journée en conflit non résolue. C'est exactement le cas critiqué par le constat P1 : le 04 est désormais `NOT_COVERED` (`CHAIN_UNPROVEN`), et `CHAIN_UNPROVEN` s'ajoute aux 03 et 05.
+- « ORA identité » attendait `AVAILABLE` 25 au 04 : sa clôture ne reposait que sur un fichier dont une journée livrée est à revoir. Il est désormais `DAY_NOT_CLOSED` (P2 de la troisième revue).
+- Deux jeux d'essai sont ajustés sans changer leur objet :
+  - « ORA suivante à revoir » livre sa journée à revoir par un second fichier, pour que la clôture de D reste prouvée par un fichier digne de preuve ;
+  - « ORA devise » déclare sa période dès le 29/09.
+- Décompte des comptes de test : 32 XOF attendus, 33 listés ; sous-total au 02 : 2 250,00 (six comptes).
+
+**Arbitrage CTO sur la clôture des journées.** La règle prudente est acceptée pour ce lot fermé ; elle devra être évaluée sur les vrais fichiers avant toute utilisation quotidienne. L'horodatage d'édition bancaire reste une piste d'amélioration, sans être démontré comme l'unique preuve possible.
+
 ## 6. Limites et risques
 
 - **Peu de comptes disponibles sans qualification réelle :** rien n'est qualifié par la migration ; tant que la phase de qualification sur fichiers réels (GO dédié) n'a pas posé de statut, tous les comptes restent `NON COUVERT` (`FORMAT_NOT_QUALIFIED`).
 - **Journées sans mouvement des formats Excel :** jamais couvertes tant que la correction d'ingestion du § 2 n'est pas arbitrée et réalisée.
-- **Couverture réduite par la règle de clôture (choix prudent, à arbitrer) :**
+- **Couverture réduite par la règle de clôture (choix prudent, accepté par le CTO pour ce lot fermé) :**
   - la dernière journée livrée d'un fichier reste `DAY_NOT_CLOSED` jusqu'à l'une de deux preuves :
     - un fichier ultérieur la relivre avec une ligne plus récente ;
     - l'ouverture de l'unité suivante, à travers des journées prouvées sans mouvement, égale sa clôture ;
   - avec des exports qui ne se recouvrent pas et des week-ends non prouvés, D = veille peut donc rester non couvert ;
-  - seul un horodatage d'édition fourni par la banque et enregistré à l'ingestion (correction du § 2) permettrait de lever cette limite sans affaiblir la preuve.
+  - à évaluer sur les vrais fichiers avant toute utilisation quotidienne. Un horodatage d'édition fourni par la banque et enregistré à l'ingestion (correction du § 2) est une piste, pas nécessairement la seule.
+- **Propagation jusqu'à résolution :** une journée non résolue (conflit, version en attente, provisoire jamais finalisée, à revoir, version de parseur non prise en charge) rend non couvertes toutes les dates postérieures du compte, jusqu'à sa résolution dans Daily v2. Cela vaut aussi pour une livraison en attente antérieure au premier relevé retenu. Ce lot ne propose aucune résolution (aucun réancrage opérateur). Le chemin de résolution Daily v2 des journées `staged` et `needs_review` est à confirmer en exploitation, car les statuts de staging n'ont pas d'état « rejeté ».
+- **Clôture et fichier entièrement accepté (arbitrage proposé) :** un fichier ne prouve la clôture d'une journée que s'il est digne de preuve, donc entièrement accepté (§ 2). Une journée en attente ou en conflit dans un fichier lui retire cette valeur pour ses autres journées. C'est plus strict que nécessaire pour prouver l'heure de production du fichier. Un assouplissement possible : n'exiger, pour la clôture, que la validité, la version de parseur et l'absence de motif de revue. Il reste à arbitrer.
 - **Opérations à date future :** une ligne datée après le jour du dépôt n'a aucune valeur de preuve. Une ligne datée entre la production et le dépôt du fichier en aurait une ; ce risque résiduel est faible et n'est pas détectable sans horodatage d'édition.
 - **Ancrage de la chaîne :** c'est la première unité canonique de clôture connue. Une rupture ancienne bloque le compte, et une discontinuité non prouvée le laisse non couvert, jusqu'à correction des relevés (aucun réancrage opérateur dans ce lot).
 - **Journée livrée le jour de l'export, puis complétée :** si la journée complète diffère, elle passe en conflit Daily v2 et reste bloquée jusqu'à son traitement ; la chaîne suivante reste non prouvée.
 - **Unités historiques non adoptées** (sans `account_registry_id`) : ignorées ; le compte apparaît sans relevé. Les doublons d'identité dans le registre Daily v2 ne sont pas détectés par ce lot.
-- **Coût de lecture :** proportionnel au nombre de jours de l'historique et d'exports par compte ; à mesurer sur volume réel avant ouverture.
+- **Coût de lecture :** proportionnel au nombre de jours de l'historique et d'exports par compte. L'évaluation par journée repose sur des fonctions de fenêtre et des jointures par journée. Elle reste à mesurer sur volume réel avant ouverture.
 - **Fixtures :** données Daily v2 amorcées en mode réplica (gardes Daily v2 désactivées le temps de l'amorçage), cohérence vérifiée ensuite. Le cas d'un export à revoir dont les journées livrées sont valides n'est pas produit par le pipeline actuel ; il isole le contrôle au niveau de l'export.
 - **Date cible par défaut (veille à Dakar) :** paramètre d'exploitation à confirmer avant ouverture ; calendrier ouvré non pris en compte.
 - **Local Node 22, CI Node 20 :** compatibilité simulée sans `navigator` ; à confirmer par la CI.

@@ -26,7 +26,8 @@ SELECT tr_test.put('x_' || n, (public.treasury_admin_add_expected_account_v1(tr_
 FROM unnest(ARRAY['ora_main', 'bdk_break', 'atb_gap', 'bis_gap', 'bicis_prov', 'ora_cur', 'bridge_inactive', 'eur_acc',
                   'ora_review', 'bdk_noref', 'ora_conflict', 'ora_lead', 'ora_nostmt', 'ora_after', 'bdk_intraday',
                   'ora_contest', 'ora_oldparser', 'ora_identity', 'ora_next', 'atb_weekend', 'ora_cont', 'ora_reset',
-                  'ora_tail']) n;
+                  'ora_tail', 'ora_dispute', 'ora_pending_mid', 'ora_staged_mid', 'ora_back', 'ora_lead_pending',
+                  'ora_first_pending', 'ora_prov', 'bis_nobal_first']) n;
 SELECT tr_test.put('x_nsia', (public.treasury_admin_add_expected_account_v1(tr_test.key('add-nsia'), NULL, 'NSIA', 'XOF',
   'TR NSIA principal', 'Banque attendue sans export pris en charge') ->> 'expected_account_id')::uuid);
 SELECT tr_test.put('x_bdk_future', (public.treasury_admin_add_expected_account_v1(tr_test.key('add-bdk-future'), NULL, 'bdk', 'xof',
@@ -42,9 +43,9 @@ UPDATE public.daily_statement_account_registry
  WHERE id = tr_test.id('bridge_inactive');
 SET session_replication_role = origin;
 
-SELECT tr_test.assert((SELECT count(*) FROM treasury_private.expected_accounts WHERE status = 'ACTIVE') = 25,
-  '25 comptes attendus actifs');
-SELECT tr_test.assert((SELECT count(*) FROM treasury_private.events WHERE event_type = 'EXPECTED_ACCOUNT_ADDED') = 25,
+SELECT tr_test.assert((SELECT count(*) FROM treasury_private.expected_accounts WHERE status = 'ACTIVE') = 33,
+  '33 comptes attendus actifs');
+SELECT tr_test.assert((SELECT count(*) FROM treasury_private.events WHERE event_type = 'EXPECTED_ACCOUNT_ADDED') = 33,
   'chaque ajout journalisé');
 SELECT tr_test.assert((SELECT bank || '/' || currency FROM treasury_private.expected_accounts WHERE id = tr_test.id('x_bdk_future'))
   = 'BDK/XOF', 'banque et devise normalisées');

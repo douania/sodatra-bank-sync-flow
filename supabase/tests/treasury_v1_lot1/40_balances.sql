@@ -6,19 +6,51 @@
 \set ON_ERROR_STOP on
 
 -- En tête : scénarios dont l'altération change le STATUT rendu (mutants m09,
--- m14, m19 à m21), avant les contrôles de motifs.
+-- m14, m19 à m21, m31 à m36), avant les contrôles de motifs et de provenance.
 -- Période déclarée au-delà de la dernière ligne : rien n'est prouvé ; le 04,
 -- prouvé par la ligne du 05 de l'export suivant, prend l'ouverture du 05.
 SELECT tr_test.check('2026-10-01', 'ora_tail', 'NOT_COVERED', NULL, 'DAY_NOT_CLOSED', 'ORA dernière ligne du premier fichier');
 SELECT tr_test.check('2026-10-02', 'ora_tail', 'NOT_COVERED', NULL, 'DAY_WITHOUT_PROOF', 'ORA période déclarée sans ligne ultérieure');
 SELECT tr_test.check('2026-10-04', 'ora_tail', 'AVAILABLE', '20.00', '', 'ORA sans mouvement avant l''ouverture suivante');
 
+-- Constat CTO P1 : une contradiction ou une incertitude portée par une journée
+-- non résolue se propage aux dates postérieures jusqu'à sa résolution.
+-- Journée disputée continue : la suivante s'appuie sur une clôture non résolue.
+SELECT tr_test.check('2026-10-01', 'ora_pending_mid', 'AVAILABLE', '200.00', '', 'ORA avant la journée disputée');
+SELECT tr_test.check('2026-10-02', 'ora_pending_mid', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA journée retenue mais disputée');
+SELECT tr_test.check('2026-10-03', 'ora_pending_mid', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA appui sur une clôture disputée');
+-- Journée livrée seulement par une version non retenue, enjambée par la continuité.
+SELECT tr_test.check('2026-10-02', 'ora_staged_mid', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA journée livrée non retenue');
+SELECT tr_test.check('2026-10-03', 'ora_staged_mid', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA continuité enjambant une journée non résolue');
+-- L'ouverture d'une journée disputée est contrôlée : la rupture (1400 puis 9000)
+-- bloque la journée disputée et les dates postérieures.
+SELECT tr_test.check('2026-10-01', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN_AFTER_DATE', 'ORA clôture contredite par la journée disputée');
+SELECT tr_test.check('2026-10-02', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN,DAY_CONTESTED', 'ORA rupture portée par la journée disputée');
+SELECT tr_test.check('2026-10-03', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN,CHAIN_UNPROVEN', 'ORA date postérieure à la journée disputée');
+-- Report arrière : il vient de l'ouverture contrôlée, il ne prouve pas la continuité.
+SELECT tr_test.check('2026-10-03', 'ora_back', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA report arrière d''une ouverture non continue');
+SELECT tr_test.check('2026-10-04', 'ora_back', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA ouverture après un écart non prouvé');
+-- Journée non résolue AVANT le premier relevé retenu : le premier ancrage n'est pas prouvé.
+SELECT tr_test.check('2026-10-03', 'ora_lead_pending', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA report arrière après une journée disputée en amont');
+SELECT tr_test.check('2026-10-04', 'ora_lead_pending', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA premier relevé après une journée disputée');
+SELECT tr_test.check('2026-10-02', 'ora_first_pending', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA premier relevé après la livraison disputée');
+SELECT tr_test.check('2026-10-01', 'ora_first_pending', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA livraison disputée avant tout relevé retenu');
+-- Une unité sans solde dérivable, qui ne se résoudra pas, n'empêche pas l'ancrage suivant.
+SELECT tr_test.check('2026-10-04', 'bis_nobal_first', 'AVAILABLE', '510.00', '', 'BIS ancrage après une journée sans solde');
+-- Clôture prouvée seulement par des fichiers dignes de preuve : ni identité non
+-- corroborée, ni journée livrée à revoir.
+SELECT tr_test.check('2026-10-01', 'ora_identity', 'NOT_COVERED', NULL, 'DAY_NOT_CLOSED', 'ORA clôture par un fichier d''identité non corroborée');
+SELECT tr_test.check('2026-10-04', 'ora_identity', 'NOT_COVERED', NULL, 'DAY_NOT_CLOSED', 'ORA clôture par un fichier à revoir');
+-- Devise contrôlée jusqu'à l'unité qui fournit un solde reporté en arrière.
+SELECT tr_test.check('2026-09-30', 'ora_cur', 'BLOCKED', NULL, 'CURRENCY_CONTRADICTION', 'ORA report arrière depuis une unité en EUR');
+
 -- Journées disputées par un second export : non retenue, conflit, en attente.
+-- L'incertitude se propage aux dates postérieures jusqu'à leur résolution.
 SELECT tr_test.check('2026-10-01', 'ora_contest', 'AVAILABLE', '20.00', '', 'ORA avant les journées disputées');
 SELECT tr_test.check('2026-10-02', 'ora_contest', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA mouvement livré non retenu');
-SELECT tr_test.check('2026-10-03', 'ora_contest', 'BLOCKED', NULL, 'DAY_CONFLICT', 'ORA journée en conflit');
-SELECT tr_test.check('2026-10-04', 'ora_contest', 'AVAILABLE', '40.00', '', 'ORA journée suivante, chaîne continue');
-SELECT tr_test.check('2026-10-05', 'ora_contest', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA journée en attente de revue');
+SELECT tr_test.check('2026-10-03', 'ora_contest', 'BLOCKED', NULL, 'CHAIN_UNPROVEN,DAY_CONFLICT', 'ORA journée en conflit');
+SELECT tr_test.check('2026-10-04', 'ora_contest', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA journée suivant un conflit non résolu');
+SELECT tr_test.check('2026-10-05', 'ora_contest', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN,DAY_CONTESTED', 'ORA journée en attente de revue');
 
 -- Couverture positive : unités closes, journées sans mouvement d'une période
 -- DÉCLARÉE dont le fichier porte une ligne ultérieure.
@@ -47,15 +79,23 @@ BEGIN
   PERFORM tr_test.assert(r ->> 'read_at' IS NOT NULL, 'instant de lecture');
   PERFORM tr_test.assert_eq(r ->> 'basis', 'ACCOUNTING_DATE', 'base : date comptable');
   PERFORM tr_test.assert_eq(a -> 'dates' ->> 'bank_date_covered', '2026-10-09', 'date bancaire couverte (toutes dates)');
+  PERFORM tr_test.assert_eq(a -> 'dates' ->> 'bank_date_observed', '2026-10-09', 'date bancaire observée');
   PERFORM tr_test.assert_eq(a -> 'dates' ->> 'age_days', (treasury_private.today() - date '2026-10-09')::text, 'fraîcheur en jours');
   PERFORM tr_test.assert_eq(a -> 'dates' ->> 'balance_source_day', '2026-10-02', 'jour source du solde reporté');
-  PERFORM tr_test.assert_eq(jsonb_array_length(a -> 'sources')::text, '2', 'deux sources : unité et période déclarée');
+  PERFORM tr_test.assert_eq(jsonb_array_length(a -> 'sources')::text, '4', 'unité, clôture, chaîne, période déclarée');
   s := a -> 'sources' -> 0;
-  PERFORM tr_test.assert_eq(s ->> 'kind', 'CANONICAL_UNIT', 'source 1 : unité');
+  PERFORM tr_test.assert_eq(s ->> 'kind' || '/' || (s ->> 'role'), 'CANONICAL_UNIT/CLOSING', 'source 1 : clôture de l''unité');
+  PERFORM tr_test.assert_eq(s ->> 'export_id', tr_test.id('e_ora_main')::text, 'référence du fichier de l''unité');
   PERFORM tr_test.assert(s ->> 'ingested_at' IS NOT NULL AND s ->> 'export_ingested_at' IS NOT NULL, 'ingestion de l''unité et de son export');
   s := a -> 'sources' -> 1;
-  PERFORM tr_test.assert_eq(s ->> 'kind', 'DECLARED_PERIOD', 'source 2 : période déclarée');
+  PERFORM tr_test.assert_eq(s ->> 'kind' || '/' || (s ->> 'later_line_day'), 'CLOSURE_LATER_LINE/2026-10-07', 'source 2 : ligne ultérieure');
+  s := a -> 'sources' -> 2;
+  PERFORM tr_test.assert_eq(s ->> 'kind' || '/' || (s ->> 'link') || '/' || (s ->> 'reference_day'), 'CHAIN_LINK/OK/2026-10-01',
+    'source 3 : contrôle de chaîne');
+  s := a -> 'sources' -> 3;
+  PERFORM tr_test.assert_eq(s ->> 'kind', 'DECLARED_PERIOD', 'source 4 : période déclarée');
   PERFORM tr_test.assert_eq(s ->> 'period_start' || '/' || (s ->> 'closed_until'), '2026-10-01/2026-10-06', 'période et clôture');
+  PERFORM tr_test.assert_eq(s ->> 'export_id', tr_test.id('e_ora_main')::text, 'référence du fichier probant');
   PERFORM tr_test.assert(s ->> 'export_ingested_at' IS NOT NULL, 'ingestion de la preuve');
   PERFORM tr_test.assert_eq(a -> 'value_dates' ->> 'total_lines', '4', 'lignes sur 90 jours au 04');
   PERFORM tr_test.assert_eq(a -> 'value_dates' ->> 'lines_with_value_date', '2', 'lignes datées en valeur');
@@ -150,13 +190,83 @@ SELECT tr_test.check('2026-10-01', 'ora_oldparser', 'NOT_COVERED', NULL, 'PARSER
 
 -- Une période déclarée par un export à revoir ne prouve rien.
 SELECT tr_test.check('2026-10-02', 'ora_identity', 'NOT_COVERED', NULL, 'DAY_WITHOUT_PROOF', 'ORA identité non corroborée');
-SELECT tr_test.check('2026-10-04', 'ora_identity', 'AVAILABLE', '25.00', '', 'ORA unité propre après un intervalle continu');
 SELECT tr_test.check('2026-10-06', 'ora_identity', 'NOT_COVERED', NULL, 'DAY_WITHOUT_PROOF', 'ORA export avec une journée à revoir');
 
 -- Journées sans mouvement avant le premier mouvement d'une période déclarée :
 -- solde = ouverture de la première unité, même non close.
 SELECT tr_test.check('2026-09-29', 'ora_lead', 'AVAILABLE', '500.00', '', 'ORA amont prouvé');
 SELECT tr_test.check('2026-09-27', 'ora_lead', 'NOT_COVERED', NULL, 'NO_STATEMENT', 'ORA avant toute période');
+
+-- Constat CTO P2 (provenance), après les contrôles de statut : les preuves de
+-- clôture et de continuité effectivement utilisées sont rendues, avec leurs
+-- références et leurs dates.
+DO $$
+DECLARE a jsonb; s jsonb;
+BEGIN
+  -- Le 07 est clos par le fichier suivant (relivraison et ligne du 10).
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-07'), 'ora_main');
+  PERFORM tr_test.assert_eq(jsonb_array_length(a -> 'sources')::text, '4', 'ORA 07 : unité, clôture, chaîne, période');
+  s := a -> 'sources' -> 0;
+  PERFORM tr_test.assert_eq(s ->> 'unit_id', tr_test.id('u_ora_main_07')::text, 'ORA 07 : unité source');
+  s := a -> 'sources' -> 1;
+  PERFORM tr_test.assert_eq(s ->> 'kind', 'CLOSURE_LATER_LINE', 'ORA 07 : preuve de clôture par ligne ultérieure');
+  PERFORM tr_test.assert_eq(s ->> 'export_id', tr_test.id('e_ora_main_tail')::text, 'ORA 07 : fichier suivant probant');
+  PERFORM tr_test.assert_eq(s ->> 'delivery' || '/' || (s ->> 'later_line_day'), 'duplicate/2026-10-10', 'ORA 07 : relivraison, ligne du 10');
+  PERFORM tr_test.assert(s ->> 'export_ingested_at' IS NOT NULL, 'ORA 07 : dépôt du fichier probant');
+  -- Ouverture du 07 comparée à la clôture du 05, reportée à travers le 06 prouvé sans mouvement.
+  s := a -> 'sources' -> 2;
+  PERFORM tr_test.assert_eq(s ->> 'link' || '/' || (s ->> 'reference_day'), 'OK/2026-10-05', 'ORA 07 : clôture comparée');
+  s := a -> 'sources' -> 3;
+  PERFORM tr_test.assert_eq(s ->> 'kind' || '/' || (s ->> 'export_id') || '/' || (s ->> 'closed_until'),
+    'DECLARED_PERIOD/' || tr_test.id('e_ora_main')::text || '/2026-10-06', 'ORA 07 : période qui prouve le 06');
+  -- Le 01 est clos par l'ouverture égale du 04, à travers les 02 et 03 prouvés sans
+  -- mouvement par un troisième fichier ; le quatrième, sans ligne, ne prouve rien.
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-01'), 'ora_prov');
+  PERFORM tr_test.assert_eq(jsonb_array_length(a -> 'sources')::text, '4', 'ORA preuve de continuité : quatre sources');
+  s := a -> 'sources' -> 1;
+  PERFORM tr_test.assert_eq(s ->> 'kind' || '/' || (s ->> 'unit_id') || '/' || (s ->> 'export_id'),
+    'CLOSURE_NEXT_OPENING/' || tr_test.id('u_ora_prov_04')::text || '/' || tr_test.id('e_ora_prov_b')::text,
+    'ORA preuve de continuité : unité suivante');
+  s := a -> 'sources' -> 3;
+  PERFORM tr_test.assert_eq(s ->> 'export_id' || '/' || (s ->> 'period_start') || '/' || (s ->> 'closed_until'),
+    tr_test.id('e_ora_prov_c')::text || '/2026-10-02/2026-10-03', 'ORA preuve de continuité : période des 02 et 03');
+  -- Le 01 est clos par l'ouverture égale du 02 (fichier suivant).
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-01'), 'ora_cont');
+  s := a -> 'sources' -> 1;
+  PERFORM tr_test.assert_eq(s ->> 'kind' || '/' || (s ->> 'day'), 'CLOSURE_NEXT_OPENING/2026-10-02', 'ORA continuité : unité suivante');
+  PERFORM tr_test.assert_eq(s ->> 'export_id', tr_test.id('e_ora_cont_b')::text, 'ORA continuité : fichier de l''unité suivante');
+  PERFORM tr_test.assert(s ->> 'unit_id' IS NOT NULL AND s ->> 'ingested_at' IS NOT NULL, 'ORA continuité : références et dates');
+  PERFORM tr_test.assert_eq((a -> 'sources' -> 2) ->> 'link', 'ANCHOR', 'ORA continuité : premier relevé');
+  -- Report arrière : ouverture de l'unité suivante, continuité et période prouvées.
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-04'), 'ora_tail');
+  PERFORM tr_test.assert_eq(jsonb_array_length(a -> 'sources')::text, '3', 'ORA report arrière : trois sources');
+  s := a -> 'sources' -> 0;
+  PERFORM tr_test.assert_eq(s ->> 'role' || '/' || (s ->> 'day'), 'OPENING/2026-10-05', 'ORA report arrière : ouverture du 05');
+  s := a -> 'sources' -> 1;
+  PERFORM tr_test.assert_eq(s ->> 'link' || '/' || (s ->> 'reference_day'), 'CONTINUOUS_GAP/2026-10-01',
+    'ORA report arrière : continuité avec la clôture du 01');
+  s := a -> 'sources' -> 2;
+  PERFORM tr_test.assert_eq(s ->> 'export_id' || '/' || (s ->> 'closed_until'), tr_test.id('e_ora_tail_b')::text || '/2026-10-04',
+    'ORA report arrière : période déclarée probante');
+  -- Contrôle de chaîne en échec rendu avec sa référence (solde observé, non retenu).
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-03'), 'ora_dispute');
+  s := a -> 'sources' -> 2;
+  PERFORM tr_test.assert_eq(s ->> 'link' || '/' || (s ->> 'reference_day'), 'UNPROVEN/2026-10-02',
+    'ORA disputé : continuité non prouvée depuis la journée disputée');
+END $$;
+
+-- Constat CTO P2 (fraîcheur) : une date observée n'est pas une date couverte.
+DO $$
+DECLARE a jsonb;
+BEGIN
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-02'), 'bdk_break');
+  PERFORM tr_test.assert(jsonb_typeof(a -> 'dates' -> 'bank_date_covered') = 'null', 'BDK rupture : aucune date couverte');
+  PERFORM tr_test.assert(jsonb_typeof(a -> 'dates' -> 'age_days') = 'null', 'BDK rupture : aucune fraîcheur');
+  PERFORM tr_test.assert_eq(a -> 'dates' ->> 'bank_date_observed', '2026-10-02', 'BDK rupture : date observée');
+  a := tr_test.account(tr_test.read_as('t_reader', '2026-10-05'), 'ora_contest');
+  PERFORM tr_test.assert_eq((a -> 'dates' ->> 'bank_date_covered') || '/' || (a -> 'dates' ->> 'bank_date_observed'),
+    '2026-10-01/2026-10-04', 'ORA contesté : couvert avant la dispute, observé ensuite');
+END $$;
 
 -- Absence de zéro par défaut : aucun solde rendu pour un compte non disponible,
 -- aucun montant consolidé sans compte disponible.
@@ -179,23 +289,68 @@ DO $$
 DECLARE r jsonb := tr_test.read_as('t_reader', '2026-10-02'); c jsonb := r -> 'consolidation';
 BEGIN
   PERFORM tr_test.assert_eq(c ->> 'status', 'BLOCKED', 'consolidation bloquée par les ruptures et la devise');
-  PERFORM tr_test.assert_eq(c ->> 'accounts_expected', '24', 'dénominateur : 24 comptes XOF attendus');
+  PERFORM tr_test.assert_eq(c ->> 'accounts_expected', '32', 'dénominateur : 32 comptes XOF attendus');
   PERFORM tr_test.assert_eq(c ->> 'accounts_out_of_scope', '1', 'un compte hors périmètre listé à part');
-  PERFORM tr_test.assert_eq(jsonb_array_length(r -> 'accounts')::text, '25', 'tous les comptes attendus restent listés');
+  PERFORM tr_test.assert_eq(jsonb_array_length(r -> 'accounts')::text, '33', 'tous les comptes attendus restent listés');
   PERFORM tr_test.assert(c -> 'reasons' ? 'INVENTORY_NOT_ATTESTED', 'inventaire non attesté');
   PERFORM tr_test.assert(c -> 'reasons' ? 'REGISTRY_ACCOUNTS_OUTSIDE_INVENTORY', 'compte du registre hors inventaire signalé');
   PERFORM tr_test.assert(r -> 'inventory' -> 'unlisted_registry_accounts' @> jsonb_build_array(jsonb_build_object(
     'registry_account_id', tr_test.id('ora_unlisted'))), 'compte hors inventaire nommé');
-  -- ORA 1200 + ATB 650 + BDK sans référence 20 + BDK intrajournalier 150 + ORA continuité 30 :
-  -- seuls comptes disponibles au 02.
-  PERFORM tr_test.assert_eq(c ->> 'amount', '2050.00', 'sous-total des seuls comptes disponibles');
-  PERFORM tr_test.assert_eq(c ->> 'accounts_available', '5', 'cinq comptes disponibles');
+  -- ORA 1200 + ATB 650 + BDK sans référence 20 + BDK intrajournalier 150 + ORA continuité 30
+  -- + ORA preuve de continuité 200 : seuls comptes disponibles au 02.
+  PERFORM tr_test.assert_eq(c ->> 'amount', '2250.00', 'sous-total des seuls comptes disponibles');
+  PERFORM tr_test.assert_eq(c ->> 'accounts_available', '6', 'six comptes disponibles');
+END $$;
+
+-- Reproduction exacte du constat CTO P1 sur ORA principal (montants fictifs) :
+-- le 21, disputé, ouvre sur 9000 après une clôture de 1400 le 20.
+SET session_replication_role = replica;
+SELECT tr_test.seed_export('cto_chain_a','ora_main','structured_bank_statement_csv','structured-csv-0b','2026-10-20','2026-10-23','2026-10-24');
+SELECT tr_test.seed_unit('cto_chain_a','2026-10-20',1300,1400);
+SELECT tr_test.seed_unit('cto_chain_a','2026-10-21',9000,9100);
+SELECT tr_test.seed_unit('cto_chain_a','2026-10-22',9100,9200);
+SELECT tr_test.seed_unit('cto_chain_a','2026-10-23',9200,9300);
+SELECT tr_test.seed_export('cto_chain_b','ora_main','structured_bank_statement_csv','structured-csv-0b','2026-10-21','2026-10-21','2026-10-22');
+SELECT tr_test.seed_unit('cto_chain_b','2026-10-21',9000,9110,p_staging_status=>'needs_review',p_canonical=>false);
+SET session_replication_role = origin;
+SELECT tr_test.check('2026-10-22', 'ora_main', 'BLOCKED', NULL, 'CHAIN_BROKEN,CHAIN_UNPROVEN', 'CTO P1 : date postérieure à la journée disputée');
+SELECT tr_test.check('2026-10-07', 'ora_main', 'AVAILABLE', '1300.00', '', 'CTO P1 : dates antérieures inchangées');
+SELECT tr_test.assert_eq((a -> 'dates' ->> 'bank_date_covered') || '/' || (a -> 'dates' ->> 'bank_date_observed'),
+  '2026-10-09/2026-10-22', 'CTO P1 : couverture inchangée, observation distincte')
+FROM tr_test.account(tr_test.read_as('t_reader', '2026-10-22'), 'ora_main') a;
+
+-- Une seule définition : pour chaque compte, la date bancaire couverte est
+-- exactement la dernière date D rendue disponible, quelle que soit la date lue.
+DO $$
+DECLARE v_bad text; v_with_cover integer;
+BEGIN
+  WITH reads AS (
+    SELECT g::date AS d, tr_test.read_as('t_reader', g::date) AS r
+    FROM generate_series(date '2026-09-20', date '2026-10-31', interval '1 day') g
+  ), rows AS (
+    SELECT rd.d, a ->> 'alias' AS alias, a ->> 'status' AS status, (a -> 'dates' ->> 'bank_date_covered')::date AS covered
+    FROM reads rd, jsonb_array_elements(rd.r -> 'accounts') a
+  ), per AS (
+    SELECT alias, max(d) FILTER (WHERE status = 'AVAILABLE') AS last_available,
+           count(DISTINCT coalesce(covered::text, '-')) AS variants, max(covered) AS covered
+    FROM rows GROUP BY alias
+  )
+  SELECT string_agg(alias || ' ' || coalesce(last_available::text, '-') || ' / ' || coalesce(covered::text, '-'), '; '),
+         (SELECT count(*) FROM per WHERE covered IS NOT NULL)
+    INTO v_bad, v_with_cover
+    FROM per WHERE variants <> 1 OR last_available IS DISTINCT FROM covered;
+  PERFORM tr_test.assert(v_bad IS NULL, 'date couverte = dernière date disponible : ' || coalesce(v_bad, ''));
+  PERFORM tr_test.assert(v_with_cover >= 10, 'au moins dix comptes couverts (propriété non vide)');
 END $$;
 
 -- Changement de qualification : pilote ou suspension rendent le compte non couvert.
 SELECT treasury_private.set_bank_format_qualification('ORA', 'structured_bank_statement_csv', 'PILOT', 'tr-test:pilote',
   'Passage synthétique en pilote', 'operateur-test');
 SELECT tr_test.check('2026-10-07', 'ora_main', 'NOT_COVERED', NULL, 'FORMAT_PILOT', 'ORA en pilote');
+-- La couverture suit la qualification : un format en pilote ne couvre aucune date.
+SELECT tr_test.assert(jsonb_typeof(a -> 'dates' -> 'bank_date_covered') = 'null'
+                      AND a -> 'dates' ->> 'bank_date_observed' = '2026-10-22', 'ORA en pilote : observé, non couvert')
+FROM tr_test.account(tr_test.read_as('t_reader', '2026-10-07'), 'ora_main') a;
 SELECT treasury_private.set_bank_format_qualification('ORA', 'structured_bank_statement_csv', 'SUSPENDED', 'tr-test:suspension',
   'Suspension synthétique', 'operateur-test');
 SELECT tr_test.check('2026-10-07', 'ora_main', 'NOT_COVERED', NULL, 'FORMAT_SUSPENDED', 'ORA suspendu');

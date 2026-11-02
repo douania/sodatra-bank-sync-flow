@@ -718,8 +718,8 @@ acc AS (
 units AS (
   SELECT u.id AS unit_id, u.account_registry_id AS rid, u.accounting_date AS day,
          u.opening_balance_derived AS opening, u.closing_balance_derived AS closing,
-         u.aggregates_status, u.currency AS unit_currency, u.ingested_at,
-         a.created_at AS export_ingested_at, a.source_format,
+         u.aggregates_status, u.currency AS unit_currency, u.ingested_at, u.day_unit_id, u.active_day_content_hash,
+         a.id AS export_id, a.created_at AS export_ingested_at, a.source_format,
          -- Version de parseur prise en charge pour la banque et le format.
          EXISTS (SELECT 1 FROM treasury_private.supported_formats f
                  WHERE f.bank = a.bank AND f.source_format = a.source_format AND a.parser_version IS NOT NULL
@@ -727,24 +727,56 @@ units AS (
            AS format_supported,
          -- Ni l'unité ni son export ne sont à revoir (identité de compte comprise).
          (u.validation_status = 'valid' AND a.parser_validation_status = 'valid'
-          AND cardinality(u.review_reason_codes) = 0 AND cardinality(a.review_reason_codes) = 0) AS unit_clean,
-         -- Journée close, preuve (a) : ce contenu exact a été livré par un fichier qui
-         -- porte aussi une ligne datée APRÈS la journée, et au plus tard le jour de
-         -- son dépôt (heure de Dakar) : le fichier a été produit la journée finie.
-         -- Ni l'instant de dépôt ni la date de référence saisie ne le prouvent.
-         EXISTS (SELECT 1 FROM public.daily_statement_units_staging s2
-                 JOIN public.daily_statement_export_attempts a2 ON a2.id = s2.attempt_id
-                 WHERE s2.day_unit_id = u.day_unit_id AND s2.day_content_hash = u.active_day_content_hash
-                   AND s2.status IN ('promoted', 'duplicate')
-                   AND EXISTS (SELECT 1 FROM public.daily_statement_units_staging s3
-                               WHERE s3.attempt_id = s2.attempt_id AND s3.accounting_date > u.accounting_date
-                                 AND s3.accounting_date <= (a2.created_at AT TIME ZONE 'Africa/Dakar')::date))
-           AS closed_by_later_line
+          AND cardinality(u.review_reason_codes) = 0 AND cardinality(a.review_reason_codes) = 0) AS unit_clean
   FROM public.daily_statement_units_canonical u
   JOIN acc ON acc.rid = u.account_registry_id
   JOIN public.daily_statement_units_staging s ON s.id = u.promoted_from_staging_unit_id
   JOIN public.daily_statement_export_attempts a ON a.id = s.attempt_id
   WHERE u.status = 'ingested'
+),
+-- Fichiers dignes de preuve : valides, d'une version de parseur prise en charge,
+-- sans motif de revue (identité de compte comprise) et entièrement acceptés
+-- (aucune journée livrée en conflit, en attente, à revoir, en échec ou non
+-- valide). Seuls ils prouvent la clôture d'une journée ou, si leur période est
+-- déclarée, l'absence de mouvement.
+trusted_exports AS (
+  SELECT a.id AS export_id, a.account_registry_id AS rid, a.bank, a.source_format, a.created_at AS export_ingested_at,
+         a.export_period_start, a.export_period_end, eu.last_line_day
+  FROM public.daily_statement_export_attempts a
+  JOIN acc ON acc.rid = a.account_registry_id
+  JOIN treasury_private.supported_formats f
+    ON f.bank = a.bank AND f.source_format = a.source_format
+   AND a.parser_version IS NOT NULL
+   AND left(a.parser_version, char_length(f.parser_version_prefix)) = f.parser_version_prefix
+  JOIN LATERAL (
+    SELECT count(*) FILTER (WHERE s.status NOT IN ('promoted', 'duplicate', 'provisional', 'superseded')
+                              OR s.validation_status <> 'valid' OR cardinality(s.review_reason_codes) > 0) AS bad_n,
+           max(s.accounting_date) FILTER (WHERE s.accounting_date <= (a.created_at AT TIME ZONE 'Africa/Dakar')::date)
+             AS last_line_day
+    FROM public.daily_statement_units_staging s
+    WHERE s.attempt_id = a.id
+  ) eu ON true
+  WHERE a.parser_validation_status = 'valid'
+    AND cardinality(a.review_reason_codes) = 0
+    AND eu.bad_n = 0
+),
+-- Journée close, preuve (a) : ce contenu exact a été livré par un fichier digne
+-- de preuve qui porte aussi une ligne datée APRÈS la journée, et au plus tard le
+-- jour de son dépôt (heure de Dakar) : le fichier a été produit la journée
+-- finie. Ni l'instant de dépôt ni la date de référence saisie ne le prouvent.
+-- Chaque fichier probant est rendu parmi les sources du solde qu'il clôt.
+closure_proofs AS (
+  SELECT u.unit_id, te.export_id, s2.status AS delivery, te.export_ingested_at,
+         max(s3.accounting_date) AS later_line_day
+  FROM units u
+  JOIN public.daily_statement_units_staging s2
+    ON s2.day_unit_id = u.day_unit_id AND s2.day_content_hash = u.active_day_content_hash
+   AND s2.status IN ('promoted', 'duplicate')
+  JOIN trusted_exports te ON te.export_id = s2.attempt_id
+  JOIN public.daily_statement_units_staging s3
+    ON s3.attempt_id = s2.attempt_id AND s3.accounting_date > u.day
+   AND s3.accounting_date <= (te.export_ingested_at AT TIME ZONE 'Africa/Dakar')::date
+  GROUP BY u.unit_id, te.export_id, s2.status, te.export_ingested_at
 ),
 -- Toutes les versions de staging d'une journée : provisoire, en attente, en conflit.
 staged_days AS (
@@ -769,31 +801,17 @@ day_openings AS (
   WHERE s.status IN ('provisional', 'staged', 'needs_review', 'promotion_failed', 'conflict')
     AND s.opening_balance_derived IS NOT NULL
 ),
--- Exports à période DÉCLARÉE, valides, sans motif de revue et entièrement
--- acceptés : seules preuves d'une journée sans mouvement. Une journée n'y est
--- close que si le fichier porte une ligne datée APRÈS elle (et au plus tard le
--- jour de son dépôt) ; rien sans ligne. La date de référence saisie ne prouve rien.
+-- Fichiers dignes de preuve à période DÉCLARÉE : seules preuves d'une journée
+-- sans mouvement. Une journée n'y est close que si le fichier porte une ligne
+-- datée APRÈS elle (et au plus tard le jour de son dépôt) ; rien sans ligne. La
+-- date de référence saisie ne prouve rien.
 proof_exports AS (
-  SELECT a.account_registry_id AS rid, a.id AS export_id, a.created_at AS export_ingested_at,
-         a.export_period_start AS p_start, a.export_period_end AS p_end,
-         least(a.export_period_end, coalesce(eu.last_line_day, a.export_period_start) - 1) AS closed_until
-  FROM public.daily_statement_export_attempts a
-  JOIN acc ON acc.rid = a.account_registry_id
+  SELECT te.rid, te.export_id, te.export_ingested_at,
+         te.export_period_start AS p_start, te.export_period_end AS p_end,
+         least(te.export_period_end, coalesce(te.last_line_day, te.export_period_start) - 1) AS closed_until
+  FROM trusted_exports te
   JOIN treasury_private.supported_formats f
-    ON f.bank = a.bank AND f.source_format = a.source_format AND f.period_provenance = 'DECLARED'
-   AND a.parser_version IS NOT NULL
-   AND left(a.parser_version, char_length(f.parser_version_prefix)) = f.parser_version_prefix
-  JOIN LATERAL (
-    SELECT count(*) FILTER (WHERE s.status NOT IN ('promoted', 'duplicate', 'provisional', 'superseded')
-                              OR s.validation_status <> 'valid' OR cardinality(s.review_reason_codes) > 0) AS bad_n,
-           max(s.accounting_date) FILTER (WHERE s.accounting_date <= (a.created_at AT TIME ZONE 'Africa/Dakar')::date)
-             AS last_line_day
-    FROM public.daily_statement_units_staging s
-    WHERE s.attempt_id = a.id
-  ) eu ON true
-  WHERE a.parser_validation_status = 'valid'
-    AND cardinality(a.review_reason_codes) = 0
-    AND eu.bad_n = 0
+    ON f.bank = te.bank AND f.source_format = te.source_format AND f.period_provenance = 'DECLARED'
 ),
 bounds AS (
   SELECT acc.rid,
@@ -801,6 +819,8 @@ bounds AS (
          (SELECT max(u.day) FROM units u WHERE u.rid = acc.rid) AS last_unit,
          (SELECT min(pe.p_start) FROM proof_exports pe WHERE pe.rid = acc.rid AND pe.closed_until >= pe.p_start) AS first_proof,
          (SELECT max(pe.closed_until) FROM proof_exports pe WHERE pe.rid = acc.rid) AS last_proof,
+         -- Première livraison vivante : une journée disputée avant le premier relevé retenu reste visible.
+         (SELECT min(sd.day) FROM staged_days sd WHERE sd.rid = acc.rid AND sd.has_live) AS first_live,
          (SELECT max(sd.day) FROM staged_days sd WHERE sd.rid = acc.rid) AS last_staged
   FROM acc
 ),
@@ -809,15 +829,16 @@ series AS (
   FROM bounds b
   CROSS JOIN params p
   CROSS JOIN LATERAL generate_series(
-    least(b.first_unit, coalesce(b.first_proof, b.first_unit)),
+    least(b.first_unit, coalesce(b.first_proof, b.first_unit), coalesce(b.first_live, b.first_unit)),
     least(p.t, greatest(p.d, b.last_unit, coalesce(b.last_proof, b.last_unit), coalesce(b.last_staged, b.last_unit))),
     interval '1 day') g
   WHERE b.first_unit IS NOT NULL
 ),
 -- Nature de chaque journée, avant la preuve de clôture des unités retenues.
 base AS (
-  SELECT s.rid, s.day, u.unit_id, u.opening, u.closing, u.unit_currency, u.ingested_at, u.export_ingested_at,
-         u.source_format, u.closed_by_later_line,
+  SELECT s.rid, s.day, u.unit_id, u.export_id, u.opening, u.closing, u.unit_currency, u.ingested_at,
+         u.export_ingested_at, u.source_format,
+         EXISTS (SELECT 1 FROM closure_proofs cp WHERE cp.unit_id = u.unit_id) AS closed_by_later_line,
          CASE
            -- Journée disputée par une autre version : contenu divergent ou en attente.
            WHEN u.unit_id IS NOT NULL AND sd.has_conflict THEN 'CONFLICT'
@@ -842,13 +863,16 @@ base AS (
 -- mouvement » est une unité retenue dont l'ouverture égale la clôture.
 next_heads AS (
   SELECT b.rid, b.day,
-         lead(b.base_kind) OVER (PARTITION BY b.rid ORDER BY b.day) AS next_kind,
-         lead(b.opening) OVER (PARTITION BY b.rid ORDER BY b.day) AS next_opening
+         lead(b.base_kind) OVER w AS next_kind,
+         lead(b.opening) OVER w AS next_opening,
+         lead(b.day) OVER w AS next_day,
+         lead(b.unit_id) OVER w AS next_unit_id
   FROM base b WHERE b.base_kind <> 'NOMOV'
+  WINDOW w AS (PARTITION BY b.rid ORDER BY b.day)
 ),
 days AS (
-  SELECT b.rid, b.day, b.unit_id, b.opening, b.closing, b.unit_currency, b.ingested_at, b.export_ingested_at,
-         b.source_format,
+  SELECT b.rid, b.day, b.unit_id, b.export_id, b.opening, b.closing, b.unit_currency, b.ingested_at,
+         b.export_ingested_at, b.source_format, b.closed_by_later_line, n.next_day, n.next_unit_id,
          CASE WHEN b.base_kind <> 'UNIT_OK' THEN b.base_kind
               WHEN b.closed_by_later_line THEN 'UNIT'
               WHEN n.next_kind = 'UNIT_OK' AND n.next_opening = b.closing THEN 'UNIT'
@@ -859,6 +883,9 @@ days AS (
 ),
 grouped AS (
   SELECT d.*,
+         -- Preuve de clôture retenue (rendue parmi les sources) : ligne ultérieure, sinon ouverture suivante.
+         CASE WHEN d.kind = 'UNIT' THEN CASE WHEN d.closed_by_later_line THEN 'LATER_LINE' ELSE 'NEXT_OPENING' END
+         END AS closure_basis,
          count(*) FILTER (WHERE d.kind <> 'NOMOV')
            OVER (PARTITION BY d.rid ORDER BY d.day ROWS UNBOUNDED PRECEDING) AS grp_f,
          count(*) FILTER (WHERE d.kind <> 'NOMOV')
@@ -874,7 +901,7 @@ heads AS (
   FROM grouped g WHERE g.kind <> 'NOMOV'
 ),
 unit_rank AS (
-  SELECT g.rid, g.closing, row_number() OVER (PARTITION BY g.rid ORDER BY g.day) AS n
+  SELECT g.rid, g.day, g.closing, row_number() OVER (PARTITION BY g.rid ORDER BY g.day) AS n
   FROM grouped g WHERE g.unit_id IS NOT NULL AND g.closing IS NOT NULL
 ),
 -- Solde de fin de journée prouvé : unité close de la journée, ou report à travers
@@ -886,6 +913,15 @@ bal AS (
               WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.closing
               WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.opening
          END AS balance_end,
+         -- Solde prouvé EN AVANT seulement : seule référence admise pour contrôler
+         -- l'ouverture suivante (un report arrière vient de cette ouverture même).
+         CASE WHEN g.kind = 'UNIT' THEN g.closing
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.closing
+         END AS fwd_balance,
+         CASE WHEN g.kind = 'UNIT' THEN 'CLOSING'
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN 'CLOSING'
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN 'OPENING'
+         END AS source_role,
          CASE WHEN g.kind = 'UNIT' THEN g.day
               WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.day
               WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.day
@@ -909,59 +945,111 @@ bal AS (
 chain AS (
   SELECT b.*,
          lag(b.day) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_day,
-         lag(b.balance_end) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_balance,
-         ur.closing AS prev_unit_closing
+         lag(b.fwd_balance) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_balance,
+         -- Unité dont la clôture fournit ce solde de la veille (comparée à l'ouverture).
+         lag(b.source_day) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_source_day,
+         ur.closing AS prev_unit_closing, ur.day AS prev_unit_day,
+         -- Dernière journée antérieure non résolue : disputée, en conflit, provisoire,
+         -- à revoir ou d'une version de parseur non prise en charge. Une unité sans
+         -- solde dérivé est retenue et ne se résoudra pas : elle compte comme une
+         -- journée non prouvée (continuité admise seulement si les soldes concordent).
+         max(b.day) FILTER (WHERE b.kind IN ('CONFLICT', 'CONTESTED', 'PROVISIONAL', 'UNIT_REVIEW', 'UNIT_UNSUPPORTED'))
+           OVER (PARTITION BY b.rid ORDER BY b.day ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS last_unresolved_before
   FROM bal b
   LEFT JOIN unit_rank ur ON ur.rid = b.rid AND ur.n = b.units_before
 ),
 transitions AS (
   SELECT c.*,
-         -- Contrôle de l'ouverture d'une unité close, ou d'une journée non close
-         -- dont l'ouverture est connue : toute contradiction compte.
-         CASE WHEN c.kind NOT IN ('UNIT', 'NOT_CLOSED') OR c.opening IS NULL THEN NULL
+         -- Toute ouverture d'unité retenue est contrôlée, quelle que soit la nature
+         -- de sa journée : la dispute d'une journée ne masque jamais la
+         -- contradiction qu'elle porte.
+         CASE WHEN c.unit_id IS NULL OR c.opening IS NULL THEN NULL
               WHEN c.prev_day = c.day - 1 AND c.prev_balance IS NOT NULL
                 THEN CASE WHEN c.opening = c.prev_balance THEN 'OK' ELSE 'BREAK' END
+              -- Continuité appuyée sur une journée non résolue, ou qui l'enjambe, ou
+              -- premier ancrage précédé d'une telle journée : incertaine jusqu'à la
+              -- résolution de cette journée.
+              WHEN c.last_unresolved_before >= coalesce(c.prev_unit_day, c.last_unresolved_before) THEN 'UNPROVEN'
               WHEN c.prev_unit_closing IS NULL THEN 'ANCHOR'
               WHEN c.opening = c.prev_unit_closing THEN 'CONTINUOUS_GAP'
               ELSE 'UNPROVEN'
          END AS transition
   FROM chain c
 ),
+-- Ouvertures connues, regroupées par journée ; première au-delà d'aujourd'hui.
+opening_days AS (
+  SELECT o.rid, o.day, array_agg(o.opening) AS openings FROM day_openings o GROUP BY o.rid, o.day
+),
+late_openings AS (
+  SELECT f.rid, min(f.day) AS day FROM opening_days f, params p WHERE f.day > p.t GROUP BY f.rid
+),
+-- Chaque journée X de la série lue comme date D. Une seule définition sert la
+-- date D demandée et la date bancaire couverte : contradiction ou incertitude
+-- jusqu'à X (cumulées), première ouverture connue après X.
+ahead AS (
+  SELECT t.*,
+         coalesce(min(t.day) FILTER (WHERE od.day IS NOT NULL) OVER fw, lo.day) AS next_open_day,
+         min(t.day) FILTER (WHERE t.kind <> 'NOMOV') OVER fw AS next_non_nomov_day,
+         min(t.day) FILTER (WHERE t.kind NOT IN ('NOMOV', 'UNPROVEN')) OVER fw AS next_line_day,
+         coalesce(bool_or(t.transition = 'BREAK') OVER bw, false) AS break_through,
+         coalesce(bool_or(t.transition = 'UNPROVEN') OVER bw, false) AS unproven_through,
+         coalesce(bool_or(t.unit_currency <> r.currency) OVER bw, false) AS currency_through
+  FROM transitions t
+  JOIN public.daily_statement_account_registry r ON r.id = t.rid
+  LEFT JOIN opening_days od ON od.rid = t.rid AND od.day = t.day
+  LEFT JOIN late_openings lo ON lo.rid = t.rid
+  WINDOW fw AS (PARTITION BY t.rid ORDER BY t.day ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING),
+         bw AS (PARTITION BY t.rid ORDER BY t.day ROWS UNBOUNDED PRECEDING)
+),
+day_status AS (
+  SELECT a.*,
+         -- Le solde de X (report compris) est confronté à TOUTE ouverture connue de
+         -- la première journée suivante qui en porte une, même postérieure à X.
+         a.balance_end IS NOT NULL AND coalesce(a.balance_end <> ANY (od.openings), false) AS next_mismatch,
+         a.next_non_nomov_day IS NULL OR a.next_non_nomov_day >= a.next_open_day AS only_nomov_between,
+         a.next_line_day IS NULL OR a.next_line_day >= a.next_open_day AS no_lines_between,
+         -- Un solde reporté en arrière dépend aussi des contrôles (chaîne et devise)
+         -- de l'unité qui le fournit.
+         coalesce(s.break_through, a.break_through) AS has_break,
+         coalesce(s.unproven_through, a.unproven_through) AS has_unproven,
+         coalesce(s.currency_through, a.currency_through) AS currency_contradiction
+  FROM ahead a
+  LEFT JOIN opening_days od ON od.rid = a.rid AND od.day = a.next_open_day
+  LEFT JOIN ahead s ON s.rid = a.rid AND s.day = greatest(a.day, coalesce(a.source_day, a.day))
+),
 per_rid AS (
   SELECT acc.rid,
-         (SELECT t.kind FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS kind_d,
-         (SELECT t.balance_end FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS balance_d,
-         (SELECT t.source_day FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS source_day_d,
-         (SELECT t.source_format_used FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS source_format_d,
-         (SELECT t.source_unit_ingested_at FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS unit_ingested_d,
-         (SELECT t.source_export_ingested_at FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS export_ingested_d,
-         EXISTS (SELECT 1 FROM transitions t, params p WHERE t.rid = acc.rid AND t.day <= p.d AND t.transition = 'BREAK') AS has_break,
-         EXISTS (SELECT 1 FROM transitions t, params p WHERE t.rid = acc.rid AND t.day <= p.d AND t.transition = 'UNPROVEN') AS has_unproven,
-         -- Première journée après D dont une ouverture est connue.
-         (SELECT min(o.day) FROM day_openings o, params p WHERE o.rid = acc.rid AND o.day > p.d) AS next_open_day,
-         -- D appartient à l'historique du compte : premier relevé, ou période déclarée qui le précède.
-         EXISTS (SELECT 1 FROM transitions t, params p WHERE t.rid = acc.rid AND t.day = p.d) AS has_statement,
-         (SELECT array_agg(DISTINCT u.unit_currency) FROM units u, params p WHERE u.rid = acc.rid AND u.day <= p.d) AS unit_currencies,
-         (SELECT u.source_format FROM units u, params p WHERE u.rid = acc.rid AND u.day <= p.d ORDER BY u.day DESC LIMIT 1) AS last_format,
-         (SELECT max(t.day) FROM transitions t, params p WHERE t.rid = acc.rid AND t.day <= p.t AND t.balance_end IS NOT NULL) AS covered_through,
+         v.kind AS kind_d, v.balance_end AS balance_d, v.source_day AS source_day_d, v.source_role AS source_role_d,
+         v.source_format_used AS source_format_d, v.source_unit_ingested_at AS unit_ingested_d,
+         v.source_export_ingested_at AS export_ingested_d,
+         coalesce(v.has_break, false) AS has_break,
+         coalesce(v.has_unproven, false) AS has_unproven,
+         coalesce(v.currency_contradiction, false) AS currency_contradiction,
+         -- D appartient à l'historique du compte : premier relevé, livraison ou période déclarée qui le précède.
+         v.day IS NOT NULL AS has_statement,
+         -- Unité source du solde de D : références, preuve de clôture, contrôle de chaîne.
+         sv.unit_id AS source_unit_id_d, sv.export_id AS source_export_id_d, sv.closure_basis AS closure_basis_d,
+         sv.next_unit_id AS closure_next_unit_id_d, sv.next_day AS closure_next_day_d, sv.transition AS source_link_d,
+         -- Journée de référence du contrôle : unité dont la clôture prouvée a été
+         -- comparée, ou dernière clôture retenue.
+         CASE WHEN sv.transition IN ('OK', 'BREAK') THEN sv.prev_source_day
+              WHEN sv.transition IN ('CONTINUOUS_GAP', 'UNPROVEN') THEN sv.prev_unit_day END AS source_link_ref_d,
+         -- Format des relevés jusqu'à D, sinon du premier relevé (qualification lue).
+         coalesce((SELECT u.source_format FROM units u WHERE u.rid = acc.rid AND u.day <= p.d ORDER BY u.day DESC LIMIT 1),
+                  (SELECT u.source_format FROM units u WHERE u.rid = acc.rid ORDER BY u.day LIMIT 1)) AS last_format,
+         (SELECT max(o.day) FROM day_status o WHERE o.rid = acc.rid AND o.balance_end IS NOT NULL) AS observed_through,
          (SELECT jsonb_build_object('balance', t.balance_end::text, 'date', t.day)
-            FROM transitions t, params p
+            FROM day_status t
            WHERE t.rid = acc.rid AND t.day < p.d AND t.balance_end IS NOT NULL
            ORDER BY t.day DESC LIMIT 1) AS last_known_before
   FROM acc
+  CROSS JOIN params p
+  LEFT JOIN day_status v ON v.rid = acc.rid AND v.day = p.d
+  LEFT JOIN day_status sv ON sv.rid = acc.rid AND sv.day = v.source_day
 ),
--- Le solde de D (report compris) est confronté à TOUTE ouverture connue de la
--- première journée suivante qui en porte une, même postérieure à D.
 after_d AS (
-  SELECT pr.rid,
-         pr.balance_d IS NOT NULL AND EXISTS (SELECT 1 FROM day_openings o
-           WHERE o.rid = pr.rid AND o.day = pr.next_open_day AND o.opening <> pr.balance_d) AS next_mismatch,
-         NOT EXISTS (SELECT 1 FROM transitions t, params p
-           WHERE t.rid = pr.rid AND t.day > p.d AND t.day < pr.next_open_day AND t.kind <> 'NOMOV') AS only_nomov_between,
-         NOT EXISTS (SELECT 1 FROM transitions t, params p
-           WHERE t.rid = pr.rid AND t.day > p.d AND t.day < pr.next_open_day AND t.kind NOT IN ('NOMOV', 'UNPROVEN'))
-           AS no_lines_between
-  FROM per_rid pr
+  SELECT v.rid, v.next_mismatch, v.only_nomov_between, v.no_lines_between
+  FROM day_status v, params p WHERE v.day = p.d
 ),
 value_dates AS (
   SELECT u.rid, count(l.id) AS total_lines, count(l.id) FILTER (WHERE l.value_date IS NOT NULL) AS lines_with_value_date
@@ -974,8 +1062,19 @@ value_dates AS (
 per_account AS (
   SELECT i.*,
          pr.kind_d, pr.balance_d, pr.source_day_d, pr.source_format_d, pr.unit_ingested_d, pr.export_ingested_d,
-         pr.has_break, pr.has_unproven, pr.has_statement, pr.unit_currencies, pr.last_format,
-         pr.covered_through, pr.last_known_before,
+         pr.has_break, pr.has_unproven, pr.has_statement, pr.currency_contradiction, pr.last_format,
+         pr.observed_through, pr.last_known_before, pr.source_role_d, pr.source_unit_id_d, pr.source_export_id_d,
+         pr.closure_basis_d, pr.closure_next_unit_id_d, pr.closure_next_day_d, pr.source_link_d, pr.source_link_ref_d,
+         -- Date bancaire couverte : dernière journée dont le solde serait rendu
+         -- disponible, par les mêmes contrôles qu'à D ; distincte de la dernière
+         -- journée observée avec un solde dérivé (bank_date_observed).
+         CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND i.registry_status = 'active'
+                   AND i.registry_currency = i.currency THEN
+           (SELECT max(v.day) FROM day_status v
+              JOIN qual vq ON vq.bank = i.bank AND vq.source_format = v.source_format_used AND vq.status = 'QUALIFIED'
+             WHERE v.rid = i.rid AND v.balance_end IS NOT NULL AND NOT v.has_break AND NOT v.has_unproven
+               AND NOT v.currency_contradiction AND NOT (v.next_mismatch AND (v.only_nomov_between OR v.no_lines_between)))
+         END AS covered_through,
          q.status AS qualification_status, q.evidence_ref AS qualification_evidence,
          array_remove(ARRAY[
            CASE WHEN i.currency <> 'XOF' THEN 'CURRENCY_OUT_OF_SCOPE' END,
@@ -983,8 +1082,7 @@ per_account AS (
            CASE WHEN i.currency = 'XOF' AND i.rid IS NULL AND i.bank <> 'NSIA' THEN 'ACCOUNT_NOT_REGISTERED' END,
            CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND i.registry_status <> 'active' THEN 'REGISTRY_ACCOUNT_INACTIVE' END,
            CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL
-                 AND (i.registry_currency <> i.currency
-                      OR EXISTS (SELECT 1 FROM unnest(coalesce(pr.unit_currencies, ARRAY[]::text[])) c WHERE c <> i.currency))
+                 AND (i.registry_currency <> i.currency OR pr.currency_contradiction)
                 THEN 'CURRENCY_CONTRADICTION' END,
            CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND pr.has_break THEN 'CHAIN_BROKEN' END,
            -- Ouverture suivante différente à travers des journées prouvées sans mouvement : contradiction.
@@ -1100,19 +1198,47 @@ SELECT jsonb_build_object(
       'dates', jsonb_build_object(
         'bank_date_covered', c.covered_through,
         'age_days', CASE WHEN c.covered_through IS NOT NULL THEN p.t - c.covered_through END,
+        'bank_date_observed', c.observed_through,
         'balance_source_day', c.source_day_d),
+      -- Preuves effectivement utilisées pour le solde de D : unité source, preuve
+      -- de sa clôture, contrôle de chaîne de son ouverture, périodes déclarées des
+      -- journées reportées.
       'sources', CASE WHEN c.balance_d IS NULL THEN '[]'::jsonb ELSE
         jsonb_build_array(jsonb_build_object(
-          'kind', 'CANONICAL_UNIT', 'day', c.source_day_d, 'ingested_at', c.unit_ingested_d,
+          'kind', 'CANONICAL_UNIT', 'role', c.source_role_d, 'unit_id', c.source_unit_id_d,
+          'export_id', c.source_export_id_d, 'day', c.source_day_d, 'ingested_at', c.unit_ingested_d,
           'export_ingested_at', c.export_ingested_d, 'source_format', c.source_format_d))
+        || CASE WHEN c.source_role_d = 'CLOSING' AND c.closure_basis_d = 'LATER_LINE' THEN coalesce((
+             SELECT jsonb_agg(jsonb_build_object(
+                      'kind', 'CLOSURE_LATER_LINE', 'export_id', cp.export_id, 'delivery', cp.delivery,
+                      'later_line_day', cp.later_line_day, 'export_ingested_at', cp.export_ingested_at)
+                    ORDER BY cp.export_ingested_at, cp.export_id)
+             FROM closure_proofs cp WHERE cp.unit_id = c.source_unit_id_d), '[]'::jsonb)
+           WHEN c.source_role_d = 'CLOSING' AND c.closure_basis_d = 'NEXT_OPENING' THEN coalesce((
+             SELECT jsonb_build_array(jsonb_build_object(
+                      'kind', 'CLOSURE_NEXT_OPENING', 'unit_id', nu.unit_id, 'export_id', nu.export_id, 'day', nu.day,
+                      'ingested_at', nu.ingested_at, 'export_ingested_at', nu.export_ingested_at))
+             FROM units nu WHERE nu.unit_id = c.closure_next_unit_id_d), '[]'::jsonb)
+           ELSE '[]'::jsonb END
+        || jsonb_build_array(jsonb_build_object(
+             'kind', 'CHAIN_LINK', 'day', c.source_day_d, 'link', c.source_link_d, 'reference_day', c.source_link_ref_d))
         || coalesce((
           SELECT jsonb_agg(jsonb_build_object(
-                   'kind', 'DECLARED_PERIOD', 'period_start', pe.p_start, 'period_end', pe.p_end,
-                   'closed_until', pe.closed_until, 'export_ingested_at', pe.export_ingested_at)
-                 ORDER BY pe.p_start, pe.export_ingested_at)
+                   'kind', 'DECLARED_PERIOD', 'export_id', pe.export_id, 'period_start', pe.p_start,
+                   'period_end', pe.p_end, 'closed_until', pe.closed_until, 'export_ingested_at', pe.export_ingested_at)
+                 ORDER BY pe.p_start, pe.export_ingested_at, pe.export_id)
           FROM proof_exports pe
-          WHERE pe.rid = c.rid AND c.source_day_d <> p.d
-            AND pe.p_start <= greatest(c.source_day_d, p.d) AND pe.closed_until >= least(c.source_day_d, p.d)), '[]'::jsonb)
+          -- Seules les périodes qui prouvent au moins une journée sans mouvement
+          -- utilisée : journées reportées jusqu'à D, journées entre l'unité source et
+          -- l'ouverture suivante qui confirme sa clôture, journées entre l'unité
+          -- source et la clôture prouvée comparée à son ouverture.
+          WHERE pe.rid = c.rid AND pe.closed_until >= pe.p_start
+            AND EXISTS (SELECT 1 FROM (VALUES
+                  (least(c.source_day_d + 1, p.d), greatest(c.source_day_d - 1, p.d), c.source_day_d <> p.d),
+                  (c.source_day_d + 1, c.closure_next_day_d - 1,
+                   c.source_role_d = 'CLOSING' AND c.closure_basis_d = 'NEXT_OPENING'),
+                  (c.source_link_ref_d + 1, c.source_day_d - 1, c.source_link_d IN ('OK', 'BREAK'))) r(lo, hi, used)
+                WHERE r.used AND r.lo <= r.hi AND pe.p_start <= r.hi AND pe.closed_until >= r.lo)), '[]'::jsonb)
       END,
       'value_dates', jsonb_build_object('total_lines', coalesce(c.total_lines, 0),
                                         'lines_with_value_date', coalesce(c.lines_with_value_date, 0)))

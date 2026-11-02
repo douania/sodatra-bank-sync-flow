@@ -50,6 +50,14 @@ const mutants = [
     from: "  DAY_NOT_CLOSED: 'Journée non close lors de l’export',\n", to: '' },
   { name: 't15_pending_key_forgotten_by_other_decision', file: 'treasuryService.ts', test: ACCESS,
     from: '        if (pendingKey === key) pending.delete(signature);', to: '        pending.delete(signature);' },
+  { name: 't16_observed_date_shown_as_covered', file: 'treasuryModel.ts', test: MODEL,
+    from: 'const covered = account.dates.bank_date_covered;', to: 'const covered = account.dates.bank_date_observed;' },
+  { name: 't17_closure_proofs_not_rendered', file: 'TreasuryBalancesView.tsx', test: MODEL,
+    from: '{account.sources.map((source, index) =>',
+    to: "{account.sources.filter((source) => source.kind === 'CANONICAL_UNIT').map((source, index) =>" },
+  { name: 't18_proof_reference_optional', file: 'treasuryModel.ts', test: MODEL,
+    from: "kind: z.literal('CLOSURE_LATER_LINE'),\n    export_id: z.string().uuid(),",
+    to: "kind: z.literal('CLOSURE_LATER_LINE'),\n    export_id: z.string().uuid().optional()," },
 ];
 
 let killed = 0;
