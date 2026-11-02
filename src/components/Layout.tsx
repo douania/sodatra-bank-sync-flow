@@ -32,6 +32,7 @@ import {
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
 import { useCollectionsCorePilotGate } from '@/features/collections-core/CollectionsCorePilotGate';
 import { usePayablesChequesGate } from '@/features/payables-cheques/PayablesChequesGate';
+import { isTreasuryMenuVisible } from '@/features/treasury/treasuryMenu';
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
@@ -55,6 +56,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { name: 'Daily v2', href: '/daily-statements', icon: CalendarDays },
     { name: 'Collections', href: '/collections-remittances', icon: Landmark },
     { name: 'Chèques & factures', href: '/payables-cheques', icon: FileText },
+    { name: 'Soldes à date', href: '/treasury-balances', icon: Building2 },
     { name: 'Contrôle Qualité', href: '/quality-control', icon: Shield },
     { name: 'Analyse Documents', href: '/document-understanding', icon: FileSearch },
   ]
@@ -64,7 +66,8 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
         item.href !== '/collections-remittances' ||
         collectionsCoreGate.status === 'allowed',
     )
-    .filter((item) => item.href !== '/payables-cheques' || payablesGate.status === 'allowed');
+    .filter((item) => item.href !== '/payables-cheques' || payablesGate.status === 'allowed')
+    .filter((item) => item.href !== '/treasury-balances' || isTreasuryMenuVisible());
 
   return (
     <div className="min-h-screen bg-gray-50">

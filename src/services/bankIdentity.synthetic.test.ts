@@ -39,3 +39,26 @@ test('les sous-chaînes génériques ne sont pas prises pour des codes banque', 
   assert.equal(detectBankFromFileName('rapport public.pdf'), null);
   assert.equal(detectBankFromContent('BICYCLE ATLANTIQUE GENERALE'), null);
 });
+
+test('ATB désigne la seule banque Atlantique, jamais un autre établissement', () => {
+  for (const label of ['Banque Atlantique', 'ATLANTIQUE BANK', 'Atlantik Bank', 'ATB']) {
+    assert.equal(detectBankFromFileName(`Rapport ${label} 2026.xlsx`), 'ATB', label);
+  }
+  for (const label of ['Banque Atlantique', 'ATB']) {
+    assert.equal(detectBankFromContent(`${label}\nRAPPORT BANCAIRE`), 'ATB', label);
+  }
+  assert.equal(detectBankFromFileName('5-ATLANTIK BANK 2026.xlsx'), 'ATB');
+  // Ancien alias ambigu : établissement distinct, plus rattaché à ATB.
+  assert.equal(detectBankFromFileName('Rapport Arab Tunisian Bank.pdf'), null);
+  assert.equal(detectBankFromContent('ARAB TUNISIAN BANK\nRAPPORT BANCAIRE'), null);
+  assert.equal(corroborateBankIdentity('Rapport Arab Tunisian Bank.pdf', 'ARAB TUNISIAN BANK\nRAPPORT').corroborated, false);
+  // Non-régression : un libellé d'opération citant la banque Atlantique ne rend
+  // pas ambigu le document d'une autre banque.
+  for (const label of ['ATLANTIQUE BANK', 'ATLANTIK BANK']) {
+    assert.equal(detectBankFromContent(`BANQUE DE DAKAR\nVIREMENT RECU ${label}`), 'BDK', label);
+    assert.equal(detectBankFromContent(`ORABANK\nVIREMENT EMIS ${label}`), 'ORA', label);
+    assert.equal(corroborateBankIdentity('Rapport BDK 2026.pdf', `BDK\nVIREMENT ${label}`).bank, 'BDK', label);
+  }
+  assert.equal(corroborateBankIdentity('Rapport Banque Atlantique.pdf', 'BANQUE ATLANTIQUE\nRAPPORT').bank, 'ATB');
+  assert.equal(corroborateBankIdentity('Rapport ATLANTIQUE BANK.pdf', 'BDK\nRAPPORT').corroborated, false);
+});

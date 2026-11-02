@@ -156,6 +156,17 @@ jobs:
         shell: pwsh
         run: ./supabase/tests/payables_cheques_core/run_pg17_replay.ps1
 
+      # TREASURY V1 — LOT 1 (balances layer only): runtime guard (production
+      # always refused), service and view contracts, then the disposable
+      # PostgreSQL 17 replay (upgrade with access-surface comparison, fresh,
+      # snapshot race) with its mutation proofs. Synthetic data only.
+      - name: Treasury balances contracts (TypeScript and PostgreSQL 17)
+        shell: pwsh
+        run: |
+          npm run test:treasury-balances
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./supabase/tests/treasury_v1_lot1/run_pg17_replay.ps1 -Mutants
+
       # PACK 0 (GO_FIX_PACK_0 Node typing) — blocking: the Node project
       # (vite.config.ts and the modules it imports, e.g. the build provenance
       # collector) must typecheck with zero errors. The application project
