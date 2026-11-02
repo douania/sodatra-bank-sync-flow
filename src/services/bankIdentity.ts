@@ -23,9 +23,15 @@ const BANK_IDENTITIES: readonly BankIdentityDefinition[] = [
     contentPatterns: [/\bBDK\b/, /\bBANQUE DE DAKAR\b/],
   },
   {
+    // ATB désigne la banque Atlantique. L'ancien alias « ARAB TUNISIAN BANK »,
+    // établissement distinct, n'est plus rattaché à ATB : un tel document
+    // n'est plus classé chez la banque Atlantique. Les intitulés « ATLANTIQUE
+    // BANK » / « ATLANTIK BANK » ne valent que pour le NOM du fichier : dans le
+    // contenu, ils peuvent figurer dans les libellés d'opérations d'une autre
+    // banque et rendraient son document ambigu.
     code: 'ATB',
-    namePatterns: [/\bATB\b/, /\bARAB TUNISIAN BANK\b/, /\bBANQUE ATLANTIQUE\b/],
-    contentPatterns: [/\bATB\b/, /\bARAB TUNISIAN BANK\b/, /\bBANQUE ATLANTIQUE\b/],
+    namePatterns: [/\bATB\b/, /\bBANQUE ATLANTIQUE\b/, /\bATLANTIQUE BANK\b/, /\bATLANTIK BANK\b/],
+    contentPatterns: [/\bATB\b/, /\bBANQUE ATLANTIQUE\b/],
   },
   {
     code: 'BICIS',

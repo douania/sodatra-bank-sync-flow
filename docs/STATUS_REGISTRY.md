@@ -15,6 +15,59 @@
 
 ---
 
+## TREASURY-V1-LOT1-BANK-BALANCES
+
+**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; migration `20261102090000` appliquée à aucun environnement distant ; vue refusée en production**
+
+Lot `GO_IMPLEMENT_TREASURY_V1_LOT1_BANK_BALANCES`, base `origin/main` `49afcef`, branche
+`codex/treasury-v1-lot1-bank-balances`. Cadrage : trésorerie V1 R3 (`PASS_WITH_RESERVES`, hors
+dépôt). Couche « solde » seule : aucune donnée de paiement (chèques, factures, virements,
+remises, facilités) n'est lue.
+
+Livré en local :
+
+- inventaire versionné des comptes attendus, adossé au registre Daily v2 (identité
+  canonique), sans doublon ni double comptage ; NSIA attendu sans faux compte Daily v2 ;
+  attestation de l'empreinte vue par l'administrateur unique ;
+- qualification par banque et format, en ajout seul, par le seul canal opérateur
+  (aucune fonction exposée) ; rien n'est qualifié par la migration ni par les tests ;
+- solde historique à une date comptable D, couverture prouvée, motifs fermés, statuts
+  `DISPONIBLE` / `NON COUVERT À D` / `BLOQUÉ` / `HORS PÉRIMÈTRE`, consolidation XOF
+  `COMPLET` / `PARTIEL` / `BLOQUÉ` sans total partiel présenté comme total ;
+- date bancaire couverte (dernière date que la lecture rendrait disponible), date
+  seulement observée, ingestion de chaque source et instant de lecture séparés ; preuves
+  de clôture et de continuité rendues avec leurs références ; mesure de disponibilité
+  des dates de valeur ; lecture en une instruction STABLE ;
+- provenance des périodes établie format par format : CSV BDK/ORA déclarée, Excel
+  ATB/BICIS/BIS/BRIDGE déduite. Une journée sans mouvement n'est couverte que par une
+  période déclarée d'un export valide, sans motif de revue, accepté et non disputé,
+  dont le fichier porte une ligne ultérieure ; sinon `NON COUVERT` ;
+- une journée n'est close que par une ligne ultérieure d'un fichier digne de preuve
+  (valide, sans motif de revue, entièrement accepté) qui la livre, ou par
+  l'ouverture suivante égale, jamais par l'instant de dépôt ni la date de référence
+  saisie ; journée non close, disputée ou en conflit et version de parseur non prise en
+  charge jamais rendues disponibles ; solde de D comparé à toute ouverture connue de la
+  journée suivante qui en porte une (même après D) et chaîne comparée à toute clôture
+  canonique connue (aucun réancrage silencieux) ; toute ouverture retenue est contrôlée,
+  même sur une journée disputée, et une continuité appuyée sur une journée non résolue
+  reste non prouvée jusqu'à sa résolution ;
+- module **fermé côté serveur par défaut** (interrupteur au seul canal opérateur) ;
+  lecture par `BANK_READ` (mécanisme existant, READ ou AUDIT + BANK_READ) ; vue
+  « Soldes à date » en local et staging seulement, menu et route refusés en production ;
+- ambiguïté ATB corrigée (banque Atlantique seule) ; BIS : XOF déjà corroboré par les
+  en-têtes, profil inchangé ;
+- deux revues indépendantes avant commit (`FAIL` ciblé puis `FAIL`), tous les P1 traités
+  avec scénarios et mutants (§ 5 bis du rapport) ; contre-revue CTO `FAIL` sur `96be87d`
+  (un P1, deux P2), corrigée sous `GO_FIX_TREASURY_V1_LOT1_BANK_BALANCES`, puis troisième
+  revue indépendante (`FAIL`, un P1 de la même famille) traitée avant commit (§ 5 ter).
+
+Non fait (GO distincts requis) : merge, application staging ou production, ouverture du
+module côté serveur, qualification sur fichiers réels, attestation réelle de l'inventaire,
+publication. Détail :
+`docs/TREASURY_V1_LOT1_BANK_BALANCES_REPORT.md`.
+
+---
+
 ## PAYABLES-CHEQUES-PRODUCTION-ADMIN-ACCESS
 
 **Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; aucun déploiement, drapeau positionné nulle part**
