@@ -15,6 +15,70 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const dateTime = z.string().min(10);
 
 const observedSchema = z.object({ balance: amountText, date: isoDate });
+const count = z.number().int().min(0);
+// Totaux « débits/crédits » d'une version, en texte décimal exact.
+const totalsText = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?\/-?\d{1,16}(\.\d{1,2})?$/);
+
+// Constats de versions et d'écartements (Lot 1 opérationnel). Les quatre
+// premiers figurent aussi parmi les sources d'un solde rendu.
+const rejectedDeliverySchema = z.object({ kind: z.literal('REJECTED_DELIVERY'), day: isoDate, count });
+const refutedVersionSchema = z.object({
+  kind: z.literal('REFUTED_VERSION'),
+  day: isoDate,
+  nature: z.enum(['FRESH_DELIVERY', 'BANK_PIECE']),
+  automatic: z.boolean(),
+  proof_day: isoDate.nullable(),
+  sources: count,
+  covered_deliveries: count,
+  covered_redeposits: count,
+  movements_unresolved: z.boolean(),
+  mention: z.string().nullable(),
+});
+const breakdownDivergenceSchema = z.object({
+  kind: z.literal('VERSION_BREAKDOWN_DIVERGENCE'),
+  day: isoDate,
+  count,
+  retained_totals: totalsText.nullable(),
+  other_totals: totalsText.nullable(),
+  movements_unresolved: z.literal(true),
+});
+const detailDivergenceSchema = z.object({
+  kind: z.literal('VERSION_DETAIL_DIVERGENCE'), day: isoDate, count, movements_unresolved: z.literal(true),
+});
+const findingSchema = z.union([
+  rejectedDeliverySchema,
+  refutedVersionSchema,
+  breakdownDivergenceSchema,
+  detailDivergenceSchema,
+  z.object({ kind: z.literal('VERSION_CONTRADICTION'), day: isoDate, uncovered_sources: count }),
+  z.object({
+    kind: z.literal('VERSION_BALANCE_NOT_COMPARABLE'),
+    day: isoDate,
+    cause: z.enum(['AGGREGATES_UNAVAILABLE', 'VERSION_FACTS_INCOHERENT']),
+    side: z.enum(['RETAINED', 'OTHER', 'BOTH']),
+    uncovered_sources: count,
+  }),
+  z.object({ kind: z.literal('VERSION_REFUTATION_SUSPENDED'), day: isoDate }),
+]);
+
+// Point de départ vérifié d'un compte, état pour la date lue.
+const verifiedStartSchema = z.object({
+  verified_start_id: z.string().uuid(),
+  day: isoDate,
+  posed_at: dateTime,
+  evidence_ref: z.string(),
+  state: z.enum(['ACTIVE', 'REVOKED']),
+  for_date: z.enum(['EFFECTIVE', 'SUSPENDED', 'NOT_YET_APPLICABLE', 'REVOKED']),
+  suspension: z.string().nullable(),
+  applied: z.boolean(),
+  history_before: z.object({
+    unproven_days: count,
+    pending_days: count,
+    conflict_days: count,
+    rejected_deliveries: count,
+  }),
+});
+
 // Preuves effectivement utilisées pour le solde de D, avec leurs références.
 const sourceSchema = z.union([
   z.object({
@@ -26,6 +90,7 @@ const sourceSchema = z.union([
     ingested_at: dateTime.nullable(),
     export_ingested_at: dateTime.nullable(),
     source_format: z.string().nullable(),
+    content_hash: z.string().min(1).max(256).nullable(),
   }),
   z.object({
     kind: z.literal('CLOSURE_LATER_LINE'),
@@ -45,7 +110,7 @@ const sourceSchema = z.union([
   z.object({
     kind: z.literal('CHAIN_LINK'),
     day: isoDate,
-    link: z.enum(['OK', 'CONTINUOUS_GAP', 'ANCHOR', 'BREAK', 'UNPROVEN']),
+    link: z.enum(['OK', 'CONTINUOUS_GAP', 'ANCHOR', 'BREAK', 'UNPROVEN', 'VERIFIED_START']),
     reference_day: isoDate.nullable(),
   }),
   z.object({
@@ -56,6 +121,16 @@ const sourceSchema = z.union([
     closed_until: isoDate,
     export_ingested_at: dateTime,
   }),
+  z.object({
+    kind: z.literal('VERIFIED_START'),
+    day: isoDate,
+    posed_at: dateTime,
+    evidence_ref: z.string(),
+  }),
+  rejectedDeliverySchema,
+  refutedVersionSchema,
+  breakdownDivergenceSchema,
+  detailDivergenceSchema,
 ]);
 
 const accountSchema = z.object({
@@ -77,6 +152,10 @@ const accountSchema = z.object({
     bank_date_observed: isoDate.nullable(),
     balance_source_day: isoDate.nullable(),
   }),
+  verified_starts: z.array(verifiedStartSchema),
+  retained_unit_at_date: z.object({ unit_id: z.string().uuid(), content_hash: z.string().min(1).max(256) }).nullable(),
+  findings: z.array(findingSchema),
+  counters: z.object({ rejected_deliveries: count, refuted_versions: count }),
   sources: z.array(sourceSchema),
   value_dates: z.object({
     total_lines: z.number().int().min(0),
@@ -122,6 +201,8 @@ const resultSchema = z.object({
 export type TreasuryBalances = z.infer<typeof resultSchema>;
 export type TreasuryAccount = z.infer<typeof accountSchema>;
 export type TreasurySource = z.infer<typeof sourceSchema>;
+export type TreasuryFinding = z.infer<typeof findingSchema>;
+export type TreasuryVerifiedStart = z.infer<typeof verifiedStartSchema>;
 
 export class TreasuryError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -177,6 +258,12 @@ export const REASON_LABELS: Record<string, string> = {
   DAY_NOT_CLOSED: 'Journée non close lors de l’export',
   DAY_CONTESTED: 'Journée disputée par une autre livraison',
   DAY_CONFLICT: 'Journée en conflit entre deux livraisons',
+  DAY_PENDING_VALIDATION: 'Journée livrée, en attente de validation',
+  UNIT_FINANCIAL_FACTS_INCOHERENT: 'Faits financiers du relevé incohérents (ouverture, mouvements, clôture)',
+  VERSION_BALANCE_NOT_COMPARABLE: 'Soldes de deux livraisons non comparables (données insuffisantes)',
+  VERIFIED_START_SUSPENDED: 'Point de départ vérifié suspendu',
+  VERSION_REFUTATION_SUSPENDED: 'Réfutation d’une version suspendue',
+  ACCOUNT_IDENTITY_NOT_CORROBORATED: 'Identité du compte non corroborée par le fichier',
   PARSER_VERSION_UNSUPPORTED: 'Version de lecture du relevé non prise en charge',
   BALANCE_UNKNOWN_AT_DATE: 'Solde inconnu à cette date',
   FORMAT_NOT_QUALIFIED: 'Format bancaire non qualifié',
@@ -210,6 +297,17 @@ export const ERROR_MESSAGES: Record<string, string> = {
   TREASURY_REGISTRY_ACCOUNT_EXISTS_LINK_INSTEAD: 'Ce compte existe déjà au registre : rattachez-le au lieu d’en créer un second.',
   TREASURY_EXPECTED_ACCOUNT_DUPLICATE: 'Compte attendu déjà présent.',
   TREASURY_RESPONSE_INVALID: 'La réponse du serveur ne respecte pas le contrat attendu.',
+  TREASURY_TEXT_SENSITIVE: 'Le texte ressemble à un numéro de compte, un IBAN ou une adresse : retirez-le.',
+  TREASURY_EVIDENCE_REQUIRED: 'Référence de preuve requise (1 à 200 caractères).',
+  TREASURY_OPENING_NOT_WHOLE_XOF: 'Ouverture lue sur pièce à saisir en francs XOF entiers.',
+  TREASURY_RETAINED_OPENING_NOT_WHOLE_XOF: 'L’ouverture retenue de cette journée n’est pas en francs XOF entiers.',
+  TREASURY_OPENING_MISMATCH: 'L’ouverture saisie ne correspond pas à celle de la journée retenue.',
+  TREASURY_EXPECTED_ACCOUNT_UNKNOWN: 'Compte absent de l’inventaire actif.',
+  TREASURY_VERIFIED_START_STALE: 'La journée a changé depuis votre lecture : relisez avant de poser le point.',
+  TREASURY_VERIFIED_START_ALREADY_ACTIVE: 'Un point de départ est déjà actif pour ce compte et cette journée.',
+  TREASURY_VERIFIED_START_NOT_EFFECTIVE: 'Le point ne serait pas effectif pour sa journée : rien n’a été enregistré.',
+  TREASURY_VERIFIED_START_UNKNOWN: 'Point de départ inconnu.',
+  TREASURY_VERIFIED_START_ALREADY_REVOKED: 'Point de départ déjà révoqué.',
 };
 
 export function errorMessage(code: string | null, fallback = 'La lecture a été refusée.'): string {
@@ -312,7 +410,119 @@ const LINK_LABELS: Record<Extract<TreasurySource, { kind: 'CHAIN_LINK' }>['link'
   ANCHOR: 'premier relevé de la chaîne',
   BREAK: 'contredite par le solde prouvé du',
   UNPROVEN: 'continuité non prouvée depuis le',
+  VERIFIED_START: 'point de départ vérifié sur pièce',
 };
+
+export const PIECE_MENTION = 'attestation sur pièce archivée, contenu non vérifié automatiquement';
+
+// Accord explicite : les adjectifs s'accordent, les compléments restent invariables.
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n > 1 ? many : one}`;
+}
+
+function totalsLabel(text: string | null): string {
+  if (text === null) return 'indisponibles';
+  const [debits, credits] = text.split('/');
+  return `débits ${debits}, crédits ${credits}`;
+}
+
+const SIDE_LABELS: Record<'RETAINED' | 'OTHER' | 'BOTH', string> = {
+  RETAINED: 'version retenue',
+  OTHER: 'autre livraison',
+  BOTH: 'les deux versions',
+};
+
+/** Libellé d'un constat de version ou d'écartement, sans donnée bancaire. */
+export function findingLabel(finding: TreasuryFinding): string {
+  switch (finding.kind) {
+    case 'REJECTED_DELIVERY':
+      return `${plural(finding.count, 'livraison écartée', 'livraisons écartées')} le ${finding.day} (sans effet sur le solde retenu)`;
+    case 'REFUTED_VERSION': {
+      const proof = finding.nature === 'BANK_PIECE'
+        ? `pièce corrective émise le ${finding.proof_day ?? 'inconnu'} — ${finding.mention ?? PIECE_MENTION}`
+        : `livraison fraîche${finding.proof_day ? ` (journée ${finding.proof_day})` : ''}`;
+      return `Version réfutée le ${finding.day}${finding.automatic ? ' automatiquement' : ''} : ${proof} ;`
+        + ` ${plural(finding.sources, 'source justifiée', 'sources justifiées')}, ${plural(finding.covered_deliveries, 'livraison couverte', 'livraisons couvertes')}`
+        + `, ${plural(finding.covered_redeposits, 'redépôt identique', 'redépôts identiques')}`
+        + (finding.movements_unresolved ? ' ; mouvements non résolus (seuls les soldes sont prouvés)' : '');
+    }
+    case 'VERSION_BREAKDOWN_DIVERGENCE':
+      return `Ventilation différente le ${finding.day} (${plural(finding.count, 'livraison', 'livraisons')}) : version retenue`
+        + ` ${totalsLabel(finding.retained_totals)} ; autre version ${totalsLabel(finding.other_totals)} — mouvements non résolus`;
+    case 'VERSION_DETAIL_DIVERGENCE':
+      return `Détail des mouvements différent le ${finding.day} (${plural(finding.count, 'livraison', 'livraisons')}), mêmes soldes`
+        + ' — mouvements non résolus';
+    case 'VERSION_CONTRADICTION':
+      return `Contradiction démontrée le ${finding.day} : ${plural(finding.uncovered_sources, 'source non couverte', 'sources non couvertes')}`
+        + ' par une réfutation';
+    case 'VERSION_BALANCE_NOT_COMPARABLE':
+      return `Soldes non comparables le ${finding.day} (${finding.cause === 'AGGREGATES_UNAVAILABLE'
+        ? 'agrégats indisponibles' : 'faits financiers incohérents'}, ${SIDE_LABELS[finding.side]}) :`
+        + ` ${plural(finding.uncovered_sources, 'source non couverte', 'sources non couvertes')}`;
+    case 'VERSION_REFUTATION_SUSPENDED':
+      return `Réfutation du ${finding.day} suspendue : une nouvelle source rouvre la question, une nouvelle preuve est nécessaire`;
+  }
+}
+
+const VERIFIED_START_STATE_LABELS: Record<TreasuryVerifiedStart['for_date'], string> = {
+  EFFECTIVE: 'effectif à D',
+  SUSPENDED: 'suspendu à D',
+  NOT_YET_APPLICABLE: 'postérieur à D',
+  REVOKED: 'révoqué',
+};
+
+export const SUSPENSION_LABELS: Record<string, string> = {
+  ACCOUNT_INACTIVE: 'compte du registre désactivé',
+  UNIT_CHANGED: 'journée retenue modifiée depuis la pose',
+  OPENING_CHANGED: 'ouverture retenue modifiée depuis la pose',
+  CONTRADICTION_AT_HORIZON: 'contradiction datée au plus tard à l’horizon de D',
+};
+
+function suspensionLabel(code: string): string {
+  if (SUSPENSION_LABELS[code]) return SUSPENSION_LABELS[code];
+  if (code.startsWith('DAY_')) return `journée non prouvée (${code.slice(4)})`;
+  return `motif ${code}`;
+}
+
+/** Point de départ vérifié : journée, période d'application, état et lacunes antérieures. */
+export function verifiedStartLabel(point: TreasuryVerifiedStart): string {
+  const suspension = point.suspension === null ? '' : ` (${suspensionLabel(point.suspension)})`;
+  const h = point.history_before;
+  return `Point de départ du ${point.day}, applicable à partir de cette journée : ${VERIFIED_START_STATE_LABELS[point.for_date]}`
+    + `${suspension}${point.applied ? ', appliqué à D' : ''}. Avant ce point : ${plural(h.unproven_days, 'journée non prouvée', 'journées non prouvées')},`
+    + ` ${plural(h.pending_days, 'journée en attente ou disputée', 'journées en attente ou disputées')}, ${plural(h.conflict_days, 'journée en conflit', 'journées en conflit')},`
+    + ` ${plural(h.rejected_deliveries, 'livraison écartée', 'livraisons écartées')} (non couvertes par le point).`;
+}
+
+const FINDING_KINDS: ReadonlySet<string> = new Set([
+  'REJECTED_DELIVERY', 'REFUTED_VERSION', 'VERSION_BREAKDOWN_DIVERGENCE', 'VERSION_DETAIL_DIVERGENCE',
+]);
+
+/** Journée retenue affichée par la lecture : liaison d'un point de départ, revérifiée sous verrou. */
+export interface RetainedDayUnit {
+  canonicalUnitId: string;
+  contentHash: string;
+}
+
+/**
+ * Unité retenue de la journée D elle-même, telle que la lecture l'affiche, même
+ * sans solde à D (journée non close) ; sinon aucune pose possible.
+ */
+export function retainedUnitAtDate(account: TreasuryAccount): RetainedDayUnit | null {
+  const unit = account.retained_unit_at_date;
+  if (unit === null) return null;
+  return { canonicalUnitId: unit.unit_id, contentHash: unit.content_hash };
+}
+
+/** Ouverture lue sur pièce : francs XOF entiers, sans séparateur ni décimale. */
+export function isWholeXofText(text: string): boolean {
+  return /^-?\d{1,16}$/.test(text.trim());
+}
+
+/** Preuves du solde ; les constats de versions, aussi rendus parmi les sources, sont listés à part. */
+export function proofSources(account: TreasuryAccount): TreasurySource[] {
+  return account.sources.filter((source) => !FINDING_KINDS.has(source.kind));
+}
 
 export function sourceLabel(source: TreasurySource): string {
   switch (source.kind) {
@@ -331,5 +541,12 @@ export function sourceLabel(source: TreasurySource): string {
     case 'DECLARED_PERIOD':
       return `Période déclarée ${source.period_start} → ${source.period_end} (close jusqu’au ${source.closed_until},`
         + ` fichier ${shortRef(source.export_id)}) — importée le ${source.export_ingested_at}`;
+    case 'VERIFIED_START':
+      return `Point de départ vérifié du ${source.day} (pièce ${source.evidence_ref}) — posé le ${source.posed_at}`;
+    case 'REJECTED_DELIVERY':
+    case 'REFUTED_VERSION':
+    case 'VERSION_BREAKDOWN_DIVERGENCE':
+    case 'VERSION_DETAIL_DIVERGENCE':
+      return findingLabel(source);
   }
 }

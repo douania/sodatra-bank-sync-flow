@@ -15,6 +15,42 @@
 
 ---
 
+## TREASURY-V1-LOT1-OPERATIONAL-FIX
+
+**Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; migrations `20261103120000` et `20261103130000` appliquées à aucun environnement distant ; verrous et module fermés**
+
+Lot `GO_IMPLEMENT_TREASURY_V1_LOT1_OPERATIONAL_FIX`, base `main` `9256da4`, branche
+`codex/treasury-v1-lot1-operational-fix`. Conception : proposition corrective R6
+(`PASS_WITH_RESERVES`, hors dépôt) et les deux exigences CTO du GO (cohérence financière
+sans livraison concurrente ; lignes réellement réutilisables pour une correction).
+
+Livré en local :
+
+- reconnaissance des noms ORABANK (`ORAB` compris, séparateurs), variantes existantes
+  conservées, nom ambigu refusé ;
+- décisions Daily v2 par clé de commande : attestations d'identité et de devise (Excel,
+  fichier resélectionné), écartement (`rejected`), correction des seuls soldes, réfutation
+  d'une version justifiée source par source (livraison fraîche ou pièce corrective archivée
+  hors application, mention déclarative), approbation groupée par fichier ; exception H1
+  dans les deux cœurs vivants du dépôt, rien d'autre de modifié ;
+- lecture « Soldes à date » réécrite : versions financières complètes et comparaison à trois
+  issues, unité incohérente jamais disponible même seule, journée en attente
+  (`DAY_PENDING_VALIDATION`), points de départ vérifiés applicables par période, constats,
+  compteurs et provenance ; réécritures de performance à sémantique identique (C7), éprouvées
+  contre une référence figée ;
+- interfaces : versions et décisions de la journée, approbation groupée, panneau des points
+  de départ (local et staging, refus en production inchangé) ;
+- revue indépendante (`PASS_WITH_RESERVES`, aucun P1) traitée avant commit.
+
+Résultats sur les 12 relevés réels (base jetable, simulations étiquetées), mesures C7 et
+limites : `docs/TREASURY_V1_LOT1_OPERATIONAL_FIX_REPORT.md`.
+
+Non fait (GO distincts requis) : merge, application staging ou production, ouverture du
+module ou des verrous Daily v2 côté serveur, attestations, qualifications et points de
+départ réels, diagnostic des ruptures BIS, matérialisation de la lecture.
+
+---
+
 ## TREASURY-V1-LOT1-BANK-BALANCES
 
 **Statut : `IN_PROGRESS` — développé et testé localement, PR en brouillon ; migration `20261102090000` appliquée à aucun environnement distant ; vue refusée en production**

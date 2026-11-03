@@ -53,19 +53,42 @@ const mutants = [
   { name: 't16_observed_date_shown_as_covered', file: 'treasuryModel.ts', test: MODEL,
     from: 'const covered = account.dates.bank_date_covered;', to: 'const covered = account.dates.bank_date_observed;' },
   { name: 't17_closure_proofs_not_rendered', file: 'TreasuryBalancesView.tsx', test: MODEL,
-    from: '{account.sources.map((source, index) =>',
-    to: "{account.sources.filter((source) => source.kind === 'CANONICAL_UNIT').map((source, index) =>" },
+    from: '{proofSources(account).map((source, index) =>',
+    to: "{proofSources(account).filter((source) => source.kind === 'CANONICAL_UNIT').map((source, index) =>" },
   { name: 't18_proof_reference_optional', file: 'treasuryModel.ts', test: MODEL,
     from: "kind: z.literal('CLOSURE_LATER_LINE'),\n    export_id: z.string().uuid(),",
     to: "kind: z.literal('CLOSURE_LATER_LINE'),\n    export_id: z.string().uuid().optional()," },
+  // Lot 1 opérationnel.
+  { name: 't19_piece_mention_dropped', file: 'treasuryModel.ts', test: MODEL,
+    from: '— ${finding.mention ?? PIECE_MENTION}`', to: '`' },
+  { name: 't20_start_on_another_day', file: 'treasuryModel.ts', test: MODEL,
+    from: 'const unit = account.retained_unit_at_date;',
+    to: "const unit = account.retained_unit_at_date ?? { unit_id: 'autre-journee', content_hash: 'autre' };" },
+  { name: 't21_finding_side_optional', file: 'treasuryModel.ts', test: MODEL,
+    from: "side: z.enum(['RETAINED', 'OTHER', 'BOTH']),", to: "side: z.enum(['RETAINED', 'OTHER', 'BOTH']).optional()," },
+  { name: 't22_point_always_applied', file: 'treasuryModel.ts', test: MODEL,
+    from: "point.applied ? ', appliqué à D' : ''", to: "', appliqué à D'" },
+  { name: 't23_opening_with_decimals', file: 'treasuryModel.ts', test: MODEL,
+    from: 'return /^-?\\d{1,16}$/.test(text.trim());', to: 'return /^-?\\d{1,16}(\\.\\d{1,2})?$/.test(text.trim());' },
+  { name: 't24_findings_doubled_as_proofs', file: 'treasuryModel.ts', test: MODEL,
+    from: 'return account.sources.filter((source) => !FINDING_KINDS.has(source.kind));', to: 'return account.sources;' },
+  { name: 't25_verified_start_before_target_check', file: 'treasuryService.ts', test: ACCESS,
+    from: "return adminCall('treasury_admin_set_verified_start_v1', commandKey, {",
+    to: "void db.rpc('treasury_admin_set_verified_start_v1', {});\n  return adminCall('treasury_admin_set_verified_start_v1', commandKey, {" },
+  { name: 't26_panel_shows_other_day', file: 'TreasuryVerifiedStartAdmin.tsx', test: ACCESS,
+    from: '.filter((entry): entry is { account: TreasuryAccount; unit: RetainedDayUnit } => entry.unit !== null);',
+    to: ';' },
 ];
 
 let killed = 0;
 for (const mutant of mutants) {
   const file = resolve(dir, mutant.file);
   const original = readFileSync(file, 'utf8');
-  if (!original.includes(mutant.from)) throw new Error(`MUTANT_TARGET_NOT_FOUND ${mutant.name}`);
-  writeFileSync(file, original.replace(mutant.from, mutant.to));
+  // Extraction Windows (autocrlf) : les cibles multilignes suivent les fins de ligne du fichier.
+  const eol = original.includes('\r\n') ? '\r\n' : '\n';
+  const from = mutant.from.split('\n').join(eol);
+  if (!original.includes(from)) throw new Error(`MUTANT_TARGET_NOT_FOUND ${mutant.name}`);
+  writeFileSync(file, original.replace(from, mutant.to.split('\n').join(eol)));
   let survived = false;
   try {
     execFileSync(process.execPath, [tsxCli, '--test', mutant.test], { stdio: 'pipe' });

@@ -17,15 +17,18 @@ SELECT tr_test.check('2026-10-04', 'ora_tail', 'AVAILABLE', '20.00', '', 'ORA sa
 -- non résolue se propage aux dates postérieures jusqu'à sa résolution.
 -- Journée disputée continue : la suivante s'appuie sur une clôture non résolue.
 SELECT tr_test.check('2026-10-01', 'ora_pending_mid', 'AVAILABLE', '200.00', '', 'ORA avant la journée disputée');
-SELECT tr_test.check('2026-10-02', 'ora_pending_mid', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA journée retenue mais disputée');
+-- Lot 1 opérationnel (R6, § 4.3, élément 2) : la version en attente clôt la
+-- journée autrement (mouvement net différent) : contradiction démontrée.
+SELECT tr_test.check('2026-10-02', 'ora_pending_mid', 'BLOCKED', NULL, 'DAY_CONFLICT', 'ORA journée retenue mais disputée');
 SELECT tr_test.check('2026-10-03', 'ora_pending_mid', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA appui sur une clôture disputée');
 -- Journée livrée seulement par une version non retenue, enjambée par la continuité.
-SELECT tr_test.check('2026-10-02', 'ora_staged_mid', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA journée livrée non retenue');
+-- A6 : journée sans unité retenue, livraisons toutes en attente.
+SELECT tr_test.check('2026-10-02', 'ora_staged_mid', 'NOT_COVERED', NULL, 'DAY_PENDING_VALIDATION', 'ORA journée livrée non retenue');
 SELECT tr_test.check('2026-10-03', 'ora_staged_mid', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA continuité enjambant une journée non résolue');
 -- L'ouverture d'une journée disputée est contrôlée : la rupture (1400 puis 9000)
 -- bloque la journée disputée et les dates postérieures.
 SELECT tr_test.check('2026-10-01', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN_AFTER_DATE', 'ORA clôture contredite par la journée disputée');
-SELECT tr_test.check('2026-10-02', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN,DAY_CONTESTED', 'ORA rupture portée par la journée disputée');
+SELECT tr_test.check('2026-10-02', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN,DAY_CONFLICT', 'ORA rupture portée par la journée disputée');
 SELECT tr_test.check('2026-10-03', 'ora_dispute', 'BLOCKED', NULL, 'CHAIN_BROKEN,CHAIN_UNPROVEN', 'ORA date postérieure à la journée disputée');
 -- Report arrière : il vient de l'ouverture contrôlée, il ne prouve pas la continuité.
 SELECT tr_test.check('2026-10-03', 'ora_back', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA report arrière d''une ouverture non continue');
@@ -34,7 +37,7 @@ SELECT tr_test.check('2026-10-04', 'ora_back', 'NOT_COVERED', NULL, 'CHAIN_UNPRO
 SELECT tr_test.check('2026-10-03', 'ora_lead_pending', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA report arrière après une journée disputée en amont');
 SELECT tr_test.check('2026-10-04', 'ora_lead_pending', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA premier relevé après une journée disputée');
 SELECT tr_test.check('2026-10-02', 'ora_first_pending', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA premier relevé après la livraison disputée');
-SELECT tr_test.check('2026-10-01', 'ora_first_pending', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA livraison disputée avant tout relevé retenu');
+SELECT tr_test.check('2026-10-01', 'ora_first_pending', 'NOT_COVERED', NULL, 'DAY_PENDING_VALIDATION', 'ORA livraison disputée avant tout relevé retenu');
 -- Une unité sans solde dérivable, qui ne se résoudra pas, n'empêche pas l'ancrage suivant.
 SELECT tr_test.check('2026-10-04', 'bis_nobal_first', 'AVAILABLE', '510.00', '', 'BIS ancrage après une journée sans solde');
 -- Clôture prouvée seulement par des fichiers dignes de preuve : ni identité non
@@ -47,10 +50,10 @@ SELECT tr_test.check('2026-09-30', 'ora_cur', 'BLOCKED', NULL, 'CURRENCY_CONTRAD
 -- Journées disputées par un second export : non retenue, conflit, en attente.
 -- L'incertitude se propage aux dates postérieures jusqu'à leur résolution.
 SELECT tr_test.check('2026-10-01', 'ora_contest', 'AVAILABLE', '20.00', '', 'ORA avant les journées disputées');
-SELECT tr_test.check('2026-10-02', 'ora_contest', 'NOT_COVERED', NULL, 'DAY_CONTESTED', 'ORA mouvement livré non retenu');
+SELECT tr_test.check('2026-10-02', 'ora_contest', 'NOT_COVERED', NULL, 'DAY_PENDING_VALIDATION', 'ORA mouvement livré non retenu');
 SELECT tr_test.check('2026-10-03', 'ora_contest', 'BLOCKED', NULL, 'CHAIN_UNPROVEN,DAY_CONFLICT', 'ORA journée en conflit');
 SELECT tr_test.check('2026-10-04', 'ora_contest', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN', 'ORA journée suivant un conflit non résolu');
-SELECT tr_test.check('2026-10-05', 'ora_contest', 'NOT_COVERED', NULL, 'CHAIN_UNPROVEN,DAY_CONTESTED', 'ORA journée en attente de revue');
+SELECT tr_test.check('2026-10-05', 'ora_contest', 'BLOCKED', NULL, 'CHAIN_UNPROVEN,DAY_CONFLICT', 'ORA journée en attente de revue');
 
 -- Couverture positive : unités closes, journées sans mouvement d'une période
 -- DÉCLARÉE dont le fichier porte une ligne ultérieure.

@@ -1,14 +1,19 @@
 param(
   [string]$Image = 'postgres:17-alpine',
-  [switch]$Mutants
+  [switch]$Mutants,
+  # Mesure C7 seule (R6) : volume synthétique 10 comptes × 10 ans dans son propre
+  # conteneur, 120 lectures chronométrées, plan détaillé ; hors CI (durée).
+  [switch]$Perf
 )
 
 # TREASURY V1 — LOT 1 : rejeu PostgreSQL 17 local, jetable, données synthétiques.
 # Aucune connexion à une base préexistante, au staging ou à la production : les
 # seules cibles sont des conteneurs créés ici, nommés de façon unique et
 # supprimés à la fin. Deux scénarios, chacun dans son conteneur :
-#   - « upgrade » : chaîne complète SANS la migration du lot, données Daily v2 et
-#     habilitations existantes, relevé de la surface d'accès, migration du lot,
+#   - « upgrade » : chaîne complète SANS la migration du lot ni celles du Lot 1
+#     opérationnel, données Daily v2 et habilitations existantes, relevé de la
+#     surface d'accès, migration du lot, comparaison de surface, puis les deux
+#     migrations du Lot 1 opérationnel sur cette base peuplée, seconde
 #     comparaison de surface, puis les suites du lot ;
 #   - « fresh » : chaîne complète AVEC la migration du lot sur une base neuve,
 #     puis les mêmes suites ; avec -Mutants, preuves de mordant.
@@ -20,6 +25,7 @@ $OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $testDir = 'supabase/tests/treasury_v1_lot1'
 $lotMigration = '20261102090000_treasury_v1_lot1_bank_balances.sql'
+$operationalMigrations = @('20261103120000_daily_v2_operational_decisions.sql', '20261103130000_treasury_v1_lot1_operational_fix.sql')
 $expectedRaceResult = 'RESULT|AVAILABLE|1300.00|QUALIFIED|null'
 $script:containerName = $null
 
@@ -36,6 +42,14 @@ function Invoke-Sql([string]$sql, [string]$label) {
 }
 
 function Invoke-File([string]$relativePath) { Invoke-Sql (Get-SqlText $relativePath) $relativePath }
+
+# Mesure : toute la sortie est rendue (lignes PERF et plan détaillé d'auto_explain).
+function Invoke-FileVerbose([string]$relativePath) {
+  $ErrorActionPreference = 'Continue'
+  $output = (Get-SqlText $relativePath) | docker exec -e PGOPTIONS=--client-min-messages=warning -i $script:containerName psql -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "SQL replay failed for $relativePath`n$($output -join [Environment]::NewLine)" }
+  $output | ForEach-Object { "$_" }
+}
 
 # Fichiers d'assertions : exécutés dans une transaction annulée, sans effet durable.
 function Invoke-FileInTransaction([string]$relativePath) {
@@ -75,11 +89,14 @@ function Stop-Container {
 function Invoke-Chain([switch]$WithoutLot) {
   Invoke-File 'supabase/tests/full_chain_replay/00_platform_shim_minimal.sql' | Out-Null
   $files = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'supabase/migrations') -Filter '*.sql' | Sort-Object Name
+  $excluded = if ($WithoutLot) { @($lotMigration) + $operationalMigrations } else { @() }
+  $applied = 0
   foreach ($file in $files) {
-    if ($WithoutLot -and $file.Name -eq $lotMigration) { continue }
+    if ($excluded -contains $file.Name) { continue }
     Invoke-File ('supabase/migrations/' + $file.Name) | Out-Null
+    $applied++
   }
-  Write-Output ("CHAIN applied ({0} migrations{1})" -f ($files.Count - [int][bool]$WithoutLot), $(if ($WithoutLot) { ', lot excluded' } else { '' }))
+  Write-Output ("CHAIN applied ({0} migrations{1})" -f $applied, $(if ($WithoutLot) { ', lot and operational fix excluded' } else { '' }))
 }
 
 function Start-SqlJob([string]$relativePath) {
@@ -122,14 +139,32 @@ function Invoke-SnapshotRace([switch]$ExpectMismatch, [string]$marker) {
   }
 }
 
-function Invoke-Mutants {
+function Get-ReferenceSnapshotAsLive {
+  # C7 : la référence figée, installée à la place de la lecture optimisée.
+  (Get-SqlText "$testDir/perf/reference_balances_snapshot.sql").Replace(
+    'CREATE OR REPLACE FUNCTION tr_ref.balances_snapshot(', 'CREATE OR REPLACE FUNCTION treasury_private.balances_snapshot(')
+}
+
+# C7 : réponse identique à la référence figée, sur les scénarios et sur des
+# historiques aléatoires à graine fixe, chacun dans une transaction annulée.
+function Invoke-Differential {
+  $reference = Get-SqlText "$testDir/perf/reference_balances_snapshot.sql"
+  $compare = Get-SqlText "$testDir/perf/82_differential.sql"
+  foreach ($base in "$testDir/40_balances.sql", "$testDir/46_operational.sql", "$testDir/perf/83_random_histories.sql") {
+    Invoke-Sql ("BEGIN;`n" + $reference + "`n" + (Get-SqlText $base) + "`n" + $compare + "`nROLLBACK;`n") "differential on $base" |
+      Where-Object { $_ -like 'PASS 82_*' -or $_ -like 'PASS 83_*' } | ForEach-Object { "$_ <- $base" }
+  }
+}
+
+function Invoke-Mutants([switch]$Reference) {
   $count = 0
+  $prefix = if ($Reference) { (Get-ReferenceSnapshotAsLive) + "`n" } else { '' }
   $mutantFiles = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'mutants') -Filter 'm*.sql' | Sort-Object Name
   foreach ($file in $mutantFiles) {
     $mutantText = Get-Content -Raw -Encoding UTF8 -LiteralPath $file.FullName
     $target = ([regex]::Match($mutantText, '-- target: (\S+)')).Groups[1].Value
     if (-not $target) { throw "Mutant without target: $($file.Name)" }
-    $sql = "BEGIN;`n" + $mutantText + "`n" + (Get-SqlText "$testDir/$target") + "`nROLLBACK;`n"
+    $sql = "BEGIN;`n" + $prefix + $mutantText + "`n" + (Get-SqlText "$testDir/$target") + "`nROLLBACK;`n"
     $ErrorActionPreference = 'Continue'
     $output = $sql | docker exec -e PGOPTIONS=--client-min-messages=warning -i $script:containerName psql -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres 2>&1
     $code = $LASTEXITCODE
@@ -138,10 +173,10 @@ function Invoke-Mutants {
     if ($text -match 'MUTANT_TARGET_NOT_FOUND') { throw "Mutant target not found: $($file.Name)" }
     if ($code -eq 0 -or $text -notmatch 'TEST_FAILED') { throw "MUTANT_SURVIVED $($file.BaseName)" }
     $reason = ([regex]::Match($text, 'TEST_FAILED: [^\r\n]*')).Value
-    Write-Output "KILLED $($file.BaseName) -> $target : $reason"
+    Write-Output "KILLED $($file.BaseName) -> $target : $reason$(if ($Reference) { ' [reference]' } else { '' })"
     $count++
   }
-  Write-Output "MUTANTS killed: $count / $($mutantFiles.Count)"
+  Write-Output "MUTANTS killed$(if ($Reference) { ' on the frozen reference' } else { '' }): $count / $($mutantFiles.Count)"
 }
 
 function Invoke-LotSuites {
@@ -151,12 +186,37 @@ function Invoke-LotSuites {
   Invoke-FileInTransaction "$testDir/25_inventory_rules.sql"
   Invoke-FileInTransaction "$testDir/40_balances.sql"
   Invoke-FileInTransaction "$testDir/45_consolidation.sql"
+  Invoke-FileInTransaction "$testDir/46_operational.sql"
   Invoke-File "$testDir/70_isolation.sql"
   Invoke-SnapshotRace -marker '50_race snapshot'
   Invoke-File "$testDir/52_race_restore.sql"
 }
 
 try {
+  if ($Perf) {
+    Write-Output '== scenario perf (C7)'
+    Start-Container 'perf'
+    Invoke-Chain
+    Invoke-File "$testDir/00_tools.sql"
+    Invoke-File "$testDir/05_users_governance.sql"
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    Invoke-FileVerbose "$testDir/perf/80_perf_seed.sql" | Where-Object { $_ -like 'PERF*' -or $_ -like 'PASS *' }
+    Write-Output "PERF seed_seconds=$([math]::Round($watch.Elapsed.TotalSeconds, 1))"
+    $ErrorActionPreference = 'Continue'
+    $limits = docker inspect --format 'nano_cpus={{.HostConfig.NanoCpus}} memory_bytes={{.HostConfig.Memory}}' $script:containerName 2>&1
+    $engine = docker info --format 'engine_cpus={{.NCPU}} engine_memory_bytes={{.MemTotal}} os={{.OperatingSystem}}' 2>&1
+    $ErrorActionPreference = 'Stop'
+    Write-Output "PERF container_limits $limits (0 = no limit) ; $engine"
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+      $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+      $mem = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+      Write-Output "PERF host cpu=$($cpu.Name.Trim()) cores=$($cpu.NumberOfCores) logical=$($cpu.NumberOfLogicalProcessors) memory_gb=$mem"
+    }
+    Invoke-FileVerbose "$testDir/perf/81_perf_measure.sql"
+    Write-Output 'TREASURY_V1_LOT1_PERF_MEASURED'
+    return
+  }
+
   Write-Output '== scenario upgrade'
   Start-Container 'upgrade'
   Invoke-Chain -WithoutLot
@@ -167,6 +227,9 @@ try {
   Invoke-File "supabase/migrations/$lotMigration" | Out-Null
   Write-Output 'LOT migration applied on the populated database'
   Invoke-File "$testDir/61_surface_compare.sql"
+  foreach ($migration in $operationalMigrations) { Invoke-File "supabase/migrations/$migration" | Out-Null }
+  Write-Output 'OPERATIONAL FIX migrations applied on the populated database'
+  Invoke-File "$testDir/62_surface_compare_operational.sql"
   Invoke-File "$testDir/10_structure_security.sql"
   Invoke-LotSuites
   Stop-Container
@@ -179,8 +242,10 @@ try {
   Invoke-File "$testDir/05_users_governance.sql"
   Invoke-File "$testDir/35_seed_daily_v2.sql"
   Invoke-LotSuites
+  Invoke-Differential
   if ($Mutants) {
     Invoke-Mutants
+    Invoke-Mutants -Reference
     Invoke-Sql "ALTER FUNCTION public.treasury_balances_at_v1(date) VOLATILE; ALTER FUNCTION treasury_private.balances_snapshot(date, date) VOLATILE;" 'm04 apply' | Out-Null
     Invoke-SnapshotRace -ExpectMismatch -marker 'm04_volatile_read'
     Invoke-Sql "ALTER FUNCTION public.treasury_balances_at_v1(date) STABLE; ALTER FUNCTION treasury_private.balances_snapshot(date, date) STABLE;" 'm04 revert' | Out-Null

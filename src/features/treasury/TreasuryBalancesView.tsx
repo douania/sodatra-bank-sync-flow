@@ -1,13 +1,16 @@
 import {
   ACCOUNT_STATUS_LABELS,
   CONSOLIDATION_STATUS_LABELS,
+  findingLabel,
   formatAmount,
   freshnessLabel,
   presentConsolidation,
+  proofSources,
   QUALIFICATION_LABELS,
   reasonLabel,
   sourceLabel,
   valueDateLabel,
+  verifiedStartLabel,
   type TreasuryAccount,
   type TreasuryBalances,
 } from './treasuryModel';
@@ -39,6 +42,16 @@ function AccountRow({ account, windowDays }: { account: TreasuryAccount; windowD
             {account.reasons.map((reason) => <li key={reason}>{reasonLabel(reason)}</li>)}
           </ul>
         )}
+        {account.findings.length > 0 && (
+          <ul className="mt-1 list-disc pl-4 text-xs" aria-label="Constats de versions">
+            {account.findings.map((finding, index) => <li key={index}>{findingLabel(finding)}</li>)}
+          </ul>
+        )}
+        {(account.counters.rejected_deliveries > 0 || account.counters.refuted_versions > 0) && (
+          <div className="mt-1 text-xs text-muted-foreground">
+            Livraisons écartées : {account.counters.rejected_deliveries} · Versions réfutées : {account.counters.refuted_versions}
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 text-right font-mono">
         <div>{formatAmount(account.balance_at_date, account.currency)}</div>
@@ -50,7 +63,10 @@ function AccountRow({ account, windowDays }: { account: TreasuryAccount; windowD
       </td>
       <td className="px-3 py-2 text-xs">
         <div>{freshnessLabel(account)}</div>
-        {account.sources.map((source, index) => <div key={index} className="text-muted-foreground">{sourceLabel(source)}</div>)}
+        {proofSources(account).map((source, index) => <div key={index} className="text-muted-foreground">{sourceLabel(source)}</div>)}
+        {account.verified_starts.map((point) => (
+          <div key={point.verified_start_id} data-verified-start={point.for_date}>{verifiedStartLabel(point)}</div>
+        ))}
       </td>
       <td className="px-3 py-2 text-xs">
         <div>{QUALIFICATION_LABELS[account.qualification] ?? account.qualification}</div>

@@ -10,7 +10,12 @@ Depuis la racine du dépôt :
 ```powershell
 pwsh -File supabase/tests/treasury_v1_lot1/run_pg17_replay.ps1            # suites
 pwsh -File supabase/tests/treasury_v1_lot1/run_pg17_replay.ps1 -Mutants   # + preuves de mordant
+pwsh -File supabase/tests/treasury_v1_lot1/run_pg17_replay.ps1 -Perf      # mesure C7 seule (hors CI)
 ```
+
+Lot 1 opérationnel : les migrations `20261103120000_daily_v2_operational_decisions.sql`
+et `20261103130000_treasury_v1_lot1_operational_fix.sql` sont appliquées après celle du
+lot (scénario upgrade : sur la base peuplée, seconde comparaison de surface).
 
 Deux scénarios, chacun dans un conteneur `postgres:17-alpine` jetable au nom aléatoire,
 supprimé dans `finally` :
@@ -41,4 +46,7 @@ vérifiée ensuite (`tr_test.assert_seed_consistent`).
 | `50`–`52` | course réelle : l'écrivain attend la lecture active et prouve qu'elle l'est encore après sa validation ; un import et une suspension validés pendant la lecture ne sont pas vus ; l'état postérieur l'est par une nouvelle lecture ; état rétabli |
 | `60`–`61` | surface d'accès et définitions avant/après : aucun objet existant modifié ; seuls nouveaux accès = exécution des cinq fonctions publiques par `authenticated` |
 | `70_isolation.sql` | aucune table legacy ni de paiement lue ; seuls `require_bank_read` et `require_admin` du module chèques appelés |
-| `mutants/` | une règle critique altérée par fichier, dans une transaction annulée ; la suite visée doit échouer |
+| `46_operational.sql` | Lot 1 opérationnel, commandes Daily v2 réelles : trois issues de comparaison, écartement, réserve 4.1 (unité incohérente jamais disponible, même seule), attestations, journée en attente (`DAY_PENDING_VALIDATION`), F1 → C → F2 → redépôt, pièce et mention, adoption fraîche ou non, scénarios 2 (correction après 60 jours) et 3 (compte dormant), points de départ vérifiés (pose, refus, suspension, révocation) |
+| `62_surface_compare_operational.sql` | seconde comparaison de surface : seuls les nouveaux objets, avec les privilèges prévus ; définitions modifiées limitées à la liste blanche |
+| `perf/` | C7 : volume synthétique 10 comptes × 10 ans × 30 lignes par jour avec toutes les anomalies de la R6 (`80_perf_seed.sql`), 120 lectures chronométrées après échauffement, p50/p95/max, ressources, plan détaillé (`81_perf_measure.sql`) ; référence figée non optimisée (`reference_balances_snapshot.sql`), test différentiel (`82_differential.sql`) sur les scénarios 40 et 46 et sur douze historiques aléatoires à graine fixe (`83_random_histories.sql`) |
+| `mutants/` | une règle critique altérée par fichier, dans une transaction annulée ; la suite visée doit échouer (74 avec le Lot 1 opérationnel, joués aussi sur la référence figée de la lecture) |

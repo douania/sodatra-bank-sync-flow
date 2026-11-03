@@ -9,14 +9,20 @@ import {
   amountTextToMinorUnits,
   defaultAsOf,
   ERROR_MESSAGES,
+  findingLabel,
   formatAmount,
   freshnessLabel,
+  isWholeXofText,
   parseTreasuryBalances,
+  PIECE_MENTION,
   presentConsolidation,
+  proofSources,
   reasonLabel,
   REASON_LABELS,
+  retainedUnitAtDate,
   treasuryErrorCode,
   TreasuryError,
+  verifiedStartLabel,
   type TreasuryBalances,
 } from './treasuryModel';
 import { STRUCTURED_BANK_STATEMENT_EXCEL_PROFILES } from '@/services/structuredBankStatementExcelProfiles';
@@ -38,11 +44,14 @@ function account(overrides: Record<string, unknown>) {
     sources: [
       { kind: 'CANONICAL_UNIT', role: 'CLOSING', unit_id: '40000000-0000-4000-8000-000000000007',
         export_id: '50000000-0000-4000-8000-000000000001', day: '2026-10-07', ingested_at: '2026-10-08T08:00:00+00:00',
-        export_ingested_at: '2026-10-08T07:59:00+00:00', source_format: 'structured_bank_statement_csv' },
+        export_ingested_at: '2026-10-08T07:59:00+00:00', source_format: 'structured_bank_statement_csv',
+        content_hash: 'c'.repeat(64) },
       { kind: 'CLOSURE_LATER_LINE', export_id: '5a000000-0000-4000-8000-000000000002', delivery: 'duplicate',
         later_line_day: '2026-10-08', export_ingested_at: '2026-10-09T07:00:00+00:00' },
       { kind: 'CHAIN_LINK', day: '2026-10-07', link: 'OK', reference_day: '2026-10-06' },
     ],
+    verified_starts: [], findings: [], counters: { rejected_deliveries: 0, refuted_versions: 0 },
+    retained_unit_at_date: null,
     value_dates: { total_lines: 3, lines_with_value_date: 2 },
     ...overrides,
   };
@@ -122,20 +131,30 @@ test('un sous-total partiel ou bloqué n’est jamais présenté comme un total'
 });
 
 test('chaque motif du serveur a un libellé', () => {
-  // Motifs relevés dans la migration elle-même : aucun motif émis sans libellé.
-  const migration = readFileSync(resolve('supabase/migrations/20261102090000_treasury_v1_lot1_bank_balances.sql'), 'utf8');
+  // Motifs relevés dans les migrations elles-mêmes : aucun motif émis sans libellé.
+  const migration = readFileSync(resolve('supabase/migrations/20261102090000_treasury_v1_lot1_bank_balances.sql'), 'utf8')
+    + readFileSync(resolve('supabase/migrations/20261103130000_treasury_v1_lot1_operational_fix.sql'), 'utf8');
   const emitted = new Set([
+    ...[...migration.matchAll(/ARRAY\['([A-Z_]+)'\]/g)].map((match) => match[1]),
     ...[...migration.matchAll(/THEN '([A-Z_]+)' END/g)].map((match) => match[1]),
     ...[...migration.matchAll(/WHEN '[A-Z_]+' THEN '([A-Z_]+)'/g)].map((match) => match[1]),
     ...[...migration.matchAll(/ELSE '([A-Z_]+)'\s+END END/g)].map((match) => match[1]),
   ]);
   for (const code of ['CHAIN_BROKEN_AFTER_DATE', 'DAY_NOT_CLOSED', 'DAY_CONTESTED', 'DAY_CONFLICT',
-    'PARSER_VERSION_UNSUPPORTED', 'FORMAT_NOT_QUALIFIED', 'ACCOUNTS_BLOCKED']) {
+    'PARSER_VERSION_UNSUPPORTED', 'FORMAT_NOT_QUALIFIED', 'ACCOUNTS_BLOCKED', 'DAY_PENDING_VALIDATION',
+    'UNIT_FINANCIAL_FACTS_INCOHERENT', 'VERSION_BALANCE_NOT_COMPARABLE', 'VERIFIED_START_SUSPENDED',
+    'VERSION_REFUTATION_SUSPENDED']) {
     assert.ok(emitted.has(code), `${code} relevé dans la migration`);
   }
-  assert.ok(emitted.size >= 26, `motifs relevés : ${emitted.size}`);
-  for (const code of emitted) {
+  assert.ok(emitted.size >= 31, `motifs relevés : ${emitted.size}`);
+  // Valeurs de suspension d'un point de départ, libellées à part (SUSPENSION_LABELS).
+  for (const code of [...emitted].filter((value) => value !== 'CONTRADICTION_AT_HORIZON')) {
     assert.ok(REASON_LABELS[code], code);
+  }
+  // Codes d'erreur des commandes de points de départ : chacun a un message.
+  const op = readFileSync(resolve('supabase/migrations/20261103130000_treasury_v1_lot1_operational_fix.sql'), 'utf8');
+  for (const match of op.matchAll(/MESSAGE = '(TREASURY_(?:VERIFIED_START|OPENING|RETAINED_OPENING|TEXT|EVIDENCE)[A-Z_]*)'/g)) {
+    assert.ok(ERROR_MESSAGES[match[1]], match[1]);
   }
   assert.equal(reasonLabel('INCONNU'), 'Motif INCONNU');
   assert.ok(ERROR_MESSAGES.TREASURY_MODULE_CLOSED);
@@ -186,7 +205,8 @@ test('les preuves de clôture et de continuité sont rendues avec leurs référe
         sources: [
           { kind: 'CANONICAL_UNIT', role: 'OPENING', unit_id: '40000000-0000-4000-8000-000000000005',
             export_id: '5b000000-0000-4000-8000-000000000003', day: '2026-10-05', ingested_at: null,
-            export_ingested_at: '2026-10-06T07:00:00+00:00', source_format: 'structured_bank_statement_csv' },
+            export_ingested_at: '2026-10-06T07:00:00+00:00', source_format: 'structured_bank_statement_csv',
+            content_hash: null },
           { kind: 'CHAIN_LINK', day: '2026-10-05', link: 'CONTINUOUS_GAP', reference_day: '2026-10-01' },
           { kind: 'DECLARED_PERIOD', export_id: '5b000000-0000-4000-8000-000000000003', period_start: '2026-10-04',
             period_end: '2026-10-05', closed_until: '2026-10-04', export_ingested_at: '2026-10-06T07:00:00+00:00' },
@@ -197,7 +217,8 @@ test('les preuves de clôture et de continuité sont rendues avec leurs référe
         sources: [
           { kind: 'CANONICAL_UNIT', role: 'CLOSING', unit_id: '40000000-0000-4000-8000-000000000001',
             export_id: '5c000000-0000-4000-8000-000000000004', day: '2026-10-01', ingested_at: null,
-            export_ingested_at: '2026-10-02T07:00:00+00:00', source_format: 'structured_bank_statement_csv' },
+            export_ingested_at: '2026-10-02T07:00:00+00:00', source_format: 'structured_bank_statement_csv',
+            content_hash: null },
           { kind: 'CLOSURE_NEXT_OPENING', unit_id: '40000000-0000-4000-8000-000000000002',
             export_id: '5d000000-0000-4000-8000-000000000005', day: '2026-10-02', ingested_at: null,
             export_ingested_at: '2026-10-04T07:00:00+00:00' },
@@ -245,4 +266,102 @@ test('BIS : la devise XOF est corroborée par les en-têtes obligatoires du prof
   assert.equal(bis.fixedCurrency, 'XOF');
   const aliases = bis.requiredHeaders.flatMap((header) => header.aliases);
   assert.ok(aliases.includes('debitxof') && aliases.includes('creditxof'), 'en-têtes DEBIT XOF / CREDIT XOF exigés');
+});
+
+const POINT = {
+  verified_start_id: '60000000-0000-4000-8000-000000000001', day: '2026-10-03', posed_at: '2026-11-03T09:00:00+00:00',
+  evidence_ref: 'PIECE-SYNTH-1', state: 'ACTIVE', for_date: 'EFFECTIVE', suspension: null, applied: true,
+  history_before: { unproven_days: 2, pending_days: 1, conflict_days: 0, rejected_deliveries: 1 },
+};
+const REFUTED_PIECE = {
+  kind: 'REFUTED_VERSION', day: '2026-10-02', nature: 'BANK_PIECE', automatic: false, proof_day: '2026-10-20', sources: 2,
+  covered_deliveries: 3, covered_redeposits: 1, movements_unresolved: true, mention: PIECE_MENTION,
+};
+
+test('contrat opérationnel : constats, points de départ et compteurs vérifiés strictement', () => {
+  const parsed = parseTreasuryBalances(result({ accounts: [account({
+    status: 'NOT_COVERED', reasons: ['DAY_PENDING_VALIDATION'], balance_at_date: null,
+    verified_starts: [POINT], counters: { rejected_deliveries: 1, refuted_versions: 1 },
+    findings: [
+      { kind: 'REJECTED_DELIVERY', day: '2026-10-02', count: 1 },
+      REFUTED_PIECE,
+      { kind: 'VERSION_BREAKDOWN_DIVERGENCE', day: '2026-10-02', count: 1, retained_totals: '10.00/20.00',
+        other_totals: '15.00/25.00', movements_unresolved: true },
+      { kind: 'VERSION_DETAIL_DIVERGENCE', day: '2026-10-02', count: 1, movements_unresolved: true },
+      { kind: 'VERSION_CONTRADICTION', day: '2026-10-02', uncovered_sources: 2 },
+      { kind: 'VERSION_BALANCE_NOT_COMPARABLE', day: '2026-10-02', cause: 'AGGREGATES_UNAVAILABLE', side: 'OTHER',
+        uncovered_sources: 1 },
+      { kind: 'VERSION_REFUTATION_SUSPENDED', day: '2026-10-02' },
+    ],
+    sources: [
+      ...(account({}).sources as unknown[]).slice(0, 2),
+      { kind: 'CHAIN_LINK', day: '2026-10-07', link: 'VERIFIED_START', reference_day: null },
+      { kind: 'VERIFIED_START', day: '2026-10-03', posed_at: '2026-11-03T09:00:00+00:00', evidence_ref: 'PIECE-SYNTH-1' },
+      REFUTED_PIECE,
+    ],
+  })] }));
+  assert.equal(parsed.accounts[0].findings.length, 7);
+  for (const broken of [
+    account({ verified_starts: undefined }),
+    account({ findings: undefined }),
+    account({ counters: { rejected_deliveries: -1, refuted_versions: 0 } }),
+    account({ findings: [{ kind: 'VERSION_INCONNUE', day: '2026-10-02' }] }),
+    account({ findings: [{ ...REFUTED_PIECE, nature: 'CONVICTION' }] }),
+    account({ findings: [{ kind: 'VERSION_BALANCE_NOT_COMPARABLE', day: '2026-10-02', cause: 'AGGREGATES_UNAVAILABLE',
+      uncovered_sources: 1 }] }),
+    account({ findings: [{ kind: 'VERSION_DETAIL_DIVERGENCE', day: '2026-10-02', count: 1, movements_unresolved: false }] }),
+    account({ verified_starts: [{ ...POINT, for_date: 'TOUJOURS' }] }),
+    account({ verified_starts: [{ ...POINT, history_before: { unproven_days: 0 } }] }),
+    account({ sources: [{ kind: 'VERIFIED_START', day: '2026-10-03', posed_at: '2026-11-03T09:00:00+00:00' }] }),
+  ]) {
+    assert.throws(() => parseTreasuryBalances(result({ accounts: [broken] })), (error: unknown) =>
+      error instanceof TreasuryError && error.code === 'TREASURY_RESPONSE_INVALID');
+  }
+});
+
+test('libellés des constats : pièce archivée avec sa mention, mouvements non résolus, attente', () => {
+  const parsed = parseTreasuryBalances(result({ accounts: [account({ findings: [REFUTED_PIECE] })] }));
+  const label = findingLabel(parsed.accounts[0].findings[0]);
+  assert.match(label, /pièce corrective émise le 2026-10-20/);
+  assert.ok(label.includes('attestation sur pièce archivée, contenu non vérifié automatiquement'));
+  assert.match(label, /2 sources justifiées, 3 livraisons couvertes, 1 redépôt identique/);
+  assert.match(label, /mouvements non résolus/);
+  assert.equal(reasonLabel('DAY_PENDING_VALIDATION'), 'Journée livrée, en attente de validation');
+  const point = parseTreasuryBalances(result({ accounts: [account({ verified_starts: [{ ...POINT, for_date: 'SUSPENDED',
+    suspension: 'CONTRADICTION_AT_HORIZON', applied: false }] })] })).accounts[0].verified_starts[0];
+  assert.match(verifiedStartLabel(point), /suspendu à D \(contradiction datée au plus tard à l’horizon de D\)/);
+  assert.match(verifiedStartLabel(point), /2 journées non prouvées, 1 journée en attente ou disputée, 0 journée en conflit,/);
+  assert.doesNotMatch(verifiedStartLabel(point), /appliqué à D/);
+});
+
+test('la vue rend constats, compteurs et points de départ, sans doubler les constats parmi les preuves', () => {
+  const parsedAccount = account({
+    findings: [REFUTED_PIECE], counters: { rejected_deliveries: 2, refuted_versions: 1 }, verified_starts: [POINT],
+    sources: [...(account({}).sources as unknown[]), REFUTED_PIECE],
+  });
+  const parsed = parseTreasuryBalances(result({ accounts: [parsedAccount] }));
+  assert.equal(proofSources(parsed.accounts[0]).length, 3);
+  const html = renderToStaticMarkup(<TreasuryBalancesView result={parsed} />);
+  assert.equal(html.split('attestation sur pièce archivée, contenu non vérifié automatiquement').length - 1, 1);
+  assert.match(html, /Livraisons écartées : 2 · Versions réfutées : 1/);
+  assert.match(html, /Point de départ du 2026-10-03, applicable à partir de cette journée : effectif à D, appliqué à D/);
+  assert.match(html, /data-verified-start="EFFECTIVE"/);
+});
+
+test('point de départ : unité de la date lue seulement, ouverture en francs entiers', () => {
+  const parsed = parseTreasuryBalances(result({ accounts: [
+    account({ retained_unit_at_date: { unit_id: '40000000-0000-4000-8000-000000000007', content_hash: 'c'.repeat(64) } }),
+    account({ expected_account_id: '30000000-0000-4000-8000-000000000009', status: 'NOT_COVERED', reasons: ['DAY_NOT_CLOSED'],
+      balance_at_date: null, sources: [], retained_unit_at_date: { unit_id: '40000000-0000-4000-8000-000000000009',
+        content_hash: 'd'.repeat(64) } }),
+    account({ expected_account_id: '30000000-0000-4000-8000-000000000010' }),
+  ] }));
+  assert.deepEqual(retainedUnitAtDate(parsed.accounts[0]),
+    { canonicalUnitId: '40000000-0000-4000-8000-000000000007', contentHash: 'c'.repeat(64) });
+  assert.deepEqual(retainedUnitAtDate(parsed.accounts[1]),
+    { canonicalUnitId: '40000000-0000-4000-8000-000000000009', contentHash: 'd'.repeat(64) }, 'journée non close : pose possible');
+  assert.equal(retainedUnitAtDate(parsed.accounts[2]), null, 'aucune unité retenue à D : pas de pose');
+  assert.throws(() => parseTreasuryBalances(result({ accounts: [account({ retained_unit_at_date: undefined })] })));
+  for (const ok of ['1300', '-5', ' 42 ']) assert.equal(isWholeXofText(ok), true, ok);
+  for (const bad of ['1300.00', '1 300', '1e3', '', '13,5']) assert.equal(isWholeXofText(bad), false, bad);
 });

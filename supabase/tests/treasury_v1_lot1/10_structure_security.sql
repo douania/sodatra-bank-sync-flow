@@ -30,7 +30,8 @@ SELECT tr_test.assert(has_function_privilege('authenticated', p.oid, 'EXECUTE')
   AND p.prosecdef AND p.proconfig::text LIKE '%search_path=public, pg_temp%', p.oid::regprocedure::text || ' : privilèges minimaux')
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'treasury\_%';
 SELECT tr_test.assert((SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public' AND p.proname LIKE 'treasury\_%') = 5, 'cinq fonctions publiques exactement');
+  WHERE n.nspname = 'public' AND p.proname LIKE 'treasury\_%') = 7,
+  'sept fonctions publiques exactement (cinq du lot, deux des points de départ vérifiés)');
 
 -- Lecture en une instruction, instantané de l'appelant.
 SELECT tr_test.assert((SELECT provolatile FROM pg_proc WHERE oid = 'public.treasury_balances_at_v1(date)'::regprocedure) = 's',

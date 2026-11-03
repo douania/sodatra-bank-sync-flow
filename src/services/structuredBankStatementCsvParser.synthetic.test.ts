@@ -239,6 +239,39 @@ test('infers bankHint from the source file name (no ORABANK in the body)', () =>
   assert.equal(anonymousDocument.bankHint, 'UNKNOWN');
 });
 
+test('recognizes ORABANK name variants and separators, and refuses ambiguous names (C1)', () => {
+  const body = csv([
+    ';;Solde initial (XOF) : 1000000;;;',
+    "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
+    '01/06/2026;01/06/2026;SYNTHETIC OUTFLOW;200000;;800000',
+    ';;Total;200000;0;',
+    ';;Solde (XOF) au 30/06/2026 : 800000;;;'
+  ]);
+  const hint = (sourceFileName: string) => parseStructuredBankStatementCsv(body, { sourceFileName }).bankHint;
+
+  for (const name of ['211026 ORAB ONLINE.csv', '211026_ORAB_ONLINE.csv', '211026-ORAB-ONLINE.csv',
+    '010726 ORA ONLINE.csv', '010726_ORA_ONLINE.csv', 'ORABANK.csv', 'ORA BANK.csv', 'releve-orabankx.csv']) {
+    assert.equal(hint(name), 'ORA', name);
+  }
+  // Variante existante conservée : « banque de dakar » en sous-chaîne, comme avant.
+  for (const name of ['010726 BDK ONLINE.csv', 'BANQUE DE DAKAR.csv', 'BANQUE_DE_DAKAR.csv', 'releve.bdk.csv',
+    'Releve banque de dakar2026.csv']) {
+    assert.equal(hint(name), 'BDK', name);
+  }
+  // Partial tokens are not names; a name designating both banks is ambiguous.
+  for (const name of ['BORAB ONLINE.csv', 'ORABX ONLINE.csv', 'ORAB BDK.csv', 'ORABANK BDK.csv', 'synthetic-export.csv']) {
+    assert.equal(hint(name), 'UNKNOWN', name);
+  }
+});
+
+test('keeps the same lines for the same content under two recognized names (C1)', () => {
+  const body = validOraLikeCsv();
+  const first = parseStructuredBankStatementCsv(body, { sourceFileName: '211026 ORA ONLINE.csv' });
+  const second = parseStructuredBankStatementCsv(body, { sourceFileName: '211026_ORAB_ONLINE.csv' });
+  assert.equal(first.bankHint, second.bankHint);
+  assert.deepEqual(first.lines, second.lines);
+});
+
 test('returns the provided sourceFileName in the document', () => {
   const document = parseStructuredBankStatementCsv(validOraLikeCsv(), {
     sourceFileName: 'synthetic-export.csv'

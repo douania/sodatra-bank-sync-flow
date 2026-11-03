@@ -266,9 +266,25 @@ BEGIN
   EXECUTE replace(v_def, p_old, p_new);
 END $$;
 REVOKE ALL ON FUNCTION tr_test.mutate(regprocedure, text, text) FROM PUBLIC;
+-- Mutant à cibles alternatives (C7) : la version optimisée et la référence figée
+-- portent la même règle sous deux écritures ; la première trouvée est mutée.
+CREATE FUNCTION tr_test.mutate_first(p_function regprocedure, p_olds text[], p_news text[])
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v_def text := pg_get_functiondef(p_function); v_i integer;
+BEGIN
+  FOR v_i IN 1..cardinality(p_olds) LOOP
+    IF position(p_olds[v_i] IN v_def) > 0 THEN
+      EXECUTE replace(v_def, p_olds[v_i], p_news[v_i]);
+      RETURN;
+    END IF;
+  END LOOP;
+  RAISE EXCEPTION 'MUTANT_TARGET_NOT_FOUND: %', p_function;
+END $$;
+REVOKE ALL ON FUNCTION tr_test.mutate_first(regprocedure, text[], text[]) FROM PUBLIC;
 
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tr_test TO anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION tr_test.mutate(regprocedure, text, text) FROM anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION tr_test.mutate_first(regprocedure, text[], text[]) FROM anon, authenticated, service_role;
 GRANT SELECT ON tr_test.ids TO anon, authenticated, service_role;
 
 SELECT 'PASS 00_tools' AS marker;
