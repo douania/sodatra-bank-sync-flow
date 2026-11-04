@@ -1,8 +1,10 @@
 -- Lot 1 opérationnel (R6) : comparaison à trois issues, écartement, cohérence
 -- financière (réserve CTO 4.1), attestations, journée en attente, réfutation
 -- justifiée source par source (F1 -> C -> F2 -> redépôt de F2) et points de
--- départ vérifiés. Données synthétiques ; rejouable dans une transaction
--- annulée (mutants). Les commandes Daily v2 sont appelées pour de vrai.
+-- départ vérifiés ; P1 et P2 de la contre-revue CTO de la PR #156 : lignes
+-- stockées conformes aux faits déclarés, statut courant des réfutations.
+-- Données synthétiques ; rejouable dans une transaction annulée (mutants). Les
+-- commandes Daily v2 sont appelées pour de vrai.
 \set ON_ERROR_STOP on
 
 CREATE SCHEMA tr_op;
@@ -59,6 +61,35 @@ BEGIN
   WHERE f ->> 'kind' = p_kind LIMIT 1;
   RETURN v;
 END $$;
+-- Statut courant d'une réfutation enregistrée, rendu par la lecture à D (P2).
+CREATE FUNCTION tr_op.ref_status(p_as_of date, p_name text, p_ref uuid)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE v jsonb;
+BEGIN
+  SELECT f INTO v FROM jsonb_array_elements(tr_test.account(tr_test.read_as('t_reader', p_as_of), p_name) -> 'findings') f
+  WHERE f ->> 'kind' = 'REFUTATION_STATUS' AND (f ->> 'refutation_id')::uuid = p_ref;
+  RETURN v;
+END $$;
+-- Lignes d'une unité retenue et de sa livraison promue, modifiées ensemble
+-- (mode réplica) : décalage des soldes courants, ordre de stockage inversé.
+CREATE FUNCTION tr_op.shift_running(p_canonical text, p_delta numeric)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE public.daily_statement_lines_canonical SET running_balance = running_balance + p_delta
+   WHERE canonical_unit_id = tr_test.id(p_canonical);
+  UPDATE public.daily_statement_lines_staging SET running_balance = running_balance + p_delta
+   WHERE staging_unit_id = tr_op.staging_of(p_canonical);
+$$;
+CREATE FUNCTION tr_op.reverse_storage(p_canonical text)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE public.daily_statement_lines_canonical
+     SET source_line_index = (SELECT max(x.source_line_index) FROM public.daily_statement_lines_canonical x
+                               WHERE x.canonical_unit_id = tr_test.id(p_canonical)) - source_line_index
+   WHERE canonical_unit_id = tr_test.id(p_canonical);
+  UPDATE public.daily_statement_lines_staging
+     SET source_line_index = (SELECT max(x.source_line_index) FROM public.daily_statement_lines_staging x
+                               WHERE x.staging_unit_id = tr_op.staging_of(p_canonical)) - source_line_index
+   WHERE staging_unit_id = tr_op.staging_of(p_canonical);
+$$;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tr_op TO authenticated;
 
 -- --------------------------------------------------------------------------
@@ -252,6 +283,14 @@ SELECT tr_test.seed_unit('e_op_pv', '2026-10-02', 200, 300);
 SELECT tr_test.put('s_op_pv_3', tr_test.seed_unit('e_op_pv', '2026-10-03', 300, 999, p_staging_status => 'provisional',
   p_canonical => false));
 UPDATE public.daily_statement_units_staging SET closing_balance_derived = 400 WHERE id = tr_test.id('s_op_pv_3');
+-- Même règle pour une livraison promue dont seuls les faits de staging sont
+-- incohérents (unité et lignes intactes) : son fichier ne prouve rien.
+SELECT tr_test.seed_registry('op_stgfacts', 'ORA', 'XOF', 'TR OP faits de livraison incohérents');
+SELECT tr_test.seed_export('e_op_sf', 'op_stgfacts', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-02', NULL, 'valid', '2026-10-03 08:00:00+00');
+SELECT tr_test.seed_unit('e_op_sf', '2026-10-01', 100, 200);
+SELECT tr_test.put('u_op_sf_02', tr_test.seed_unit('e_op_sf', '2026-10-02', 200, 300));
+UPDATE public.daily_statement_units_staging SET closing_balance_derived = 400 WHERE id = tr_op.staging_of('u_op_sf_02');
 
 -- M. Scénario 3 de la R6 : compte dormant. Contradiction de solde sur la dernière
 -- journée mouvementée (le 2 septembre), aucune journée mouvementée ensuite.
@@ -268,6 +307,32 @@ SELECT tr_test.put('s_op_dm_w', tr_op.clone_delivery(tr_op.staging_of('u_op_dm_j
 UPDATE public.daily_statement_units_staging SET opening_balance_derived = 190, closing_balance_derived = 290
  WHERE id = tr_test.id('s_op_dm_w');
 
+-- O. P1 de la contre-revue CTO de la PR #156 : la journée du 02 déclare des faits
+-- exacts (200 -> 300, équation respectée) mais ses lignes stockées ne les
+-- justifient pas (soldes courants décalés de 1 000 000). Unité et fichier non
+-- conformes : aucun solde, aucune preuve de clôture pour la veille.
+SELECT tr_test.seed_registry('op_lines', 'ORA', 'XOF', 'TR OP lignes non conformes');
+SELECT tr_test.seed_export('e_op_ln', 'op_lines', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-03', NULL, 'valid', '2026-10-04 08:00:00+00');
+SELECT tr_test.put('u_op_ln_01', tr_test.seed_unit('e_op_ln', '2026-10-01', 100, 200));
+SELECT tr_test.put('u_op_ln_02', tr_test.seed_unit('e_op_ln', '2026-10-02', 200, 300, p_pairs => 1));
+SELECT tr_test.seed_unit('e_op_ln', '2026-10-03', 300, 310);
+SELECT tr_op.shift_running('u_op_ln_02', 1000000);
+-- Doublon ordinaire sans lignes de la version non conforme, dans un autre fichier :
+-- il ne la justifie pas (aucune donnée inventée pour lui).
+SELECT tr_test.seed_export('e_op_ln2', 'op_lines', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', NULL, 'valid', '2026-10-05 08:00:00+00');
+SELECT tr_test.put('s_op_ln_dup', tr_op.clone_delivery(tr_op.staging_of('u_op_ln_02'), 'e_op_ln2', 'duplicate'));
+
+-- P. Profil décroissant (relevé du plus récent au plus ancien) : lignes stockées
+-- dans l'ordre inverse de la chaîne, conformes ; témoin de non-régression.
+SELECT tr_test.seed_registry('op_desc', 'ORA', 'XOF', 'TR OP profil décroissant');
+SELECT tr_test.seed_export('e_op_ds', 'op_desc', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-01', '2026-10-02', NULL, 'valid', '2026-10-03 08:00:00+00');
+SELECT tr_test.put('u_op_ds_01', tr_test.seed_unit('e_op_ds', '2026-10-01', 100, 200, p_pairs => 2));
+SELECT tr_test.put('u_op_ds_02', tr_test.seed_unit('e_op_ds', '2026-10-02', 200, 210));
+SELECT tr_op.reverse_storage('u_op_ds_01');
+
 SET session_replication_role = origin;
 
 -- Habilitations et verrous de cette transaction : rôle `admin` Daily v2 pour
@@ -281,7 +346,8 @@ SELECT tr_test.as_user('t_admin');
 SELECT public.treasury_admin_add_expected_account_v1(tr_test.key('op-add-' || n), tr_test.id(n), NULL, NULL, NULL,
   'Compte attendu synthétique ' || n)
 FROM unnest(ARRAY['op_same', 'op_breakdown', 'op_insuff', 'op_reject', 'op_incoh', 'op_attest', 'op_pending',
-                  'op_ref', 'op_vs', 'op_rejopen', 'op_auto', 'op_auto2', 'op_late', 'op_dormant', 'op_pvinc']) n;
+                  'op_ref', 'op_vs', 'op_rejopen', 'op_auto', 'op_auto2', 'op_late', 'op_dormant', 'op_pvinc',
+                  'op_lines', 'op_desc', 'op_stgfacts']) n;
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', '', false);
 
@@ -365,20 +431,56 @@ INSERT INTO tr_op.ctx VALUES
 SELECT tr_test.check('2026-10-10', 'op_ref', 'BLOCKED', NULL, 'DAY_CONFLICT', 'OP F1 : J en conflit');
 SELECT tr_test.check('2026-10-09', 'op_ref', 'BLOCKED', NULL, 'CHAIN_BROKEN_AFTER_DATE', 'OP F1 : la veille contredite');
 
+-- Une livraison fraîche dont les lignes stockées ne justifient pas ses faits ne
+-- prouve rien (P1) : refus, état annulé.
+SAVEPOINT op_proof_lines;
+SET session_replication_role = replica;
+UPDATE public.daily_statement_lines_staging SET running_balance = running_balance + 1
+ WHERE staging_unit_id = tr_op.staging_of('u_op_ref_10');
+SET session_replication_role = origin;
+SELECT tr_test.as_user('t_admin');
+SELECT tr_test.expect_error(format('SELECT public.refute_daily_statement_version(%L, %L, %L, %L, %L::jsonb, %L::jsonb, %L)',
+  tr_test.key('op-refute-c-badlines'), (SELECT day_unit_id FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_ref_10')),
+  (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'v'), (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'vr'),
+  (SELECT v FROM tr_op.ctx WHERE k = 'src1'),
+  jsonb_build_object('kind', 'FRESH_DELIVERY', 'staging_unit_id', tr_op.staging_of('u_op_ref_10')), 'Preuve non conforme'),
+  'fresh delivery file carries stored lines that do not match their declared balances');
+RESET ROLE;
+ROLLBACK TO SAVEPOINT op_proof_lines;
+-- Autre journée du même fichier aux lignes non conformes : le fichier ne prouve
+-- rien (la lecture ne le tiendrait pas pour digne de preuve).
+SET session_replication_role = replica;
+UPDATE public.daily_statement_lines_canonical SET running_balance = running_balance + 1
+ WHERE canonical_unit_id = (SELECT u.id FROM public.daily_statement_units_canonical u
+                             WHERE u.account_registry_id = tr_test.id('op_ref') AND u.accounting_date = '2026-10-09');
+SET session_replication_role = origin;
+SELECT tr_test.as_user('t_admin');
+SELECT tr_test.expect_error(format('SELECT public.refute_daily_statement_version(%L, %L, %L, %L, %L::jsonb, %L::jsonb, %L)',
+  tr_test.key('op-refute-c-badfile'), (SELECT day_unit_id FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_ref_10')),
+  (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'v'), (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'vr'),
+  (SELECT v FROM tr_op.ctx WHERE k = 'src1'),
+  jsonb_build_object('kind', 'FRESH_DELIVERY', 'staging_unit_id', tr_op.staging_of('u_op_ref_10')), 'Fichier non conforme'),
+  'fresh delivery file carries stored lines that do not match their declared balances');
+RESET ROLE;
+ROLLBACK TO SAVEPOINT op_proof_lines;
+SELECT set_config('request.jwt.claim.sub', '', false);
+
 -- Réfutation par la livraison fraîche C (journée livrée du 13 > premier dépôt de F1, le 11).
 SELECT tr_test.as_user('t_admin');
-SELECT public.refute_daily_statement_version(tr_test.key('op-refute-c'),
+SELECT tr_test.put('ref_c', (public.refute_daily_statement_version(tr_test.key('op-refute-c'),
   (SELECT day_unit_id FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_ref_10')),
   (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'v'), (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'vr'),
   (SELECT v FROM tr_op.ctx WHERE k = 'src1'),
   jsonb_build_object('kind', 'FRESH_DELIVERY', 'staging_unit_id', tr_op.staging_of('u_op_ref_10')),
-  'Releve correctif posterieur');
+  'Releve correctif posterieur') ->> 'refutation_id')::uuid);
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', '', false);
 SELECT tr_test.check('2026-10-10', 'op_ref', 'AVAILABLE', '300.00', '', 'OP C : J couverte');
 SELECT tr_test.check('2026-10-09', 'op_ref', 'AVAILABLE', '200.00', '', 'OP C : la veille couverte');
 SELECT tr_test.assert_eq(tr_op.finding('2026-10-10', 'op_ref', 'REFUTED_VERSION') ->> 'nature', 'FRESH_DELIVERY',
   'OP C : nature de la preuve');
+SELECT tr_test.assert_eq(tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_c')) ->> 'state', 'EFFECTIVE',
+  'OP C : réfutation enregistrée et effective');
 
 -- F2 : autre empreinte portant V, première apparition le 20 : la journée se rouvre.
 SET session_replication_role = replica;
@@ -389,6 +491,22 @@ SET session_replication_role = origin;
 INSERT INTO tr_op.ctx VALUES ('src2', tr_op.sources(tr_test.id('s_op_f1')));
 SELECT tr_test.check('2026-10-10', 'op_ref', 'BLOCKED', NULL, 'DAY_CONFLICT', 'OP F2 : nouvelle source non couverte');
 SELECT tr_test.check('2026-10-09', 'op_ref', 'BLOCKED', NULL, 'CHAIN_BROKEN_AFTER_DATE', 'OP F2 : la veille de nouveau contredite');
+-- P2 : la décision reste enregistrée mais ne couvre plus toute la version ; une
+-- nouvelle preuve est nécessaire pour la source F2.
+SELECT tr_test.assert_eq(tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_c'))::text,
+  jsonb_build_object('kind', 'REFUTATION_STATUS', 'day', '2026-10-10', 'refutation_id', tr_test.id('ref_c'),
+    'proof_kind', 'FRESH_DELIVERY', 'state', 'PARTIAL', 'causes', jsonb_build_array('NEW_SOURCE_UNCOVERED'),
+    'uncovered_sources', 1)::text, 'OP F2 : réfutation partielle, nouvelle source non couverte');
+-- Justificatif invalidé : le fichier de la livraison fraîche cesse d'être digne de
+-- preuve (journée en attente ajoutée) ; la réfutation est suspendue.
+SAVEPOINT op_proof_invalid;
+SET session_replication_role = replica;
+SELECT tr_test.seed_unit('e_op_c', '2026-10-12', 300, 300, p_staging_status => 'staged', p_canonical => false);
+SET session_replication_role = origin;
+SELECT tr_test.assert((tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_c')) ->> 'state') = 'SUSPENDED'
+  AND tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_c')) -> 'causes' ? 'PROOF_NO_LONGER_VALID',
+  'OP justificatif invalidé : réfutation suspendue');
+ROLLBACK TO SAVEPOINT op_proof_invalid;
 
 -- C ne justifie pas F2 (13 <= 20) ; une pièce du jour même non plus ; une pièce
 -- sans attestation d'archivage ou aux valeurs différentes est refusée.
@@ -424,19 +542,23 @@ SELECT tr_test.expect_error(format('SELECT public.refute_daily_statement_version
     'opening', '201', 'closing', '300'), 'Valeur differente d un franc'),
   'DAILY_STMT_PIECE_VALUES_MISMATCH');
 -- Pièce émise le 24, archivée, valeurs égales à la version retenue : F1 et F2 justifiées.
-SELECT public.refute_daily_statement_version(tr_test.key('op-refute-piece'),
+SELECT tr_test.put('ref_piece', (public.refute_daily_statement_version(tr_test.key('op-refute-piece'),
   (SELECT day_unit_id FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_ref_10')),
   (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'v'), (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'vr'),
   (SELECT v FROM tr_op.ctx WHERE k = 'src2'),
   jsonb_build_object('kind', 'BANK_PIECE', 'piece_sha256', repeat('d', 64), 'piece_reference', 'Lettre corrective D',
     'archive_reference', 'Archive tresorerie dossier D', 'issued_on', '2026-10-24', 'archive_attested', true,
-    'opening', '200', 'closing', '300'), 'Piece corrective archivee');
+    'opening', '200', 'closing', '300'), 'Piece corrective archivee') ->> 'refutation_id')::uuid);
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub', '', false);
 SELECT tr_test.check('2026-10-10', 'op_ref', 'AVAILABLE', '300.00', '', 'OP pièce : J couverte');
 SELECT tr_test.assert_eq(tr_op.finding('2026-10-10', 'op_ref', 'REFUTED_VERSION') ->> 'mention',
   'attestation sur pièce archivée, contenu non vérifié automatiquement', 'OP pièce : mention déclarative');
 SELECT tr_test.assert_eq(tr_op.finding('2026-10-10', 'op_ref', 'REFUTED_VERSION') ->> 'sources', '2', 'OP pièce : deux sources');
+SELECT tr_test.assert_eq(tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_piece')) ->> 'state', 'EFFECTIVE',
+  'OP pièce : réfutation effective');
+SELECT tr_test.assert(tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_c')) IS NULL,
+  'OP pièce : la réfutation remplacée n''est plus une décision active');
 
 -- Redépôt identique de F2 le 30 : même source, première apparition inchangée.
 SET session_replication_role = replica;
@@ -539,6 +661,8 @@ SELECT tr_test.check('2026-10-02', 'op_pvinc', 'NOT_COVERED', NULL, 'DAY_NOT_CLO
   'OP 4.1 : un fichier portant une livraison incohérente ne clôt pas la journée');
 SELECT tr_test.assert(NOT EXISTS (SELECT 1 FROM jsonb_array_elements(tr_test.account(tr_test.read_as('t_reader', '2026-10-02'),
   'op_pvinc') -> 'sources') s WHERE s ->> 'kind' = 'CLOSURE_LATER_LINE'), 'OP 4.1 : aucune preuve de clôture par ce fichier');
+SELECT tr_test.check('2026-10-01', 'op_stgfacts', 'NOT_COVERED', NULL, 'DAY_NOT_CLOSED',
+  'OP 4.1 : faits de livraison incohérents, le fichier ne clôt pas la veille');
 
 -- --------------------------------------------------------------------------
 -- Scénario 3 de la R6 : compte dormant
@@ -574,5 +698,131 @@ SELECT tr_test.check('2026-09-02', 'op_dormant', 'NOT_COVERED', NULL, 'DAY_NOT_C
 SELECT tr_test.assert((tr_test.account(tr_test.read_as('t_reader', '2026-09-20'), 'op_dormant') ->> 'status') = 'NOT_COVERED'
   AND (tr_test.account(tr_test.read_as('t_reader', '2026-09-20'), 'op_dormant') ->> 'balance_at_date') IS NULL,
   'OP dormant : aucune journée sans mouvement inventée');
+
+-- --------------------------------------------------------------------------
+-- P1 de la contre-revue CTO : lignes stockées et faits déclarés
+-- --------------------------------------------------------------------------
+SELECT tr_test.assert(public.daily_stmt_version_coherent('derived', 200, 300, 1, 101)
+  AND NOT public.daily_stmt_canonical_lines_conform(tr_test.id('u_op_ln_02')),
+  'OP lignes : équation respectée, lignes non conformes');
+SELECT tr_test.check('2026-10-02', 'op_lines', 'NOT_COVERED', NULL, 'UNIT_FINANCIAL_FACTS_INCOHERENT',
+  'OP lignes : aucune unité non conforme ne fournit de solde');
+SELECT tr_test.assert_eq(tr_op.finding('2026-10-02', 'op_lines', 'LINES_NOT_CONFORMING')::text,
+  '{"day": "2026-10-02", "kind": "LINES_NOT_CONFORMING", "deliveries": 1, "retained_unit": true}',
+  'OP lignes : unité retenue signalée, le doublon sans lignes n''est pas dit non conforme');
+-- Fichier non conforme : il ne clôt pas la veille par sa ligne ultérieure.
+SELECT tr_test.check('2026-10-01', 'op_lines', 'NOT_COVERED', NULL, 'DAY_NOT_CLOSED',
+  'OP lignes : un fichier non conforme ne prouve pas la clôture');
+SELECT tr_test.assert(NOT EXISTS (SELECT 1 FROM jsonb_array_elements(tr_test.account(tr_test.read_as('t_reader', '2026-10-01'),
+  'op_lines') -> 'sources') s WHERE s ->> 'kind' = 'CLOSURE_LATER_LINE'), 'OP lignes : aucune preuve de clôture par ce fichier');
+-- Profil décroissant : ordre de stockage inverse de la chaîne, conforme.
+SELECT tr_test.assert(public.daily_stmt_canonical_lines_conform(tr_test.id('u_op_ds_01'))
+  AND public.daily_stmt_staging_lines_conform(tr_op.staging_of('u_op_ds_01')), 'OP décroissant : lignes conformes');
+SELECT tr_test.check('2026-10-01', 'op_desc', 'AVAILABLE', '200.00', '', 'OP décroissant : solde disponible');
+-- Variantes, chacune annulée : nombre de lignes, totaux à net égal, chaîne interne.
+SAVEPOINT op_lines_variant;
+SET session_replication_role = replica;
+UPDATE public.daily_statement_units_canonical SET line_count = line_count + 1 WHERE id = tr_test.id('u_op_ds_01');
+SET session_replication_role = origin;
+SELECT tr_test.assert(NOT public.daily_stmt_canonical_lines_conform(tr_test.id('u_op_ds_01')), 'OP variante : nombre de lignes');
+SELECT tr_test.assert((tr_test.account(tr_test.read_as('t_reader', '2026-10-01'), 'op_desc') ->> 'balance_at_date') IS NULL,
+  'OP variante : nombre de lignes, aucun solde');
+ROLLBACK TO SAVEPOINT op_lines_variant;
+SET session_replication_role = replica;
+UPDATE public.daily_statement_units_canonical SET day_total_debits = day_total_debits + 5,
+       day_total_credits = day_total_credits + 5 WHERE id = tr_test.id('u_op_ds_01');
+SET session_replication_role = origin;
+SELECT tr_test.assert(NOT public.daily_stmt_canonical_lines_conform(tr_test.id('u_op_ds_01')), 'OP variante : totaux à net égal');
+ROLLBACK TO SAVEPOINT op_lines_variant;
+SET session_replication_role = replica;
+UPDATE public.daily_statement_lines_canonical SET running_balance = running_balance + 1
+ WHERE canonical_unit_id = tr_test.id('u_op_ds_01') AND source_line_index = 2;
+SET session_replication_role = origin;
+SELECT tr_test.assert(NOT public.daily_stmt_canonical_lines_conform(tr_test.id('u_op_ds_01')), 'OP variante : chaîne interne');
+ROLLBACK TO SAVEPOINT op_lines_variant;
+
+-- --------------------------------------------------------------------------
+-- P2 : effectivité d'une réfutation après changement de la version retenue
+-- (cas reproduit par le CTO), lue par le serveur seul
+-- --------------------------------------------------------------------------
+SET session_replication_role = replica;
+SELECT tr_test.seed_export('e_op_rc', 'op_ref', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-10', '2026-10-10', NULL, 'valid', '2026-10-31 08:00:00+00');
+SELECT tr_test.put('s_op_rc', tr_op.clone_delivery(tr_op.staging_of('u_op_ref_10'), 'e_op_rc', 'duplicate'));
+UPDATE public.daily_statement_units_staging SET opening_balance_derived = 210, closing_balance_derived = 310
+ WHERE id = tr_test.id('s_op_rc');
+INSERT INTO public.daily_statement_lines_staging (staging_unit_id, attempt_id, day_unit_id, daily_line_hash,
+  daily_occurrence_ordinal, source_line_index, accounting_date, value_date, description_sanitized, debit_amount,
+  credit_amount, signed_amount, running_balance, direction, currency)
+SELECT tr_test.id('s_op_rc'), tr_test.id('e_op_rc'), l.day_unit_id, l.daily_line_hash, l.daily_occurrence_ordinal,
+       l.source_line_index, l.accounting_date, l.value_date, l.description_sanitized, l.debit_amount, l.credit_amount,
+       l.signed_amount, l.running_balance + 10, l.direction, l.currency
+FROM public.daily_statement_lines_canonical l WHERE l.canonical_unit_id = tr_test.id('u_op_ref_10');
+SET session_replication_role = origin;
+INSERT INTO tr_op.ctx VALUES
+  ('rc_v', to_jsonb(tr_op.vkey_staging(tr_test.id('s_op_rc')))),
+  ('ref_day', to_jsonb((SELECT day_unit_id FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_ref_10'))));
+CREATE TABLE tr_op.rs (k text PRIMARY KEY, v jsonb);
+GRANT SELECT, INSERT ON tr_op.rs TO authenticated;
+SELECT tr_test.as_user('t_admin');
+INSERT INTO tr_op.rs VALUES ('before', public.daily_v2_refutation_status_v1((SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'ref_day')));
+SELECT public.supersede_daily_statement_unit_balances(tr_test.key('op-ref-balances'), tr_test.id('u_op_ref_10'),
+  tr_test.id('s_op_rc'), (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'rc_v'), 'Correction des soldes apres refutation');
+INSERT INTO tr_op.rs VALUES ('after', public.daily_v2_refutation_status_v1((SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'ref_day')));
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
+-- Avant : décision effective. Après : la décision enregistrée subsiste, son
+-- effectivité ne l'est plus (version retenue changée) ; jamais affichée acquise.
+SELECT tr_test.assert_eq((SELECT v FROM tr_op.rs WHERE k = 'before') -> 'refutations' -> 0 ->> 'state', 'EFFECTIVE',
+  'OP P2 : lecture serveur avant changement');
+SELECT tr_test.assert(((SELECT v FROM tr_op.rs WHERE k = 'after') ->> 'verifiable')::boolean
+  AND (SELECT v FROM tr_op.rs WHERE k = 'after') -> 'refutations' -> 0 ->> 'state' = 'SUSPENDED'
+  AND (SELECT v FROM tr_op.rs WHERE k = 'after') -> 'refutations' -> 0 -> 'causes' ? 'RETAINED_VERSION_CHANGED'
+  AND (SELECT v FROM tr_op.rs WHERE k = 'after') -> 'refutations' -> 0 ->> 'refutation_id' = tr_test.id('ref_piece')::text,
+  'OP P2 : réfutation suspendue après changement de la version retenue');
+SELECT tr_test.assert_eq(tr_op.ref_status('2026-10-10', 'op_ref', tr_test.id('ref_piece')) ->> 'state', 'SUSPENDED',
+  'OP P2 : même statut dans « Soldes à date »');
+-- Accès et cas non vérifiables : rôle admin requis, journée inconnue, module fermé.
+SELECT tr_test.as_user('t_reader');
+SELECT tr_test.expect_error(format('SELECT public.daily_v2_refutation_status_v1(%L)',
+  (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'ref_day')), 'DAILY_STMT_ROLE_DENIED');
+RESET ROLE;
+SELECT tr_test.as_user('t_admin');
+SELECT tr_test.assert_eq(public.daily_v2_refutation_status_v1('tr-test:journee-inconnue') ->> 'cause', 'DAY_UNKNOWN',
+  'OP P2 : journée inconnue non vérifiable');
+RESET ROLE;
+SELECT treasury_private.set_module_open(false, 'tr-test:fermeture-46', 'Fermeture synthétique de controle', 'operateur-test');
+SELECT tr_test.as_user('t_admin');
+SELECT tr_test.assert(NOT (public.daily_v2_refutation_status_v1((SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'ref_day')) ->> 'verifiable')::boolean
+  AND public.daily_v2_refutation_status_v1((SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'ref_day')) ->> 'cause' = 'TREASURY_MODULE_CLOSED',
+  'OP P2 : module fermé, effectivité non vérifiable');
+RESET ROLE;
+SELECT treasury_private.set_module_open(true, 'tr-test:reouverture-46', 'Reouverture synthetique de controle', 'operateur-test');
+SELECT set_config('request.jwt.claim.sub', '', false);
+
+-- Réfutation explicite d'une version déjà couverte par l'adoption (scénario K) :
+-- une nouvelle source couverte par l'adoption ne la rend pas partielle.
+INSERT INTO tr_op.ctx VALUES
+  ('au_v', to_jsonb(tr_op.vkey_staging(tr_op.staging_of('u_op_au_old')))),
+  ('au_vr', to_jsonb(tr_op.vkey_staging(tr_op.staging_of('u_op_au_new')))),
+  ('au_src', tr_op.sources(tr_op.staging_of('u_op_au_old'))),
+  ('au_day', to_jsonb((SELECT day_unit_id FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_au_new'))));
+SELECT tr_test.as_user('t_admin');
+SELECT tr_test.put('ref_au', (public.refute_daily_statement_version(tr_test.key('op-auto-piece'),
+  (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'au_day'),
+  (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'au_v'), (SELECT v #>> '{}' FROM tr_op.ctx WHERE k = 'au_vr'),
+  (SELECT v FROM tr_op.ctx WHERE k = 'au_src'),
+  jsonb_build_object('kind', 'BANK_PIECE', 'piece_sha256', repeat('7', 64), 'piece_reference', 'Releve correctif G',
+    'archive_reference', 'Archive tresorerie dossier G', 'issued_on', '2026-10-09', 'archive_attested', true,
+    'opening', '200', 'closing', '300'), 'Piece corrective deja adoptee') ->> 'refutation_id')::uuid);
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
+SET session_replication_role = replica;
+SELECT tr_test.seed_export('e_op_au2', 'op_auto', 'structured_bank_statement_csv', 'structured-csv-0b',
+  '2026-10-02', '2026-10-02', NULL, 'valid', '2026-10-04 08:00:00+00');
+SELECT tr_op.clone_delivery(tr_op.staging_of('u_op_au_old'), 'e_op_au2', 'duplicate');
+SET session_replication_role = origin;
+SELECT tr_test.assert_eq(tr_op.ref_status('2026-10-02', 'op_auto', tr_test.id('ref_au')) ->> 'state', 'EFFECTIVE',
+  'OP P2 : source couverte par l''adoption, réfutation non partielle');
 
 SELECT 'PASS 46_operational' AS marker;

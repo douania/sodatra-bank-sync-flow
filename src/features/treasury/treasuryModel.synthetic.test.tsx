@@ -292,6 +292,9 @@ test('contrat opérationnel : constats, points de départ et compteurs vérifié
       { kind: 'VERSION_BALANCE_NOT_COMPARABLE', day: '2026-10-02', cause: 'AGGREGATES_UNAVAILABLE', side: 'OTHER',
         uncovered_sources: 1 },
       { kind: 'VERSION_REFUTATION_SUSPENDED', day: '2026-10-02' },
+      { kind: 'LINES_NOT_CONFORMING', day: '2026-10-02', deliveries: 2, retained_unit: true },
+      { kind: 'REFUTATION_STATUS', day: '2026-10-02', refutation_id: '61000000-0000-4000-8000-000000000001',
+        proof_kind: 'FRESH_DELIVERY', state: 'SUSPENDED', causes: ['RETAINED_VERSION_CHANGED'], uncovered_sources: 0 },
     ],
     sources: [
       ...(account({}).sources as unknown[]).slice(0, 2),
@@ -300,7 +303,14 @@ test('contrat opérationnel : constats, points de départ et compteurs vérifié
       REFUTED_PIECE,
     ],
   })] }));
-  assert.equal(parsed.accounts[0].findings.length, 7);
+  assert.equal(parsed.accounts[0].findings.length, 9);
+  // P1 et P2 de la contre-revue CTO de la PR #156 : constats rendus tels quels.
+  assert.equal(findingLabel(parsed.accounts[0].findings[7]),
+    'Lignes stockées non conformes aux soldes et totaux déclarés le 2026-10-02 : 2 livraisons, dont la journée retenue'
+    + ' — aucun solde ni preuve n’en est tiré');
+  assert.equal(findingLabel(parsed.accounts[0].findings[8]),
+    'Réfutation enregistrée du 2026-10-02 (livraison fraîche) : suspendue (version retenue changée depuis la décision),'
+    + ' nouvelle preuve nécessaire');
   for (const broken of [
     account({ verified_starts: undefined }),
     account({ findings: undefined }),
@@ -310,6 +320,11 @@ test('contrat opérationnel : constats, points de départ et compteurs vérifié
     account({ findings: [{ kind: 'VERSION_BALANCE_NOT_COMPARABLE', day: '2026-10-02', cause: 'AGGREGATES_UNAVAILABLE',
       uncovered_sources: 1 }] }),
     account({ findings: [{ kind: 'VERSION_DETAIL_DIVERGENCE', day: '2026-10-02', count: 1, movements_unresolved: false }] }),
+    account({ findings: [{ kind: 'LINES_NOT_CONFORMING', day: '2026-10-02', deliveries: -1, retained_unit: true }] }),
+    account({ findings: [{ kind: 'REFUTATION_STATUS', day: '2026-10-02', refutation_id: '61000000-0000-4000-8000-000000000001',
+      proof_kind: 'FRESH_DELIVERY', state: 'ACQUISE', causes: [], uncovered_sources: 0 }] }),
+    account({ findings: [{ kind: 'REFUTATION_STATUS', day: '2026-10-02', refutation_id: '61000000-0000-4000-8000-000000000001',
+      proof_kind: 'FRESH_DELIVERY', state: 'SUSPENDED', causes: ['INCONNUE'], uncovered_sources: 0 }] }),
     account({ verified_starts: [{ ...POINT, for_date: 'TOUJOURS' }] }),
     account({ verified_starts: [{ ...POINT, history_before: { unproven_days: 0 } }] }),
     account({ sources: [{ kind: 'VERIFIED_START', day: '2026-10-03', posed_at: '2026-11-03T09:00:00+00:00' }] }),

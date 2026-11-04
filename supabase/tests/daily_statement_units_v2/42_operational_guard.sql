@@ -60,6 +60,7 @@ SELECT poc_test.assert(
      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE (n.nspname = 'public' AND p.proname IN ('daily_stmt_version_coherent', 'daily_stmt_version_key',
              'daily_stmt_version_compare', 'daily_stmt_staging_lines_conform', 'daily_stmt_h1_keep_lines',
+             'daily_stmt_line_facts_conform', 'daily_stmt_canonical_lines_conform',
              'daily_stmt_version_facts', 'daily_stmt_version_sources', 'daily_stmt_attempt_resolved_codes',
              'daily_stmt_batch_candidates', 'daily_stmt_acquire_attempt_lock', 'daily_stmt_require_decision_actor',
              'daily_stmt_pre_ingest_legacy_core_0u', 'daily_stmt_pre_ingest_bis_backfill_core_0v'))
@@ -75,6 +76,22 @@ SELECT poc_test.assert(
       'reject_daily_statement_unit', 'promote_daily_statement_attempt_units', 'supersede_daily_statement_unit_balances',
       'refute_daily_statement_version', 'revoke_daily_statement_version_refutation')),
   'operational: sept commandes exposées à authenticated seul, SECURITY DEFINER'
+);
+
+-- Lecture du plan d'approbation groupée pour l'interface (P1 et P2 de la
+-- contre-revue CTO de la PR #156) : authenticated seul, SECURITY DEFINER, STABLE,
+-- chemin épinglé, rôle admin vérifié. La lecture du statut des réfutations vit
+-- dans la migration trésorerie (vérifiée par treasury_v1_lot1/10).
+SELECT poc_test.assert(
+  (SELECT count(*) = 1 AND bool_and(has_function_privilege('authenticated', p.oid, 'EXECUTE')
+                                    AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
+                                    AND NOT has_function_privilege('service_role', p.oid, 'EXECUTE')
+                                    AND p.prosecdef AND p.provolatile = 's'
+                                    AND p.proconfig::text LIKE '%search_path=public, pg_temp%'
+                                    AND pg_get_functiondef(p.oid) LIKE '%daily_stmt_require_decision_actor(false)%')
+     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'daily_v2_attempt_batch_plan_v1'),
+  'operational: lecture du plan exposée à authenticated seul, admin vérifié'
 );
 
 SELECT 'PASS 42_operational_guard' AS marker;

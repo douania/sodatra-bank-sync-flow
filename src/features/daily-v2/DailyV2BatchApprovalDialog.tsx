@@ -7,20 +7,18 @@ import { Textarea } from '@/components/ui/textarea';
 import { ReviewReasonList } from './DailyV2Tables';
 import {
   dailyV2DecisionCommandKeys,
-  getDailyV2ExportAttempt,
-  listDailyV2ActiveCanonicalUnits,
-  listDailyV2AttemptAttestations,
-  listDailyV2AttemptsUnits,
+  getDailyV2AttemptBatchPlan,
   promoteDailyV2AttemptUnits,
 } from './dailyV2SupabaseService';
 import { useDailyV2ScopedMutation as useMutation } from './session/dailyV2SessionScope';
-import { computeDailyV2BatchPlan, DAILY_V2_BATCH_MAX_DAYS, type DailyV2BatchExpected } from './dailyV2Types';
+import { DAILY_V2_BATCH_INADMISSIBLE_LABELS, type DailyV2BatchExpected, type DailyV2ReviewReasonCode } from './dailyV2Types';
 
-// Approbation groupée par fichier (C8). La liste admissible est calculée comme
-// le serveur la calcule (computeDailyV2BatchPlan, miroir de
-// daily_stmt_batch_candidates), puis transmise à l'identique : le serveur la
-// recalcule sous verrou et refuse tout écart. Chaque journée passe par la
-// promotion existante, inchangée ; tout ou rien.
+// Approbation groupée par fichier (C8). La liste admissible et les motifs
+// d'inadmissibilité sont lus sur le serveur (daily_v2_attempt_batch_plan_v1,
+// même règle que daily_stmt_batch_candidates, lignes stockées conformes
+// comprises), puis transmis à l'identique : le serveur les recalcule sous
+// verrou et refuse tout écart. Aucun plan n'est recalculé dans le navigateur ;
+// si la lecture échoue, aucune approbation n'est proposée.
 
 export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onChanged }: {
   attemptId: string | null;
@@ -31,31 +29,13 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
   const queryClient = useQueryClient();
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState<string | null>(null);
-  const attemptQuery = useQuery({
-    queryKey: ['daily-v2', 'batch-attempt', attemptId],
-    queryFn: () => getDailyV2ExportAttempt(attemptId!),
+  const planQuery = useQuery({
+    queryKey: ['daily-v2', 'batch-plan', attemptId],
+    queryFn: () => getDailyV2AttemptBatchPlan(attemptId!),
     enabled: attemptId !== null,
   });
-  const unitsQuery = useQuery({
-    queryKey: ['daily-v2', 'batch-units', attemptId],
-    queryFn: () => listDailyV2AttemptsUnits([attemptId!]),
-    enabled: attemptId !== null,
-  });
-  const dayIds = Array.from(new Set((unitsQuery.data ?? []).map((unit) => unit.day_unit_id))).sort();
-  const canonicalsQuery = useQuery({
-    queryKey: ['daily-v2', 'batch-canonicals', dayIds],
-    queryFn: () => listDailyV2ActiveCanonicalUnits(dayIds),
-    enabled: dayIds.length > 0,
-  });
-  const attestationsQuery = useQuery({
-    queryKey: ['daily-v2', 'batch-attestations', attemptId],
-    queryFn: () => listDailyV2AttemptAttestations([attemptId!]),
-    enabled: attemptId !== null,
-  });
-  const plan = attemptQuery.data && unitsQuery.data && canonicalsQuery.data && attestationsQuery.data
-    ? computeDailyV2BatchPlan({ attempt: attemptQuery.data, units: unitsQuery.data,
-      activeCanonicals: canonicalsQuery.data, attestations: attestationsQuery.data })
-    : null;
+  // Plan lu seulement sur une lecture réussie et à jour (jamais un plan périmé).
+  const plan = planQuery.isError || planQuery.isFetching ? null : planQuery.data ?? null;
 
   const approve = useMutation<unknown, Error, { attemptId: string; expected: DailyV2BatchExpected; reason: string }>({
     mutationFn: async (variables) => {
@@ -78,7 +58,7 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
     setMessage(null);
     onClose();
   };
-  const tooLarge = (plan?.admissible.length ?? 0) > DAILY_V2_BATCH_MAX_DAYS;
+  const tooLarge = plan !== null && plan.admissible.length > plan.maxDays;
 
   return (
     <Dialog open={attemptId !== null} onOpenChange={(open) => !open && close()}>
@@ -86,20 +66,26 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
         <DialogHeader>
           <DialogTitle>Approbation groupée du fichier</DialogTitle>
           <DialogDescription>
-            Chaque journée admissible passe par la promotion existante. La liste ci-dessous est transmise telle quelle : si
-            elle a changé depuis l’affichage, rien n’est approuvé.
+            Chaque journée admissible passe par la promotion existante. La liste ci-dessous, établie par le serveur, est
+            transmise telle quelle : si elle a changé depuis l’affichage, rien n’est approuvé.
           </DialogDescription>
         </DialogHeader>
+        {planQuery.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {planQuery.error instanceof Error ? planQuery.error.message : 'Lecture du plan impossible.'} Aucune approbation
+            n’est proposée.
+          </p>
+        )}
         {plan && (
           <div className="max-h-[55vh] space-y-3 overflow-y-auto text-sm">
             <section aria-label="Journées admissibles">
               <div className="font-medium">Journées admissibles ({plan.admissible.length})</div>
               <ul className="mt-1 space-y-1">
-                {plan.admissible.map((unit) => (
-                  <li key={unit.id} className="flex flex-wrap items-center gap-2">
-                    <span>{unit.accounting_date}</span>
-                    <Badge variant="outline">{unit.validation_status}</Badge>
-                    <ReviewReasonList codes={unit.review_reason_codes} />
+                {plan.admissible.map((day) => (
+                  <li key={day.stagingUnitId} className="flex flex-wrap items-center gap-2">
+                    <span>{day.accountingDate}</span>
+                    <Badge variant="outline">{day.validationStatus}</Badge>
+                    <ReviewReasonList codes={day.reviewReasonCodes as DailyV2ReviewReasonCode[]} />
                   </li>
                 ))}
               </ul>
@@ -110,14 +96,16 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
             <section aria-label="Journées inadmissibles">
               <div className="font-medium">Journées inadmissibles ({plan.inadmissible.length})</div>
               <ul className="mt-1 space-y-1">
-                {plan.inadmissible.map(({ unit, reason: cause }) => (
-                  <li key={unit.id}>{unit.accounting_date} — {cause}</li>
+                {plan.inadmissible.map((day) => (
+                  <li key={day.stagingUnitId}>
+                    {day.accountingDate} — {DAILY_V2_BATCH_INADMISSIBLE_LABELS[day.reason]} ({day.status})
+                  </li>
                 ))}
               </ul>
             </section>
             {tooLarge && (
               <p role="alert" className="text-destructive">
-                Plus de {DAILY_V2_BATCH_MAX_DAYS} journées admissibles : le serveur refusera l’approbation groupée.
+                Plus de {plan.maxDays} journées admissibles : le serveur refusera l’approbation groupée.
               </p>
             )}
           </div>
@@ -127,8 +115,8 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
         {message && <p role="status" className="text-sm">{message}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={close}>Annuler</Button>
-          <Button disabled={!canDecide || !plan || plan.admissible.length === 0 || tooLarge || reason.trim() === ''
-            || approve.isPending}
+          <Button disabled={!canDecide || !plan || planQuery.isError || plan.admissible.length === 0 || tooLarge
+            || reason.trim() === '' || approve.isPending}
           onClick={() => plan && attemptId && approve.mutate({ attemptId, expected: plan.expected, reason })}>
             Confirmer l’approbation des {plan?.admissible.length ?? 0} journée(s)
           </Button>

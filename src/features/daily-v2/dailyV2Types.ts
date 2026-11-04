@@ -429,12 +429,69 @@ export interface DailyV2DecisionResult {
   [key: string]: unknown;
 }
 
+/** Plan d'approbation groupée établi par le serveur (daily_v2_attempt_batch_plan_v1). */
+export interface DailyV2ServerBatchPlan {
+  attemptId: string;
+  /** Liste admissible exacte, transmise telle quelle à la commande. */
+  expected: DailyV2BatchExpected;
+  maxDays: number;
+  admissible: Array<{ stagingUnitId: string; accountingDate: string; validationStatus: string; reviewReasonCodes: string[] }>;
+  inadmissible: Array<{ stagingUnitId: string; accountingDate: string; status: string; reason: DailyV2BatchInadmissibleReason }>;
+}
+
+export type DailyV2BatchInadmissibleReason =
+  | 'FILE_UNRESOLVED'
+  | 'STATUS_NOT_STAGED'
+  | 'AGGREGATES_UNAVAILABLE'
+  | 'LINES_NOT_CONFORMING'
+  | 'REVIEW_UNRESOLVED'
+  | 'NOT_ADMISSIBLE';
+
+export const DAILY_V2_BATCH_INADMISSIBLE_LABELS: Record<DailyV2BatchInadmissibleReason, string> = {
+  FILE_UNRESOLVED: 'Fichier entier non résolu (attestation manquante)',
+  STATUS_NOT_STAGED: 'Livraison qui n’est pas en attente',
+  AGGREGATES_UNAVAILABLE: 'Soldes non dérivés',
+  LINES_NOT_CONFORMING: 'Lignes stockées non conformes aux soldes et totaux déclarés',
+  REVIEW_UNRESOLVED: 'Motifs de revue non résolus',
+  NOT_ADMISSIBLE: 'Non admissible',
+};
+
+export type DailyV2RefutationEffectState = 'EFFECTIVE' | 'PARTIAL' | 'SUSPENDED';
+export type DailyV2RefutationEffectCause =
+  | 'RETAINED_VERSION_CHANGED'
+  | 'RETAINED_VERSION_UNUSABLE'
+  | 'PROOF_NO_LONGER_VALID'
+  | 'SOURCE_NOT_JUSTIFIED'
+  | 'NEW_SOURCE_UNCOVERED';
+export type DailyV2RefutationUnverifiableCause =
+  | 'DAY_UNKNOWN'
+  | 'TREASURY_MODULE_CLOSED'
+  | 'ACCOUNT_NOT_IN_INVENTORY'
+  | 'FUTURE_DAY';
+
+/** Statut courant des réfutations d'une journée, établi par la lecture « Soldes à date » (serveur). */
+export type DailyV2RefutationStatusRead =
+  | {
+    dayUnitId: string;
+    verifiable: true;
+    readAt: string;
+    refutations: Array<{
+      refutationId: string;
+      proofKind: DailyV2RefutationProofKind;
+      state: DailyV2RefutationEffectState;
+      causes: DailyV2RefutationEffectCause[];
+      uncoveredSources: number;
+    }>;
+  }
+  | { dayUnitId: string; verifiable: false; cause: DailyV2RefutationUnverifiableCause };
+
 // --------------------------------------------------------------------------
 // Versions d'une journée (fonctions pures, sans réseau). Miroir exact des
 // règles du serveur (migration 20261103120000) : clé de version, cohérence,
-// comparaison à trois issues, sources, justification d'une preuve, liste
-// admissible d'un fichier. Le serveur reste seul juge : il recalcule sous
-// verrou et refuse tout écart avec l'état transmis.
+// comparaison à trois issues, sources, justification d'une preuve. Le serveur
+// reste seul juge : il recalcule sous verrou et refuse tout écart avec l'état
+// transmis. La liste admissible d'un fichier et l'effectivité courante d'une
+// réfutation ne sont jamais recalculées ici : elles sont lues sur le serveur.
 // --------------------------------------------------------------------------
 
 export const DAILY_V2_PIECE_MENTION = 'attestation sur pièce archivée, contenu non vérifié automatiquement';
@@ -617,9 +674,8 @@ export interface DailyV2DayVersion {
   deliveries: DailyV2StagingUnitRow[];
   comparison: DailyV2VersionComparison | null;
   sources: DailyV2SourceWithCount[];
+  /** Décision enregistrée (non révoquée) visant cette version. Son effectivité est lue sur le serveur. */
   refutation: DailyV2VersionRefutationRow | null;
-  /** Sources apparues hors de la réfutation active : elles la rouvrent (nouvelle preuve nécessaire). */
-  uncoveredSources: DailyV2SourceWithCount[];
 }
 
 /** Versions d'une journée : livraisons regroupées par identité des mouvements et version financière. */
@@ -628,7 +684,6 @@ export function groupDailyV2DayVersions(input: {
   attempts: DailyV2ExportAttemptRow[];
   active: DailyV2CanonicalUnitRow | null;
   refutations: DailyV2VersionRefutationRow[];
-  refutationSources: DailyV2RefutationSourceRow[];
 }): DailyV2DayVersion[] {
   const retainedFacts = input.active ? canonicalVersionFacts(input.active) : null;
   const retainedKey = retainedFacts ? dailyV2VersionKey(retainedFacts) : null;
@@ -647,17 +702,11 @@ export function groupDailyV2DayVersions(input: {
     groups.set(key, {
       key, facts, retained: key === retainedKey, deliveries: [unit],
       comparison: retainedFacts ? dailyV2CompareVersions(facts, retainedFacts) : null,
-      sources: [], refutation, uncoveredSources: [],
+      sources: [], refutation,
     });
   }
   for (const version of groups.values()) {
     version.sources = dailyV2VersionSources(input.units, input.attempts, version.key);
-    if (version.refutation) {
-      const covered = new Set(input.refutationSources.filter((row) => row.refutation_id === version.refutation!.id)
-        .map((row) => `${row.raw_text_hash}|${row.account_registry_id}`));
-      version.uncoveredSources = version.sources.filter((source) =>
-        !covered.has(`${source.raw_text_hash}|${source.account_registry_id}`));
-    }
   }
   return [...groups.values()].sort((a, b) => Number(b.retained) - Number(a.retained) || a.key.localeCompare(b.key));
 }
@@ -670,6 +719,59 @@ export const COMPARISON_LABELS: Record<DailyV2VersionComparison, string> = {
   INSUFFICIENT_UNAVAILABLE: 'Données insuffisantes — agrégats indisponibles',
   INSUFFICIENT_INCOHERENT: 'Données insuffisantes — faits financiers incohérents',
 };
+
+const REFUTATION_CAUSE_LABELS: Record<DailyV2RefutationEffectCause, string> = {
+  RETAINED_VERSION_CHANGED: 'la version retenue a changé depuis la décision',
+  RETAINED_VERSION_UNUSABLE: 'la version retenue n’est plus utilisable (faits ou lignes non conformes)',
+  PROOF_NO_LONGER_VALID: 'le justificatif n’est plus valable',
+  SOURCE_NOT_JUSTIFIED: 'une source couverte n’est plus justifiée',
+  NEW_SOURCE_UNCOVERED: 'une source de la version réfutée n’est pas couverte',
+};
+const REFUTATION_UNVERIFIABLE_LABELS: Record<DailyV2RefutationUnverifiableCause, string> = {
+  DAY_UNKNOWN: 'journée inconnue du serveur',
+  TREASURY_MODULE_CLOSED: 'lecture « Soldes à date » fermée sur cet environnement',
+  ACCOUNT_NOT_IN_INVENTORY: 'compte hors de l’inventaire des comptes attendus',
+  FUTURE_DAY: 'journée postérieure à aujourd’hui',
+};
+
+export interface DailyV2RefutationEffect {
+  /** Effectivité actuelle, établie par le serveur ; NOT_VERIFIABLE si elle ne peut pas l'être. */
+  state: DailyV2RefutationEffectState | 'NOT_VERIFIABLE';
+  label: string;
+  /** Suspension ou couverture partielle : une nouvelle preuve est nécessaire. */
+  newProofNeeded: boolean;
+}
+
+/**
+ * Effectivité actuelle d'une réfutation enregistrée, telle que le serveur la
+ * rend. Aucune déduction locale : sans lecture serveur, ou si le serveur ne
+ * peut pas l'établir, l'affichage dit qu'elle n'est pas vérifiable.
+ */
+export function describeDailyV2RefutationEffect(
+  refutationId: string, read: DailyV2RefutationStatusRead | null,
+): DailyV2RefutationEffect {
+  if (read === null) {
+    return { state: 'NOT_VERIFIABLE', label: 'Effectivité actuelle non vérifiable : lecture du serveur indisponible.', newProofNeeded: false };
+  }
+  if (read.verifiable === false) {
+    return { state: 'NOT_VERIFIABLE', label: `Effectivité actuelle non vérifiable : ${REFUTATION_UNVERIFIABLE_LABELS[read.cause]}.`,
+      newProofNeeded: false };
+  }
+  const status = read.refutations.find((row) => row.refutationId === refutationId);
+  if (!status) {
+    return { state: 'NOT_VERIFIABLE', label: 'Effectivité actuelle non vérifiable : décision absente de la lecture du serveur.',
+      newProofNeeded: false };
+  }
+  const at = `lecture du serveur du ${read.readAt.slice(0, 16).replace('T', ' ')} UTC`;
+  if (status.state === 'EFFECTIVE') return { state: 'EFFECTIVE', label: `Effective (${at}).`, newProofNeeded: false };
+  if (status.state === 'PARTIAL') {
+    return { state: 'PARTIAL', newProofNeeded: true,
+      label: `Partielle : ${status.uncoveredSources} source(s) non couverte(s) — nouvelle preuve nécessaire (${at}).` };
+  }
+  const causes = status.causes.map((cause) => REFUTATION_CAUSE_LABELS[cause]).join(' ; ');
+  return { state: 'SUSPENDED', newProofNeeded: true,
+    label: `Suspendue${causes ? ` : ${causes}` : ''} — nouvelle preuve nécessaire (${at}).` };
+}
 
 export function isRefutable(version: DailyV2DayVersion, retained: DailyV2VersionFacts | null): boolean {
   if (version.retained || version.comparison === null || retained === null || version.sources.length === 0) return false;
@@ -687,71 +789,6 @@ export function isBalanceCorrectionCandidate(unit: DailyV2StagingUnitRow, active
 /** Montant saisi : format strict du serveur (daily_stmt_parse_amount_strict). */
 export function isDailyV2AmountText(text: string): boolean {
   return /^-?[0-9]{1,16}([.][0-9]{1,2})?$/.test(text.trim());
-}
-
-export const DAILY_V2_BATCH_MAX_DAYS = 45;
-const ATTESTATION_CODES = ['ACCOUNT_IDENTITY_NOT_CORROBORATED', 'TRUSTED_CURRENCY_UNCORROBORATED'];
-
-export interface DailyV2BatchPlan {
-  fileHealthy: boolean;
-  unresolvedFileCodes: string[];
-  admissible: DailyV2StagingUnitRow[];
-  inadmissible: Array<{ unit: DailyV2StagingUnitRow; reason: string }>;
-  expected: DailyV2BatchExpected;
-}
-
-export function computeDailyV2BatchPlan(input: {
-  attempt: DailyV2ExportAttemptRow;
-  units: DailyV2StagingUnitRow[];
-  activeCanonicals: DailyV2CanonicalUnitRow[];
-  attestations: DailyV2AttemptAttestationRow[];
-}): DailyV2BatchPlan {
-  const revoked = new Set(input.attestations.filter((row) => row.action === 'REVOKE').map((row) => row.revokes_id));
-  const active = input.attestations.filter((row) => row.attempt_id === input.attempt.id && row.action === 'ATTEST'
-    && !revoked.has(row.id));
-  const resolved = new Set<string>(active.map((row) => (row.attestation_type === 'ACCOUNT_IDENTITY'
-    ? 'ACCOUNT_IDENTITY_NOT_CORROBORATED' : 'TRUSTED_CURRENCY_UNCORROBORATED')));
-  const unresolvedFileCodes = (input.attempt.review_reason_codes ?? []).filter((code) => !resolved.has(code));
-  const fileHealthy = unresolvedFileCodes.length === 0;
-  const canonicalByDay = new Map(input.activeCanonicals.filter((row) => row.status === 'ingested')
-    .map((row) => [row.day_unit_id, row]));
-
-  const admissible: DailyV2StagingUnitRow[] = [];
-  const inadmissible: Array<{ unit: DailyV2StagingUnitRow; reason: string }> = [];
-  const units = input.units.filter((unit) => unit.attempt_id === input.attempt.id)
-    .sort((a, b) => a.accounting_date.localeCompare(b.accounting_date) || a.id.localeCompare(b.id));
-  for (const unit of units) {
-    const codes = unit.review_reason_codes ?? [];
-    if (!fileHealthy) {
-      inadmissible.push({ unit, reason: `Fichier entier non résolu : ${unresolvedFileCodes.join(', ')}` });
-    } else if (unit.status !== 'staged') {
-      inadmissible.push({ unit, reason: `Statut ${unit.status}` });
-    } else if (unit.aggregates_status !== 'derived') {
-      inadmissible.push({ unit, reason: 'Soldes non dérivés' });
-    } else if (unit.validation_status === 'needs_review' && codes.length === 0) {
-      inadmissible.push({ unit, reason: 'À revoir sans motif enregistré' });
-    } else if (unit.validation_status === 'needs_review'
-      && codes.some((code) => !resolved.has(code) || !ATTESTATION_CODES.includes(code))) {
-      inadmissible.push({ unit, reason: `Motifs non résolus : ${codes.filter((code) => !resolved.has(code)).join(', ')}` });
-    } else if (unit.validation_status !== 'valid' && unit.validation_status !== 'needs_review') {
-      inadmissible.push({ unit, reason: `Validation ${unit.validation_status}` });
-    } else {
-      admissible.push(unit);
-    }
-  }
-  // Ordre du serveur : journée (collation C), puis identifiant.
-  const byC = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  const days = admissible.map((unit) => {
-    const canonical = canonicalByDay.get(unit.day_unit_id) ?? null;
-    return {
-      staging_unit_id: unit.id, day_unit_id: unit.day_unit_id, day_content_hash: unit.day_content_hash,
-      canonical_unit_id: canonical?.id ?? null, canonical_content_hash: canonical?.active_day_content_hash ?? null,
-    };
-  }).sort((a, b) => byC(a.day_unit_id, b.day_unit_id) || byC(a.staging_unit_id, b.staging_unit_id));
-  return {
-    fileHealthy, unresolvedFileCodes, admissible, inadmissible,
-    expected: { days, attestation_ids: active.map((row) => row.id).sort(byC) },
-  };
 }
 
 export interface DailyV2Page<T> {
@@ -893,6 +930,14 @@ export type DailyV2Database = {
       };
       revoke_daily_statement_version_refutation: {
         Args: { p_command_key: string; p_refutation_id: string; p_reason: string };
+        Returns: Json;
+      };
+      daily_v2_attempt_batch_plan_v1: {
+        Args: { p_attempt_id: string };
+        Returns: Json;
+      };
+      daily_v2_refutation_status_v1: {
+        Args: { p_day_unit_id: string };
         Returns: Json;
       };
     };

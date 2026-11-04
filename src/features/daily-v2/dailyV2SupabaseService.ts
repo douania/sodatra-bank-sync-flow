@@ -21,7 +21,9 @@ import type {
   DailyV2PromoteResponse,
   DailyV2RefutationProof,
   DailyV2RefutationSourceRow,
+  DailyV2RefutationStatusRead,
   DailyV2ReportingUnitRow,
+  DailyV2ServerBatchPlan,
   DailyV2StagingLineRow,
   DailyV2StagingStatus,
   DailyV2StagingUnitRow,
@@ -39,6 +41,12 @@ import {
   type DailyV2ReportingReadAdapter,
   type DailyV2ReportingReadFilters,
 } from './dailyV2ReportingReadCore';
+import {
+  createDailyV2DecisionReads,
+  parseDailyV2BatchPlan,
+  parseDailyV2RefutationStatus,
+  type DailyV2DecisionPageReader,
+} from './dailyV2DecisionReadCore';
 import {
   buildDailyV2BackfillIncrementalDelta,
   type DailyV2ActiveCanonicalFingerprint,
@@ -661,39 +669,41 @@ const decisionSourceSchema = z.object({
   first_seen_at: z.string().min(10),
 });
 
+// Adaptateur de pages des listes de décisions, en lecture seule (P2 de la
+// contre-revue CTO de la PR #156) : total exact, filtres d'égalité et
+// d'appartenance, tri croissant stable. Le cœur pur lit jusqu'à épuisement et
+// déclare toute lecture incomplète (DAILY_V2_READ_INCOMPLETE).
+type DecisionPageBuilder = {
+  eq(column: string, value: string): DecisionPageBuilder;
+  in(column: string, values: readonly string[]): DecisionPageBuilder;
+  order(column: string, options: { ascending: boolean }): DecisionPageBuilder;
+  range(from: number, to: number): PromiseLike<{
+    data: unknown[] | null; count: number | null; error: { message?: string; code?: string } | null;
+  }>;
+};
+const decisionPageReader: DailyV2DecisionPageReader = async (query) => {
+  let builder = dailyV2Supabase.from(query.table).select('*', { count: 'exact' }) as unknown as DecisionPageBuilder;
+  for (const [column, value] of query.eq) builder = builder.eq(column, value);
+  if (query.in) builder = builder.in(query.in[0], query.in[1]);
+  for (const column of query.order) builder = builder.order(column, { ascending: true });
+  const { data, count, error } = await builder.range(query.from, query.to);
+  return { data, count, error };
+};
+const decisionReads = createDailyV2DecisionReads(decisionPageReader);
+
 /** Livraisons d'une journée (toutes) et leurs fichiers : base de l'affichage des versions. */
 export async function listDailyV2DayDeliveries(dayUnitId: string): Promise<{
   units: DailyV2StagingUnitRow[];
   attempts: DailyV2ExportAttemptRow[];
 }> {
   assertAuthorizedDailyV2Target('read');
-  const { data: units, error } = await dailyV2Supabase
-    .from('daily_statement_units_staging')
-    .select('*')
-    .eq('day_unit_id', dayUnitId)
-    .order('created_at', { ascending: true });
-  if (error) throw toSafeError(error, 'Lecture des livraisons de la journée impossible.');
-  const attemptIds = Array.from(new Set((units ?? []).map((unit) => unit.attempt_id)));
-  if (attemptIds.length === 0) return { units: [], attempts: [] };
-  const { data: attempts, error: attemptsError } = await dailyV2Supabase
-    .from('daily_statement_export_attempts')
-    .select('*')
-    .in('id', attemptIds);
-  if (attemptsError) throw toSafeError(attemptsError, 'Lecture des fichiers de la journée impossible.');
-  return { units: units ?? [], attempts: attempts ?? [] };
+  return decisionReads.listDayDeliveries(dayUnitId);
 }
 
-/** Journées livrées par des fichiers : approbation groupée et borne d'une livraison fraîche. */
+/** Journées livrées par des fichiers : borne d'une livraison fraîche. */
 export async function listDailyV2AttemptsUnits(attemptIds: string[]): Promise<DailyV2StagingUnitRow[]> {
   assertAuthorizedDailyV2Target('read');
-  if (attemptIds.length === 0) return [];
-  const { data, error } = await dailyV2Supabase
-    .from('daily_statement_units_staging')
-    .select('*')
-    .in('attempt_id', attemptIds)
-    .order('accounting_date', { ascending: true });
-  if (error) throw toSafeError(error, 'Lecture des journées du fichier impossible.');
-  return data ?? [];
+  return decisionReads.listAttemptsUnits(attemptIds);
 }
 
 export async function getDailyV2ExportAttempt(attemptId: string): Promise<DailyV2ExportAttemptRow | null> {
@@ -709,26 +719,12 @@ export async function getDailyV2ExportAttempt(attemptId: string): Promise<DailyV
 
 export async function listDailyV2ActiveCanonicalUnits(dayUnitIds: string[]): Promise<DailyV2CanonicalUnitRow[]> {
   assertAuthorizedDailyV2Target('read');
-  if (dayUnitIds.length === 0) return [];
-  const { data, error } = await dailyV2Supabase
-    .from('daily_statement_units_canonical')
-    .select('*')
-    .in('day_unit_id', dayUnitIds)
-    .eq('status', 'ingested');
-  if (error) throw toSafeError(error, 'Lecture des journées retenues impossible.');
-  return data ?? [];
+  return decisionReads.listActiveCanonicalUnits(dayUnitIds);
 }
 
 export async function listDailyV2AttemptAttestations(attemptIds: string[]): Promise<DailyV2AttemptAttestationRow[]> {
   assertAuthorizedDailyV2Target('read');
-  if (attemptIds.length === 0) return [];
-  const { data, error } = await dailyV2Supabase
-    .from('daily_statement_attempt_attestations')
-    .select('*')
-    .in('attempt_id', attemptIds)
-    .order('created_at', { ascending: true });
-  if (error) throw toSafeError(error, 'Lecture des attestations impossible.');
-  return data ?? [];
+  return decisionReads.listAttemptAttestations(attemptIds);
 }
 
 export async function listDailyV2VersionRefutations(dayUnitId: string): Promise<{
@@ -736,20 +732,25 @@ export async function listDailyV2VersionRefutations(dayUnitId: string): Promise<
   sources: DailyV2RefutationSourceRow[];
 }> {
   assertAuthorizedDailyV2Target('read');
-  const { data, error } = await dailyV2Supabase
-    .from('daily_statement_version_refutations')
-    .select('*')
-    .eq('day_unit_id', dayUnitId)
-    .order('created_at', { ascending: true });
-  if (error) throw toSafeError(error, 'Lecture des réfutations impossible.');
-  const ids = (data ?? []).filter((row) => row.action === 'REFUTE').map((row) => row.id);
-  if (ids.length === 0) return { refutations: data ?? [], sources: [] };
-  const { data: sources, error: sourcesError } = await dailyV2Supabase
-    .from('daily_statement_refutation_sources')
-    .select('*')
-    .in('refutation_id', ids);
-  if (sourcesError) throw toSafeError(sourcesError, 'Lecture des sources réfutées impossible.');
-  return { refutations: data ?? [], sources: sources ?? [] };
+  return decisionReads.listVersionRefutations(dayUnitId);
+}
+
+/** C8 : plan d'approbation groupée établi par le serveur (liste admissible exacte et motifs). */
+export async function getDailyV2AttemptBatchPlan(attemptId: string): Promise<DailyV2ServerBatchPlan> {
+  assertAuthorizedDailyV2Target('read');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('daily_v2_attempt_batch_plan_v1', { p_attempt_id: attemptId });
+  if (error) throw toSafeError(error, 'Lecture du plan d’approbation groupée impossible.');
+  return parseDailyV2BatchPlan(data, attemptId);
+}
+
+/** P2 : effectivité actuelle des réfutations d'une journée, établie par le serveur seul. */
+export async function getDailyV2RefutationStatus(dayUnitId: string): Promise<DailyV2RefutationStatusRead> {
+  assertAuthorizedDailyV2Target('read');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('daily_v2_refutation_status_v1', { p_day_unit_id: dayUnitId });
+  if (error) throw toSafeError(error, 'Lecture de l’effectivité des réfutations impossible.');
+  return parseDailyV2RefutationStatus(data, dayUnitId);
 }
 
 /** C2 et C3 : attestation d'un fichier Excel resélectionné (empreinte recalculée localement). */

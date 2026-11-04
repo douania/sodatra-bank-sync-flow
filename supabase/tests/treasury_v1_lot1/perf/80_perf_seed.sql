@@ -118,6 +118,26 @@ FROM (
   WHERE p.day < date '2026-10-30'
 ) x;
 
+-- Lignes staging : chaque livraison porte les siennes, comme le pipeline les
+-- stocke (P1 de la contre-revue CTO : la lecture contrôle leur concordance), y
+-- compris les deux journées en attente (environ 1,1 million de lignes de plus).
+INSERT INTO public.daily_statement_lines_staging (
+  staging_unit_id, attempt_id, day_unit_id, daily_line_hash, daily_occurrence_ordinal, source_line_index,
+  accounting_date, value_date, description_sanitized, debit_amount, credit_amount, signed_amount,
+  running_balance, direction, currency)
+SELECT x.staging_id, x.attempt_id, x.day_unit_id,
+       encode(sha256(convert_to('perf-sline:' || x.staging_id || ':' || x.j, 'UTF8')), 'hex'),
+       1, x.j - 1, x.day, CASE WHEN x.j % 3 = 0 THEN x.day END, 'Opération synthétique',
+       CASE WHEN x.amount < 0 THEN -x.amount END, CASE WHEN x.amount > 0 THEN x.amount END, x.amount,
+       x.opening + sum(x.amount) OVER (PARTITION BY x.staging_id ORDER BY x.j), CASE WHEN x.amount < 0 THEN 'debit' ELSE 'credit' END,
+       'XOF'
+FROM (
+  SELECT p.staging_id, p.attempt_id, p.day_unit_id, p.day, p.opening, j,
+         CASE WHEN j <= 15 THEN -(((p.idx * 7 + j * 13 + p.k::int * 3) % 997) + 1) * 100
+              ELSE (((p.idx * 11 + j * 17 + p.k::int * 5) % 991) + 1) * 100 END::numeric AS amount
+  FROM tr_test.perf_days p CROSS JOIN generate_series(1, 30) j
+) x;
+
 -- Anomalies, réparties de façon déterministe dans l'historique de chaque compte.
 DO $$
 DECLARE
@@ -263,6 +283,7 @@ SELECT 'PERF_SEED accounts=' || (SELECT count(*) FROM tr_test.perf_accounts)
     || ' staging=' || (SELECT count(*) FROM public.daily_statement_units_staging WHERE day_unit_id LIKE 'tr-perf:%')
     || ' canonical=' || (SELECT count(*) FROM public.daily_statement_units_canonical WHERE day_unit_id LIKE 'tr-perf:%')
     || ' lines=' || (SELECT count(*) FROM public.daily_statement_lines_canonical WHERE day_unit_id LIKE 'tr-perf:%')
+    || ' staging_lines=' || (SELECT count(*) FROM public.daily_statement_lines_staging WHERE day_unit_id LIKE 'tr-perf:%')
     || ' refutations=' || (SELECT count(*) FROM public.daily_statement_version_refutations)
     || ' attestations=' || (SELECT count(*) FROM public.daily_statement_attempt_attestations)
     || ' verified_starts=' || (SELECT count(*) FROM treasury_private.verified_starts) AS marker;

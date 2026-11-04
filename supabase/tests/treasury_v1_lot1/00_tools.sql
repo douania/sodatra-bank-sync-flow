@@ -203,6 +203,22 @@ BEGIN
     (SELECT coalesce(sum(-x), 0) FROM unnest(v_amounts) x WHERE x < 0), (SELECT coalesce(sum(x), 0) FROM unnest(v_amounts) x WHERE x > 0),
     v_open, v_close, p_aggregates, p_validation, p_staging_status, tr_test.id('t_admin'), a.account_registry_id);
 
+  -- Lignes de la livraison, comme le pipeline les stocke (P1 de la contre-revue
+  -- CTO : la lecture vérifie leur concordance avec les faits déclarés).
+  v_running := coalesce(p_opening, 0);
+  FOR i IN 1..cardinality(v_amounts) LOOP
+    v_running := v_running + v_amounts[i];
+    INSERT INTO public.daily_statement_lines_staging (
+      staging_unit_id, attempt_id, day_unit_id, daily_line_hash, daily_occurrence_ordinal, source_line_index,
+      accounting_date, value_date, description_sanitized, debit_amount, credit_amount, signed_amount,
+      running_balance, direction, currency)
+    VALUES (v_staging, a.id, v_day_unit, encode(sha256(convert_to('sline:' || v_staging::text || ':' || i, 'UTF8')), 'hex'),
+      1, i - 1, p_day, CASE WHEN i <= p_value_dated THEN p_day END, 'Opération synthétique',
+      CASE WHEN v_amounts[i] < 0 THEN -v_amounts[i] END, CASE WHEN v_amounts[i] > 0 THEN v_amounts[i] END,
+      v_amounts[i], CASE WHEN p_aggregates = 'derived' THEN v_running END,
+      CASE WHEN v_amounts[i] < 0 THEN 'debit' ELSE 'credit' END, v_currency);
+  END LOOP;
+
   IF NOT p_canonical THEN RETURN v_staging; END IF;
 
   INSERT INTO public.daily_statement_units_canonical (

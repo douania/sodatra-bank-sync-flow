@@ -91,6 +91,8 @@ Constats :
 
 ## 4. Performance (C7)
 
+Mesure de `e3eb8a2`. Mesure finale après les corrections de la contre-revue : § 8.5.
+
 Volume synthétique : 10 comptes, 10 ans (2016-11-01 → 2026-10-31), 30 lignes par jour
 (1 095 000 lignes canonical, 37 090 unités, 39 510 livraisons, 4 190 fichiers), avec
 doublons, attentes, écartements, ventilations différentes, données insuffisantes,
@@ -161,8 +163,146 @@ exiger, comme l'identité, un fichier sans libellé de compte ?
 
 ## 7. Limites et confirmations nécessaires
 
-- Budget C7 : **dépassé** sur le volume C7 (p95 2,84 s pour 1 s visé) ; respecté sur les relevés réels (médiane 77 ms, 228 ms en simulation). Conformément à la R6, aucune matérialisation automatique : rapport de mesure rendu, suite à arbitrer (pré-agrégation persistée, index additif en dernier recours, ou budget redéfini pour ce volume).
+- Budget C7 : **dépassé** sur le volume C7 (p95 2,84 s pour 1 s visé à `e3eb8a2` ; mesure finale au § 8.5) ; respecté sur les relevés réels (médiane 77 ms, 228 ms en simulation). Conformément à la R6, aucune matérialisation automatique : rapport de mesure rendu, suite à arbitrer (pré-agrégation persistée, index additif en dernier recours, ou budget redéfini pour ce volume).
 - Aucune attestation, qualification ni point de départ réel : à fournir par écrit (GO
   distinct), fichier par fichier, avec la lecture sur pièce pour tout point de départ.
 - BIS : diagnostic des ruptures et éventuelle évolution de profil hors de ce GO.
 - Application staging et production, ouverture du module et des verrous : GO distincts.
+
+## 8. Corrections après la contre-revue CTO de `e3eb8a2` (`GO_FIX_TREASURY_V1_LOT1_OPERATIONAL_FIX`)
+
+Verdict CTO sur `e3eb8a2` : `FAIL` (P1 concordance soldes/lignes, P2 exhaustivité des lectures,
+P2 effectivité des réfutations dans l'interface). Corrections dans les deux migrations
+candidates du lot seulement ; aucune migration historique, empreinte, idempotence ou
+enveloppe existante modifiée ; aucune dépendance, aucun `.env`, aucun seuil CI, aucun
+artefact MCP.
+
+### 8.1 Constat → correction → preuve
+
+| Constat CTO | Correction | Preuve |
+|---|---|---|
+| **P1** — charge réelle aux agrégats décalés de 1 000 000 XOF lue `AVAILABLE` à 1 000 110 XOF (l'équation ouverture + crédits − débits = clôture ne suffisait pas) | Règle unique `daily_stmt_line_facts_conform` : nombre de lignes, totaux et chaîne des soldes courants de l'ouverture à la clôture (ordre du fichier ou son inverse exact) ; appliquée aux lignes staging (`daily_stmt_staging_lines_conform`) et canonical (`daily_stmt_canonical_lines_conform`). Lecture « Soldes à date » : une passe, une fenêtre (`canon_agg`, `stg_agg`) ; unité non conforme → `UNIT_FINANCIAL_FACTS_INCOHERENT`, jamais de solde ; livraison non conforme → non propre, son fichier ne prouve ni clôture ni réfutation ; doublon sans lignes propre seulement si une version retenue de mêmes faits a des lignes conformes ; constat `LINES_NOT_CONFORMING`. Approbation groupée : journées aux lignes non conformes inadmissibles. Réfutation : refusée si la version retenue a des lignes non conformes, ou si le fichier de la livraison fraîche porte une journée aux lignes non conformes | `44_lines_conformity.sql` (contre-exemple CTO sur la charge du pipeline réel : plus de solde ; variantes totaux à net égal et soldes courants ; promotion unitaire historique puis lecture ; réfutation refusée ; correction des seuls soldes ; deux mordants : sans la condition, la charge serait admissible et le solde décalé redeviendrait `AVAILABLE` à 1 000 110 XOF) ; `46_operational.sql` scénarios O, P et N bis (unité, fichier, doublon sans lignes, profil décroissant, nombre, totaux, chaîne interne, faits de livraison incohérents) ; mutants m76 (unité), m77 (fichier), m78 (protection entière) tués sur les deux versions ; H1 et « première copie inutilisable puis copie valide » : `40_duplicate_financial_version_lines.sql` et scénario L inchangés, verts |
+| **P2** — lectures non paginées (livraisons, fichiers, journées, unités retenues, attestations, réfutations, sources) | Cœur pur `dailyV2DecisionReadCore.ts` : pages de 500 jusqu'au total exact annoncé, décalage égal aux lignes reçues, tri stable terminé par l'identifiant (ou la clé primaire), identifiants découpés en lots de 100, plafond de sûreté ; erreur, total absent ou modifié, page vide, ligne répétée, fichier associé manquant → `DAILY_V2_READ_INCOMPLETE`. Interfaces : lecture en échec signalée, décisions dépendantes suspendues (versions non construites, attestations et approbation groupée retirées, preuve fraîche non proposée) | `dailyV2DecisionReads.synthetic.test.ts` (faux PostgREST : 1 234 réfutations dont la révocation en troisième page, 1 101 livraisons dont une nouvelle source en dernière réponse avec un plafond serveur de 300 lignes, 250 fichiers en trois lots, sept cas de lecture incomplète) ; contrat des interfaces dans `dailyV2OperationalDecisions.synthetic.test.ts` |
+| **P2** — ancienne réfutation affichée acquise après changement de l'unité retenue | Effectivité calculée par le serveur seul : constat `REFUTATION_STATUS` de la lecture (`EFFECTIVE`, `PARTIAL` avec sources non couvertes, `SUSPENDED` avec causes `RETAINED_VERSION_CHANGED`, `RETAINED_VERSION_UNUSABLE`, `PROOF_NO_LONGER_VALID`, `SOURCE_NOT_JUSTIFIED`, `NEW_SOURCE_UNCOVERED`) et lecture `daily_v2_refutation_status_v1` (administrateur ; `verifiable = false` avec motif si le module est fermé, la journée inconnue ou le compte hors inventaire). Interface : décision enregistrée, puis effectivité actuelle telle que le serveur la rend, avec l'heure de la lecture, ou « non vérifiable » (lecture en cours, en échec ou impossible) ; plus aucun calcul de couverture dans le navigateur ; sources non couvertes comptées hors couverture par l'adoption. Plan d'approbation groupée lu de même sur le serveur (`daily_v2_attempt_batch_plan_v1`) | `46_operational.sql` : effective, partielle (nouvelle source F2), suspendue (justificatif invalidé ; version retenue changée par une correction des seuls soldes = cas CTO), lecture serveur avant/après, refus sans rôle admin, journée inconnue, module fermé ; mutants m79 (partielle ignorée) et m80 (changement de retenue ignoré) ; TypeScript : cas CTO (décision enregistrée visible, effectivité « Suspendue », jamais « effective » sans lecture serveur), réponses hors contrat refusées |
+
+### 8.2 Tests rejoués
+
+| Suite | Résultat |
+|---|---|
+| Trésorerie PG17 `run_pg17_replay.ps1 -Mutants` (upgrade avec surfaces 61/62, fresh, course de lecture, différentiel) | `TREASURY_V1_LOT1_PG17_REPLAY_PASS` ; surface : 162 ajouts, 5 définitions du lot modifiées ; différentiel identique (40 : 29 dates, 46 : 80 dates, historiques aléatoires : 46 dates) |
+| Mutants SQL trésorerie | 80/80 sur la version optimisée, 80/80 sur la référence figée |
+| Daily v2 opérationnel PG17 (dont 44) | `DAILY_V2_OPERATIONAL_DECISIONS_PG17_PASS` |
+| LOCAL-E2E-0R | `ALL_LOCAL_E2E_0R_PASS` |
+| TypeScript | voir § 8.4 |
+
+### 8.3 Relevés réels (rejeu local, base jetable)
+
+Les 12 fichiers `RELEVE_SOURCE` du manifeste, copiés entiers et sans renommage dans un
+dossier privé ; taille et SHA-256 identiques au manifeste avant la copie, sur la copie, et
+après les essais. Mêmes étapes que pour `e3eb8a2` (dépôt, promotion des journées valides,
+redépôts identiques, lecture sans décision, puis SIMULATION LOCALE annulée : attestations,
+formats réputés qualifiés, approbation groupée).
+
+| Fichier | Lignes stockées conformes | Écart avec `e3eb8a2` |
+|---|---|---|
+| ATB juillet / octobre | 12/12 · 9/9 | aucun (hors durées) |
+| BDK juillet / octobre | 2/2 · 3/3 (unités retenues conformes) | aucun |
+| BICIS juillet / octobre | 12/12 · 12/12 | aucun |
+| BIS juillet / octobre (backfill) | 19/19 · 883/883 | aucun |
+| BRIDGE juillet / octobre | 1/1 · 3/3 | aucun |
+| ORA juillet / octobre | 3/3 · 7/7 (unités retenues conformes) | aucun |
+
+Lecture sans décision, simulation et rapport par fichier : lignes identiques à `e3eb8a2`, aux
+durées près. Seules nouveautés : le plan serveur nomme le motif d'inadmissibilité
+(`STATUS_NOT_STAGED` pour les CSV déjà promus, `FILE_UNRESOLVED` pour BIS) ; aucune journée
+réelle n'est écartée pour lignes non conformes. Redépôts identiques : doublons sans lignes,
+toujours justifiés par leur version retenue conforme. Lecture : médiane 80 ms (maximum 109 ms)
+sans décision, contre 77 ms pour `e3eb8a2` ; médiane 243 ms (maximum 266 ms) en simulation,
+contre 228 ms. Verrous Daily v2 et module refermés, refus vérifiés, base détruite, copies,
+charges utiles et manifestes privés supprimés ; seules les lignes agrégées (sans montant) sont
+conservées hors dépôt comme preuves.
+
+### 8.4 TypeScript, typecheck, ESLint, build
+
+| Contrôle | Résultat |
+|---|---|
+| `test:treasury-balances` | 28/28 |
+| Mutants d'interface trésorerie (`treasuryMutation.proof.ts`) | 26/26 |
+| `test:daily-v2-application` | 108/108 |
+| `test:daily-v2-reporting` | 70/70 |
+| Décisions Daily v2, correction des soldes, lectures paginées | 22/22 |
+| `test:structured-csv-all` · `-e2b` · `test:structured-excel` · `test:payables-cheques` | 134/134 · 49/49 · 21/21 · 88/88 |
+| Typecheck application | 16 erreurs, identiques à la base ; projet Node 0 |
+| ESLint | 178 erreurs, 11 avertissements, identiques à la base, aucun élément nouveau |
+| Build | PASS ; artefact MCP inchangé |
+
+### 8.5 Mesure C7 finale
+
+Même protocole et même machine qu'au § 4 (120 lectures après échauffement, cache chaud,
+mesure seule). Le volume porte désormais aussi les lignes staging de chaque livraison
+(1 095 600 lignes de plus, base de 1 156 MB), comme le pipeline les stocke : sans elles, le
+contrôle P1 ne serait pas mesuré. Statuts finaux inchangés (`NOT_COVERED` = 10 au 31 octobre).
+
+| Mesure (120 lectures) | `e3eb8a2` | Après corrections |
+|---|---|---|
+| p50 | 2 796 ms | 4 725 ms |
+| p95 | 2 837 ms | 4 839 ms |
+| maximum | 2 902 ms | 4 873 ms (D = 2025-04-26) |
+
+**Budget de 1 s dépassé**, davantage qu'avant : le contrôle des lignes ajoute environ 1,8 s sur
+ce volume (10 comptes × 10 ans × 30 lignes par jour). Sur la même base, la lecture de
+`e3eb8a2` mesure 2,84 s et rend des réponses identiques. Décomposition du surcoût : tri,
+fenêtre et agrégat des 1,1 million de lignes canonical (environ 1,2 s, tri débordant sur
+disque avec `work_mem` à 4 MB), lecture des lignes staging des livraisons jamais promues
+(environ 0,1 s), appels de la règle par unité (environ 0,25 s). Essais écartés, faute de gain
+suffisant : règle écrite en ligne (−0,24 s, au prix d'une seconde écriture de la règle) et
+`work_mem` porté à 64 MB sur la fonction (−0,18 s). Aucune matérialisation, aucun index, aucune
+réduction de l'historique. Options à arbitrer : indicateur de conformité calculé une fois à la
+promotion (les lignes et faits d'une unité sont immuables), ou index additif
+`(canonical_unit_id, source_line_index, daily_occurrence_ordinal, id)` qui supprimerait le tri.
+Relevés réels : médiane 80 ms sans décision.
+
+### 8.6 Revue indépendante des corrections
+
+Relecture indépendante en lecture seule. P1 tient pour les soldes et les preuves (chaque chemin
+vérifié échoue fermé), version optimisée conforme à la référence et aux fonctions scalaires,
+privilèges corrects. Constats traités :
+
+| Constat | Traitement |
+|---|---|
+| F1 (moyen) — une relecture en échec ou en cours gardait l'ancien statut « effective » | Relecture en cours ou en échec : effectivité « non vérifiable », alerte, heure de la lecture serveur affichée ; plan d'approbation et bornes d'une livraison fraîche jamais repris d'une lecture périmée ; tests de contrat |
+| F2 — un doublon sans lignes par construction était dit « lignes non conformes » | Le constat ne compte que les livraisons qui portent des lignes stockées ; la propreté reste stricte (sans effet sur les soldes) ; scénario O |
+| F3 — l'état `PARTIAL` ignorait la couverture par l'adoption | Sources non couvertes = livraisons comparées non couvertes, hors sources de la réfutation ; scénario « réfutation explicite d'une version adoptée », mutant m81 |
+| F4 — une livraison fraîche était acceptée alors que son fichier ne pouvait pas faire preuve | Refus si une journée du fichier porte des lignes stockées non conformes (staging ou unité retenue) ; deux refus dans `46` |
+| F5 — la lecture des statuts filtrait par compte et date | Filtre sur les réfutations de la journée demandée |
+
+Doutes rapportés, non modifiés :
+
+- Une unité retenue non conforme reste créable par la promotion unitaire et le remplacement
+  historiques (enveloppes inchangées, hors périmètre) ; elle n'établit alors aucun solde. Si
+  seuls ses soldes courants stockés étaient faux (faits identiques), un redépôt correct serait
+  un doublon sans lignes et la journée resterait non réparable sans point de départ vérifié.
+  Le pipeline réel dérive les faits des mêmes soldes courants, ce qui rend ce cas improbable ;
+  un recensement en lecture seule de `daily_stmt_canonical_lines_conform` sur staging, puis
+  production, avant toute application est recommandé (GO distinct).
+- Une livraison non conforme continue d'alimenter les ouvertures connues et les comparaisons :
+  elle peut bloquer une journée (`CONFLICT`, chaîne rompue), jamais en établir une. Choix
+  conservateur, à confirmer.
+- `daily_v2_refutation_status_v1` est réservée au rôle admin Daily v2 ; elle révèle l'état du
+  module et l'appartenance à l'inventaire, aucun solde ; chaque appel lit tous les comptes
+  (coût de la lecture C7). Module fermé : réfutations « non vérifiables », comme prévu.
+- Égalités de `(source_line_index, daily_occurrence_ordinal)` départagées par l'identifiant
+  de ligne, différent entre copie staging et copie canonical : seule une charge fabriquée peut
+  les produire (indices uniques par fichier dans le pipeline).
+- Étape CI ciblée du lot complétée d'un fichier de test, sans changement de seuil.
+- Hors de ce diff : un redépôt R1 provisoire identique reste comparé après clôture de la
+  journée (comportement antérieur).
+
+### 8.7 Limites
+
+- Budget C7 dépassé (§ 8.5) : à arbitrer.
+- Aucune attestation, qualification ni point de départ réel n'a été posé ; les simulations
+  sont annulées et étiquetées SIMULATION LOCALE.
+- Diagnostic des ruptures BIS hors périmètre.
+- Merge, application staging ou production, ouverture du module ou des verrous : GO
+  distincts.

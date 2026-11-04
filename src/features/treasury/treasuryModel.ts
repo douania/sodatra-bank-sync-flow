@@ -59,6 +59,20 @@ const findingSchema = z.union([
     uncovered_sources: count,
   }),
   z.object({ kind: z.literal('VERSION_REFUTATION_SUSPENDED'), day: isoDate }),
+  // P1 de la contre-revue CTO de la PR #156 : livraisons dont les lignes stockées
+  // ne justifient pas les faits déclarés (aucun solde ni preuve n'en est tiré).
+  z.object({ kind: z.literal('LINES_NOT_CONFORMING'), day: isoDate, deliveries: count, retained_unit: z.boolean() }),
+  // P2 : statut courant d'une réfutation enregistrée, établi par la lecture.
+  z.object({
+    kind: z.literal('REFUTATION_STATUS'),
+    day: isoDate,
+    refutation_id: z.string().uuid(),
+    proof_kind: z.enum(['FRESH_DELIVERY', 'BANK_PIECE']),
+    state: z.enum(['EFFECTIVE', 'PARTIAL', 'SUSPENDED']),
+    causes: z.array(z.enum(['RETAINED_VERSION_CHANGED', 'RETAINED_VERSION_UNUSABLE', 'PROOF_NO_LONGER_VALID',
+      'SOURCE_NOT_JUSTIFIED', 'NEW_SOURCE_UNCOVERED'])),
+    uncovered_sources: count,
+  }),
 ]);
 
 // Point de départ vérifié d'un compte, état pour la date lue.
@@ -259,7 +273,13 @@ export const REASON_LABELS: Record<string, string> = {
   DAY_CONTESTED: 'Journée disputée par une autre livraison',
   DAY_CONFLICT: 'Journée en conflit entre deux livraisons',
   DAY_PENDING_VALIDATION: 'Journée livrée, en attente de validation',
-  UNIT_FINANCIAL_FACTS_INCOHERENT: 'Faits financiers du relevé incohérents (ouverture, mouvements, clôture)',
+  UNIT_FINANCIAL_FACTS_INCOHERENT: 'Faits financiers du relevé incohérents (ouverture, mouvements, clôture) ou non justifiés par ses lignes',
+  // Causes du statut d'une réfutation (constat REFUTATION_STATUS).
+  RETAINED_VERSION_CHANGED: 'version retenue changée depuis la décision',
+  RETAINED_VERSION_UNUSABLE: 'version retenue inutilisable (faits ou lignes non conformes)',
+  PROOF_NO_LONGER_VALID: 'justificatif plus valable',
+  SOURCE_NOT_JUSTIFIED: 'source couverte plus justifiée',
+  NEW_SOURCE_UNCOVERED: 'source de la version réfutée non couverte',
   VERSION_BALANCE_NOT_COMPARABLE: 'Soldes de deux livraisons non comparables (données insuffisantes)',
   VERIFIED_START_SUSPENDED: 'Point de départ vérifié suspendu',
   VERSION_REFUTATION_SUSPENDED: 'Réfutation d’une version suspendue',
@@ -460,7 +480,20 @@ export function findingLabel(finding: TreasuryFinding): string {
         ? 'agrégats indisponibles' : 'faits financiers incohérents'}, ${SIDE_LABELS[finding.side]}) :`
         + ` ${plural(finding.uncovered_sources, 'source non couverte', 'sources non couvertes')}`;
     case 'VERSION_REFUTATION_SUSPENDED':
-      return `Réfutation du ${finding.day} suspendue : une nouvelle source rouvre la question, une nouvelle preuve est nécessaire`;
+      return `Réfutation du ${finding.day} suspendue : une nouvelle preuve est nécessaire`;
+    case 'LINES_NOT_CONFORMING':
+      return `Lignes stockées non conformes aux soldes et totaux déclarés le ${finding.day} : `
+        + `${plural(finding.deliveries, 'livraison', 'livraisons')}${finding.retained_unit ? ', dont la journée retenue' : ''}`
+        + ' — aucun solde ni preuve n’en est tiré';
+    case 'REFUTATION_STATUS': {
+      const proof = finding.proof_kind === 'BANK_PIECE' ? 'pièce corrective' : 'livraison fraîche';
+      const causes = finding.causes.map((cause) => REASON_LABELS[cause] ?? cause).join(', ');
+      const state = finding.state === 'EFFECTIVE' ? 'effective'
+        : finding.state === 'PARTIAL'
+          ? `partielle (${plural(finding.uncovered_sources, 'source non couverte', 'sources non couvertes')}), nouvelle preuve nécessaire`
+          : `suspendue${causes ? ` (${causes})` : ''}, nouvelle preuve nécessaire`;
+      return `Réfutation enregistrée du ${finding.day} (${proof}) : ${state}`;
+    }
   }
 }
 

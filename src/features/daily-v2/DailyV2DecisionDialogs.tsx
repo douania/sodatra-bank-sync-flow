@@ -10,6 +10,7 @@ import {
   attestDailyV2Attempt,
   dailyV2DecisionCommandKeys,
   getActiveDailyV2CanonicalUnit,
+  getDailyV2RefutationStatus,
   listDailyV2AttemptAttestations,
   listDailyV2AttemptsUnits,
   listDailyV2DayDeliveries,
@@ -32,6 +33,7 @@ import {
   dailyV2PieceRequirements,
   dailyV2SourceVerdicts,
   dailyV2VersionKey,
+  describeDailyV2RefutationEffect,
   groupDailyV2DayVersions,
   isBalanceCorrectionCandidate,
   isDailyV2AmountText,
@@ -51,7 +53,12 @@ import {
 // et décisions de l'administrateur. Les règles de version (clé, cohérence,
 // comparaison, sources, justification) sont les fonctions pures de
 // dailyV2Types ; le serveur les recalcule sous verrou et refuse tout écart avec
-// l'état affiché (« STALE »). Rien n'est décidé ici.
+// l'état affiché (« STALE »). Rien n'est décidé ici. Une réfutation est
+// affichée en deux temps (P2 de la contre-revue CTO de la PR #156) : la
+// décision enregistrée, puis son effectivité actuelle telle que le serveur la
+// rend (effective, partielle, suspendue, ou non vérifiable) ; aucune
+// effectivité n'est déduite dans le navigateur. Une lecture en échec ou
+// incomplète suspend les décisions qui en dépendent.
 
 function amount(value: number | null): string {
   return value === null ? '—' : value.toFixed(2);
@@ -106,21 +113,43 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
     queryFn: () => listDailyV2AttemptAttestations(attemptIds),
     enabled: attemptIds.length > 0,
   });
+  const hasRecordedRefutation = (refutationsQuery.data?.refutations ?? []).some((row) => row.action === 'REFUTE');
+  const refutationStatusQuery = useQuery({
+    queryKey: ['daily-v2', 'refutation-status', dayUnitId],
+    queryFn: () => getDailyV2RefutationStatus(dayUnitId!),
+    enabled: dayUnitId !== null && hasRecordedRefutation,
+  });
 
+  // Lecture en échec ou incomplète : signalée, et les décisions qui en dépendent
+  // sont suspendues (aucune version n'est construite sur une base partielle).
+  const failedRead = [deliveriesQuery, activeQuery, refutationsQuery].find((query) => query.isError);
+  const readError = failedRead?.error instanceof Error ? failedRead.error.message
+    : failedRead ? 'Lecture impossible.' : null;
+  const attestationsError = attestationsQuery.isError
+    ? (attestationsQuery.error instanceof Error ? attestationsQuery.error.message : 'Lecture des attestations impossible.')
+    : null;
   const active = activeQuery.data ?? null;
   const retainedFacts = active ? canonicalVersionFacts(active) : null;
   let versions: DailyV2DayVersion[] = [];
   let versionError: string | null = null;
-  if (deliveriesQuery.data && refutationsQuery.data && !activeQuery.isLoading) {
+  if (readError === null && deliveriesQuery.data && refutationsQuery.data && !activeQuery.isLoading) {
     try {
       versions = groupDailyV2DayVersions({
         units: deliveriesQuery.data.units, attempts: deliveriesQuery.data.attempts, active,
-        refutations: refutationsQuery.data.refutations, refutationSources: refutationsQuery.data.sources,
+        refutations: refutationsQuery.data.refutations,
       });
     } catch {
       versionError = 'Versions non calculables localement (montant hors plage exacte ou contexte manquant) : aucune décision possible.';
     }
   }
+  // Une lecture en cours ou en échec ne réutilise jamais un statut précédent :
+  // l'effectivité est alors « non vérifiable » (revue indépendante, F1).
+  const refutationStatusError = refutationStatusQuery.isError
+    ? (refutationStatusQuery.error instanceof Error ? refutationStatusQuery.error.message : 'Lecture impossible.')
+    : null;
+  const refutationEffect = (refutationId: string) => (refutationStatusQuery.isFetching
+    ? { state: 'NOT_VERIFIABLE' as const, label: 'Effectivité actuelle : vérification en cours sur le serveur.', newProofNeeded: false }
+    : describeDailyV2RefutationEffect(refutationId, refutationStatusError === null ? refutationStatusQuery.data ?? null : null));
   const unitAttempt = deliveriesQuery.data?.attempts.find((attempt) => attempt.id === unit?.attempt_id) ?? null;
   const attestations = (attestationsQuery.data ?? []).filter((row) => row.attempt_id === unitAttempt?.id);
 
@@ -162,7 +191,15 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
             sous verrou et refuse tout écart avec cet affichage.
           </DialogDescription>
         </DialogHeader>
+        {readError && (
+          <p role="alert" className="text-sm text-destructive">{readError} Les décisions de la journée sont suspendues.</p>
+        )}
         {versionError && <p role="alert" className="text-sm text-destructive">{versionError}</p>}
+        {refutationStatusError && (
+          <p role="alert" className="text-sm text-destructive">
+            {refutationStatusError} L’effectivité actuelle des réfutations n’est pas vérifiable.
+          </p>
+        )}
         <div className="max-h-[60vh] space-y-3 overflow-y-auto text-sm" aria-label="Versions de la journée">
           {versions.map((version) => (
             <div key={version.key} className="rounded border p-3" data-version-retained={version.retained}>
@@ -175,7 +212,8 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
                 )}
                 {version.refutation && (
                   <Badge variant="outline">
-                    Version réfutée — {version.refutation.proof_kind === 'BANK_PIECE' ? 'pièce corrective' : 'livraison fraîche'}
+                    Réfutation enregistrée le {version.refutation.created_at.slice(0, 10)} —{' '}
+                    {version.refutation.proof_kind === 'BANK_PIECE' ? 'pièce corrective' : 'livraison fraîche'}
                     {' '}(borne {version.refutation.proof_bound_day})
                   </Badge>
                 )}
@@ -189,12 +227,15 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
                 <span>Mouvements : <span className="font-mono">{shortHash(version.facts.hash)}</span></span>
               </div>
               {version.refutation?.proof_kind === 'BANK_PIECE' && <p className="mt-1 text-xs">{DAILY_V2_PIECE_MENTION}</p>}
-              {version.uncoveredSources.length > 0 && (
-                <p className="mt-1 text-xs text-destructive">
-                  {version.uncoveredSources.length} nouvelle(s) source(s) hors de la réfutation : la contradiction ou
-                  l’incertitude est rouverte, une nouvelle preuve est nécessaire.
-                </p>
-              )}
+              {version.refutation && (() => {
+                const effect = refutationEffect(version.refutation.id);
+                return (
+                  <p className={`mt-1 text-xs ${effect.state === 'EFFECTIVE' ? '' : 'text-destructive'}`}
+                    data-refutation-effect={effect.state} aria-label="Effectivité actuelle de la réfutation">
+                    {effect.label}
+                  </p>
+                );
+              })()}
               <ul className="mt-2 space-y-1 text-xs">
                 {version.deliveries.map((delivery) => (
                   <li key={delivery.id} className="flex flex-wrap items-center gap-2">
@@ -225,8 +266,15 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
               </div>
             </div>
           ))}
-          {unitAttempt && (
-            <FileSection attempt={unitAttempt} attestations={attestations} canAdminister={canAdminister} canDecide={canDecide}
+          {attestationsError && (
+            <p role="alert" className="text-sm text-destructive">
+              {attestationsError} Les attestations et l’approbation groupée sont suspendues.
+            </p>
+          )}
+          {unitAttempt && readError === null && (
+            <FileSection attempt={unitAttempt} attestations={attestations}
+              canAdminister={canAdminister && attestationsError === null && !attestationsQuery.isLoading}
+              canDecide={canDecide && attestationsError === null && !attestationsQuery.isLoading}
               onAttest={(type) => setAction({ kind: 'attest', attempt: unitAttempt, type })}
               onRevoke={(attestation) => setAction({ kind: 'revoke-attestation', attestation })}
               onBatch={() => onBatch(unitAttempt.id)} />
@@ -413,10 +461,15 @@ function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: 
     queryFn: () => listDailyV2AttemptsUnits(candidateAttemptIds),
     enabled: candidateAttemptIds.length > 0,
   });
+  // Bornes lues seulement sur une lecture complète et à jour (jamais une donnée périmée).
+  const bounds = boundsQuery.isError || boundsQuery.isFetching ? null : boundsQuery.data ?? null;
   const boundOf = (unit: DailyV2StagingUnitRow) => {
     const attempt = deliveries.attempts.find((row) => row.id === unit.attempt_id);
-    return attempt && boundsQuery.data ? dailyV2FreshDeliveryBound(attempt, boundsQuery.data) : null;
+    return attempt && bounds ? dailyV2FreshDeliveryBound(attempt, bounds) : null;
   };
+  const boundsError = boundsQuery.isError
+    ? (boundsQuery.error instanceof Error ? boundsQuery.error.message : 'Lecture des journées du fichier impossible.')
+    : null;
   const fresh = candidates.find((unit) => unit.id === freshId) ?? null;
   const bound = kind === 'FRESH_DELIVERY' ? (fresh ? boundOf(fresh) : null) : (issuedOn || null);
   const verdicts = dailyV2SourceVerdicts(version.sources, bound);
@@ -452,6 +505,9 @@ function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: 
           Pièce corrective
         </Button>
       </div>
+      {kind === 'FRESH_DELIVERY' && boundsError && (
+        <p role="alert" className="text-destructive">{boundsError} Aucune livraison fraîche ne peut être retenue comme preuve.</p>
+      )}
       {kind === 'FRESH_DELIVERY' && (
         <select aria-label="Livraison fraîche de la version retenue" className="w-full rounded border px-2 py-1"
           value={freshId} onChange={(event) => setFreshId(event.target.value)}>

@@ -4,7 +4,6 @@ import test from 'node:test';
 import {
   activeAttestations,
   activeRefutations,
-  computeDailyV2BatchPlan,
   dailyV2AmountText,
   dailyV2CompareVersions,
   dailyV2FreshDeliveryBound,
@@ -14,6 +13,8 @@ import {
   dailyV2VersionKey,
   dailyV2VersionSources,
   dakarDate,
+  DAILY_V2_BATCH_INADMISSIBLE_LABELS,
+  describeDailyV2RefutationEffect,
   groupDailyV2DayVersions,
   isBalanceCorrectionCandidate,
   isDailyV2AmountText,
@@ -22,10 +23,12 @@ import {
   type DailyV2AttemptAttestationRow,
   type DailyV2CanonicalUnitRow,
   type DailyV2ExportAttemptRow,
+  type DailyV2RefutationStatusRead,
   type DailyV2StagingUnitRow,
   type DailyV2VersionFacts,
   type DailyV2VersionRefutationRow,
 } from './dailyV2Types';
+import { parseDailyV2BatchPlan, parseDailyV2RefutationStatus } from './dailyV2DecisionReadCore';
 
 // Lot 1 opérationnel : règles de version côté interface, données fictives.
 // La parité exacte avec le serveur est éprouvée par 43_version_parity.sql
@@ -163,7 +166,7 @@ test('pièce corrective : valeurs exigées et format strict', () => {
   for (const bad of ['1 300', '1,5', '1e3', '', '1.234']) assert.equal(isDailyV2AmountText(bad), false, bad);
 });
 
-test('versions d’une journée : retenue, réfutée, nouvelle source qui rouvre', () => {
+test('versions d’une journée : retenue, décision de réfutation enregistrée, révocation', () => {
   const a1 = attempt('11111111-0000-4000-8000-000000000001');
   const a2 = attempt('21111111-0000-4000-8000-000000000002');
   const active = canonical();
@@ -178,16 +181,13 @@ test('versions d’une journée : retenue, réfutée, nouvelle source qui rouvre
     id: 'r1', action: 'REFUTE', day_unit_id: 'day-2026-10-02', refuted_version_key: wrongKey,
     proof_kind: 'FRESH_DELIVERY', proof_bound_day: '2026-10-09',
   } as DailyV2VersionRefutationRow;
-  const versions = groupDailyV2DayVersions({
-    units, attempts: [a1, a2], active, refutations: [refutation],
-    refutationSources: [{ refutation_id: 'r1', raw_text_hash: a1.raw_text_hash, account_registry_id: ACCOUNT,
-      first_seen_at: a1.created_at, proof_bound_day: '2026-10-09', verdict: 'JUSTIFIED' }],
-  });
+  const versions = groupDailyV2DayVersions({ units, attempts: [a1, a2], active, refutations: [refutation] });
   assert.equal(versions.length, 2, 'la livraison remplacée n’est plus une version affichée');
   assert.equal(versions[0].retained, true);
   assert.equal(versions[1].comparison, 'CONTRADICTION');
-  assert.equal(versions[1].refutation?.id, 'r1');
-  assert.equal(versions[1].uncoveredSources.length, 1, 'la source du second fichier rouvre la contradiction');
+  assert.equal(versions[1].refutation?.id, 'r1', 'décision enregistrée affichée');
+  assert.equal(versions[1].sources.length, 2, 'deux sources de la version réfutée');
+  assert.equal('uncoveredSources' in versions[1], false, 'aucune couverture déduite dans le navigateur');
   assert.equal(isRefutable(versions[1], stagingVersionFacts(units[0])), true);
   assert.equal(isRefutable(versions[0], stagingVersionFacts(units[0])), false);
   const revoke = { id: 'r2', action: 'REVOKE', revokes_id: 'r1' } as DailyV2VersionRefutationRow;
@@ -208,45 +208,101 @@ test('correction des seuls soldes : doublon de mêmes mouvements, version dériv
   assert.equal(isBalanceCorrectionCandidate(unit('d', 'a', { status: 'duplicate' }), null), false);
 });
 
-test('approbation groupée : fichier entier, attestations actives, liste exacte et ordonnée', () => {
-  const file = attempt('51111111-0000-4000-8000-000000000005', { review_reason_codes: ['ACCOUNT_IDENTITY_NOT_CORROBORATED'] });
-  const units = [
-    unit('u-b', file.id, { day_unit_id: 'day-b', accounting_date: '2026-10-02', validation_status: 'needs_review',
-      review_reason_codes: ['ACCOUNT_IDENTITY_NOT_CORROBORATED'] }),
-    unit('u-a', file.id, { day_unit_id: 'day-a', accounting_date: '2026-10-01' }),
-    unit('u-c', file.id, { day_unit_id: 'day-c', accounting_date: '2026-10-03', aggregates_status: 'unavailable',
-      opening_balance_derived: null, closing_balance_derived: null }),
-    unit('u-d', file.id, { day_unit_id: 'day-d', accounting_date: '2026-10-04', status: 'duplicate' }),
-    unit('u-e', file.id, { day_unit_id: 'day-e', accounting_date: '2026-10-05', validation_status: 'needs_review',
-      review_reason_codes: ['RUNNING_BALANCE_MISSING'] }),
-  ];
-  const unattested = computeDailyV2BatchPlan({ attempt: file, units, activeCanonicals: [], attestations: [] });
-  assert.equal(unattested.fileHealthy, false);
-  assert.equal(unattested.admissible.length, 0, 'un fichier non résolu ne rend propre aucune journée');
+// P2 de la contre-revue CTO de la PR #156 : l'effectivité d'une réfutation est
+// celle que rend le serveur ; le navigateur ne la déduit jamais.
+const REF = '61000000-0000-4000-8000-000000000001';
+const DAY = 'day-2026-10-02';
+function statusRead(state: 'EFFECTIVE' | 'PARTIAL' | 'SUSPENDED', causes: string[] = [], uncovered = 0): DailyV2RefutationStatusRead {
+  return parseDailyV2RefutationStatus({ day_unit_id: DAY, verifiable: true, read_at: '2026-11-04T10:00:00+00:00',
+    refutations: [{ refutation_id: REF, proof_kind: 'FRESH_DELIVERY', state, causes, uncovered_sources: uncovered }] }, DAY);
+}
 
-  const attestation = { id: 'att-1', attempt_id: file.id, attestation_type: 'ACCOUNT_IDENTITY', action: 'ATTEST' } as
-    DailyV2AttemptAttestationRow;
-  const plan = computeDailyV2BatchPlan({ attempt: file, units, activeCanonicals: [canonical({ day_unit_id: 'day-b',
-    id: 'c-b', active_day_content_hash: HB })], attestations: [attestation] });
-  assert.equal(plan.fileHealthy, true);
-  assert.deepEqual(plan.admissible.map((u) => u.id), ['u-a', 'u-b']);
-  assert.deepEqual(plan.inadmissible.map((entry) => [entry.unit.id, entry.reason]), [
-    ['u-c', 'Soldes non dérivés'],
-    ['u-d', 'Statut duplicate'],
-    ['u-e', 'Motifs non résolus : RUNNING_BALANCE_MISSING'],
-  ]);
-  assert.deepEqual(plan.expected, {
-    days: [
-      { staging_unit_id: 'u-a', day_unit_id: 'day-a', day_content_hash: HA, canonical_unit_id: null, canonical_content_hash: null },
-      { staging_unit_id: 'u-b', day_unit_id: 'day-b', day_content_hash: HA, canonical_unit_id: 'c-b', canonical_content_hash: HB },
-    ],
-    attestation_ids: ['att-1'],
+test('cas reproduit par le CTO : ancienne réfutation après changement de l’unité retenue, jamais affichée acquise', () => {
+  // Version réfutée contre l'unité retenue c-old ; une correction des soldes a
+  // depuis retenu c-new. Les données locales (décision non révoquée, sources
+  // toutes couvertes) laissaient croire la réfutation acquise.
+  const a1 = attempt('11111111-0000-4000-8000-000000000001');
+  const units = [
+    unit('u-new', a1.id, { status: 'promoted', opening_balance_derived: 210, closing_balance_derived: 220 }),
+    unit('u-wrong', a1.id, { opening_balance_derived: 200, closing_balance_derived: 210, status: 'conflict' }),
+  ];
+  const refutation = {
+    id: REF, action: 'REFUTE', day_unit_id: DAY, refuted_version_key: dailyV2VersionKey(stagingVersionFacts(units[1])),
+    retained_canonical_unit_id: 'c-old', proof_kind: 'FRESH_DELIVERY', proof_bound_day: '2026-10-09',
+    created_at: '2026-10-10T08:00:00+00:00',
+  } as DailyV2VersionRefutationRow;
+  const versions = groupDailyV2DayVersions({ units, attempts: [a1],
+    active: canonical({ id: 'c-new', opening_balance_derived: 210, closing_balance_derived: 220 }), refutations: [refutation] });
+  const refuted = versions.find((version) => version.refutation !== null)!;
+  assert.equal(refuted.refutation?.id, REF, 'la décision enregistrée reste visible');
+
+  const suspended = describeDailyV2RefutationEffect(REF, statusRead('SUSPENDED', ['RETAINED_VERSION_CHANGED']));
+  assert.equal(suspended.state, 'SUSPENDED');
+  assert.equal(suspended.newProofNeeded, true);
+  assert.match(suspended.label,
+    /^Suspendue : la version retenue a changé depuis la décision — nouvelle preuve nécessaire \(lecture du serveur du 2026-11-04 10:00 UTC\)\.$/);
+  // Sans lecture serveur : non vérifiable, jamais « effective ».
+  for (const effect of [describeDailyV2RefutationEffect(REF, null),
+    describeDailyV2RefutationEffect(REF, parseDailyV2RefutationStatus({ day_unit_id: DAY, verifiable: false,
+      cause: 'TREASURY_MODULE_CLOSED', refutations: [] }, DAY)),
+    describeDailyV2RefutationEffect(REF, parseDailyV2RefutationStatus({ day_unit_id: DAY, verifiable: true,
+      read_at: '2026-11-04T10:00:00+00:00', refutations: [] }, DAY))]) {
+    assert.equal(effect.state, 'NOT_VERIFIABLE');
+    assert.match(effect.label, /^Effectivité actuelle non vérifiable : /);
+  }
+});
+
+test('effectivité rendue par le serveur : effective, partielle, suspendue, causes nommées', () => {
+  assert.deepEqual(describeDailyV2RefutationEffect(REF, statusRead('EFFECTIVE')),
+    { state: 'EFFECTIVE', label: 'Effective (lecture du serveur du 2026-11-04 10:00 UTC).', newProofNeeded: false });
+  assert.deepEqual(describeDailyV2RefutationEffect(REF, statusRead('PARTIAL', ['NEW_SOURCE_UNCOVERED'], 1)), {
+    state: 'PARTIAL', newProofNeeded: true,
+    label: 'Partielle : 1 source(s) non couverte(s) — nouvelle preuve nécessaire (lecture du serveur du 2026-11-04 10:00 UTC).',
   });
-  const revoked = { id: 'att-2', attempt_id: file.id, attestation_type: 'ACCOUNT_IDENTITY', action: 'REVOKE',
+  const proof = describeDailyV2RefutationEffect(REF, statusRead('SUSPENDED', ['PROOF_NO_LONGER_VALID', 'NEW_SOURCE_UNCOVERED'], 1));
+  assert.match(proof.label, /le justificatif n’est plus valable ; une source de la version réfutée n’est pas couverte/);
+  // Réponse serveur hors contrat : refusée, rien n'est affiché comme acquis.
+  assert.throws(() => parseDailyV2RefutationStatus({ day_unit_id: DAY, verifiable: true, read_at: '2026-11-04T10:00:00+00:00',
+    refutations: [{ refutation_id: REF, proof_kind: 'FRESH_DELIVERY', state: 'ACQUIRED', causes: [], uncovered_sources: 0 }] }, DAY),
+  /Statut des réfutations invalide/);
+  assert.throws(() => parseDailyV2RefutationStatus({ day_unit_id: 'autre', verifiable: false, cause: 'DAY_UNKNOWN',
+    refutations: [] }, DAY), /Statut des réfutations invalide/);
+  assert.throws(() => parseDailyV2RefutationStatus({ day_unit_id: DAY, verifiable: true, read_at: '2026-11-04T10:00:00+00:00',
+    refutations: [{ refutation_id: REF, proof_kind: 'BANK_PIECE', state: 'EFFECTIVE',
+      causes: [], uncovered_sources: 0 }, { refutation_id: REF, proof_kind: 'BANK_PIECE', state: 'SUSPENDED',
+      causes: ['RETAINED_VERSION_CHANGED'], uncovered_sources: 0 }] }, DAY), /Statut des réfutations incohérent/);
+});
+
+test('approbation groupée : plan du serveur transmis à l’identique, lignes non conformes nommées', () => {
+  const attemptId = '51111111-0000-4000-8000-000000000005';
+  const day = (id: string, date: string) => ({ staging_unit_id: id, accounting_date: date, validation_status: 'valid',
+    review_reason_codes: [] });
+  const expected = { days: [{ staging_unit_id: '61111111-0000-4000-8000-000000000001', day_unit_id: 'day-a',
+    day_content_hash: HA, canonical_unit_id: null, canonical_content_hash: null }],
+  attestation_ids: ['71111111-0000-4000-8000-000000000001'] };
+  const raw = {
+    attempt_id: attemptId, expected, max_days: 45,
+    admissible: [day('61111111-0000-4000-8000-000000000001', '2026-10-01')],
+    inadmissible: [{ staging_unit_id: '61111111-0000-4000-8000-000000000002', accounting_date: '2026-10-02', status: 'staged',
+      reason: 'LINES_NOT_CONFORMING' }],
+  };
+  const plan = parseDailyV2BatchPlan(raw, attemptId);
+  assert.deepEqual(plan.expected, expected, 'liste admissible du serveur, sans recalcul');
+  assert.equal(plan.maxDays, 45);
+  assert.equal(DAILY_V2_BATCH_INADMISSIBLE_LABELS[plan.inadmissible[0].reason],
+    'Lignes stockées non conformes aux soldes et totaux déclarés');
+  // Incohérences et réponses hors contrat : refus, aucune approbation proposée.
+  assert.throws(() => parseDailyV2BatchPlan({ ...raw, admissible: [] }, attemptId), /incohérent/);
+  assert.throws(() => parseDailyV2BatchPlan({ ...raw, inadmissible: [{ ...raw.inadmissible[0],
+    staging_unit_id: '61111111-0000-4000-8000-000000000001' }] }, attemptId), /incohérent/);
+  assert.throws(() => parseDailyV2BatchPlan(raw, '51111111-0000-4000-8000-000000000009'), /invalide/);
+  assert.throws(() => parseDailyV2BatchPlan({ ...raw, inadmissible: [{ ...raw.inadmissible[0], reason: 'OTHER' }] }, attemptId),
+    /invalide/);
+  const attestation = { id: 'att-1', attempt_id: attemptId, attestation_type: 'ACCOUNT_IDENTITY', action: 'ATTEST' } as
+    DailyV2AttemptAttestationRow;
+  const revoked = { id: 'att-2', attempt_id: attemptId, attestation_type: 'ACCOUNT_IDENTITY', action: 'REVOKE',
     revokes_id: 'att-1' } as DailyV2AttemptAttestationRow;
   assert.deepEqual(activeAttestations([attestation, revoked]), []);
-  assert.equal(computeDailyV2BatchPlan({ attempt: file, units, activeCanonicals: [], attestations: [attestation, revoked] })
-    .admissible.length, 0, 'attestation révoquée : plus rien d’admissible');
 });
 
 test('interfaces : aucune écriture directe, pièce jamais téléversée, mention affichée, clé de commande par décision', () => {
@@ -261,6 +317,22 @@ test('interfaces : aucune écriture directe, pièce jamais téléversée, mentio
     assert.match(source, /dailyV2DecisionCommandKeys\.succeeded\(/);
   }
   assert.match(types, /DAILY_V2_PIECE_MENTION = 'attestation sur pièce archivée, contenu non vérifié automatiquement'/);
+  // Seconde autorité de calcul absente : plan et effectivité lus sur le serveur.
+  assert.doesNotMatch(types, /computeDailyV2BatchPlan|uncoveredSources: DailyV2SourceWithCount|refutationSources/);
+  assert.doesNotMatch(dialogs, /uncoveredSources|refutationSources/);
+  assert.match(batch, /getDailyV2AttemptBatchPlan\(attemptId!\)/);
+  assert.match(batch, /expected: plan\.expected/);
+  assert.match(dialogs, /getDailyV2RefutationStatus\(dayUnitId!\)/);
+  assert.match(dialogs, /describeDailyV2RefutationEffect\(refutationId, refutationStatusError === null \? refutationStatusQuery\.data \?\? null : null\)/);
+  // Relecture en cours ou en échec : jamais l'ancien statut, jamais un plan ou des bornes périmés.
+  assert.match(dialogs, /refutationStatusQuery\.isFetching/);
+  assert.match(dialogs, /boundsQuery\.isError \|\| boundsQuery\.isFetching \? null/);
+  assert.match(batch, /planQuery\.isError \|\| planQuery\.isFetching \? null/);
+  assert.match(dialogs, /data-refutation-effect=\{effect\.state\}/);
+  // Lectures en échec : signalées, décisions suspendues.
+  assert.match(dialogs, /Les décisions de la journée sont suspendues/);
+  assert.match(dialogs, /readError === null && deliveriesQuery\.data/);
+  assert.match(batch, /planQuery\.isError/);
   assert.match(dialogs, /\{DAILY_V2_PIECE_MENTION\}/);
   assert.match(dialogs, /buildRawBytesHash\(await file\.arrayBuffer\(\)\)/);
   // Les valeurs lues sur la pièce ne sont jamais préremplies.

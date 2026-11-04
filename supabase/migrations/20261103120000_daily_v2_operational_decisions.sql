@@ -121,46 +121,97 @@ BEGIN
 END;
 $$;
 
--- Relation 6 : lignes stockées conformes aux faits de leur unité (nombre,
--- totaux et, si `derived`, chaîne des soldes courants de l'ouverture à la
--- clôture). L'ordre de chaînage du pipeline est l'ordre du fichier ou son
--- inverse (profils Excel décroissants) : l'un des deux doit être cohérent.
+-- Relation 6 : lignes stockées conformes aux faits déclarés de leur unité
+-- (nombre, totaux et, si `derived`, chaîne des soldes courants de l'ouverture à
+-- la clôture). L'ordre de chaînage du pipeline est l'ordre du fichier ou son
+-- inverse exact (profils Excel décroissants) : l'un des deux doit être cohérent.
+-- Une seule règle (P1 de la contre-revue CTO) : la décision ci-dessous sert aux
+-- lignes de staging, aux lignes canonical et à la lecture « Soldes à date ».
+CREATE FUNCTION public.daily_stmt_line_facts_conform(
+  p_line_count integer, p_debits numeric, p_credits numeric, p_aggregates text, p_opening numeric, p_closing numeric,
+  p_n bigint, p_line_debits numeric, p_line_credits numeric, p_all_balances boolean, p_chain_asc boolean,
+  p_chain_desc boolean, p_open_asc numeric, p_close_asc numeric, p_open_desc numeric, p_close_desc numeric)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT coalesce(
+    coalesce(p_n, 0) = p_line_count AND coalesce(p_line_debits, 0) = p_debits AND coalesce(p_line_credits, 0) = p_credits
+    AND (p_aggregates = 'unavailable'
+         OR (coalesce(p_all_balances, false)
+             AND ((coalesce(p_chain_asc, false) AND p_open_asc = p_opening AND p_close_asc = p_closing)
+               OR (coalesce(p_chain_desc, false) AND p_open_desc = p_opening AND p_close_desc = p_closing)))), false)
+$$;
+
+-- Faits agrégés des lignes, une seule fenêtre : rang, précédent et suivant dans
+-- l'ordre du fichier ; l'ordre inverse se lit sur le suivant.
 CREATE FUNCTION public.daily_stmt_staging_lines_conform(p_staging_unit_id uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SET search_path = public, pg_temp
 AS $$
-  WITH u AS (
-    SELECT s.* FROM public.daily_statement_units_staging s WHERE s.id = p_staging_unit_id
-  ), l AS (
-    SELECT ls.signed_amount, ls.direction, ls.running_balance,
-           row_number() OVER (ORDER BY ls.source_line_index, ls.daily_occurrence_ordinal, ls.id) AS rn_asc,
-           row_number() OVER (ORDER BY ls.source_line_index DESC, ls.daily_occurrence_ordinal, ls.id) AS rn_desc,
-           lag(ls.running_balance) OVER (ORDER BY ls.source_line_index, ls.daily_occurrence_ordinal, ls.id) AS prev_asc,
-           lag(ls.running_balance) OVER (ORDER BY ls.source_line_index DESC, ls.daily_occurrence_ordinal, ls.id) AS prev_desc
+  WITH l AS (
+    SELECT ls.signed_amount AS signed, ls.direction, ls.running_balance AS running,
+           row_number() OVER w AS rn, count(*) OVER () AS n_all,
+           lag(ls.running_balance) OVER w AS prev_r, lead(ls.running_balance) OVER w AS next_r
     FROM public.daily_statement_lines_staging ls
     WHERE ls.staging_unit_id = p_staging_unit_id
+    WINDOW w AS (ORDER BY ls.source_line_index, ls.daily_occurrence_ordinal, ls.id)
   ), agg AS (
     SELECT count(*) AS n,
-           coalesce(sum(-l.signed_amount) FILTER (WHERE l.direction = 'debit'), 0) AS debits,
-           coalesce(sum(l.signed_amount) FILTER (WHERE l.direction = 'credit'), 0) AS credits,
-           coalesce(bool_and(l.running_balance IS NOT NULL), false) AS all_balances,
-           coalesce(bool_and(l.rn_asc = 1 OR l.running_balance = l.prev_asc + l.signed_amount), false) AS chain_asc,
-           coalesce(bool_and(l.rn_desc = 1 OR l.running_balance = l.prev_desc + l.signed_amount), false) AS chain_desc,
-           max(l.running_balance - l.signed_amount) FILTER (WHERE l.rn_asc = 1) AS open_asc,
-           max(l.running_balance - l.signed_amount) FILTER (WHERE l.rn_desc = 1) AS open_desc,
-           max(l.running_balance) FILTER (WHERE l.rn_desc = 1) AS close_asc,
-           max(l.running_balance) FILTER (WHERE l.rn_asc = 1) AS close_desc
+           sum(-l.signed) FILTER (WHERE l.direction = 'debit') AS debits,
+           sum(l.signed) FILTER (WHERE l.direction = 'credit') AS credits,
+           bool_and(l.running IS NOT NULL) AS all_balances,
+           bool_and(l.rn = 1 OR l.running = l.prev_r + l.signed) AS chain_asc,
+           bool_and(l.rn = l.n_all OR l.running = l.next_r + l.signed) AS chain_desc,
+           max(l.running - l.signed) FILTER (WHERE l.rn = 1) AS open_asc,
+           max(l.running) FILTER (WHERE l.rn = l.n_all) AS close_asc,
+           max(l.running - l.signed) FILTER (WHERE l.rn = l.n_all) AS open_desc,
+           max(l.running) FILTER (WHERE l.rn = 1) AS close_desc
     FROM l
   )
   SELECT coalesce((
-    SELECT agg.n = u.line_count AND agg.debits = u.day_total_debits AND agg.credits = u.day_total_credits
-           AND (u.aggregates_status = 'unavailable'
-                OR (agg.all_balances
-                    AND ((agg.chain_asc AND agg.open_asc = u.opening_balance_derived AND agg.close_asc = u.closing_balance_derived)
-                      OR (agg.chain_desc AND agg.open_desc = u.opening_balance_derived AND agg.close_desc = u.closing_balance_derived))))
-    FROM u, agg), false)
+    SELECT public.daily_stmt_line_facts_conform(u.line_count, u.day_total_debits, u.day_total_credits, u.aggregates_status,
+             u.opening_balance_derived, u.closing_balance_derived, agg.n, agg.debits, agg.credits, agg.all_balances,
+             agg.chain_asc, agg.chain_desc, agg.open_asc, agg.close_asc, agg.open_desc, agg.close_desc)
+    FROM public.daily_statement_units_staging u, agg WHERE u.id = p_staging_unit_id), false)
+$$;
+
+-- Même règle pour les lignes d'une unité canonical (actives ou désactivées par un
+-- remplacement : ce sont ses lignes).
+CREATE FUNCTION public.daily_stmt_canonical_lines_conform(p_canonical_unit_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  WITH l AS (
+    SELECT lc.signed_amount AS signed, lc.direction, lc.running_balance AS running,
+           row_number() OVER w AS rn, count(*) OVER () AS n_all,
+           lag(lc.running_balance) OVER w AS prev_r, lead(lc.running_balance) OVER w AS next_r
+    FROM public.daily_statement_lines_canonical lc
+    WHERE lc.canonical_unit_id = p_canonical_unit_id
+    WINDOW w AS (ORDER BY lc.source_line_index, lc.daily_occurrence_ordinal, lc.id)
+  ), agg AS (
+    SELECT count(*) AS n,
+           sum(-l.signed) FILTER (WHERE l.direction = 'debit') AS debits,
+           sum(l.signed) FILTER (WHERE l.direction = 'credit') AS credits,
+           bool_and(l.running IS NOT NULL) AS all_balances,
+           bool_and(l.rn = 1 OR l.running = l.prev_r + l.signed) AS chain_asc,
+           bool_and(l.rn = l.n_all OR l.running = l.next_r + l.signed) AS chain_desc,
+           max(l.running - l.signed) FILTER (WHERE l.rn = 1) AS open_asc,
+           max(l.running) FILTER (WHERE l.rn = l.n_all) AS close_asc,
+           max(l.running - l.signed) FILTER (WHERE l.rn = l.n_all) AS open_desc,
+           max(l.running) FILTER (WHERE l.rn = 1) AS close_desc
+    FROM l
+  )
+  SELECT coalesce((
+    SELECT public.daily_stmt_line_facts_conform(u.line_count, u.day_total_debits, u.day_total_credits, u.aggregates_status,
+             u.opening_balance_derived, u.closing_balance_derived, agg.n, agg.debits, agg.credits, agg.all_balances,
+             agg.chain_asc, agg.chain_desc, agg.open_asc, agg.close_asc, agg.open_desc, agg.close_desc)
+    FROM public.daily_statement_units_canonical u, agg WHERE u.id = p_canonical_unit_id), false)
 $$;
 
 -- Exception H1 : faut-il conserver les lignes d'un doublon R1 ?
@@ -786,6 +837,7 @@ AS $$
     JOIN public.daily_statement_units_staging s ON s.attempt_id = h.id
     LEFT JOIN public.daily_statement_units_canonical c ON c.day_unit_id = s.day_unit_id AND c.status = 'ingested'
     WHERE h.ok AND s.status = 'staged' AND s.aggregates_status = 'derived'
+      AND public.daily_stmt_staging_lines_conform(s.id)
       AND (s.validation_status = 'valid'
            OR (s.validation_status = 'needs_review' AND cardinality(s.review_reason_codes) > 0
                AND NOT EXISTS (SELECT 1 FROM unnest(s.review_reason_codes) c2
@@ -802,6 +854,63 @@ AS $$
               WHERE x.attempt_id = p_attempt_id AND x.action = 'ATTEST'
                 AND NOT EXISTS (SELECT 1 FROM public.daily_statement_attempt_attestations r WHERE r.revokes_id = x.id)),
               '[]'::jsonb))
+$$;
+
+-- Plan d'approbation groupée lu par l'interface (P1 et P2 de la contre-revue
+-- CTO) : la liste admissible EXACTE de daily_stmt_batch_candidates, son détail
+-- d'affichage et, pour chaque autre journée du fichier, son premier motif
+-- d'inadmissibilité. Lecture seule, réservée au rôle admin ; aucun calcul
+-- parallèle dans le navigateur.
+CREATE FUNCTION public.daily_v2_attempt_batch_plan_v1(p_attempt_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor    uuid;
+  v_plan     jsonb;
+  v_resolved text[];
+BEGIN
+  v_actor := public.daily_stmt_require_decision_actor(false);
+  IF NOT EXISTS (SELECT 1 FROM public.daily_statement_export_attempts WHERE id = p_attempt_id) THEN
+    RAISE EXCEPTION 'DAILY_STMT_ATTEMPT_NOT_FOUND (fail-closed)';
+  END IF;
+  v_plan := public.daily_stmt_batch_candidates(p_attempt_id);
+  v_resolved := public.daily_stmt_attempt_resolved_codes(p_attempt_id);
+  RETURN jsonb_build_object(
+    'attempt_id', p_attempt_id,
+    'expected', v_plan,
+    'max_days', 45,
+    'admissible', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('staging_unit_id', s.id, 'accounting_date', s.accounting_date,
+               'validation_status', s.validation_status, 'review_reason_codes', to_jsonb(coalesce(s.review_reason_codes, ARRAY[]::text[])))
+             ORDER BY s.accounting_date, s.id)
+      FROM public.daily_statement_units_staging s
+      WHERE s.id IN (SELECT (e ->> 'staging_unit_id')::uuid FROM jsonb_array_elements(v_plan -> 'days') e)), '[]'::jsonb),
+    'inadmissible', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('staging_unit_id', s.id, 'accounting_date', s.accounting_date, 'status', s.status,
+               'reason', CASE
+                 WHEN EXISTS (SELECT 1 FROM unnest(coalesce(a.review_reason_codes, ARRAY[]::text[])) c
+                              WHERE NOT (c = ANY (v_resolved))) THEN 'FILE_UNRESOLVED'
+                 WHEN s.status <> 'staged' THEN 'STATUS_NOT_STAGED'
+                 WHEN s.aggregates_status <> 'derived' THEN 'AGGREGATES_UNAVAILABLE'
+                 WHEN NOT public.daily_stmt_staging_lines_conform(s.id) THEN 'LINES_NOT_CONFORMING'
+                 WHEN NOT (s.validation_status = 'valid'
+                           OR (s.validation_status = 'needs_review' AND cardinality(s.review_reason_codes) > 0
+                               AND NOT EXISTS (SELECT 1 FROM unnest(s.review_reason_codes) c2
+                                               WHERE NOT (c2 = ANY (v_resolved))
+                                                  OR c2 NOT IN ('ACCOUNT_IDENTITY_NOT_CORROBORATED',
+                                                                'TRUSTED_CURRENCY_UNCORROBORATED'))))
+                   THEN 'REVIEW_UNRESOLVED'
+                 ELSE 'NOT_ADMISSIBLE' END)
+             ORDER BY s.accounting_date, s.id)
+      FROM public.daily_statement_units_staging s
+      JOIN public.daily_statement_export_attempts a ON a.id = s.attempt_id
+      WHERE s.attempt_id = p_attempt_id
+        AND s.id NOT IN (SELECT (e ->> 'staging_unit_id')::uuid FROM jsonb_array_elements(v_plan -> 'days') e)), '[]'::jsonb));
+END;
 $$;
 
 -- 5.4 Approbation groupée par fichier (C8) : exactement la logique de la
@@ -1054,6 +1163,9 @@ BEGIN
   IF p_refuted_version_key = v_retained_key THEN
     RAISE EXCEPTION 'DAILY_STMT_REFUTATION_TARGET_RETAINED (fail-closed)';
   END IF;
+  IF NOT public.daily_stmt_canonical_lines_conform(v_active.id) THEN
+    RAISE EXCEPTION 'DAILY_STMT_REFUTATION_RETAINED_LINES_NONCONFORMING: retained day lines do not match its declared balances (fail-closed)';
+  END IF;
   SELECT * INTO v_rep FROM public.daily_statement_units_staging s
   WHERE s.day_unit_id = p_day_unit_id AND s.status NOT IN ('provisional', 'superseded')
     AND public.daily_stmt_version_key(s.day_content_hash, s.aggregates_status, s.opening_balance_derived,
@@ -1097,6 +1209,15 @@ BEGIN
             v_proof_unit.opening_balance_derived, v_proof_unit.closing_balance_derived, v_proof_unit.day_total_debits,
             v_proof_unit.day_total_credits) <> v_retained_key THEN
       RAISE EXCEPTION 'DAILY_STMT_REFUTATION_PROOF_INVALID: fresh delivery must carry the retained version (fail-closed)';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.daily_statement_units_staging s2
+               WHERE s2.attempt_id = v_proof_unit.attempt_id
+                 AND ((EXISTS (SELECT 1 FROM public.daily_statement_lines_staging l WHERE l.staging_unit_id = s2.id)
+                       AND NOT public.daily_stmt_staging_lines_conform(s2.id))
+                   OR EXISTS (SELECT 1 FROM public.daily_statement_units_canonical c
+                              WHERE c.promoted_from_staging_unit_id = s2.id
+                                AND NOT public.daily_stmt_canonical_lines_conform(c.id)))) THEN
+      RAISE EXCEPTION 'DAILY_STMT_REFUTATION_PROOF_INVALID: fresh delivery file carries stored lines that do not match their declared balances (fail-closed)';
     END IF;
     SELECT * INTO v_proof_att FROM public.daily_statement_export_attempts WHERE id = v_proof_unit.attempt_id;
     -- Borne : dernière journée livrée par le fichier, au plus tard le jour de son dépôt.
@@ -1319,7 +1440,11 @@ REVOKE ALL ON FUNCTION public.daily_stmt_version_key(text, text, numeric, numeri
   FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.daily_stmt_version_compare(text, text, numeric, numeric, numeric, numeric,
   text, text, numeric, numeric, numeric, numeric) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.daily_stmt_line_facts_conform(integer, numeric, numeric, text, numeric, numeric, bigint,
+  numeric, numeric, boolean, boolean, boolean, numeric, numeric, numeric, numeric) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.daily_stmt_staging_lines_conform(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.daily_stmt_canonical_lines_conform(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.daily_v2_attempt_batch_plan_v1(uuid) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.daily_stmt_h1_keep_lines(text, text, text, numeric, numeric, numeric, numeric, uuid, uuid)
   FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.daily_stmt_version_facts(uuid) FROM PUBLIC, anon, authenticated, service_role;
@@ -1355,6 +1480,7 @@ GRANT EXECUTE ON FUNCTION public.promote_daily_statement_attempt_units(text, uui
 GRANT EXECUTE ON FUNCTION public.supersede_daily_statement_unit_balances(text, uuid, uuid, text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.refute_daily_statement_version(text, text, text, text, jsonb, jsonb, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.revoke_daily_statement_version_refutation(text, uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.daily_v2_attempt_batch_plan_v1(uuid) TO authenticated;
 
 COMMENT ON TABLE public.daily_statement_correction_pieces IS
   'Pièces correctives bancaires archivées par SODATRA hors de l''application : attestation sur pièce archivée, contenu non vérifié automatiquement. Aucun fichier n''est stocké.';

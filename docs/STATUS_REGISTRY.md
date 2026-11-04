@@ -40,7 +40,12 @@ Livré en local :
   contre une référence figée ;
 - interfaces : versions et décisions de la journée, approbation groupée, panneau des points
   de départ (local et staging, refus en production inchangé) ;
-- revue indépendante (`PASS_WITH_RESERVES`, aucun P1) traitée avant commit.
+- revue indépendante (`PASS_WITH_RESERVES`, aucun P1) traitée avant commit ;
+- corrections après la contre-revue CTO de `e3eb8a2` (`GO_FIX_TREASURY_V1_LOT1_OPERATIONAL_FIX`,
+  verdict `FAIL`) : lignes stockées contrôlées contre les faits déclarés (aucun solde ni
+  preuve tirés d'une unité ou d'un fichier non conforme), lectures des décisions exhaustives
+  (lecture incomplète signalée, décisions suspendues), effectivité des réfutations et plan
+  d'approbation groupée lus sur le serveur ; nouvelle relecture indépendante traitée.
 
 Résultats sur les 12 relevés réels (base jetable, simulations étiquetées), mesures C7 et
 limites : `docs/TREASURY_V1_LOT1_OPERATIONAL_FIX_REPORT.md`.

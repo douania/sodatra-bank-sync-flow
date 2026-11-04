@@ -14,7 +14,11 @@
 --     financière, trois issues de comparaison, réfutations par source,
 --     attestations, livraisons écartées, points de départ, journée `PENDING`,
 --     et réserve CTO 4.1 (toute unité utilisée comme solde ou preuve satisfait
---     les relations financières, même seule pour sa journée).
+--     les relations financières, même seule pour sa journée) ; lignes stockées
+--     conformes aux faits déclarés et statut courant des réfutations (P1 et P2
+--     de la contre-revue CTO de la PR #156).
+-- Lecture ajoutée : `public.daily_v2_refutation_status_v1` (statut courant des
+-- réfutations d'une journée, pour l'interface Daily v2, administrateur).
 -- La migration `20261102090000` n'est pas modifiée. Le module reste fermé côté
 -- serveur : rien ne s'ouvre par cette migration.
 -- ============================================================================
@@ -316,6 +320,75 @@ att2 AS (
               AND NOT (x.codes && ARRAY['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING']))) AS file_status_ok
   FROM att x
 ),
+-- Concordance des lignes stockées avec les faits déclarés (P1 de la contre-revue
+-- CTO). Décision unique public.daily_stmt_line_facts_conform, alimentée en une
+-- passe et une fenêtre : lignes canonical de chaque unité des comptes lus (une
+-- livraison promue porte les lignes et les faits de son unité, copiés à la
+-- promotion et immuables), lignes staging des seules livraisons jamais promues.
+canon_agg AS (
+  SELECT l.cid, count(*) AS n,
+         sum(-l.signed) FILTER (WHERE l.direction = 'debit') AS debits,
+         sum(l.signed) FILTER (WHERE l.direction = 'credit') AS credits,
+         bool_and(l.running IS NOT NULL) AS all_balances,
+         bool_and(l.rn = 1 OR l.running = l.prev_r + l.signed) AS chain_asc,
+         bool_and(NOT l.has_next OR l.running = l.next_r + l.signed) AS chain_desc,
+         max(l.running - l.signed) FILTER (WHERE l.rn = 1) AS open_asc,
+         max(l.running) FILTER (WHERE NOT l.has_next) AS close_asc,
+         max(l.running - l.signed) FILTER (WHERE NOT l.has_next) AS open_desc,
+         max(l.running) FILTER (WHERE l.rn = 1) AS close_desc
+  FROM (
+    SELECT lc.canonical_unit_id AS cid, lc.signed_amount AS signed, lc.direction, lc.running_balance AS running,
+           row_number() OVER w AS rn, lead(true, 1, false) OVER w AS has_next,
+           lag(lc.running_balance) OVER w AS prev_r, lead(lc.running_balance) OVER w AS next_r
+    FROM public.daily_statement_lines_canonical lc
+    JOIN public.daily_statement_units_canonical c ON c.id = lc.canonical_unit_id
+    JOIN acc ON acc.rid = c.account_registry_id
+    WINDOW w AS (PARTITION BY lc.canonical_unit_id ORDER BY lc.source_line_index, lc.daily_occurrence_ordinal, lc.id)
+  ) l
+  GROUP BY l.cid
+),
+canon_conform AS (
+  SELECT c.id AS cid, c.promoted_from_staging_unit_id AS staging_id, c.day_unit_id, c.status,
+         public.daily_stmt_version_key(c.active_day_content_hash, c.aggregates_status, c.opening_balance_derived,
+           c.closing_balance_derived, c.day_total_debits, c.day_total_credits) AS vkey,
+         public.daily_stmt_line_facts_conform(c.line_count, c.day_total_debits, c.day_total_credits, c.aggregates_status,
+           c.opening_balance_derived, c.closing_balance_derived, g.n, g.debits, g.credits, g.all_balances,
+           g.chain_asc, g.chain_desc, g.open_asc, g.close_asc, g.open_desc, g.close_desc) AS conform
+  FROM public.daily_statement_units_canonical c
+  JOIN acc ON acc.rid = c.account_registry_id
+  LEFT JOIN canon_agg g ON g.cid = c.id
+),
+canon_by_stg AS (
+  SELECT cc.staging_id, bool_and(cc.conform) AS conform FROM canon_conform cc GROUP BY cc.staging_id
+),
+-- Versions retenues justifiées par des lignes conformes : seul appui d'un
+-- doublon ordinaire sans lignes (rien n'est inventé pour lui).
+canon_ok_versions AS (
+  SELECT DISTINCT cc.day_unit_id, cc.vkey FROM canon_conform cc WHERE cc.status = 'ingested' AND cc.conform
+),
+stg_agg AS (
+  SELECT l.sid, count(*) AS n,
+         sum(-l.signed) FILTER (WHERE l.direction = 'debit') AS debits,
+         sum(l.signed) FILTER (WHERE l.direction = 'credit') AS credits,
+         bool_and(l.running IS NOT NULL) AS all_balances,
+         bool_and(l.rn = 1 OR l.running = l.prev_r + l.signed) AS chain_asc,
+         bool_and(NOT l.has_next OR l.running = l.next_r + l.signed) AS chain_desc,
+         max(l.running - l.signed) FILTER (WHERE l.rn = 1) AS open_asc,
+         max(l.running) FILTER (WHERE NOT l.has_next) AS close_asc,
+         max(l.running - l.signed) FILTER (WHERE NOT l.has_next) AS open_desc,
+         max(l.running) FILTER (WHERE l.rn = 1) AS close_desc
+  FROM (
+    SELECT ls.staging_unit_id AS sid, ls.signed_amount AS signed, ls.direction, ls.running_balance AS running,
+           row_number() OVER w AS rn, lead(true, 1, false) OVER w AS has_next,
+           lag(ls.running_balance) OVER w AS prev_r, lead(ls.running_balance) OVER w AS next_r
+    FROM public.daily_statement_lines_staging ls
+    JOIN public.daily_statement_units_staging s ON s.id = ls.staging_unit_id
+    JOIN att2 a ON a.export_id = s.attempt_id
+    WHERE NOT EXISTS (SELECT 1 FROM canon_by_stg cb WHERE cb.staging_id = s.id)
+    WINDOW w AS (PARTITION BY ls.staging_unit_id ORDER BY ls.source_line_index, ls.daily_occurrence_ordinal, ls.id)
+  ) l
+  GROUP BY l.sid
+),
 -- Toutes les livraisons des comptes lus, avec leur version financière (C4 bis).
 dlv AS (
   SELECT s.id AS staging_id, s.attempt_id AS export_id, s.account_registry_id AS rid, s.accounting_date AS day,
@@ -324,11 +397,12 @@ dlv AS (
          s.day_total_debits AS debits, s.day_total_credits AS credits,
          public.daily_stmt_version_key(s.day_content_hash, s.aggregates_status, s.opening_balance_derived,
            s.closing_balance_derived, s.day_total_debits, s.day_total_credits) AS vkey,
-         a.raw_text_hash, a.export_ingested_at,
+         a.raw_text_hash, a.export_ingested_at, lo.lines_ok, lo.has_lines,
          -- Livraison propre (§ 4.1) : version listée, statut du fichier admis,
          -- motifs résiduels vides pour le fichier et la journée, validation
-         -- admise, et relations financières satisfaites (réserve CTO 4.1).
-         (a.supported AND a.file_status_ok AND cardinality(a.residual) = 0
+         -- admise, relations financières satisfaites (réserve CTO 4.1) et
+         -- lignes stockées conformes (P1 de la contre-revue CTO).
+         (a.supported AND a.file_status_ok AND cardinality(a.residual) = 0 AND lo.lines_ok
           AND coalesce(s.review_reason_codes, ARRAY[]::text[]) <@ a.resolved
           AND (s.validation_status = 'valid'
                OR (s.validation_status = 'needs_review' AND cardinality(s.review_reason_codes) > 0
@@ -337,6 +411,25 @@ dlv AS (
                 s.closing_balance_derived, s.day_total_debits, s.day_total_credits)) AS clean
   FROM public.daily_statement_units_staging s
   JOIN att2 a ON a.export_id = s.attempt_id
+  LEFT JOIN canon_by_stg cb ON cb.staging_id = s.id
+  LEFT JOIN stg_agg sg ON sg.sid = s.id
+  -- Lignes de la livraison : celles de son unité si elle a été promue, sinon les
+  -- siennes ; sans aucune ligne, seule une version retenue de mêmes faits et
+  -- aux lignes conformes la justifie.
+  CROSS JOIN LATERAL (
+    SELECT CASE
+             WHEN cb.staging_id IS NOT NULL THEN coalesce(cb.conform, false)
+             WHEN sg.sid IS NOT NULL THEN public.daily_stmt_line_facts_conform(s.line_count, s.day_total_debits,
+               s.day_total_credits, s.aggregates_status, s.opening_balance_derived, s.closing_balance_derived, sg.n,
+               sg.debits, sg.credits, sg.all_balances, sg.chain_asc, sg.chain_desc, sg.open_asc, sg.close_asc,
+               sg.open_desc, sg.close_desc)
+             ELSE EXISTS (SELECT 1 FROM canon_ok_versions o
+                          WHERE o.day_unit_id = s.day_unit_id
+                            AND o.vkey = public.daily_stmt_version_key(s.day_content_hash, s.aggregates_status,
+                                  s.opening_balance_derived, s.closing_balance_derived, s.day_total_debits,
+                                  s.day_total_credits))
+           END AS lines_ok,
+           (cb.staging_id IS NOT NULL OR sg.sid IS NOT NULL) AS has_lines) lo
 ),
 units AS (
   SELECT u.id AS unit_id, u.account_registry_id AS rid, u.accounting_date AS day,
@@ -344,14 +437,17 @@ units AS (
          u.aggregates_status, u.currency AS unit_currency, u.ingested_at, u.day_unit_id, u.active_day_content_hash,
          u.day_total_debits, u.day_total_credits, u.promoted_from_staging_unit_id AS promoted_staging_id,
          d.vkey, d.clean AS promoted_clean,
-         public.daily_stmt_version_coherent(u.aggregates_status, u.opening_balance_derived,
-           u.closing_balance_derived, u.day_total_debits, u.day_total_credits) AS coherent,
+         (public.daily_stmt_version_coherent(u.aggregates_status, u.opening_balance_derived,
+            u.closing_balance_derived, u.day_total_debits, u.day_total_credits)
+          AND coalesce(cc.conform, false)) AS coherent,
+         coalesce(cc.conform, false) AS lines_conform,
          a.export_id, a.export_ingested_at, a.source_format, a.supported AS format_supported,
          pv.prev_unit_id
   FROM public.daily_statement_units_canonical u
   JOIN acc ON acc.rid = u.account_registry_id
   JOIN dlv d ON d.staging_id = u.promoted_from_staging_unit_id
   JOIN att2 a ON a.export_id = d.export_id
+  LEFT JOIN canon_conform cc ON cc.cid = u.id
   -- Unité remplacée par u (prédécesseur), regroupée une fois au lieu d'un
   -- parcours de la table par unité (C7). Un remplacement n'en produit qu'une.
   LEFT JOIN (SELECT p.superseded_by, min(p.id::text)::uuid AS prev_unit_id
@@ -414,18 +510,19 @@ src_first AS (
   GROUP BY d.day_unit_id, d.vkey, d.raw_text_hash, d.rid
 ),
 -- Réfutations explicites actives, et leur effectivité revérifiée à la lecture :
--- version retenue inchangée, preuve toujours valable, chaque source couverte
--- toujours justifiée avec sa première apparition recalculée.
-ref_eff AS (
+-- version retenue inchangée et utilisable (cohérente, lignes conformes), preuve
+-- toujours valable, chaque source couverte toujours justifiée avec sa première
+-- apparition recalculée. Les composantes servent au statut rendu (P2).
+ref_eff0 AS (
   SELECT r.id, r.account_registry_id AS rid, r.accounting_date AS day, r.day_unit_id, r.refuted_version_key,
          r.proof_kind, r.proof_bound_day, r.created_at, r.retained_version_key,
-         (EXISTS (SELECT 1 FROM units2 u WHERE u.unit_id = r.retained_canonical_unit_id)
-          AND (r.proof_kind = 'BANK_PIECE'
-               OR EXISTS (SELECT 1 FROM dlv p JOIN trusted_exports te ON te.export_id = p.export_id
-                          WHERE p.staging_id = r.proof_staging_unit_id AND p.status IN ('promoted', 'duplicate')
-                            AND p.vkey = r.retained_version_key))
-          AND coalesce(ru.unjustified_n, 0) = 0)
-           AS effective
+         EXISTS (SELECT 1 FROM units2 u WHERE u.unit_id = r.retained_canonical_unit_id) AS retained_present,
+         EXISTS (SELECT 1 FROM units2 u WHERE u.unit_id = r.retained_canonical_unit_id AND u.coherent) AS retained_ok,
+         (r.proof_kind = 'BANK_PIECE'
+          OR EXISTS (SELECT 1 FROM dlv p JOIN trusted_exports te ON te.export_id = p.export_id
+                     WHERE p.staging_id = r.proof_staging_unit_id AND p.status IN ('promoted', 'duplicate')
+                       AND p.vkey = r.retained_version_key)) AS proof_ok,
+         coalesce(ru.unjustified_n, 0) = 0 AS sources_ok
   FROM public.daily_statement_version_refutations r
   JOIN acc ON acc.rid = r.account_registry_id
   -- Sources couvertes non justifiées, comptées une fois par réfutation (C7).
@@ -441,6 +538,9 @@ ref_eff AS (
   WHERE r.action = 'REFUTE'
     AND NOT EXISTS (SELECT 1 FROM public.daily_statement_version_refutations x WHERE x.revokes_id = r.id)
 ),
+ref_eff AS (
+  SELECT x.*, (x.retained_ok AND x.proof_ok AND x.sources_ok) AS effective FROM ref_eff0 x
+),
 -- Réfutation automatique, évaluée à la lecture : la livraison adoptée par un
 -- remplacement (supersede ou correction des seuls soldes), issue d'un fichier
 -- digne de preuve, réfute la version remplacée si elle justifie CHACUNE de ses
@@ -452,7 +552,7 @@ auto_eff AS (
          -- Chaque source justifiée : dernière journée livrée strictement postérieure
          -- à sa première apparition ; absente, rien n'est justifié (F2 de la revue).
          -- Comparée à la plus tardive des premières apparitions, regroupée une fois (C7).
-         te.export_id IS NOT NULL AND (sm.last_first_seen_day IS NULL
+         u.coherent AND te.export_id IS NOT NULL AND (sm.last_first_seen_day IS NULL
                                        OR coalesce(te.last_line_day > sm.last_first_seen_day, false)) AS effective,
          te.last_line_day
   FROM units2 u
@@ -538,6 +638,33 @@ refuted_info AS (
 ref_suspended AS (
   SELECT DISTINCT r.rid, r.day FROM ref_eff r WHERE NOT r.effective
 ),
+-- Statut courant de chaque réfutation enregistrée (P2 de la contre-revue CTO),
+-- calculé ici seulement : EFFECTIVE, PARTIAL (une source de la version réfutée
+-- n'est pas couverte : nouvelle preuve nécessaire) ou SUSPENDED, avec ses causes.
+ref_status AS (
+  SELECT r.id, r.rid, r.day, r.proof_kind,
+         CASE WHEN NOT r.effective THEN 'SUSPENDED'
+              WHEN coalesce(un.uncovered_n, 0) > 0 THEN 'PARTIAL'
+              ELSE 'EFFECTIVE' END AS state,
+         array_remove(ARRAY[
+           CASE WHEN NOT r.retained_present THEN 'RETAINED_VERSION_CHANGED' END,
+           CASE WHEN r.retained_present AND NOT r.retained_ok THEN 'RETAINED_VERSION_UNUSABLE' END,
+           CASE WHEN NOT r.proof_ok THEN 'PROOF_NO_LONGER_VALID' END,
+           CASE WHEN NOT r.sources_ok THEN 'SOURCE_NOT_JUSTIFIED' END,
+           CASE WHEN coalesce(un.uncovered_n, 0) > 0 THEN 'NEW_SOURCE_UNCOVERED' END], NULL) AS causes,
+         coalesce(un.uncovered_n, 0) AS uncovered_sources
+  FROM ref_eff r
+  LEFT JOIN (
+    SELECT r2.id, count(DISTINCT c.raw_text_hash) AS uncovered_n
+    FROM ref_eff r2
+    JOIN cmp c ON c.day_unit_id = r2.day_unit_id AND c.vkey = r2.refuted_version_key
+    WHERE NOT c.covered
+      AND NOT EXISTS (SELECT 1 FROM public.daily_statement_refutation_sources rs
+                      WHERE rs.refutation_id = r2.id AND rs.raw_text_hash = c.raw_text_hash
+                        AND rs.account_registry_id = c.rid)
+    GROUP BY r2.id
+  ) un ON un.id = r.id
+),
 -- Indicateurs de journée, toutes livraisons confondues.
 day_flags AS (
   SELECT d.rid, d.day,
@@ -604,7 +731,10 @@ base AS (
                                            OR coalesce(sd.has_provisional, false)) THEN 'CONTESTED'
            WHEN u.unit_id IS NOT NULL AND NOT u.format_supported THEN 'UNIT_UNSUPPORTED'
            -- Réserve CTO 4.1 : une unité dérivée incohérente ne fournit aucun solde.
-           WHEN u.unit_id IS NOT NULL AND u.aggregates_status = 'derived' AND NOT u.coherent THEN 'UNIT_INCOHERENT'
+           -- Lignes stockées non conformes aux faits déclarés (P1 de la contre-revue
+           -- CTO) : même issue, quel que soit l'état des agrégats.
+           WHEN u.unit_id IS NOT NULL AND (NOT u.lines_conform OR (u.aggregates_status = 'derived' AND NOT u.coherent))
+             THEN 'UNIT_INCOHERENT'
            WHEN u.unit_id IS NOT NULL AND NOT u.unit_clean THEN 'UNIT_REVIEW'
            WHEN u.unit_id IS NOT NULL AND u.aggregates_status = 'derived' THEN 'UNIT_OK'
            WHEN u.unit_id IS NOT NULL THEN 'UNIT_NO_BALANCE'
@@ -962,6 +1092,18 @@ findings_day AS (
     UNION ALL
     SELECT rs.rid, rs.day, 7, jsonb_build_object('kind', 'VERSION_REFUTATION_SUSPENDED', 'day', rs.day)
     FROM ref_suspended rs
+    UNION ALL
+    -- Livraisons dont les lignes stockées ne justifient pas les faits déclarés.
+    SELECT d.rid, d.day, 8, jsonb_build_object(
+             'kind', 'LINES_NOT_CONFORMING', 'day', d.day, 'deliveries', count(*),
+             'retained_unit', bool_or(EXISTS (SELECT 1 FROM units2 u WHERE u.promoted_staging_id = d.staging_id)))
+    FROM dlv d WHERE d.has_lines AND NOT d.lines_ok
+    GROUP BY d.rid, d.day
+    UNION ALL
+    SELECT st.rid, st.day, 9, jsonb_build_object(
+             'kind', 'REFUTATION_STATUS', 'day', st.day, 'refutation_id', st.id, 'proof_kind', st.proof_kind,
+             'state', st.state, 'causes', to_jsonb(st.causes), 'uncovered_sources', st.uncovered_sources)
+    FROM ref_status st
   ) z
   GROUP BY z.rid, z.day
 ),
@@ -1380,6 +1522,66 @@ BEGIN
 END;
 $$;
 
+-- Statut courant des réfutations d'une journée pour l'interface Daily v2 (P2 de
+-- la contre-revue CTO) : la seule autorité est la lecture « Soldes à date » ;
+-- aucune effectivité n'est recalculée dans le navigateur. Hors d'état de la
+-- vérifier, la réponse le dit (verifiable = false) au lieu de la supposer.
+CREATE FUNCTION public.daily_v2_refutation_status_v1(p_day_unit_id text)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor uuid;
+  v_unit  record;
+  v_today date := treasury_private.today();
+  v_read  jsonb;
+  v_acc   jsonb;
+BEGIN
+  v_actor := public.daily_stmt_require_decision_actor(false);
+  SELECT s.account_registry_id AS rid, s.accounting_date AS day INTO v_unit
+  FROM public.daily_statement_units_staging s WHERE s.day_unit_id = p_day_unit_id
+  ORDER BY s.created_at, s.id LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'DAY_UNKNOWN',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  IF NOT coalesce((SELECT s.is_open FROM treasury_private.module_switch_events s ORDER BY s.seq DESC LIMIT 1), false) THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'TREASURY_MODULE_CLOSED',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  IF v_unit.rid IS NULL OR NOT EXISTS (SELECT 1 FROM treasury_private.expected_accounts e
+                                       WHERE e.status = 'ACTIVE' AND e.registry_account_id = v_unit.rid) THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'ACCOUNT_NOT_IN_INVENTORY',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  IF v_unit.day > v_today THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'FUTURE_DAY',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  v_read := treasury_private.balances_snapshot(v_unit.day, v_today);
+  SELECT a INTO v_acc FROM jsonb_array_elements(v_read -> 'accounts') a
+  WHERE (a ->> 'registry_account_id')::uuid = v_unit.rid LIMIT 1;
+  IF v_acc IS NULL THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'ACCOUNT_NOT_IN_INVENTORY',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  RETURN jsonb_build_object(
+    'day_unit_id', p_day_unit_id, 'verifiable', true, 'read_at', v_read -> 'read_at',
+    'refutations', coalesce((
+      SELECT jsonb_agg(jsonb_build_object(
+               'refutation_id', f ->> 'refutation_id', 'proof_kind', f ->> 'proof_kind', 'state', f ->> 'state',
+               'causes', f -> 'causes', 'uncovered_sources', (f ->> 'uncovered_sources')::integer)
+             ORDER BY f ->> 'refutation_id')
+      FROM jsonb_array_elements(v_acc -> 'findings') f
+      WHERE f ->> 'kind' = 'REFUTATION_STATUS' AND (f ->> 'day')::date = v_unit.day
+        AND (f ->> 'refutation_id')::uuid IN (SELECT r.id FROM public.daily_statement_version_refutations r
+                                               WHERE r.day_unit_id = p_day_unit_id)), '[]'::jsonb));
+END;
+$$;
+
 -- --------------------------------------------------------------------------
 -- 7. Privilèges minimaux
 -- --------------------------------------------------------------------------
@@ -1400,6 +1602,8 @@ GRANT EXECUTE ON FUNCTION public.treasury_admin_add_expected_account_v1(text, uu
 GRANT EXECUTE ON FUNCTION public.treasury_admin_set_verified_start_v1(text, uuid, date, uuid, text, text, text, text)
   TO authenticated;
 GRANT EXECUTE ON FUNCTION public.treasury_admin_revoke_verified_start_v1(text, uuid, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.daily_v2_refutation_status_v1(text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.daily_v2_refutation_status_v1(text) TO authenticated;
 
 COMMENT ON TABLE treasury_private.verified_starts IS
   'Points de départ vérifiés sur pièce par l''administrateur unique, applicables par période ; ajout seul.';

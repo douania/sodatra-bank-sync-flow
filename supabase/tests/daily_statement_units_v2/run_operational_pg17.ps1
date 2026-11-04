@@ -91,7 +91,7 @@ try {
   Invoke-Sql (Get-SqlText (Join-Path $workDir 'opfix_payloads.sql')) 'opfix_payloads.sql' | Out-Null
   Invoke-Sql (Get-SqlText (Join-Path $workDir 'opfix_version_parity.sql')) 'opfix_version_parity.sql' | Out-Null
   Invoke-File "$testDir/43_version_parity.sql"
-  foreach ($suite in '33a_operational_setup', '40_duplicate_financial_version_lines', '41_version_comparison',
+  foreach ($suite in '33a_operational_setup', '44_lines_conformity', '40_duplicate_financial_version_lines', '41_version_comparison',
                      '39_balance_only_correction', '36_version_refutation', '35_unit_rejection',
                      '34_attempt_attestations', '37_batch_approval', '38a_decision_concurrency_setup') {
     Invoke-File "$testDir/$suite.sql"

@@ -86,6 +86,9 @@ test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
     'supersede_daily_statement_unit_balances',
     'refute_daily_statement_version',
     'revoke_daily_statement_version_refutation',
+    // P1 et P2 de la contre-revue CTO de la PR #156 : lectures serveur.
+    'daily_v2_attempt_batch_plan_v1',
+    'daily_v2_refutation_status_v1',
   ]) {
     assert.match(service, new RegExp(`\\.rpc\\(['"]${rpc}['"]`));
     assert.match(types, new RegExp(`${rpc}:`));
@@ -701,6 +704,8 @@ test('gives every Daily v2 network operation an explicit capability', () => {
     supersedeDailyV2UnitBalances: 'promote',
     refuteDailyV2Version: 'promote',
     revokeDailyV2VersionRefutation: 'promote',
+    getDailyV2AttemptBatchPlan: 'read',
+    getDailyV2RefutationStatus: 'read',
   };
 
   // Chaque opération réseau publique déclare sa capacité, et une seule.
