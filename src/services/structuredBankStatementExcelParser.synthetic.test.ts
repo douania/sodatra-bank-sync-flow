@@ -546,3 +546,47 @@ test('refuses an XLSX container presented to the exported parser as XLS', () => 
   assert.equal(result.validation.status, 'invalid');
   assert.match(result.errors.join(' '), /does not match the Excel container signature/i);
 });
+
+// Lot 1 opérationnel (R6 § 4.2) : causes possibles du statut needs_review, par
+// version exacte de profil, miroir de treasury_private.parser_versions. Une
+// nouvelle version ou une nouvelle cause fait échouer ce test : la liste blanche
+// de la trésorerie doit alors être revue (canal opérateur), jamais devinée.
+test('freezes the needs_review causes of every Excel profile version (treasury whitelist mirror)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { STRUCTURED_BANK_STATEMENT_EXCEL_PROFILES } = await import('./structuredBankStatementExcelProfiles');
+  const parserSource = readFileSync('src/services/structuredBankStatementExcelParser.ts', 'utf8');
+  const emitted = [...parserSource.matchAll(/reviewReasonCodes\.push\('([A-Z_]+)'\)/g)].map((match) => match[1]).sort();
+  assert.deepEqual(emitted, ['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING', 'TRUSTED_CURRENCY_UNCORROBORATED']);
+
+  const migration = readFileSync('supabase/migrations/20261103130000_treasury_v1_lot1_operational_fix.sql', 'utf8');
+  const seeded = new Map([...migration.matchAll(
+    /\('(ATB|BICIS|BIS|BRIDGE)', '(structured_bank_statement_xlsx?)', '(structured-excel-0q\/[a-z0-9-]+)', (true|false),/g,
+  )].map((match) => [match[3], { bank: match[1], sourceFormat: match[2], currencyCause: match[4] === 'true' }]));
+  assert.equal(seeded.size, STRUCTURED_BANK_STATEMENT_EXCEL_PROFILES.length, 'one whitelisted version per profile');
+  const expected: Record<string, string[]> = {
+    'structured-excel-0q/atb-online-xls-v1': ['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING'],
+    'structured-excel-0q/bicis-online-xls-v1': ['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING'],
+    'structured-excel-0q/bis-online-xls-v1': ['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING'],
+    'structured-excel-0q/bridge-online-xlsx-v1': ['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING',
+      'TRUSTED_CURRENCY_UNCORROBORATED'],
+  };
+  for (const profile of STRUCTURED_BANK_STATEMENT_EXCEL_PROFILES) {
+    const version = `structured-excel-0q/${profile.version}`;
+    // La devise n'est une cause possible que sans colonne de devise ni devise fixe du profil.
+    const currencyCause = !('currency' in profile.columns) && !('fixedCurrency' in profile);
+    const causes = ['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING',
+      ...(currencyCause ? ['TRUSTED_CURRENCY_UNCORROBORATED'] : [])];
+    assert.deepEqual(causes, expected[version], version);
+    assert.equal(seeded.get(version)?.bank, profile.bank, version);
+    assert.equal(seeded.get(version)?.currencyCause, currencyCause, `${version} currency cause`);
+  }
+  // Observé : ATB sans cause, BRIDGE avec la seule devise.
+  const atb = parseStructuredBankStatementExcel(workbookBytes(atbWorkbook(), 'xls'), {
+    sourceFileName: 'SYNTHETIC ATB ONLINE.xls', expectedBank: 'ATB',
+  });
+  assert.deepEqual(atb.reviewReasonCodes, []);
+  const bridge = parseStructuredBankStatementExcel(workbookBytes(bridgeWorkbook(), 'xlsx'), {
+    sourceFileName: 'SYNTHETIC BRIDGE ONLINE.xlsx', expectedBank: 'BRIDGE',
+  });
+  assert.deepEqual(bridge.reviewReasonCodes, ['TRUSTED_CURRENCY_UNCORROBORATED']);
+});

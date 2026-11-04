@@ -5,20 +5,31 @@ import type {
   DailyV2AppRole,
   DailyV2AccountRegistryRow,
   DailyV2AccountEventRow,
+  DailyV2AttemptAttestationRow,
+  DailyV2AttestationType,
   DailyV2AuditEventRow,
   DailyV2BackfillGrantRow,
+  DailyV2BatchExpected,
   DailyV2CanonicalLineRow,
   DailyV2CanonicalUnitRow,
   DailyV2Database,
+  DailyV2DecisionResult,
+  DailyV2ExportAttemptRow,
   DailyV2Page,
   DailyV2PreIngestPayload,
   DailyV2PreIngestResponse,
   DailyV2PromoteResponse,
+  DailyV2RefutationProof,
+  DailyV2RefutationSourceRow,
+  DailyV2RefutationStatusRead,
   DailyV2ReportingUnitRow,
+  DailyV2ServerBatchPlan,
   DailyV2StagingLineRow,
   DailyV2StagingStatus,
   DailyV2StagingUnitRow,
   DailyV2SupersedeResponse,
+  DailyV2VersionRefutationRow,
+  DailyV2VersionSource,
 } from './dailyV2Types';
 import {
   currentDailyV2RuntimeTargetVerdict,
@@ -30,6 +41,12 @@ import {
   type DailyV2ReportingReadAdapter,
   type DailyV2ReportingReadFilters,
 } from './dailyV2ReportingReadCore';
+import {
+  createDailyV2DecisionReads,
+  parseDailyV2BatchPlan,
+  parseDailyV2RefutationStatus,
+  type DailyV2DecisionPageReader,
+} from './dailyV2DecisionReadCore';
 import {
   buildDailyV2BackfillIncrementalDelta,
   type DailyV2ActiveCanonicalFingerprint,
@@ -611,6 +628,265 @@ export async function listDailyV2AuditEvents(input: {
     .range(from, to);
   if (error) throw toSafeError(error, 'Lecture de l’audit Daily v2 impossible.');
   return { rows: data ?? [], count: count ?? 0, page, pageSize };
+}
+
+// --------------------------------------------------------------------------
+// Lot 1 opérationnel : décisions par clé de commande (C9). Une clé par
+// décision, conservée tant que la décision n'a pas abouti : un double envoi ou
+// un nouvel essai après une réponse perdue rejoue la même commande.
+// --------------------------------------------------------------------------
+
+/** Clé d'idempotence d'une décision (format accepté par le serveur). */
+export function newDailyV2CommandKey(): string {
+  return `daily-v2:${globalThis.crypto.randomUUID()}`;
+}
+
+export function createDailyV2CommandKeyKeeper(newKey: () => string = newDailyV2CommandKey) {
+  // Liste de couples (signature, clé) : aucune méthode homonyme d'une écriture
+  // de table dans ce module (contrôle statique du contrat).
+  let pending: Array<[signature: string, key: string]> = [];
+  return {
+    keyFor(signature: string): string {
+      const known = pending.find(([candidate]) => candidate === signature);
+      if (known !== undefined) return known[1];
+      const key = newKey();
+      pending = [...pending, [signature, key]];
+      return key;
+    },
+    succeeded(key: string): void {
+      pending = pending.filter(([, pendingKey]) => pendingKey !== key);
+    },
+  };
+}
+
+/** Décisions en attente de la page : survivent à la fermeture d'un dialogue. */
+export const dailyV2DecisionCommandKeys = createDailyV2CommandKeyKeeper();
+
+const decisionResultSchema = z.object({ outcome: z.string().min(1) }).passthrough();
+const decisionSourceSchema = z.object({
+  raw_text_hash: z.string().regex(/^[0-9a-f]{64}$/),
+  account_registry_id: z.string().uuid(),
+  first_seen_at: z.string().min(10),
+});
+
+// Adaptateur de pages des listes de décisions, en lecture seule (P2 de la
+// contre-revue CTO de la PR #156) : total exact, filtres d'égalité et
+// d'appartenance, tri croissant stable. Le cœur pur lit jusqu'à épuisement et
+// déclare toute lecture incomplète (DAILY_V2_READ_INCOMPLETE).
+type DecisionPageBuilder = {
+  eq(column: string, value: string): DecisionPageBuilder;
+  in(column: string, values: readonly string[]): DecisionPageBuilder;
+  order(column: string, options: { ascending: boolean }): DecisionPageBuilder;
+  range(from: number, to: number): PromiseLike<{
+    data: unknown[] | null; count: number | null; error: { message?: string; code?: string } | null;
+  }>;
+};
+const decisionPageReader: DailyV2DecisionPageReader = async (query) => {
+  let builder = dailyV2Supabase.from(query.table).select('*', { count: 'exact' }) as unknown as DecisionPageBuilder;
+  for (const [column, value] of query.eq) builder = builder.eq(column, value);
+  if (query.in) builder = builder.in(query.in[0], query.in[1]);
+  for (const column of query.order) builder = builder.order(column, { ascending: true });
+  const { data, count, error } = await builder.range(query.from, query.to);
+  return { data, count, error };
+};
+const decisionReads = createDailyV2DecisionReads(decisionPageReader);
+
+/** Livraisons d'une journée (toutes) et leurs fichiers : base de l'affichage des versions. */
+export async function listDailyV2DayDeliveries(dayUnitId: string): Promise<{
+  units: DailyV2StagingUnitRow[];
+  attempts: DailyV2ExportAttemptRow[];
+}> {
+  assertAuthorizedDailyV2Target('read');
+  return decisionReads.listDayDeliveries(dayUnitId);
+}
+
+/** Journées livrées par des fichiers : borne d'une livraison fraîche. */
+export async function listDailyV2AttemptsUnits(attemptIds: string[]): Promise<DailyV2StagingUnitRow[]> {
+  assertAuthorizedDailyV2Target('read');
+  return decisionReads.listAttemptsUnits(attemptIds);
+}
+
+export async function getDailyV2ExportAttempt(attemptId: string): Promise<DailyV2ExportAttemptRow | null> {
+  assertAuthorizedDailyV2Target('read');
+  const { data, error } = await dailyV2Supabase
+    .from('daily_statement_export_attempts')
+    .select('*')
+    .eq('id', attemptId)
+    .maybeSingle();
+  if (error) throw toSafeError(error, 'Lecture du fichier déposé impossible.');
+  return data;
+}
+
+export async function listDailyV2ActiveCanonicalUnits(dayUnitIds: string[]): Promise<DailyV2CanonicalUnitRow[]> {
+  assertAuthorizedDailyV2Target('read');
+  return decisionReads.listActiveCanonicalUnits(dayUnitIds);
+}
+
+export async function listDailyV2AttemptAttestations(attemptIds: string[]): Promise<DailyV2AttemptAttestationRow[]> {
+  assertAuthorizedDailyV2Target('read');
+  return decisionReads.listAttemptAttestations(attemptIds);
+}
+
+export async function listDailyV2VersionRefutations(dayUnitId: string): Promise<{
+  refutations: DailyV2VersionRefutationRow[];
+  sources: DailyV2RefutationSourceRow[];
+}> {
+  assertAuthorizedDailyV2Target('read');
+  return decisionReads.listVersionRefutations(dayUnitId);
+}
+
+/** C8 : plan d'approbation groupée établi par le serveur (liste admissible exacte et motifs). */
+export async function getDailyV2AttemptBatchPlan(attemptId: string): Promise<DailyV2ServerBatchPlan> {
+  assertAuthorizedDailyV2Target('read');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('daily_v2_attempt_batch_plan_v1', { p_attempt_id: attemptId });
+  if (error) throw toSafeError(error, 'Lecture du plan d’approbation groupée impossible.');
+  return parseDailyV2BatchPlan(data, attemptId);
+}
+
+/** P2 : effectivité actuelle des réfutations d'une journée, établie par le serveur seul. */
+export async function getDailyV2RefutationStatus(dayUnitId: string): Promise<DailyV2RefutationStatusRead> {
+  assertAuthorizedDailyV2Target('read');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('daily_v2_refutation_status_v1', { p_day_unit_id: dayUnitId });
+  if (error) throw toSafeError(error, 'Lecture de l’effectivité des réfutations impossible.');
+  return parseDailyV2RefutationStatus(data, dayUnitId);
+}
+
+/** C2 et C3 : attestation d'un fichier Excel resélectionné (empreinte recalculée localement). */
+export async function attestDailyV2Attempt(commandKey: string, input: {
+  attemptId: string;
+  attestationType: DailyV2AttestationType;
+  rawTextHash: string;
+  accountRegistryId: string;
+  currency: string | null;
+  evidenceRef: string;
+  reason: string;
+}): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('admin');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('attest_daily_statement_attempt', {
+    p_command_key: commandKey,
+    p_attempt_id: input.attemptId,
+    p_attestation_type: input.attestationType,
+    p_raw_text_hash: input.rawTextHash,
+    p_account_registry_id: input.accountRegistryId,
+    p_currency: input.currency,
+    p_evidence_ref: normalizeRequiredReason(input.evidenceRef),
+    p_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'L’attestation a été refusée.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse d’attestation invalide.');
+}
+
+export async function revokeDailyV2AttemptAttestation(
+  commandKey: string, attestationId: string, reason: string,
+): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('admin');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('revoke_daily_statement_attempt_attestation', {
+    p_command_key: commandKey, p_attestation_id: attestationId, p_reason: normalizeRequiredReason(reason),
+  });
+  if (error) throw toSafeError(error, 'La révocation de l’attestation a été refusée.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse de révocation invalide.');
+}
+
+/** C4 : écartement d'une livraison en attente, état affiché transmis pour contrôle sous verrou. */
+export async function rejectDailyV2Unit(commandKey: string, input: {
+  unit: DailyV2StagingUnitRow;
+  activeCanonical: Pick<DailyV2CanonicalUnitRow, 'id' | 'active_day_content_hash'> | null;
+  reason: string;
+}): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('promote');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('reject_daily_statement_unit', {
+    p_command_key: commandKey,
+    p_staging_unit_id: input.unit.id,
+    p_expected_status: input.unit.status,
+    p_expected_canonical_unit_id: input.activeCanonical?.id ?? null,
+    p_expected_canonical_content_hash: input.activeCanonical?.active_day_content_hash ?? null,
+    p_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'L’écartement a été refusé.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse d’écartement invalide.');
+}
+
+/** C8 : approbation groupée des journées admissibles d'un fichier, liste exacte affichée. */
+export async function promoteDailyV2AttemptUnits(commandKey: string, input: {
+  attemptId: string;
+  expected: DailyV2BatchExpected;
+  reason: string;
+}): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('promote');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('promote_daily_statement_attempt_units', {
+    p_command_key: commandKey,
+    p_attempt_id: input.attemptId,
+    p_expected: input.expected as unknown as DailyV2Database['public']['Functions']['promote_daily_statement_attempt_units']['Args']['p_expected'],
+    p_approval_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'L’approbation groupée a été refusée.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse d’approbation groupée invalide.');
+}
+
+/** C4 bis : correction des seuls soldes par une livraison de mêmes mouvements. */
+export async function supersedeDailyV2UnitBalances(commandKey: string, input: {
+  canonicalUnitId: string;
+  correctiveStagingUnitId: string;
+  expectedCorrectiveVersionKey: string;
+  reason: string;
+}): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('promote');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('supersede_daily_statement_unit_balances', {
+    p_command_key: commandKey,
+    p_canonical_unit_id: input.canonicalUnitId,
+    p_corrective_staging_unit_id: input.correctiveStagingUnitId,
+    p_expected_corrective_version_key: input.expectedCorrectiveVersionKey,
+    p_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'La correction des soldes a été refusée.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse de correction des soldes invalide.');
+}
+
+/** C4 bis : réfutation d'une version non retenue, justifiée source par source. */
+export async function refuteDailyV2Version(commandKey: string, input: {
+  dayUnitId: string;
+  refutedVersionKey: string;
+  expectedRetainedVersionKey: string;
+  expectedSources: DailyV2VersionSource[];
+  proof: DailyV2RefutationProof;
+  reason: string;
+}): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('promote');
+  await assertAuthenticatedSession();
+  const sources = z.array(decisionSourceSchema).min(1).safeParse(input.expectedSources);
+  if (!sources.success) {
+    throw new DailyV2ServiceError('Sources de la version invalides (fail-closed).', 'REFUTATION_SOURCES_INVALID');
+  }
+  const { data, error } = await dailyV2Supabase.rpc('refute_daily_statement_version', {
+    p_command_key: commandKey,
+    p_day_unit_id: input.dayUnitId,
+    p_refuted_version_key: input.refutedVersionKey,
+    p_expected_retained_version_key: input.expectedRetainedVersionKey,
+    p_expected_sources: sources.data,
+    p_proof: input.proof as unknown as DailyV2Database['public']['Functions']['refute_daily_statement_version']['Args']['p_proof'],
+    p_reason: normalizeRequiredReason(input.reason),
+  });
+  if (error) throw toSafeError(error, 'La réfutation a été refusée.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse de réfutation invalide.');
+}
+
+export async function revokeDailyV2VersionRefutation(
+  commandKey: string, refutationId: string, reason: string,
+): Promise<DailyV2DecisionResult> {
+  assertAuthorizedDailyV2Target('promote');
+  await assertAuthenticatedSession();
+  const { data, error } = await dailyV2Supabase.rpc('revoke_daily_statement_version_refutation', {
+    p_command_key: commandKey, p_refutation_id: refutationId, p_reason: normalizeRequiredReason(reason),
+  });
+  if (error) throw toSafeError(error, 'La révocation de la réfutation a été refusée.');
+  return parseRpcResponse<DailyV2DecisionResult>(decisionResultSchema, data, 'Réponse de révocation invalide.');
 }
 
 const REPORTING_COLUMNS =

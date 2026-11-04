@@ -1,4 +1,5 @@
 -- target: 40_balances.sql
--- Mutant (P2-4) : un export à revoir (identité non corroborée) prouve ses journées.
+-- Mutant (P2-4, R6) les motifs non résolus d'un export (identité non corroborée) sont ignorés.
 SELECT tr_test.mutate('treasury_private.balances_snapshot(date, date)',
-  E'AND cardinality(a.review_reason_codes) = 0\n    AND eu.bad_n = 0', E'AND true\n    AND eu.bad_n = 0');
+  'ARRAY(SELECT c FROM unnest(x.codes) c WHERE NOT (c = ANY (x.resolved))) AS residual',
+  'ARRAY[]::text[] AS residual');

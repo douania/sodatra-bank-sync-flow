@@ -1,7 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { currentTreasuryRuntimeVerdict, isTreasuryRuntimeRefused } from './treasuryRuntimeTarget';
-import { errorMessage, parseTreasuryBalances, TreasuryError, treasuryErrorCode, type TreasuryBalances } from './treasuryModel';
+import {
+  errorMessage,
+  parseTreasuryBalances,
+  TreasuryError,
+  treasuryErrorCode,
+  type RetainedDayUnit,
+  type TreasuryBalances,
+} from './treasuryModel';
 
 // Les fonctions de trésorerie ne figurent pas dans les types générés : client non
 // typé localement, sans modification de src/integrations/supabase/types.ts.
@@ -120,5 +127,26 @@ export function retireExpectedAccount(commandKey: string, expectedAccountId: str
 export function attestInventory(commandKey: string, inventoryFingerprint: string, reason: string): Promise<AdminResult> {
   return adminCall('treasury_admin_attest_inventory_v1', commandKey, {
     p_inventory_fingerprint: inventoryFingerprint, p_reason: reason,
+  });
+}
+
+/** Décisions de points de départ en attente pour la page. */
+export const verifiedStartCommandKeys = createCommandKeyKeeper();
+
+export function setVerifiedStart(
+  commandKey: string,
+  input: { registryAccountId: string; day: string; unit: RetainedDayUnit; verifiedOpening: string; evidenceRef: string;
+    reason: string },
+): Promise<AdminResult> {
+  return adminCall('treasury_admin_set_verified_start_v1', commandKey, {
+    p_registry_account_id: input.registryAccountId, p_day: input.day, p_canonical_unit_id: input.unit.canonicalUnitId,
+    p_content_hash: input.unit.contentHash, p_verified_opening: input.verifiedOpening, p_evidence_ref: input.evidenceRef,
+    p_reason: input.reason,
+  });
+}
+
+export function revokeVerifiedStart(commandKey: string, verifiedStartId: string, reason: string): Promise<AdminResult> {
+  return adminCall('treasury_admin_revoke_verified_start_v1', commandKey, {
+    p_verified_start_id: verifiedStartId, p_reason: reason,
   });
 }

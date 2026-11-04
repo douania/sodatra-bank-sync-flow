@@ -1,0 +1,1613 @@
+-- ============================================================================
+-- TREASURY V1 — LOT 1 OPÉRATIONNEL : lecture corrigée, points de départ vérifiés
+-- GO_IMPLEMENT_TREASURY_V1_LOT1_OPERATIONAL_FIX — conception R6 (PASS_WITH_RESERVES).
+-- ============================================================================
+-- Nouveaux objets :
+--   - liste blanche exacte des versions de profil (§ 4.2) et son canal opérateur ;
+--   - points de départ vérifiés, applicables par période (C5), et leurs commandes ;
+--   - contrôle des textes libres `treasury_private.assert_safe_text` (C10).
+-- Objets existants du lot modifiés, et seulement eux :
+--   - contrainte des types d'événement de `treasury_private.events` ;
+--   - `treasury_private.require_reason` (filtre des textes sensibles) ;
+--   - `public.treasury_admin_add_expected_account_v1` (filtre de l'alias) ;
+--   - `treasury_private.balances_snapshot`, réécrite (§ 4 de la R6) : version
+--     financière, trois issues de comparaison, réfutations par source,
+--     attestations, livraisons écartées, points de départ, journée `PENDING`,
+--     et réserve CTO 4.1 (toute unité utilisée comme solde ou preuve satisfait
+--     les relations financières, même seule pour sa journée) ; lignes stockées
+--     conformes aux faits déclarés et statut courant des réfutations (P1 et P2
+--     de la contre-revue CTO de la PR #156).
+-- Lecture ajoutée : `public.daily_v2_refutation_status_v1` (statut courant des
+-- réfutations d'une journée, pour l'interface Daily v2, administrateur).
+-- La migration `20261102090000` n'est pas modifiée. Le module reste fermé côté
+-- serveur : rien ne s'ouvre par cette migration.
+-- ============================================================================
+
+BEGIN;
+
+-- --------------------------------------------------------------------------
+-- 1. Textes libres (C10)
+-- --------------------------------------------------------------------------
+CREATE FUNCTION treasury_private.assert_safe_text(p_value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v text := btrim(coalesce(p_value, ''));
+BEGIN
+  -- Même filtre sensible que daily_stmt_assert_safe_operator_reason : huit
+  -- chiffres consécutifs ou forme d'un IBAN.
+  IF v ~ '[0-9]{8,}' OR v ~* '(^|[^A-Z])[A-Z]{2}[0-9]{2}[A-Z0-9]{8,}' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_TEXT_SENSITIVE';
+  END IF;
+  RETURN v;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION treasury_private.require_reason(p_reason text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE v text := btrim(coalesce(p_reason, ''));
+BEGIN
+  IF char_length(v) < 5 OR char_length(v) > 500 OR v ~ '[[:cntrl:]]' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_REASON_REQUIRED';
+  END IF;
+  RETURN treasury_private.assert_safe_text(v);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.treasury_admin_add_expected_account_v1(
+  p_command_key text, p_registry_account_id uuid, p_bank text, p_currency text, p_safe_alias text, p_reason text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor uuid := treasury_private.require_admin();
+  v_bank text := upper(btrim(coalesce(p_bank, '')));
+  v_currency text := upper(btrim(coalesce(p_currency, '')));
+  v_alias text := nullif(btrim(coalesce(p_safe_alias, '')), '');
+  v_reason text := btrim(coalesce(p_reason, ''));
+  v_prior jsonb;
+  v_reg public.daily_statement_account_registry%ROWTYPE;
+  v_id uuid;
+  v_result jsonb;
+BEGIN
+  v_prior := treasury_private.command_begin(v_actor, 'ADD_EXPECTED_ACCOUNT', p_command_key,
+    jsonb_build_object('registry', p_registry_account_id, 'bank', v_bank, 'currency', v_currency,
+                       'alias', v_alias, 'reason', v_reason));
+  IF v_prior IS NOT NULL THEN RETURN v_prior; END IF;
+  v_reason := treasury_private.require_reason(v_reason);
+
+  IF p_registry_account_id IS NOT NULL THEN
+    SELECT * INTO v_reg FROM public.daily_statement_account_registry r WHERE r.id = p_registry_account_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_REGISTRY_ACCOUNT_UNKNOWN';
+    END IF;
+    IF v_reg.status <> 'active' THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_REGISTRY_ACCOUNT_INACTIVE';
+    END IF;
+    IF (v_bank <> '' AND v_bank <> v_reg.bank) OR (v_currency <> '' AND v_currency <> v_reg.currency) THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_BANK_MISMATCH';
+    END IF;
+    IF v_alias IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_ALIAS_NOT_ALLOWED';
+    END IF;
+    IF EXISTS (SELECT 1 FROM treasury_private.expected_accounts e
+               WHERE e.status = 'ACTIVE' AND e.registry_account_id = p_registry_account_id) THEN
+      RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'TREASURY_REGISTRY_ACCOUNT_ALREADY_EXPECTED';
+    END IF;
+    INSERT INTO treasury_private.expected_accounts (bank, currency, registry_account_id, created_by, created_reason)
+    VALUES (v_reg.bank, v_reg.currency, v_reg.id, v_actor, v_reason)
+    RETURNING id INTO v_id;
+  ELSE
+    IF v_bank NOT IN ('BDK', 'ORA', 'ATB', 'BICIS', 'BIS', 'BRIDGE', 'NSIA') THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_BANK_UNSUPPORTED';
+    END IF;
+    IF v_currency !~ '^[A-Z]{3}$' THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_CURRENCY_INVALID';
+    END IF;
+    IF v_alias IS NULL OR char_length(v_alias) > 80 OR v_alias ~ '[[:cntrl:]]' THEN
+      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_ALIAS_INVALID';
+    END IF;
+    -- Arbitrage 10 : l'alias ne porte ni numéro de compte ni IBAN.
+    PERFORM treasury_private.assert_safe_text(v_alias);
+    -- Un compte déjà présent au registre se rattache : aucun second compte.
+    IF EXISTS (SELECT 1 FROM public.daily_statement_account_registry r
+               WHERE r.status = 'active' AND r.bank = v_bank AND r.currency = v_currency
+                 AND lower(btrim(r.safe_alias)) = lower(v_alias)) THEN
+      RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'TREASURY_REGISTRY_ACCOUNT_EXISTS_LINK_INSTEAD';
+    END IF;
+    IF EXISTS (SELECT 1 FROM treasury_private.expected_accounts e
+               WHERE e.status = 'ACTIVE' AND e.registry_account_id IS NULL AND e.bank = v_bank
+                 AND e.currency = v_currency AND lower(btrim(e.safe_alias)) = lower(v_alias)) THEN
+      RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'TREASURY_EXPECTED_ACCOUNT_DUPLICATE';
+    END IF;
+    INSERT INTO treasury_private.expected_accounts (bank, currency, safe_alias, created_by, created_reason)
+    VALUES (v_bank, v_currency, v_alias, v_actor, v_reason)
+    RETURNING id INTO v_id;
+  END IF;
+
+  INSERT INTO treasury_private.events (event_type, actor_id, payload, reason)
+  VALUES ('EXPECTED_ACCOUNT_ADDED', v_actor,
+          jsonb_build_object('expected_account_id', v_id, 'registry_account_id', p_registry_account_id), v_reason);
+  v_result := jsonb_build_object('expected_account_id', v_id,
+                                 'inventory_fingerprint', treasury_private.inventory_fingerprint());
+  RETURN treasury_private.command_finish(p_command_key, v_result);
+END;
+$$;
+
+-- --------------------------------------------------------------------------
+-- 2. Journal : nouveaux types d'événement
+-- --------------------------------------------------------------------------
+ALTER TABLE treasury_private.events DROP CONSTRAINT events_event_type_check;
+ALTER TABLE treasury_private.events ADD CONSTRAINT events_event_type_check CHECK (event_type IN (
+  'EXPECTED_ACCOUNT_ADDED', 'EXPECTED_ACCOUNT_LINKED', 'EXPECTED_ACCOUNT_RETIRED',
+  'INVENTORY_ATTESTED', 'QUALIFICATION_RECORDED', 'MODULE_SWITCH_RECORDED',
+  'PARSER_VERSION_ADDED', 'VERIFIED_START_SET', 'VERIFIED_START_REVOKED'));
+
+-- --------------------------------------------------------------------------
+-- 3. Liste blanche exacte des versions de profil (§ 4.2, arbitrage 12)
+-- --------------------------------------------------------------------------
+CREATE TABLE treasury_private.parser_versions (
+  bank           text NOT NULL,
+  source_format  text NOT NULL,
+  parser_version text NOT NULL CHECK (char_length(parser_version) BETWEEN 1 AND 120),
+  -- Causes possibles du statut `needs_review` du fichier : ruptures, soldes
+  -- manquants, et la devise pour un profil sans devise lue.
+  currency_cause boolean NOT NULL,
+  basis          text NOT NULL CHECK (char_length(btrim(basis)) BETWEEN 1 AND 300),
+  added_at       timestamptz NOT NULL DEFAULT statement_timestamp(),
+  PRIMARY KEY (bank, source_format, parser_version),
+  FOREIGN KEY (bank, source_format) REFERENCES treasury_private.supported_formats (bank, source_format)
+);
+INSERT INTO treasury_private.parser_versions (bank, source_format, parser_version, currency_cause, basis) VALUES
+  ('BDK', 'structured_bank_statement_csv', 'structured-csv-0b', false, 'Version CSV en vigueur (R6, § 4.2).'),
+  ('ORA', 'structured_bank_statement_csv', 'structured-csv-0b', false, 'Version CSV en vigueur (R6, § 4.2).'),
+  ('ATB', 'structured_bank_statement_xls', 'structured-excel-0q/atb-online-xls-v1', false, 'Profil Excel en vigueur (R6, § 4.2).'),
+  ('BICIS', 'structured_bank_statement_xls', 'structured-excel-0q/bicis-online-xls-v1', false, 'Profil Excel en vigueur (R6, § 4.2).'),
+  ('BIS', 'structured_bank_statement_xls', 'structured-excel-0q/bis-online-xls-v1', false, 'Profil Excel en vigueur (R6, § 4.2).'),
+  ('BRIDGE', 'structured_bank_statement_xlsx', 'structured-excel-0q/bridge-online-xlsx-v1', true,
+   'Profil Excel en vigueur, sans devise lue (R6, § 4.2).');
+
+CREATE TRIGGER treasury_parser_versions_append_only
+  BEFORE UPDATE OR DELETE ON treasury_private.parser_versions
+  FOR EACH ROW EXECUTE FUNCTION treasury_private.block_mutation();
+CREATE TRIGGER treasury_parser_versions_no_truncate
+  BEFORE TRUNCATE ON treasury_private.parser_versions
+  FOR EACH STATEMENT EXECUTE FUNCTION treasury_private.block_mutation();
+
+-- Canal opérateur, sans privilège d'exécution accordé.
+CREATE FUNCTION treasury_private.add_parser_version(
+  p_bank text, p_source_format text, p_parser_version text, p_currency_cause boolean, p_basis text,
+  p_reason text, p_operator_label text)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  INSERT INTO treasury_private.parser_versions (bank, source_format, parser_version, currency_cause, basis)
+  VALUES (p_bank, p_source_format, btrim(p_parser_version), p_currency_cause, btrim(p_basis));
+  INSERT INTO treasury_private.events (event_type, operator_label, payload, reason)
+  VALUES ('PARSER_VERSION_ADDED', btrim(p_operator_label),
+          jsonb_build_object('bank', p_bank, 'source_format', p_source_format, 'parser_version', btrim(p_parser_version),
+                             'currency_cause', p_currency_cause), btrim(p_reason));
+END;
+$$;
+
+-- --------------------------------------------------------------------------
+-- 4. Points de départ vérifiés, applicables par période (C5)
+-- --------------------------------------------------------------------------
+-- Unicité structurelle (schéma de C2) : au plus un point actif par compte et
+-- par journée ; plusieurs points par compte.
+CREATE TABLE treasury_private.verified_starts (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  action              text NOT NULL CHECK (action IN ('SET', 'REVOKE')),
+  registry_account_id uuid NOT NULL REFERENCES public.daily_statement_account_registry (id),
+  day                 date NOT NULL,
+  canonical_unit_id   uuid NOT NULL REFERENCES public.daily_statement_units_canonical (id),
+  content_hash        text NOT NULL,
+  verified_opening    numeric(18, 2) NOT NULL CHECK (verified_opening = trunc(verified_opening)),
+  evidence_ref        text NOT NULL CHECK (char_length(btrim(evidence_ref)) BETWEEN 1 AND 200),
+  reason              text NOT NULL CHECK (char_length(btrim(reason)) BETWEEN 5 AND 500),
+  revokes_id          uuid,
+  revokes_kind        text GENERATED ALWAYS AS (CASE WHEN revokes_id IS NULL THEN NULL ELSE 'SET' END) STORED,
+  after_revocation_id uuid,
+  after_revocation_kind text GENERATED ALWAYS AS (CASE WHEN after_revocation_id IS NULL THEN NULL ELSE 'REVOKE' END) STORED,
+  actor_id            uuid NOT NULL REFERENCES auth.users (id),
+  created_at          timestamptz NOT NULL DEFAULT statement_timestamp(),
+  CONSTRAINT verified_starts_chain_key UNIQUE (id, registry_account_id, day, action),
+  CONSTRAINT verified_starts_shape CHECK (
+    (action = 'SET' AND revokes_id IS NULL) OR (action = 'REVOKE' AND revokes_id IS NOT NULL AND after_revocation_id IS NULL)),
+  CONSTRAINT verified_starts_revokes_fk FOREIGN KEY (revokes_id, registry_account_id, day, revokes_kind)
+    REFERENCES treasury_private.verified_starts (id, registry_account_id, day, action),
+  CONSTRAINT verified_starts_after_fk FOREIGN KEY (after_revocation_id, registry_account_id, day, after_revocation_kind)
+    REFERENCES treasury_private.verified_starts (id, registry_account_id, day, action)
+);
+CREATE UNIQUE INDEX uq_treasury_verified_starts_first
+  ON treasury_private.verified_starts (registry_account_id, day)
+  WHERE action = 'SET' AND after_revocation_id IS NULL;
+CREATE UNIQUE INDEX uq_treasury_verified_starts_revokes
+  ON treasury_private.verified_starts (revokes_id) WHERE revokes_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_treasury_verified_starts_after
+  ON treasury_private.verified_starts (after_revocation_id) WHERE after_revocation_id IS NOT NULL;
+
+CREATE TRIGGER treasury_verified_starts_append_only
+  BEFORE UPDATE OR DELETE ON treasury_private.verified_starts
+  FOR EACH ROW EXECUTE FUNCTION treasury_private.block_mutation();
+CREATE TRIGGER treasury_verified_starts_no_truncate
+  BEFORE TRUNCATE ON treasury_private.verified_starts
+  FOR EACH STATEMENT EXECUTE FUNCTION treasury_private.block_mutation();
+
+-- --------------------------------------------------------------------------
+-- 5. Lecture : soldes à une date comptable D, en UNE instruction (réécrite)
+-- --------------------------------------------------------------------------
+-- Paramètre d'optimiseur (C7) : les étapes intermédiaires sont des CTE dont
+-- l'optimiseur ignore la taille ; il choisissait des fusions sur le seul compte,
+-- la journée en filtre (coût quadratique par compte). Les jointures concernées
+-- sont des égalités de clés : elles passent en hachage. La compilation JIT,
+-- déclenchée par ces coûts estimés, coûtait plus que l'exécution : désactivée.
+-- Sans effet sur le résultat (82_differential.sql contre la référence figée).
+CREATE OR REPLACE FUNCTION treasury_private.balances_snapshot(p_as_of date, p_today date)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+SET enable_mergejoin = off
+SET jit = off
+AS $$
+WITH
+params AS (
+  SELECT p_as_of AS d, p_today AS t, statement_timestamp() AS read_at,
+         'attestation sur pièce archivée, contenu non vérifié automatiquement'::text AS piece_mention
+),
+qual AS (
+  SELECT DISTINCT ON (q.bank, q.source_format) q.bank, q.source_format, q.status, q.evidence_ref, q.decided_at
+  FROM treasury_private.bank_format_qualifications q
+  ORDER BY q.bank, q.source_format, q.seq DESC
+),
+inv AS (
+  SELECT e.id AS expected_id, e.bank, e.currency, e.registry_account_id AS rid, e.safe_alias,
+         r.safe_alias AS registry_alias, r.status AS registry_status, r.bank AS registry_bank,
+         r.currency AS registry_currency
+  FROM treasury_private.expected_accounts e
+  LEFT JOIN public.daily_statement_account_registry r ON r.id = e.registry_account_id
+  WHERE e.status = 'ACTIVE'
+),
+acc AS (
+  SELECT DISTINCT inv.rid FROM inv WHERE inv.rid IS NOT NULL
+),
+-- Attestations actives par tentative (C2, C3) : motifs résolus.
+att_res AS (
+  SELECT x.attempt_id,
+         array_agg(DISTINCT CASE x.attestation_type WHEN 'ACCOUNT_IDENTITY' THEN 'ACCOUNT_IDENTITY_NOT_CORROBORATED'
+                                                    ELSE 'TRUSTED_CURRENCY_UNCORROBORATED' END) AS resolved
+  FROM public.daily_statement_attempt_attestations x
+  WHERE x.action = 'ATTEST'
+    AND NOT EXISTS (SELECT 1 FROM public.daily_statement_attempt_attestations r WHERE r.revokes_id = x.id)
+  GROUP BY x.attempt_id
+),
+-- Tentatives des comptes lus : version exacte listée (§ 4.2), motifs résiduels,
+-- statut du fichier admis (exception devise BRIDGE seulement).
+att AS (
+  SELECT a.id AS export_id, a.account_registry_id AS rid, a.bank, a.source_format, a.parser_version,
+         a.created_at AS export_ingested_at, a.export_period_start, a.export_period_end, a.raw_text_hash,
+         a.parser_validation_status, coalesce(a.review_reason_codes, ARRAY[]::text[]) AS codes,
+         coalesce(ar.resolved, ARRAY[]::text[]) AS resolved,
+         (EXISTS (SELECT 1 FROM treasury_private.supported_formats f
+                  WHERE f.bank = a.bank AND f.source_format = a.source_format AND a.parser_version IS NOT NULL
+                    AND left(a.parser_version, char_length(f.parser_version_prefix)) = f.parser_version_prefix)
+          AND pv.parser_version IS NOT NULL) AS supported,
+         coalesce(pv.currency_cause, false) AS currency_cause
+  FROM public.daily_statement_export_attempts a
+  JOIN acc ON acc.rid = a.account_registry_id
+  LEFT JOIN att_res ar ON ar.attempt_id = a.id
+  LEFT JOIN treasury_private.parser_versions pv
+    ON pv.bank = a.bank AND pv.source_format = a.source_format AND pv.parser_version = a.parser_version
+),
+att2 AS (
+  SELECT x.*,
+         ARRAY(SELECT c FROM unnest(x.codes) c WHERE NOT (c = ANY (x.resolved))) AS residual,
+         (x.parser_validation_status = 'valid'
+          OR (x.parser_validation_status = 'needs_review' AND x.currency_cause
+              AND 'TRUSTED_CURRENCY_UNCORROBORATED' = ANY (x.codes)
+              AND 'TRUSTED_CURRENCY_UNCORROBORATED' = ANY (x.resolved)
+              AND NOT (x.codes && ARRAY['RUNNING_BALANCE_CHAIN_INCOHERENT', 'RUNNING_BALANCE_MISSING']))) AS file_status_ok
+  FROM att x
+),
+-- Concordance des lignes stockées avec les faits déclarés (P1 de la contre-revue
+-- CTO). Décision unique public.daily_stmt_line_facts_conform, alimentée en une
+-- passe et une fenêtre : lignes canonical de chaque unité des comptes lus (une
+-- livraison promue porte les lignes et les faits de son unité, copiés à la
+-- promotion et immuables), lignes staging des seules livraisons jamais promues.
+canon_agg AS (
+  SELECT l.cid, count(*) AS n,
+         sum(-l.signed) FILTER (WHERE l.direction = 'debit') AS debits,
+         sum(l.signed) FILTER (WHERE l.direction = 'credit') AS credits,
+         bool_and(l.running IS NOT NULL) AS all_balances,
+         bool_and(l.rn = 1 OR l.running = l.prev_r + l.signed) AS chain_asc,
+         bool_and(NOT l.has_next OR l.running = l.next_r + l.signed) AS chain_desc,
+         max(l.running - l.signed) FILTER (WHERE l.rn = 1) AS open_asc,
+         max(l.running) FILTER (WHERE NOT l.has_next) AS close_asc,
+         max(l.running - l.signed) FILTER (WHERE NOT l.has_next) AS open_desc,
+         max(l.running) FILTER (WHERE l.rn = 1) AS close_desc
+  FROM (
+    SELECT lc.canonical_unit_id AS cid, lc.signed_amount AS signed, lc.direction, lc.running_balance AS running,
+           row_number() OVER w AS rn, lead(true, 1, false) OVER w AS has_next,
+           lag(lc.running_balance) OVER w AS prev_r, lead(lc.running_balance) OVER w AS next_r
+    FROM public.daily_statement_lines_canonical lc
+    JOIN public.daily_statement_units_canonical c ON c.id = lc.canonical_unit_id
+    JOIN acc ON acc.rid = c.account_registry_id
+    WINDOW w AS (PARTITION BY lc.canonical_unit_id ORDER BY lc.source_line_index, lc.daily_occurrence_ordinal, lc.id)
+  ) l
+  GROUP BY l.cid
+),
+canon_conform AS (
+  SELECT c.id AS cid, c.promoted_from_staging_unit_id AS staging_id, c.day_unit_id, c.status,
+         public.daily_stmt_version_key(c.active_day_content_hash, c.aggregates_status, c.opening_balance_derived,
+           c.closing_balance_derived, c.day_total_debits, c.day_total_credits) AS vkey,
+         public.daily_stmt_line_facts_conform(c.line_count, c.day_total_debits, c.day_total_credits, c.aggregates_status,
+           c.opening_balance_derived, c.closing_balance_derived, g.n, g.debits, g.credits, g.all_balances,
+           g.chain_asc, g.chain_desc, g.open_asc, g.close_asc, g.open_desc, g.close_desc) AS conform
+  FROM public.daily_statement_units_canonical c
+  JOIN acc ON acc.rid = c.account_registry_id
+  LEFT JOIN canon_agg g ON g.cid = c.id
+),
+canon_by_stg AS (
+  SELECT cc.staging_id, bool_and(cc.conform) AS conform FROM canon_conform cc GROUP BY cc.staging_id
+),
+-- Versions retenues justifiées par des lignes conformes : seul appui d'un
+-- doublon ordinaire sans lignes (rien n'est inventé pour lui).
+canon_ok_versions AS (
+  SELECT DISTINCT cc.day_unit_id, cc.vkey FROM canon_conform cc WHERE cc.status = 'ingested' AND cc.conform
+),
+stg_agg AS (
+  SELECT l.sid, count(*) AS n,
+         sum(-l.signed) FILTER (WHERE l.direction = 'debit') AS debits,
+         sum(l.signed) FILTER (WHERE l.direction = 'credit') AS credits,
+         bool_and(l.running IS NOT NULL) AS all_balances,
+         bool_and(l.rn = 1 OR l.running = l.prev_r + l.signed) AS chain_asc,
+         bool_and(NOT l.has_next OR l.running = l.next_r + l.signed) AS chain_desc,
+         max(l.running - l.signed) FILTER (WHERE l.rn = 1) AS open_asc,
+         max(l.running) FILTER (WHERE NOT l.has_next) AS close_asc,
+         max(l.running - l.signed) FILTER (WHERE NOT l.has_next) AS open_desc,
+         max(l.running) FILTER (WHERE l.rn = 1) AS close_desc
+  FROM (
+    SELECT ls.staging_unit_id AS sid, ls.signed_amount AS signed, ls.direction, ls.running_balance AS running,
+           row_number() OVER w AS rn, lead(true, 1, false) OVER w AS has_next,
+           lag(ls.running_balance) OVER w AS prev_r, lead(ls.running_balance) OVER w AS next_r
+    FROM public.daily_statement_lines_staging ls
+    JOIN public.daily_statement_units_staging s ON s.id = ls.staging_unit_id
+    JOIN att2 a ON a.export_id = s.attempt_id
+    WHERE NOT EXISTS (SELECT 1 FROM canon_by_stg cb WHERE cb.staging_id = s.id)
+    WINDOW w AS (PARTITION BY ls.staging_unit_id ORDER BY ls.source_line_index, ls.daily_occurrence_ordinal, ls.id)
+  ) l
+  GROUP BY l.sid
+),
+-- Toutes les livraisons des comptes lus, avec leur version financière (C4 bis).
+dlv AS (
+  SELECT s.id AS staging_id, s.attempt_id AS export_id, s.account_registry_id AS rid, s.accounting_date AS day,
+         s.day_unit_id, s.status, s.validation_status, s.aggregates_status, s.day_content_hash AS hash,
+         s.opening_balance_derived AS opening, s.closing_balance_derived AS closing,
+         s.day_total_debits AS debits, s.day_total_credits AS credits,
+         public.daily_stmt_version_key(s.day_content_hash, s.aggregates_status, s.opening_balance_derived,
+           s.closing_balance_derived, s.day_total_debits, s.day_total_credits) AS vkey,
+         a.raw_text_hash, a.export_ingested_at, lo.lines_ok, lo.has_lines,
+         -- Livraison propre (§ 4.1) : version listée, statut du fichier admis,
+         -- motifs résiduels vides pour le fichier et la journée, validation
+         -- admise, relations financières satisfaites (réserve CTO 4.1) et
+         -- lignes stockées conformes (P1 de la contre-revue CTO).
+         (a.supported AND a.file_status_ok AND cardinality(a.residual) = 0 AND lo.lines_ok
+          AND coalesce(s.review_reason_codes, ARRAY[]::text[]) <@ a.resolved
+          AND (s.validation_status = 'valid'
+               OR (s.validation_status = 'needs_review' AND cardinality(s.review_reason_codes) > 0
+                   AND s.aggregates_status = 'derived'))
+          AND public.daily_stmt_version_coherent(s.aggregates_status, s.opening_balance_derived,
+                s.closing_balance_derived, s.day_total_debits, s.day_total_credits)) AS clean
+  FROM public.daily_statement_units_staging s
+  JOIN att2 a ON a.export_id = s.attempt_id
+  LEFT JOIN canon_by_stg cb ON cb.staging_id = s.id
+  LEFT JOIN stg_agg sg ON sg.sid = s.id
+  -- Lignes de la livraison : celles de son unité si elle a été promue, sinon les
+  -- siennes ; sans aucune ligne, seule une version retenue de mêmes faits et
+  -- aux lignes conformes la justifie.
+  CROSS JOIN LATERAL (
+    SELECT CASE
+             WHEN cb.staging_id IS NOT NULL THEN coalesce(cb.conform, false)
+             WHEN sg.sid IS NOT NULL THEN public.daily_stmt_line_facts_conform(s.line_count, s.day_total_debits,
+               s.day_total_credits, s.aggregates_status, s.opening_balance_derived, s.closing_balance_derived, sg.n,
+               sg.debits, sg.credits, sg.all_balances, sg.chain_asc, sg.chain_desc, sg.open_asc, sg.close_asc,
+               sg.open_desc, sg.close_desc)
+             ELSE EXISTS (SELECT 1 FROM canon_ok_versions o
+                          WHERE o.day_unit_id = s.day_unit_id
+                            AND o.vkey = public.daily_stmt_version_key(s.day_content_hash, s.aggregates_status,
+                                  s.opening_balance_derived, s.closing_balance_derived, s.day_total_debits,
+                                  s.day_total_credits))
+           END AS lines_ok,
+           (cb.staging_id IS NOT NULL OR sg.sid IS NOT NULL) AS has_lines) lo
+),
+units AS (
+  SELECT u.id AS unit_id, u.account_registry_id AS rid, u.accounting_date AS day,
+         u.opening_balance_derived AS opening, u.closing_balance_derived AS closing,
+         u.aggregates_status, u.currency AS unit_currency, u.ingested_at, u.day_unit_id, u.active_day_content_hash,
+         u.day_total_debits, u.day_total_credits, u.promoted_from_staging_unit_id AS promoted_staging_id,
+         d.vkey, d.clean AS promoted_clean,
+         (public.daily_stmt_version_coherent(u.aggregates_status, u.opening_balance_derived,
+            u.closing_balance_derived, u.day_total_debits, u.day_total_credits)
+          AND coalesce(cc.conform, false)) AS coherent,
+         coalesce(cc.conform, false) AS lines_conform,
+         a.export_id, a.export_ingested_at, a.source_format, a.supported AS format_supported,
+         pv.prev_unit_id
+  FROM public.daily_statement_units_canonical u
+  JOIN acc ON acc.rid = u.account_registry_id
+  JOIN dlv d ON d.staging_id = u.promoted_from_staging_unit_id
+  JOIN att2 a ON a.export_id = d.export_id
+  LEFT JOIN canon_conform cc ON cc.cid = u.id
+  -- Unité remplacée par u (prédécesseur), regroupée une fois au lieu d'un
+  -- parcours de la table par unité (C7). Un remplacement n'en produit qu'une.
+  LEFT JOIN (SELECT p.superseded_by, min(p.id::text)::uuid AS prev_unit_id
+               FROM public.daily_statement_units_canonical p
+              WHERE p.superseded_by IS NOT NULL GROUP BY p.superseded_by) pv ON pv.superseded_by = u.id
+  WHERE u.status = 'ingested'
+),
+-- Unité propre : sa livraison promue, ou un doublon propre de MÊME version
+-- (mouvements et version financière complète), est propre (point D).
+units2 AS (
+  SELECT u.*,
+         (u.promoted_clean OR EXISTS (SELECT 1 FROM dlv d2
+                                      WHERE d2.day_unit_id = u.day_unit_id AND d2.status = 'duplicate'
+                                        AND d2.vkey = u.vkey AND d2.clean)) AS unit_clean
+  FROM units u
+),
+-- Fichiers dignes de preuve : version listée, statut admis, motifs résiduels
+-- vides, et chaque livraison propre portant la version retenue de sa journée
+-- (livraison promue, doublon ou écartée de même version), ou provisoire et
+-- remplacée par son cycle de vie. Seuls ils prouvent la clôture d'une journée
+-- ou, si leur période est déclarée, l'absence de mouvement.
+trusted_exports AS (
+  SELECT a.export_id, a.rid, a.bank, a.source_format, a.export_ingested_at,
+         a.export_period_start, a.export_period_end, eu.last_line_day
+  FROM att2 a
+  -- Agrégat par fichier, calculé une fois pour tous les fichiers (C7) ; un
+  -- fichier sans livraison garde bad_n = 0 et last_line_day absente, comme avant.
+  LEFT JOIN (
+    SELECT d.export_id,
+           count(*) FILTER (WHERE NOT d.clean OR NOT (
+             d.status IN ('provisional', 'superseded')
+             OR (d.status IN ('promoted', 'duplicate', 'rejected')
+                 AND EXISTS (SELECT 1 FROM units2 u WHERE u.day_unit_id = d.day_unit_id AND u.vkey = d.vkey)))) AS bad_n,
+           max(d.day) FILTER (WHERE d.day <= (x.export_ingested_at AT TIME ZONE 'Africa/Dakar')::date) AS last_line_day
+    FROM dlv d
+    JOIN att2 x ON x.export_id = d.export_id
+    GROUP BY d.export_id
+  ) eu ON eu.export_id = a.export_id
+  WHERE a.supported AND a.file_status_ok AND cardinality(a.residual) = 0 AND coalesce(eu.bad_n, 0) = 0
+),
+-- Journée close, preuve (a) : même VERSION (mouvements et version financière),
+-- livrée par un fichier digne de preuve qui porte une ligne datée APRÈS la
+-- journée, au plus tard le jour de son dépôt. L'unité doit être cohérente.
+closure_proofs AS (
+  SELECT u.unit_id, te.export_id, s2.status AS delivery, te.export_ingested_at, max(s3.day) AS later_line_day
+  FROM units2 u
+  JOIN dlv s2 ON s2.day_unit_id = u.day_unit_id AND s2.vkey = u.vkey AND s2.status IN ('promoted', 'duplicate')
+  JOIN trusted_exports te ON te.export_id = s2.export_id
+  JOIN dlv s3 ON s3.export_id = s2.export_id AND s3.day > u.day
+   AND s3.day <= (te.export_ingested_at AT TIME ZONE 'Africa/Dakar')::date
+  WHERE u.coherent
+  GROUP BY u.unit_id, te.export_id, s2.status, te.export_ingested_at
+),
+-- Sources d'une version : empreinte brute dans le contexte du compte et de la
+-- journée ; première apparition = premier dépôt (un redépôt identique ne la
+-- change pas).
+src_first AS (
+  SELECT d.day_unit_id, d.vkey, d.raw_text_hash, d.rid, min(d.export_ingested_at) AS first_seen_at
+  FROM dlv d WHERE d.status NOT IN ('provisional', 'superseded')
+  GROUP BY d.day_unit_id, d.vkey, d.raw_text_hash, d.rid
+),
+-- Réfutations explicites actives, et leur effectivité revérifiée à la lecture :
+-- version retenue inchangée et utilisable (cohérente, lignes conformes), preuve
+-- toujours valable, chaque source couverte toujours justifiée avec sa première
+-- apparition recalculée. Les composantes servent au statut rendu (P2).
+ref_eff0 AS (
+  SELECT r.id, r.account_registry_id AS rid, r.accounting_date AS day, r.day_unit_id, r.refuted_version_key,
+         r.proof_kind, r.proof_bound_day, r.created_at, r.retained_version_key,
+         EXISTS (SELECT 1 FROM units2 u WHERE u.unit_id = r.retained_canonical_unit_id) AS retained_present,
+         EXISTS (SELECT 1 FROM units2 u WHERE u.unit_id = r.retained_canonical_unit_id AND u.coherent) AS retained_ok,
+         (r.proof_kind = 'BANK_PIECE'
+          OR EXISTS (SELECT 1 FROM dlv p JOIN trusted_exports te ON te.export_id = p.export_id
+                     WHERE p.staging_id = r.proof_staging_unit_id AND p.status IN ('promoted', 'duplicate')
+                       AND p.vkey = r.retained_version_key)) AS proof_ok,
+         coalesce(ru.unjustified_n, 0) = 0 AS sources_ok
+  FROM public.daily_statement_version_refutations r
+  JOIN acc ON acc.rid = r.account_registry_id
+  -- Sources couvertes non justifiées, comptées une fois par réfutation (C7).
+  LEFT JOIN (
+    SELECT rs.refutation_id, count(*) AS unjustified_n
+    FROM public.daily_statement_refutation_sources rs
+    JOIN public.daily_statement_version_refutations r2 ON r2.id = rs.refutation_id
+    LEFT JOIN src_first sf ON sf.day_unit_id = r2.day_unit_id AND sf.vkey = r2.refuted_version_key
+     AND sf.raw_text_hash = rs.raw_text_hash AND sf.rid = rs.account_registry_id
+    WHERE NOT (r2.proof_bound_day > (coalesce(sf.first_seen_at, rs.first_seen_at) AT TIME ZONE 'Africa/Dakar')::date)
+    GROUP BY rs.refutation_id
+  ) ru ON ru.refutation_id = r.id
+  WHERE r.action = 'REFUTE'
+    AND NOT EXISTS (SELECT 1 FROM public.daily_statement_version_refutations x WHERE x.revokes_id = r.id)
+),
+ref_eff AS (
+  SELECT x.*, (x.retained_ok AND x.proof_ok AND x.sources_ok) AS effective FROM ref_eff0 x
+),
+-- Réfutation automatique, évaluée à la lecture : la livraison adoptée par un
+-- remplacement (supersede ou correction des seuls soldes), issue d'un fichier
+-- digne de preuve, réfute la version remplacée si elle justifie CHACUNE de ses
+-- sources ; sinon aucune.
+auto_eff AS (
+  SELECT u.unit_id, u.day_unit_id, u.rid, u.day,
+         public.daily_stmt_version_key(p.active_day_content_hash, p.aggregates_status, p.opening_balance_derived,
+           p.closing_balance_derived, p.day_total_debits, p.day_total_credits) AS refuted_vkey,
+         -- Chaque source justifiée : dernière journée livrée strictement postérieure
+         -- à sa première apparition ; absente, rien n'est justifié (F2 de la revue).
+         -- Comparée à la plus tardive des premières apparitions, regroupée une fois (C7).
+         u.coherent AND te.export_id IS NOT NULL AND (sm.last_first_seen_day IS NULL
+                                       OR coalesce(te.last_line_day > sm.last_first_seen_day, false)) AS effective,
+         te.last_line_day
+  FROM units2 u
+  JOIN public.daily_statement_units_canonical p ON p.id = u.prev_unit_id
+  LEFT JOIN trusted_exports te ON te.export_id = u.export_id
+  LEFT JOIN (
+    SELECT sf.day_unit_id, sf.vkey, max((sf.first_seen_at AT TIME ZONE 'Africa/Dakar')::date) AS last_first_seen_day
+    FROM src_first sf GROUP BY sf.day_unit_id, sf.vkey
+  ) sm ON sm.day_unit_id = u.day_unit_id
+      AND sm.vkey = public.daily_stmt_version_key(p.active_day_content_hash, p.aggregates_status,
+            p.opening_balance_derived, p.closing_balance_derived, p.day_total_debits, p.day_total_credits)
+),
+-- Comparaison de chaque autre livraison non provisoire d'une journée retenue
+-- avec la version retenue (trois issues), et couverture par une réfutation
+-- effective (source par source pour une réfutation explicite).
+cmp AS (
+  SELECT d.*, u.unit_id, u.active_day_content_hash AS r_hash, u.day_total_debits AS r_debits,
+         u.day_total_credits AS r_credits,
+         public.daily_stmt_version_compare(d.hash, d.aggregates_status, d.opening, d.closing, d.debits, d.credits,
+           u.active_day_content_hash, u.aggregates_status, u.opening, u.closing, u.day_total_debits,
+           u.day_total_credits) AS outcome,
+         -- Côté dont les faits manquent ou sont incohérents (données insuffisantes).
+         CASE WHEN NOT public.daily_stmt_version_coherent(u.aggregates_status, u.opening, u.closing, u.day_total_debits,
+                         u.day_total_credits) OR u.aggregates_status <> 'derived'
+              THEN CASE WHEN NOT public.daily_stmt_version_coherent(d.aggregates_status, d.opening, d.closing, d.debits,
+                                   d.credits) OR d.aggregates_status <> 'derived' THEN 'BOTH' ELSE 'RETAINED' END
+              WHEN NOT public.daily_stmt_version_coherent(d.aggregates_status, d.opening, d.closing, d.debits, d.credits)
+                   OR d.aggregates_status <> 'derived' THEN 'OTHER'
+              ELSE 'BOTH' END AS insufficient_side,
+         (EXISTS (SELECT 1 FROM ref_eff r
+                  JOIN public.daily_statement_refutation_sources rs ON rs.refutation_id = r.id
+                  WHERE r.effective AND r.day_unit_id = d.day_unit_id AND r.refuted_version_key = d.vkey
+                    AND rs.raw_text_hash = d.raw_text_hash AND rs.account_registry_id = d.rid)
+          OR EXISTS (SELECT 1 FROM auto_eff ae
+                     WHERE ae.effective AND ae.day_unit_id = d.day_unit_id AND ae.refuted_vkey = d.vkey)) AS covered,
+         (SELECT r.proof_kind FROM ref_eff r
+           WHERE r.effective AND r.day_unit_id = d.day_unit_id AND r.refuted_version_key = d.vkey LIMIT 1) AS ref_kind,
+         (SELECT r.proof_bound_day FROM ref_eff r
+           WHERE r.effective AND r.day_unit_id = d.day_unit_id AND r.refuted_version_key = d.vkey LIMIT 1) AS ref_day
+  FROM dlv d
+  JOIN units2 u ON u.day_unit_id = d.day_unit_id
+  WHERE d.status NOT IN ('provisional', 'superseded') AND d.staging_id <> u.promoted_staging_id
+),
+day_cmp AS (
+  SELECT c.rid, c.day,
+         bool_or(c.outcome = 'CONTRADICTION' AND NOT c.covered) AS conflict,
+         bool_or(c.outcome LIKE 'INSUFFICIENT%' AND NOT c.covered) AS insufficient,
+         CASE WHEN bool_or(c.outcome = 'INSUFFICIENT_INCOHERENT' AND NOT c.covered) THEN 'VERSION_FACTS_INCOHERENT'
+              WHEN bool_or(c.outcome = 'INSUFFICIENT_UNAVAILABLE' AND NOT c.covered) THEN 'AGGREGATES_UNAVAILABLE'
+         END AS insufficient_cause,
+         CASE WHEN bool_or(c.insufficient_side IN ('RETAINED', 'BOTH')) FILTER (WHERE c.outcome LIKE 'INSUFFICIENT%' AND NOT c.covered)
+                   AND bool_or(c.insufficient_side IN ('OTHER', 'BOTH')) FILTER (WHERE c.outcome LIKE 'INSUFFICIENT%' AND NOT c.covered)
+                THEN 'BOTH'
+              WHEN bool_or(c.insufficient_side = 'RETAINED') FILTER (WHERE c.outcome LIKE 'INSUFFICIENT%' AND NOT c.covered)
+                THEN 'RETAINED'
+              WHEN bool_or(c.outcome LIKE 'INSUFFICIENT%' AND NOT c.covered) THEN 'OTHER'
+         END AS insufficient_side,
+         bool_or(c.status IN ('staged', 'needs_review', 'promotion_failed') AND NOT c.covered) AS pending,
+         count(DISTINCT (c.raw_text_hash, c.vkey)) FILTER (WHERE c.outcome = 'CONTRADICTION' AND NOT c.covered) AS conflict_sources,
+         count(DISTINCT (c.raw_text_hash, c.vkey)) FILTER (WHERE c.outcome LIKE 'INSUFFICIENT%' AND NOT c.covered) AS insufficient_sources,
+         count(*) FILTER (WHERE c.outcome = 'AGREEMENT_BREAKDOWN' AND NOT c.covered) AS breakdown_n,
+         count(*) FILTER (WHERE c.outcome = 'AGREEMENT_DETAIL' AND NOT c.covered) AS detail_n,
+         min(c.debits::text || '/' || c.credits::text) FILTER (WHERE c.outcome = 'AGREEMENT_BREAKDOWN' AND NOT c.covered)
+           AS breakdown_other_totals,
+         min(c.r_debits::text || '/' || c.r_credits::text) AS retained_totals
+  FROM cmp c
+  GROUP BY c.rid, c.day
+),
+-- Versions réfutées effectivement : nature de la preuve, sources, redépôts,
+-- mouvements non résolus (une réfutation prouve des soldes, pas des mouvements).
+refuted_info AS (
+  SELECT c.rid, c.day, c.vkey,
+         coalesce(max(c.ref_kind), 'FRESH_DELIVERY') AS nature,
+         bool_and(c.ref_kind IS NULL) AS automatic,
+         max(c.ref_day) AS proof_day,
+         count(*) AS deliveries,
+         count(DISTINCT c.raw_text_hash) AS sources,
+         count(*) - count(DISTINCT c.raw_text_hash) AS redeposits,
+         bool_or(c.hash <> c.r_hash) AS movements_unresolved
+  FROM cmp c WHERE c.covered
+  GROUP BY c.rid, c.day, c.vkey
+),
+ref_suspended AS (
+  SELECT DISTINCT r.rid, r.day FROM ref_eff r WHERE NOT r.effective
+),
+-- Statut courant de chaque réfutation enregistrée (P2 de la contre-revue CTO),
+-- calculé ici seulement : EFFECTIVE, PARTIAL (une source de la version réfutée
+-- n'est pas couverte : nouvelle preuve nécessaire) ou SUSPENDED, avec ses causes.
+ref_status AS (
+  SELECT r.id, r.rid, r.day, r.proof_kind,
+         CASE WHEN NOT r.effective THEN 'SUSPENDED'
+              WHEN coalesce(un.uncovered_n, 0) > 0 THEN 'PARTIAL'
+              ELSE 'EFFECTIVE' END AS state,
+         array_remove(ARRAY[
+           CASE WHEN NOT r.retained_present THEN 'RETAINED_VERSION_CHANGED' END,
+           CASE WHEN r.retained_present AND NOT r.retained_ok THEN 'RETAINED_VERSION_UNUSABLE' END,
+           CASE WHEN NOT r.proof_ok THEN 'PROOF_NO_LONGER_VALID' END,
+           CASE WHEN NOT r.sources_ok THEN 'SOURCE_NOT_JUSTIFIED' END,
+           CASE WHEN coalesce(un.uncovered_n, 0) > 0 THEN 'NEW_SOURCE_UNCOVERED' END], NULL) AS causes,
+         coalesce(un.uncovered_n, 0) AS uncovered_sources
+  FROM ref_eff r
+  LEFT JOIN (
+    SELECT r2.id, count(DISTINCT c.raw_text_hash) AS uncovered_n
+    FROM ref_eff r2
+    JOIN cmp c ON c.day_unit_id = r2.day_unit_id AND c.vkey = r2.refuted_version_key
+    WHERE NOT c.covered
+      AND NOT EXISTS (SELECT 1 FROM public.daily_statement_refutation_sources rs
+                      WHERE rs.refutation_id = r2.id AND rs.raw_text_hash = c.raw_text_hash
+                        AND rs.account_registry_id = c.rid)
+    GROUP BY r2.id
+  ) un ON un.id = r.id
+),
+-- Indicateurs de journée, toutes livraisons confondues.
+day_flags AS (
+  SELECT d.rid, d.day,
+         bool_or(d.status = 'provisional') AS has_provisional,
+         bool_or(d.status IN ('staged', 'needs_review', 'promotion_failed')) AS has_pending,
+         bool_or(d.status NOT IN ('superseded', 'rejected')) AS has_live,
+         count(*) FILTER (WHERE d.status = 'rejected') AS rejected_n
+  FROM dlv d
+  GROUP BY d.rid, d.day
+),
+-- Ouvertures connues, règle unique : unité retenue ; toute livraison non
+-- provisoire de tout statut (doublon, écartée, unité remplacée, version
+-- incohérente comprise), sauf source couverte par une réfutation effective ;
+-- livraison provisoire vivante.
+day_openings AS (
+  SELECT u.rid, u.day, u.opening FROM units2 u WHERE u.opening IS NOT NULL
+  UNION
+  SELECT d.rid, d.day, d.opening
+  FROM dlv d
+  LEFT JOIN cmp c ON c.staging_id = d.staging_id
+  WHERE d.opening IS NOT NULL AND d.status <> 'superseded' AND NOT coalesce(c.covered, false)
+),
+proof_exports AS (
+  SELECT te.rid, te.export_id, te.export_ingested_at,
+         te.export_period_start AS p_start, te.export_period_end AS p_end,
+         least(te.export_period_end, coalesce(te.last_line_day, te.export_period_start) - 1) AS closed_until
+  FROM trusted_exports te
+  JOIN treasury_private.supported_formats f
+    ON f.bank = te.bank AND f.source_format = te.source_format AND f.period_provenance = 'DECLARED'
+),
+-- Début de l'historique : première unité retenue, première période probante,
+-- première livraison VIVANTE (une livraison écartée ne fixe pas ce début).
+bounds AS (
+  SELECT acc.rid,
+         (SELECT min(u.day) FROM units2 u WHERE u.rid = acc.rid) AS first_unit,
+         (SELECT max(u.day) FROM units2 u WHERE u.rid = acc.rid) AS last_unit,
+         (SELECT min(pe.p_start) FROM proof_exports pe WHERE pe.rid = acc.rid AND pe.closed_until >= pe.p_start) AS first_proof,
+         (SELECT max(pe.closed_until) FROM proof_exports pe WHERE pe.rid = acc.rid) AS last_proof,
+         (SELECT min(f.day) FROM day_flags f WHERE f.rid = acc.rid AND f.has_live) AS first_live,
+         (SELECT max(f.day) FROM day_flags f WHERE f.rid = acc.rid) AS last_staged
+  FROM acc
+),
+series AS (
+  SELECT b.rid, g::date AS day
+  FROM bounds b
+  CROSS JOIN params p
+  CROSS JOIN LATERAL generate_series(
+    least(b.first_unit, b.first_proof, b.first_live),
+    least(p.t, greatest(p.d, b.last_unit, b.last_proof, b.last_staged)),
+    interval '1 day') g
+  WHERE coalesce(b.first_unit, b.first_proof, b.first_live) IS NOT NULL
+),
+-- Nature de chaque journée, avant la preuve de clôture des unités retenues.
+base AS (
+  SELECT s.rid, s.day, u.unit_id, u.export_id, u.opening, u.closing, u.unit_currency, u.ingested_at,
+         u.export_ingested_at, u.source_format,
+         EXISTS (SELECT 1 FROM closure_proofs cp WHERE cp.unit_id = u.unit_id) AS closed_by_later_line,
+         dc.insufficient_cause,
+         CASE
+           -- Contradiction démontrée par une version non couverte (élément 2).
+           WHEN u.unit_id IS NOT NULL AND coalesce(dc.conflict, false) THEN 'CONFLICT'
+           -- Livraison en attente, provisoire, ou données insuffisantes : incertitude.
+           WHEN u.unit_id IS NOT NULL AND (coalesce(dc.insufficient, false) OR coalesce(dc.pending, false)
+                                           OR coalesce(sd.has_provisional, false)) THEN 'CONTESTED'
+           WHEN u.unit_id IS NOT NULL AND NOT u.format_supported THEN 'UNIT_UNSUPPORTED'
+           -- Réserve CTO 4.1 : une unité dérivée incohérente ne fournit aucun solde.
+           -- Lignes stockées non conformes aux faits déclarés (P1 de la contre-revue
+           -- CTO) : même issue, quel que soit l'état des agrégats.
+           WHEN u.unit_id IS NOT NULL AND (NOT u.lines_conform OR (u.aggregates_status = 'derived' AND NOT u.coherent))
+             THEN 'UNIT_INCOHERENT'
+           WHEN u.unit_id IS NOT NULL AND NOT u.unit_clean THEN 'UNIT_REVIEW'
+           WHEN u.unit_id IS NOT NULL AND u.aggregates_status = 'derived' THEN 'UNIT_OK'
+           WHEN u.unit_id IS NOT NULL THEN 'UNIT_NO_BALANCE'
+           -- Une journée encore provisoire n'est jamais déclarée sans mouvement.
+           WHEN sd.has_provisional THEN 'PROVISIONAL'
+           -- Livraisons en attente seulement (A6).
+           WHEN sd.has_pending THEN 'PENDING'
+           WHEN sd.has_live THEN 'CONTESTED'
+           -- Une livraison écartée qui porte des lignes interdit l'absence de mouvement (arbitrage 11).
+           WHEN coalesce(sd.rejected_n, 0) > 0 THEN 'UNPROVEN'
+           WHEN EXISTS (SELECT 1 FROM proof_exports pe
+                        WHERE pe.rid = s.rid AND s.day BETWEEN pe.p_start AND pe.closed_until) THEN 'NOMOV'
+           ELSE 'UNPROVEN'
+         END AS base_kind
+  FROM series s
+  LEFT JOIN units2 u ON u.rid = s.rid AND u.day = s.day
+  LEFT JOIN day_flags sd ON sd.rid = s.rid AND sd.day = s.day
+  LEFT JOIN day_cmp dc ON dc.rid = s.rid AND dc.day = s.day
+),
+-- Journée close, preuve (b) : la journée suivante qui n'est pas « sans
+-- mouvement » est une unité retenue dont l'ouverture égale la clôture.
+next_heads AS (
+  SELECT b.rid, b.day,
+         lead(b.base_kind) OVER w AS next_kind,
+         lead(b.opening) OVER w AS next_opening,
+         lead(b.day) OVER w AS next_day,
+         lead(b.unit_id) OVER w AS next_unit_id
+  FROM base b WHERE b.base_kind <> 'NOMOV'
+  WINDOW w AS (PARTITION BY b.rid ORDER BY b.day)
+),
+days AS (
+  SELECT b.rid, b.day, b.unit_id, b.export_id, b.opening, b.closing, b.unit_currency, b.ingested_at,
+         b.export_ingested_at, b.source_format, b.closed_by_later_line, b.insufficient_cause, n.next_day, n.next_unit_id,
+         CASE WHEN b.base_kind <> 'UNIT_OK' THEN b.base_kind
+              WHEN b.closed_by_later_line THEN 'UNIT'
+              WHEN n.next_kind = 'UNIT_OK' AND n.next_opening = b.closing THEN 'UNIT'
+              ELSE 'NOT_CLOSED'
+         END AS kind
+  FROM base b
+  LEFT JOIN next_heads n ON n.rid = b.rid AND n.day = b.day
+),
+grouped AS (
+  SELECT d.*,
+         CASE WHEN d.kind = 'UNIT' THEN CASE WHEN d.closed_by_later_line THEN 'LATER_LINE' ELSE 'NEXT_OPENING' END
+         END AS closure_basis,
+         count(*) FILTER (WHERE d.kind <> 'NOMOV')
+           OVER (PARTITION BY d.rid ORDER BY d.day ROWS UNBOUNDED PRECEDING) AS grp_f,
+         count(*) FILTER (WHERE d.kind <> 'NOMOV')
+           OVER (PARTITION BY d.rid ORDER BY d.day DESC ROWS UNBOUNDED PRECEDING) AS grp_b,
+         count(*) FILTER (WHERE d.unit_id IS NOT NULL AND d.closing IS NOT NULL)
+           OVER (PARTITION BY d.rid ORDER BY d.day ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS units_before
+  FROM days d
+),
+heads AS (
+  SELECT g.rid, g.grp_f, g.grp_b, g.kind, g.day, g.opening, g.closing, g.ingested_at, g.export_ingested_at,
+         g.source_format
+  FROM grouped g WHERE g.kind <> 'NOMOV'
+),
+unit_rank AS (
+  SELECT g.rid, g.day, g.closing, row_number() OVER (PARTITION BY g.rid ORDER BY g.day) AS n
+  FROM grouped g WHERE g.unit_id IS NOT NULL AND g.closing IS NOT NULL
+),
+bal AS (
+  SELECT g.*,
+         CASE WHEN g.kind = 'UNIT' THEN g.closing
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.closing
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.opening
+         END AS balance_end,
+         CASE WHEN g.kind = 'UNIT' THEN g.closing
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.closing
+         END AS fwd_balance,
+         CASE WHEN g.kind = 'UNIT' THEN 'CLOSING'
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN 'CLOSING'
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN 'OPENING'
+         END AS source_role,
+         CASE WHEN g.kind = 'UNIT' THEN g.day
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.day
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.day
+         END AS source_day,
+         CASE WHEN g.kind = 'UNIT' THEN g.source_format
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.source_format
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.source_format
+         END AS source_format_used,
+         CASE WHEN g.kind = 'UNIT' THEN g.ingested_at
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.ingested_at
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.ingested_at
+         END AS source_unit_ingested_at,
+         CASE WHEN g.kind = 'UNIT' THEN g.export_ingested_at
+              WHEN g.kind = 'NOMOV' AND hf.kind = 'UNIT' THEN hf.export_ingested_at
+              WHEN g.kind = 'NOMOV' AND hb.kind IN ('UNIT', 'NOT_CLOSED') THEN hb.export_ingested_at
+         END AS source_export_ingested_at
+  FROM grouped g
+  LEFT JOIN heads hf ON g.kind = 'NOMOV' AND hf.rid = g.rid AND hf.grp_f = g.grp_f
+  LEFT JOIN heads hb ON g.kind = 'NOMOV' AND hb.rid = g.rid AND hb.grp_b = g.grp_b
+),
+chain AS (
+  SELECT b.*,
+         lag(b.day) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_day,
+         lag(b.fwd_balance) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_balance,
+         lag(b.source_day) OVER (PARTITION BY b.rid ORDER BY b.day) AS prev_source_day,
+         ur.closing AS prev_unit_closing, ur.day AS prev_unit_day,
+         -- Dernière journée antérieure non résolue (journée en attente comprise, A6).
+         max(b.day) FILTER (WHERE b.kind IN ('CONFLICT', 'CONTESTED', 'PENDING', 'PROVISIONAL', 'UNIT_REVIEW',
+                                             'UNIT_UNSUPPORTED', 'UNIT_INCOHERENT'))
+           OVER (PARTITION BY b.rid ORDER BY b.day ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS last_unresolved_before
+  FROM bal b
+  LEFT JOIN unit_rank ur ON ur.rid = b.rid AND ur.n = b.units_before
+),
+transitions AS (
+  SELECT c.*,
+         CASE WHEN c.unit_id IS NULL OR c.opening IS NULL THEN NULL
+              WHEN c.prev_day = c.day - 1 AND c.prev_balance IS NOT NULL
+                THEN CASE WHEN c.opening = c.prev_balance THEN 'OK' ELSE 'BREAK' END
+              WHEN c.last_unresolved_before >= coalesce(c.prev_unit_day, c.last_unresolved_before) THEN 'UNPROVEN'
+              WHEN c.prev_unit_closing IS NULL THEN 'ANCHOR'
+              WHEN c.opening = c.prev_unit_closing THEN 'CONTINUOUS_GAP'
+              ELSE 'UNPROVEN'
+         END AS transition
+  FROM chain c
+),
+opening_days AS (
+  SELECT o.rid, o.day, array_agg(o.opening) AS openings FROM day_openings o GROUP BY o.rid, o.day
+),
+late_openings AS (
+  SELECT f.rid, min(f.day) AS day FROM opening_days f, params p WHERE f.day > p.t GROUP BY f.rid
+),
+-- Regards en avant : « première journée suivante » calculée par un cumul en
+-- ordre décroissant (rangées de journée strictement postérieure, une rangée par
+-- journée et par compte), coût linéaire ; même ensemble de rangées que la
+-- fenêtre « 1 FOLLOWING .. UNBOUNDED FOLLOWING » (C7, réécriture à sémantique
+-- identique, éprouvée par 82_differential.sql contre la référence figée).
+ahead AS (
+  SELECT t.*,
+         t.unit_currency IS NOT NULL AND t.unit_currency <> r.currency AS currency_at_day,
+         coalesce(min(t.day) FILTER (WHERE od.day IS NOT NULL) OVER fw, lo.day) AS next_open_day,
+         min(t.day) FILTER (WHERE t.kind <> 'NOMOV') OVER fw AS next_non_nomov_day,
+         min(t.day) FILTER (WHERE t.kind NOT IN ('NOMOV', 'UNPROVEN')) OVER fw AS next_line_day,
+         coalesce(bool_or(t.transition = 'BREAK') OVER bw, false) AS break_through,
+         coalesce(bool_or(t.transition = 'UNPROVEN') OVER bw, false) AS unproven_through,
+         coalesce(bool_or(t.unit_currency <> r.currency) OVER bw, false) AS currency_through,
+         -- Indicateurs cumulés évalués à une journée H de la série : vrais dès la
+         -- première journée qui les porte (première date <= H).
+         min(t.day) FILTER (WHERE t.transition = 'BREAK') OVER pw AS first_break_day,
+         min(t.day) FILTER (WHERE t.transition = 'UNPROVEN') OVER pw AS first_unproven_day,
+         min(t.day) FILTER (WHERE t.unit_currency <> r.currency) OVER pw AS first_currency_day,
+         max(t.day) OVER pw AS series_end
+  FROM transitions t
+  JOIN public.daily_statement_account_registry r ON r.id = t.rid
+  LEFT JOIN opening_days od ON od.rid = t.rid AND od.day = t.day
+  LEFT JOIN late_openings lo ON lo.rid = t.rid
+  WINDOW fw AS (PARTITION BY t.rid ORDER BY t.day DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+         bw AS (PARTITION BY t.rid ORDER BY t.day ROWS UNBOUNDED PRECEDING),
+         pw AS (PARTITION BY t.rid)
+),
+-- Évaluation par date SANS point de départ ; l'horizon de X est la plus
+-- tardive de X et de la journée source de son solde. Les indicateurs cumulés à
+-- l'horizon se lisent sur la première date qui les porte (la série est continue,
+-- une rangée par journée) ; au-delà de la série, ceux de X, comme avant.
+day_status0 AS (
+  SELECT a.*,
+         a.balance_end IS NOT NULL AND coalesce(a.balance_end <> ANY (od.openings), false) AS next_mismatch,
+         a.next_non_nomov_day IS NULL OR a.next_non_nomov_day >= a.next_open_day AS only_nomov_between,
+         a.next_line_day IS NULL OR a.next_line_day >= a.next_open_day AS no_lines_between,
+         CASE WHEN h.horizon <= a.series_end THEN coalesce(a.first_break_day <= h.horizon, false)
+              ELSE a.break_through END AS has_break,
+         CASE WHEN h.horizon <= a.series_end THEN coalesce(a.first_unproven_day <= h.horizon, false)
+              ELSE a.unproven_through END AS has_unproven_base,
+         CASE WHEN h.horizon <= a.series_end THEN coalesce(a.first_currency_day <= h.horizon, false)
+              ELSE a.currency_through END AS currency_contradiction,
+         h.horizon
+  FROM ahead a
+  CROSS JOIN LATERAL (SELECT greatest(a.day, coalesce(a.source_day, a.day)) AS horizon) h
+  LEFT JOIN opening_days od ON od.rid = a.rid AND od.day = a.next_open_day
+),
+-- Ensemble des contradictions datées (§ 4.3), indépendant des points de départ.
+contra AS (
+  SELECT z.rid, min(z.day) AS first_day
+  FROM (
+    SELECT a.rid, a.day FROM ahead a WHERE a.transition = 'BREAK' OR a.kind = 'CONFLICT' OR a.currency_at_day
+    UNION ALL
+    SELECT v.rid, v.day FROM day_status0 v WHERE v.next_mismatch AND v.only_nomov_between
+  ) z
+  GROUP BY z.rid
+),
+-- Points de départ vérifiés (C5) : conditions de pose revérifiées.
+vs_all AS (
+  SELECT v.id, v.registry_account_id AS rid, v.day AS s_day, v.created_at, v.evidence_ref, v.canonical_unit_id,
+         v.content_hash, v.verified_opening,
+         EXISTS (SELECT 1 FROM treasury_private.verified_starts x WHERE x.revokes_id = v.id) AS revoked
+  FROM treasury_private.verified_starts v
+  JOIN acc ON acc.rid = v.registry_account_id
+  WHERE v.action = 'SET'
+),
+vs_static AS (
+  SELECT v.*,
+         CASE WHEN NOT EXISTS (SELECT 1 FROM inv i WHERE i.rid = v.rid AND i.registry_status = 'active') THEN 'ACCOUNT_INACTIVE'
+              WHEN u.unit_id IS NULL OR u.unit_id <> v.canonical_unit_id OR u.active_day_content_hash <> v.content_hash
+                THEN 'UNIT_CHANGED'
+              WHEN u.opening IS DISTINCT FROM v.verified_opening THEN 'OPENING_CHANGED'
+              WHEN b.base_kind IS DISTINCT FROM 'UNIT_OK' THEN 'DAY_' || coalesce(b.base_kind, 'UNKNOWN')
+         END AS static_failure
+  FROM vs_all v
+  LEFT JOIN units2 u ON u.rid = v.rid AND u.day = v.s_day
+  LEFT JOIN base b ON b.rid = v.rid AND b.day = v.s_day
+),
+vs_ok AS (
+  SELECT v.* FROM vs_static v WHERE NOT v.revoked AND v.static_failure IS NULL
+),
+-- Variante de chaîne par point : pour l'incertitude seulement, la chaîne ne
+-- regarde pas en deçà de S. Les contradictions restent évaluées sur tout
+-- l'historique (contra).
+vj AS (
+  SELECT p.id AS point_id, p.s_day, t.rid, t.day, t.kind, t.unit_id, t.opening, t.closing, t.prev_day,
+         t.prev_balance, t.transition
+  FROM vs_ok p JOIN transitions t ON t.rid = p.rid AND t.day >= p.s_day
+),
+-- Dernière unité de la variante (avec clôture) strictement avant chaque journée :
+-- sa journée et sa clôture, lues par fenêtres (C7) au lieu d'une jointure sur
+-- son rang ; mêmes valeurs. Groupe g = nombre d'unités jusqu'à la journée
+-- incluse : la clôture du groupe est celle de l'unité qui l'ouvre.
+vw0 AS (
+  SELECT vj.*,
+         max(vj.day) FILTER (WHERE vj.kind IN ('CONFLICT', 'CONTESTED', 'PENDING', 'PROVISIONAL', 'UNIT_REVIEW',
+                                               'UNIT_UNSUPPORTED', 'UNIT_INCOHERENT')) OVER wpre AS last_unres_v,
+         count(*) FILTER (WHERE vj.unit_id IS NOT NULL AND vj.closing IS NOT NULL) OVER wpre AS units_before_v,
+         max(vj.day) FILTER (WHERE vj.unit_id IS NOT NULL AND vj.closing IS NOT NULL) OVER wpre AS prev_unit_day_w,
+         count(*) FILTER (WHERE vj.unit_id IS NOT NULL AND vj.closing IS NOT NULL) OVER wcum AS unit_grp
+  FROM vj
+  WINDOW wpre AS (PARTITION BY vj.point_id ORDER BY vj.day ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+         wcum AS (PARTITION BY vj.point_id ORDER BY vj.day ROWS UNBOUNDED PRECEDING)
+),
+vw AS (
+  SELECT g.*,
+         CASE WHEN g.units_before_v = 0 THEN NULL
+              WHEN g.unit_grp > g.units_before_v THEN lag(g.grp_closing) OVER (PARTITION BY g.point_id ORDER BY g.day)
+              ELSE g.grp_closing END AS prev_unit_closing_w
+  FROM (SELECT w0.*, first_value(w0.closing) OVER (PARTITION BY w0.point_id, w0.unit_grp ORDER BY w0.day) AS grp_closing
+        FROM vw0 w0) g
+),
+vt AS (
+  SELECT w.point_id, w.s_day, w.rid, w.day, w.prev_unit_day_w AS prev_unit_day_v,
+         CASE WHEN w.unit_id IS NULL OR w.opening IS NULL THEN NULL
+              WHEN w.day = w.s_day THEN CASE WHEN w.transition IN ('OK', 'BREAK') THEN w.transition ELSE 'VERIFIED_START' END
+              WHEN w.prev_day = w.day - 1 AND w.prev_balance IS NOT NULL THEN w.transition
+              WHEN w.last_unres_v >= coalesce(w.prev_unit_day_w, w.last_unres_v) THEN 'UNPROVEN'
+              WHEN w.prev_unit_closing_w IS NULL THEN 'ANCHOR'
+              WHEN w.opening = w.prev_unit_closing_w THEN 'CONTINUOUS_GAP'
+              ELSE 'UNPROVEN'
+         END AS transition_v
+  FROM vw w
+),
+vflag AS (
+  SELECT vt.*,
+         coalesce(bool_or(vt.transition_v = 'UNPROVEN') OVER (PARTITION BY vt.point_id ORDER BY vt.day ROWS UNBOUNDED PRECEDING),
+                  false) AS unproven_v
+  FROM vt
+),
+-- Point applicable à X : le dernier point effectif de journée au plus X ;
+-- effectif seulement si aucune contradiction n'est datée au plus tard à
+-- l'horizon de X. Une seule chaîne par date, regards en avant compris.
+day_status AS (
+  SELECT v.*, ap.point_id AS vs_point_id, ap.s_day AS vs_day,
+         CASE WHEN ap.point_id IS NOT NULL THEN coalesce(vf.unproven_v, v.has_unproven_base)
+              ELSE v.has_unproven_base END AS has_unproven,
+         c.first_day AS first_contradiction_day
+  FROM day_status0 v
+  LEFT JOIN contra c ON c.rid = v.rid
+  LEFT JOIN LATERAL (
+    SELECT p.id AS point_id, p.s_day FROM vs_ok p
+    WHERE p.rid = v.rid AND p.s_day <= v.day AND (c.first_day IS NULL OR c.first_day > v.horizon)
+    ORDER BY p.s_day DESC LIMIT 1) ap ON true
+  LEFT JOIN vflag vf ON vf.point_id = ap.point_id AND vf.day = v.horizon
+),
+per_rid AS (
+  SELECT acc.rid,
+         v.kind AS kind_d, v.balance_end AS balance_d, v.source_day AS source_day_d, v.source_role AS source_role_d,
+         v.source_format_used AS source_format_d, v.source_unit_ingested_at AS unit_ingested_d,
+         v.source_export_ingested_at AS export_ingested_d, v.insufficient_cause AS insufficient_cause_d,
+         v.vs_point_id AS vs_point_d, v.vs_day AS vs_day_d, v.next_open_day AS next_open_day_d,
+         v.horizon AS horizon_d, v.first_contradiction_day,
+         coalesce(v.has_break, false) AS has_break,
+         coalesce(v.has_unproven, false) AS has_unproven,
+         coalesce(v.currency_contradiction, false) AS currency_contradiction,
+         v.day IS NOT NULL AS has_statement,
+         sv.unit_id AS source_unit_id_d, sv.export_id AS source_export_id_d, sv.closure_basis AS closure_basis_d,
+         sv.next_unit_id AS closure_next_unit_id_d, sv.next_day AS closure_next_day_d,
+         CASE WHEN v.vs_point_id IS NOT NULL
+              THEN coalesce((SELECT x.transition_v FROM vt x WHERE x.point_id = v.vs_point_id AND x.day = v.source_day),
+                            sv.transition)
+              ELSE sv.transition END AS source_link_d,
+         CASE WHEN v.vs_point_id IS NOT NULL
+                   AND (SELECT x.transition_v FROM vt x WHERE x.point_id = v.vs_point_id AND x.day = v.source_day)
+                       IN ('CONTINUOUS_GAP', 'UNPROVEN')
+                THEN (SELECT x.prev_unit_day_v FROM vt x WHERE x.point_id = v.vs_point_id AND x.day = v.source_day)
+              WHEN sv.transition IN ('OK', 'BREAK') THEN sv.prev_source_day
+              WHEN sv.transition IN ('CONTINUOUS_GAP', 'UNPROVEN') THEN sv.prev_unit_day END AS source_link_ref_d,
+         coalesce((SELECT u.source_format FROM units2 u WHERE u.rid = acc.rid AND u.day <= p.d ORDER BY u.day DESC LIMIT 1),
+                  (SELECT u.source_format FROM units2 u WHERE u.rid = acc.rid ORDER BY u.day LIMIT 1)) AS last_format,
+         (SELECT max(o.day) FROM day_status o WHERE o.rid = acc.rid AND o.balance_end IS NOT NULL) AS observed_through,
+         (SELECT jsonb_build_object('balance', t.balance_end::text, 'date', t.day)
+            FROM day_status t
+           WHERE t.rid = acc.rid AND t.day < p.d AND t.balance_end IS NOT NULL
+           ORDER BY t.day DESC LIMIT 1) AS last_known_before
+  FROM acc
+  CROSS JOIN params p
+  LEFT JOIN day_status v ON v.rid = acc.rid AND v.day = p.d
+  LEFT JOIN day_status sv ON sv.rid = acc.rid AND sv.day = v.source_day
+),
+after_d AS (
+  SELECT v.rid, v.next_mismatch, v.only_nomov_between, v.no_lines_between
+  FROM day_status v, params p WHERE v.day = p.d
+),
+value_dates AS (
+  SELECT u.rid, count(l.id) AS total_lines, count(l.id) FILTER (WHERE l.value_date IS NOT NULL) AS lines_with_value_date
+  FROM units2 u
+  CROSS JOIN params p
+  JOIN public.daily_statement_lines_canonical l ON l.canonical_unit_id = u.unit_id AND l.is_active
+  WHERE u.day BETWEEN p.d - 89 AND p.d
+  GROUP BY u.rid
+),
+-- Constats rendus pour D, sa journée source et la première journée suivante
+-- dont une ouverture est connue : écartements, réfutations, divergences,
+-- comparaisons non couvertes, réfutations suspendues.
+findings_day AS (
+  SELECT z.rid, z.day, jsonb_agg(z.f ORDER BY z.k, z.f::text) AS findings
+  FROM (
+    SELECT f.rid, f.day, 1 AS k, jsonb_build_object('kind', 'REJECTED_DELIVERY', 'day', f.day, 'count', f.rejected_n) AS f
+    FROM day_flags f WHERE f.rejected_n > 0
+    UNION ALL
+    SELECT ri.rid, ri.day, 2, jsonb_build_object(
+             'kind', 'REFUTED_VERSION', 'day', ri.day, 'nature', ri.nature, 'automatic', ri.automatic,
+             'proof_day', ri.proof_day, 'sources', ri.sources, 'covered_deliveries', ri.deliveries,
+             'covered_redeposits', ri.redeposits, 'movements_unresolved', ri.movements_unresolved,
+             'mention', CASE WHEN ri.nature = 'BANK_PIECE' THEN (SELECT p.piece_mention FROM params p) END)
+    FROM refuted_info ri
+    UNION ALL
+    SELECT dc.rid, dc.day, 3, jsonb_build_object(
+             'kind', 'VERSION_BREAKDOWN_DIVERGENCE', 'day', dc.day, 'count', dc.breakdown_n,
+             'retained_totals', dc.retained_totals, 'other_totals', dc.breakdown_other_totals,
+             'movements_unresolved', true)
+    FROM day_cmp dc WHERE dc.breakdown_n > 0
+    UNION ALL
+    SELECT dc.rid, dc.day, 4, jsonb_build_object(
+             'kind', 'VERSION_DETAIL_DIVERGENCE', 'day', dc.day, 'count', dc.detail_n, 'movements_unresolved', true)
+    FROM day_cmp dc WHERE dc.detail_n > 0
+    UNION ALL
+    SELECT dc.rid, dc.day, 5, jsonb_build_object(
+             'kind', 'VERSION_CONTRADICTION', 'day', dc.day, 'uncovered_sources', dc.conflict_sources)
+    FROM day_cmp dc WHERE dc.conflict
+    UNION ALL
+    SELECT dc.rid, dc.day, 6, jsonb_build_object(
+             'kind', 'VERSION_BALANCE_NOT_COMPARABLE', 'day', dc.day, 'cause', dc.insufficient_cause,
+             'side', dc.insufficient_side, 'uncovered_sources', dc.insufficient_sources)
+    FROM day_cmp dc WHERE dc.insufficient
+    UNION ALL
+    SELECT rs.rid, rs.day, 7, jsonb_build_object('kind', 'VERSION_REFUTATION_SUSPENDED', 'day', rs.day)
+    FROM ref_suspended rs
+    UNION ALL
+    -- Livraisons dont les lignes stockées ne justifient pas les faits déclarés.
+    SELECT d.rid, d.day, 8, jsonb_build_object(
+             'kind', 'LINES_NOT_CONFORMING', 'day', d.day, 'deliveries', count(*),
+             'retained_unit', bool_or(EXISTS (SELECT 1 FROM units2 u WHERE u.promoted_staging_id = d.staging_id)))
+    FROM dlv d WHERE d.has_lines AND NOT d.lines_ok
+    GROUP BY d.rid, d.day
+    UNION ALL
+    SELECT st.rid, st.day, 9, jsonb_build_object(
+             'kind', 'REFUTATION_STATUS', 'day', st.day, 'refutation_id', st.id, 'proof_kind', st.proof_kind,
+             'state', st.state, 'causes', to_jsonb(st.causes), 'uncovered_sources', st.uncovered_sources)
+    FROM ref_status st
+  ) z
+  GROUP BY z.rid, z.day
+),
+-- Points de départ du compte, état pour la date lue.
+vs_view AS (
+  SELECT v.rid, jsonb_agg(jsonb_build_object(
+           'verified_start_id', v.id, 'day', v.s_day, 'posed_at', v.created_at, 'evidence_ref', v.evidence_ref,
+           'state', CASE WHEN v.revoked THEN 'REVOKED' ELSE 'ACTIVE' END,
+           'for_date', CASE WHEN v.revoked THEN 'REVOKED'
+                            WHEN v.s_day > p.d THEN 'NOT_YET_APPLICABLE'
+                            WHEN v.static_failure IS NOT NULL THEN 'SUSPENDED'
+                            WHEN pr.first_contradiction_day IS NOT NULL
+                                 AND pr.first_contradiction_day <= coalesce(pr.horizon_d, p.d) THEN 'SUSPENDED'
+                            ELSE 'EFFECTIVE' END,
+           'suspension', CASE WHEN v.revoked OR v.s_day > p.d THEN NULL
+                              WHEN v.static_failure IS NOT NULL THEN v.static_failure
+                              WHEN pr.first_contradiction_day IS NOT NULL
+                                   AND pr.first_contradiction_day <= coalesce(pr.horizon_d, p.d)
+                                THEN 'CONTRADICTION_AT_HORIZON' END,
+           'applied', coalesce(v.id = pr.vs_point_d, false),
+           'history_before', jsonb_build_object(
+             'unproven_days', (SELECT count(*) FROM base b WHERE b.rid = v.rid AND b.day < v.s_day AND b.base_kind = 'UNPROVEN'),
+             'pending_days', (SELECT count(*) FROM base b WHERE b.rid = v.rid AND b.day < v.s_day
+                                AND b.base_kind IN ('PENDING', 'CONTESTED', 'PROVISIONAL')),
+             'conflict_days', (SELECT count(*) FROM base b WHERE b.rid = v.rid AND b.day < v.s_day AND b.base_kind = 'CONFLICT'),
+             'rejected_deliveries', (SELECT coalesce(sum(f.rejected_n), 0) FROM day_flags f
+                                      WHERE f.rid = v.rid AND f.day < v.s_day)))
+           ORDER BY v.s_day, v.created_at) AS points,
+         bool_or(NOT v.revoked AND v.s_day <= p.d
+                 AND (v.static_failure IS NOT NULL
+                      OR (pr.first_contradiction_day IS NOT NULL
+                          AND pr.first_contradiction_day <= coalesce(pr.horizon_d, p.d)))) AS any_suspended
+  FROM vs_static v
+  CROSS JOIN params p
+  LEFT JOIN per_rid pr ON pr.rid = v.rid
+  GROUP BY v.rid
+),
+per_account AS (
+  SELECT i.*,
+         pr.kind_d, pr.balance_d, pr.source_day_d, pr.source_format_d, pr.unit_ingested_d, pr.export_ingested_d,
+         pr.has_break, pr.has_unproven, pr.has_statement, pr.currency_contradiction, pr.last_format,
+         pr.observed_through, pr.last_known_before, pr.source_role_d, pr.source_unit_id_d, pr.source_export_id_d,
+         pr.closure_basis_d, pr.closure_next_unit_id_d, pr.closure_next_day_d, pr.source_link_d, pr.source_link_ref_d,
+         pr.vs_point_d, pr.vs_day_d, pr.next_open_day_d, pr.insufficient_cause_d,
+         vv.points AS verified_starts, coalesce(vv.any_suspended, false) AS vs_suspended,
+         EXISTS (SELECT 1 FROM ref_suspended rs CROSS JOIN params p
+                 WHERE rs.rid = i.rid AND rs.day IN (p.d, pr.source_day_d)) AS ref_suspended_d,
+         CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND i.registry_status = 'active'
+                   AND i.registry_currency = i.currency THEN
+           (SELECT max(v.day) FROM day_status v
+              JOIN qual vq ON vq.bank = i.bank AND vq.source_format = v.source_format_used AND vq.status = 'QUALIFIED'
+             WHERE v.rid = i.rid AND v.balance_end IS NOT NULL AND NOT v.has_break AND NOT v.has_unproven
+               AND NOT v.currency_contradiction AND NOT (v.next_mismatch AND (v.only_nomov_between OR v.no_lines_between)))
+         END AS covered_through,
+         q.status AS qualification_status, q.evidence_ref AS qualification_evidence,
+         array_remove(ARRAY[
+           CASE WHEN i.currency <> 'XOF' THEN 'CURRENCY_OUT_OF_SCOPE' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NULL AND i.bank = 'NSIA' THEN 'BANK_WITHOUT_FORMAT' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NULL AND i.bank <> 'NSIA' THEN 'ACCOUNT_NOT_REGISTERED' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND i.registry_status <> 'active' THEN 'REGISTRY_ACCOUNT_INACTIVE' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL
+                 AND (i.registry_currency <> i.currency OR pr.currency_contradiction)
+                THEN 'CURRENCY_CONTRADICTION' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND pr.has_break THEN 'CHAIN_BROKEN' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND ad.next_mismatch AND ad.only_nomov_between
+                THEN 'CHAIN_BROKEN_AFTER_DATE' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND ad.next_mismatch AND NOT ad.only_nomov_between
+                     AND ad.no_lines_between
+                THEN 'CHAIN_UNPROVEN_AFTER_DATE' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND pr.has_unproven THEN 'CHAIN_UNPROVEN' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND NOT coalesce(pr.has_statement, false) THEN 'NO_STATEMENT' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND coalesce(pr.has_statement, false) THEN
+             CASE pr.kind_d
+               WHEN 'PROVISIONAL' THEN 'PROVISIONAL_DAY'
+               WHEN 'UNPROVEN' THEN 'DAY_WITHOUT_PROOF'
+               WHEN 'UNIT_NO_BALANCE' THEN 'BALANCE_NOT_DERIVED'
+               WHEN 'UNIT_REVIEW' THEN 'UNIT_NEEDS_REVIEW'
+               WHEN 'UNIT_INCOHERENT' THEN 'UNIT_FINANCIAL_FACTS_INCOHERENT'
+               WHEN 'CONFLICT' THEN 'DAY_CONFLICT'
+               WHEN 'CONTESTED' THEN 'DAY_CONTESTED'
+               WHEN 'PENDING' THEN 'DAY_PENDING_VALIDATION'
+               WHEN 'UNIT_UNSUPPORTED' THEN 'PARSER_VERSION_UNSUPPORTED'
+               WHEN 'NOT_CLOSED' THEN 'DAY_NOT_CLOSED'
+               WHEN 'NOMOV' THEN CASE WHEN pr.balance_d IS NULL THEN 'BALANCE_UNKNOWN_AT_DATE' END
+               WHEN 'UNIT' THEN NULL
+               ELSE 'DAY_WITHOUT_PROOF'
+             END END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND pr.kind_d = 'CONTESTED' AND pr.insufficient_cause_d IS NOT NULL
+                THEN 'VERSION_BALANCE_NOT_COMPARABLE' END,
+           CASE WHEN i.currency = 'XOF' AND i.rid IS NOT NULL AND coalesce(pr.has_statement, false) THEN
+             CASE coalesce(q.status, 'NOT_QUALIFIED')
+               WHEN 'QUALIFIED' THEN NULL
+               WHEN 'PILOT' THEN 'FORMAT_PILOT'
+               WHEN 'SUSPENDED' THEN 'FORMAT_SUSPENDED'
+               ELSE 'FORMAT_NOT_QUALIFIED'
+             END END
+         ], NULL) AS reasons,
+         vd.total_lines, vd.lines_with_value_date,
+         coalesce((SELECT jsonb_agg(f ORDER BY f::text) FROM (
+             SELECT DISTINCT jsonb_array_elements(fd.findings) AS f
+             FROM findings_day fd CROSS JOIN params p
+             WHERE fd.rid = i.rid AND fd.day IN (p.d, pr.source_day_d, pr.next_open_day_d)) x), '[]'::jsonb) AS findings,
+         (SELECT coalesce(sum(f.rejected_n), 0) FROM day_flags f WHERE f.rid = i.rid) AS rejected_deliveries_n,
+         (SELECT count(*) FROM refuted_info ri WHERE ri.rid = i.rid) AS refuted_versions_n
+  FROM inv i
+  LEFT JOIN per_rid pr ON pr.rid = i.rid
+  LEFT JOIN after_d ad ON ad.rid = i.rid
+  LEFT JOIN qual q ON q.bank = i.bank AND q.source_format = coalesce(pr.source_format_d, pr.last_format)
+  LEFT JOIN value_dates vd ON vd.rid = i.rid
+  LEFT JOIN vs_view vv ON vv.rid = i.rid
+),
+-- Motifs informatifs : rendus, sans changer le statut (ils expliquent une
+-- suspension dont l'effet est déjà porté par les autres motifs).
+classified AS (
+  SELECT pa.*,
+         pa.reasons
+           || CASE WHEN pa.vs_suspended THEN ARRAY['VERIFIED_START_SUSPENDED'] ELSE ARRAY[]::text[] END
+           || CASE WHEN pa.ref_suspended_d THEN ARRAY['VERSION_REFUTATION_SUSPENDED'] ELSE ARRAY[]::text[] END
+           AS all_reasons,
+         CASE WHEN 'CURRENCY_OUT_OF_SCOPE' = ANY (pa.reasons) THEN 'OUT_OF_SCOPE'
+              WHEN pa.reasons && ARRAY['CURRENCY_CONTRADICTION', 'CHAIN_BROKEN', 'CHAIN_BROKEN_AFTER_DATE', 'DAY_CONFLICT']
+                THEN 'BLOCKED'
+              WHEN cardinality(pa.reasons) > 0 THEN 'NOT_COVERED'
+              WHEN pa.balance_d IS NULL THEN 'NOT_COVERED'
+              ELSE 'AVAILABLE'
+         END AS status
+  FROM per_account pa
+),
+attest AS (
+  SELECT a.inventory_fingerprint, a.attested_at, a.accounts_count
+  FROM treasury_private.inventory_attestations a ORDER BY a.seq DESC LIMIT 1
+),
+unlisted AS (
+  SELECT r.id, r.bank, r.currency, r.safe_alias
+  FROM public.daily_statement_account_registry r
+  WHERE r.status = 'active'
+    AND NOT EXISTS (SELECT 1 FROM treasury_private.expected_accounts e
+                    WHERE e.status = 'ACTIVE' AND e.registry_account_id = r.id)
+),
+cons AS (
+  SELECT count(*) FILTER (WHERE c.currency = 'XOF') AS expected_n,
+         count(*) FILTER (WHERE c.currency = 'XOF' AND c.status = 'AVAILABLE') AS available_n,
+         count(*) FILTER (WHERE c.currency = 'XOF' AND c.status = 'NOT_COVERED') AS not_covered_n,
+         count(*) FILTER (WHERE c.currency = 'XOF' AND c.status = 'BLOCKED') AS blocked_n,
+         count(*) FILTER (WHERE c.status = 'OUT_OF_SCOPE') AS out_of_scope_n,
+         sum(c.balance_d) FILTER (WHERE c.currency = 'XOF' AND c.status = 'AVAILABLE') AS subtotal
+  FROM classified c
+),
+inventory_state AS (
+  SELECT treasury_private.inventory_fingerprint() AS fingerprint,
+         (SELECT count(*) FROM treasury_private.expected_accounts e WHERE e.status = 'ACTIVE') AS active_n,
+         (SELECT a.inventory_fingerprint FROM attest a) AS attested_fingerprint,
+         (SELECT a.attested_at FROM attest a) AS attested_at,
+         (SELECT count(*) FROM unlisted u WHERE u.currency = 'XOF'
+            AND u.bank IN ('BDK', 'ORA', 'ATB', 'BICIS', 'BIS', 'BRIDGE')) AS unlisted_xof_n
+)
+SELECT jsonb_build_object(
+  'contract', 'treasury_balances_at_v1',
+  'as_of', p.d,
+  'today', p.t,
+  'read_at', p.read_at,
+  'timezone', 'Africa/Dakar',
+  'basis', 'ACCOUNTING_DATE',
+  'value_date_window_days', 90,
+  'inventory', jsonb_build_object(
+    'fingerprint', s.fingerprint,
+    'active_accounts', s.active_n,
+    'attested', s.attested_fingerprint IS NOT NULL AND s.attested_fingerprint = s.fingerprint AND s.active_n > 0,
+    'attested_at', s.attested_at,
+    'unlisted_registry_accounts', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('registry_account_id', u.id, 'bank', u.bank, 'currency', u.currency,
+                                          'alias', u.safe_alias) ORDER BY u.bank, u.safe_alias, u.id)
+      FROM unlisted u), '[]'::jsonb)),
+  'accounts', coalesce((
+    SELECT jsonb_agg(jsonb_build_object(
+      'expected_account_id', c.expected_id,
+      'registry_account_id', c.rid,
+      'bank', c.bank,
+      'currency', c.currency,
+      'alias', coalesce(c.registry_alias, c.safe_alias),
+      'status', c.status,
+      'reasons', to_jsonb(c.all_reasons),
+      'balance_at_date', CASE WHEN c.status = 'AVAILABLE' THEN c.balance_d::text END,
+      'observed_balance', CASE WHEN c.status <> 'AVAILABLE' AND c.balance_d IS NOT NULL
+                               THEN jsonb_build_object('balance', c.balance_d::text, 'date', p.d)
+                               WHEN c.status <> 'AVAILABLE' THEN c.last_known_before END,
+      'source_format', coalesce(c.source_format_d, c.last_format),
+      'qualification', coalesce(c.qualification_status, CASE WHEN c.bank = 'NSIA' THEN 'NO_FORMAT' ELSE 'NOT_QUALIFIED' END),
+      'qualification_evidence', c.qualification_evidence,
+      'dates', jsonb_build_object(
+        'bank_date_covered', c.covered_through,
+        'age_days', CASE WHEN c.covered_through IS NOT NULL THEN p.t - c.covered_through END,
+        'bank_date_observed', c.observed_through,
+        'balance_source_day', c.source_day_d),
+      'verified_starts', coalesce(c.verified_starts, '[]'::jsonb),
+      -- Unité retenue de la journée D elle-même (liaison d'un point de départ),
+      -- rendue même sans solde à D (journée non close, par exemple).
+      'retained_unit_at_date', (SELECT CASE WHEN count(*) = 1 THEN jsonb_build_object('unit_id', min(u.unit_id::text)::uuid,
+                                                   'content_hash', min(u.active_day_content_hash)) END
+                                  FROM units2 u WHERE u.rid = c.rid AND u.day = p.d),
+      'findings', c.findings,
+      'counters', jsonb_build_object('rejected_deliveries', c.rejected_deliveries_n,
+                                     'refuted_versions', c.refuted_versions_n),
+      'sources', CASE WHEN c.balance_d IS NULL THEN '[]'::jsonb ELSE
+        jsonb_build_array(jsonb_build_object(
+          'kind', 'CANONICAL_UNIT', 'role', c.source_role_d, 'unit_id', c.source_unit_id_d,
+          'export_id', c.source_export_id_d, 'day', c.source_day_d, 'ingested_at', c.unit_ingested_d,
+          'export_ingested_at', c.export_ingested_d, 'source_format', c.source_format_d,
+          -- Empreinte de contenu active : liaison d'un point de départ (C5).
+          'content_hash', (SELECT u.active_day_content_hash FROM units2 u WHERE u.unit_id = c.source_unit_id_d)))
+        || CASE WHEN c.source_role_d = 'CLOSING' AND c.closure_basis_d = 'LATER_LINE' THEN coalesce((
+             SELECT jsonb_agg(jsonb_build_object(
+                      'kind', 'CLOSURE_LATER_LINE', 'export_id', cp.export_id, 'delivery', cp.delivery,
+                      'later_line_day', cp.later_line_day, 'export_ingested_at', cp.export_ingested_at)
+                    ORDER BY cp.export_ingested_at, cp.export_id)
+             FROM closure_proofs cp WHERE cp.unit_id = c.source_unit_id_d), '[]'::jsonb)
+           WHEN c.source_role_d = 'CLOSING' AND c.closure_basis_d = 'NEXT_OPENING' THEN coalesce((
+             SELECT jsonb_build_array(jsonb_build_object(
+                      'kind', 'CLOSURE_NEXT_OPENING', 'unit_id', nu.unit_id, 'export_id', nu.export_id, 'day', nu.day,
+                      'ingested_at', nu.ingested_at, 'export_ingested_at', nu.export_ingested_at))
+             FROM units2 nu WHERE nu.unit_id = c.closure_next_unit_id_d), '[]'::jsonb)
+           ELSE '[]'::jsonb END
+        || jsonb_build_array(jsonb_build_object(
+             'kind', 'CHAIN_LINK', 'day', c.source_day_d, 'link', c.source_link_d, 'reference_day', c.source_link_ref_d))
+        || CASE WHEN c.vs_point_d IS NULL THEN '[]'::jsonb ELSE coalesce((
+             SELECT jsonb_build_array(jsonb_build_object(
+                      'kind', 'VERIFIED_START', 'day', v.s_day, 'posed_at', v.created_at, 'evidence_ref', v.evidence_ref))
+             FROM vs_static v WHERE v.id = c.vs_point_d), '[]'::jsonb) END
+        || coalesce((SELECT jsonb_agg(f ORDER BY f::text) FROM jsonb_array_elements(c.findings) f
+                     WHERE f ->> 'kind' IN ('REJECTED_DELIVERY', 'REFUTED_VERSION', 'VERSION_BREAKDOWN_DIVERGENCE',
+                                            'VERSION_DETAIL_DIVERGENCE')), '[]'::jsonb)
+        || coalesce((
+          SELECT jsonb_agg(jsonb_build_object(
+                   'kind', 'DECLARED_PERIOD', 'export_id', pe.export_id, 'period_start', pe.p_start,
+                   'period_end', pe.p_end, 'closed_until', pe.closed_until, 'export_ingested_at', pe.export_ingested_at)
+                 ORDER BY pe.p_start, pe.export_ingested_at, pe.export_id)
+          FROM proof_exports pe
+          WHERE pe.rid = c.rid AND pe.closed_until >= pe.p_start
+            AND EXISTS (SELECT 1 FROM (VALUES
+                  (least(c.source_day_d + 1, p.d), greatest(c.source_day_d - 1, p.d), c.source_day_d <> p.d),
+                  (c.source_day_d + 1, c.closure_next_day_d - 1,
+                   c.source_role_d = 'CLOSING' AND c.closure_basis_d = 'NEXT_OPENING'),
+                  (c.source_link_ref_d + 1, c.source_day_d - 1, c.source_link_d IN ('OK', 'BREAK'))) r(lo, hi, used)
+                WHERE r.used AND r.lo <= r.hi AND pe.p_start <= r.hi AND pe.closed_until >= r.lo)), '[]'::jsonb)
+      END,
+      'value_dates', jsonb_build_object('total_lines', coalesce(c.total_lines, 0),
+                                        'lines_with_value_date', coalesce(c.lines_with_value_date, 0)))
+      ORDER BY c.bank, coalesce(c.registry_alias, c.safe_alias), c.expected_id)
+    FROM classified c), '[]'::jsonb),
+  'consolidation', jsonb_build_object(
+    'currency', 'XOF',
+    'status', CASE WHEN k.blocked_n > 0 THEN 'BLOCKED'
+                   WHEN k.expected_n > 0 AND k.available_n = k.expected_n AND s.unlisted_xof_n = 0
+                        AND s.attested_fingerprint IS NOT NULL AND s.attested_fingerprint = s.fingerprint THEN 'COMPLETE'
+                   ELSE 'PARTIAL' END,
+    'amount', k.subtotal::text,
+    'accounts_expected', k.expected_n,
+    'accounts_available', k.available_n,
+    'accounts_not_covered', k.not_covered_n,
+    'accounts_blocked', k.blocked_n,
+    'accounts_out_of_scope', k.out_of_scope_n,
+    'registry_accounts_outside_inventory', s.unlisted_xof_n,
+    'reasons', to_jsonb(array_remove(ARRAY[
+      CASE WHEN s.active_n = 0 THEN 'INVENTORY_EMPTY' END,
+      CASE WHEN s.attested_fingerprint IS NULL OR s.attested_fingerprint <> s.fingerprint THEN 'INVENTORY_NOT_ATTESTED' END,
+      CASE WHEN s.unlisted_xof_n > 0 THEN 'REGISTRY_ACCOUNTS_OUTSIDE_INVENTORY' END,
+      CASE WHEN k.not_covered_n > 0 THEN 'ACCOUNTS_NOT_COVERED' END,
+      CASE WHEN k.blocked_n > 0 THEN 'ACCOUNTS_BLOCKED' END], NULL)))
+)
+FROM params p CROSS JOIN inventory_state s CROSS JOIN cons k
+$$;
+
+-- --------------------------------------------------------------------------
+-- 6. Commandes des points de départ vérifiés (administrateur unique)
+-- --------------------------------------------------------------------------
+-- Ordre des verrous (C9) : autorité de l'administrateur unique (partagée),
+-- inventaire, puis verrou de journée Daily v2. La pose n'est acquise que si le
+-- point est effectif pour sa propre journée, vérifié par la lecture elle-même ;
+-- sinon tout est annulé.
+CREATE FUNCTION public.treasury_admin_set_verified_start_v1(
+  p_command_key text, p_registry_account_id uuid, p_day date, p_canonical_unit_id uuid, p_content_hash text,
+  p_verified_opening text, p_evidence_ref text, p_reason text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor    uuid := treasury_private.require_admin();
+  v_reason   text := btrim(coalesce(p_reason, ''));
+  v_evidence text := btrim(coalesce(p_evidence_ref, ''));
+  v_prior    jsonb;
+  v_unit     public.daily_statement_units_canonical%ROWTYPE;
+  v_opening  numeric;
+  v_after    uuid;
+  v_id       uuid;
+  v_read     jsonb;
+  v_point    jsonb;
+  v_result   jsonb;
+BEGIN
+  v_prior := treasury_private.command_begin(v_actor, 'SET_VERIFIED_START', p_command_key, jsonb_build_object(
+    'registry', p_registry_account_id, 'day', p_day, 'unit', p_canonical_unit_id, 'hash', p_content_hash,
+    'opening', p_verified_opening, 'evidence', v_evidence, 'reason', v_reason));
+  IF v_prior IS NOT NULL THEN RETURN v_prior; END IF;
+  v_reason := treasury_private.require_reason(v_reason);
+  IF char_length(v_evidence) NOT BETWEEN 1 AND 200 OR v_evidence ~ '[[:cntrl:]]' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_EVIDENCE_REQUIRED';
+  END IF;
+  v_evidence := treasury_private.assert_safe_text(v_evidence);
+  -- Ouverture lue sur pièce : francs XOF entiers, sans tolérance.
+  IF p_verified_opening IS NULL OR btrim(p_verified_opening) !~ '^-?[0-9]{1,16}$' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_OPENING_NOT_WHOLE_XOF';
+  END IF;
+  v_opening := btrim(p_verified_opening)::numeric;
+  IF NOT EXISTS (SELECT 1 FROM treasury_private.expected_accounts e
+                 WHERE e.status = 'ACTIVE' AND e.registry_account_id = p_registry_account_id) THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_EXPECTED_ACCOUNT_UNKNOWN';
+  END IF;
+
+  SELECT * INTO v_unit FROM public.daily_statement_units_canonical WHERE id = p_canonical_unit_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'TREASURY_VERIFIED_START_STALE';
+  END IF;
+  PERFORM public.daily_stmt_acquire_day_lock(v_unit.day_unit_id);
+  -- Puis le fichier de la livraison retenue, en partage (C9) : une révocation
+  -- d'attestation de ce fichier attend la pose, ou la précède.
+  PERFORM public.daily_stmt_acquire_attempt_lock(
+    (SELECT s.attempt_id FROM public.daily_statement_units_staging s WHERE s.id = v_unit.promoted_from_staging_unit_id), false);
+  SELECT * INTO v_unit FROM public.daily_statement_units_canonical WHERE id = p_canonical_unit_id;
+  IF v_unit.status <> 'ingested' OR v_unit.account_registry_id IS DISTINCT FROM p_registry_account_id
+     OR v_unit.accounting_date <> p_day OR v_unit.active_day_content_hash IS DISTINCT FROM p_content_hash THEN
+    RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'TREASURY_VERIFIED_START_STALE';
+  END IF;
+  IF v_unit.currency <> 'XOF' OR v_unit.opening_balance_derived IS NULL
+     OR v_unit.opening_balance_derived <> trunc(v_unit.opening_balance_derived) THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_RETAINED_OPENING_NOT_WHOLE_XOF';
+  END IF;
+  IF v_unit.opening_balance_derived <> v_opening THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_OPENING_MISMATCH';
+  END IF;
+  IF EXISTS (SELECT 1 FROM treasury_private.verified_starts v
+             WHERE v.action = 'SET' AND v.registry_account_id = p_registry_account_id AND v.day = p_day
+               AND NOT EXISTS (SELECT 1 FROM treasury_private.verified_starts r WHERE r.revokes_id = v.id)) THEN
+    RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'TREASURY_VERIFIED_START_ALREADY_ACTIVE';
+  END IF;
+  SELECT r.id INTO v_after FROM treasury_private.verified_starts r
+  WHERE r.action = 'REVOKE' AND r.registry_account_id = p_registry_account_id AND r.day = p_day
+    AND NOT EXISTS (SELECT 1 FROM treasury_private.verified_starts a WHERE a.after_revocation_id = r.id)
+  ORDER BY r.created_at DESC, r.id LIMIT 1;
+
+  INSERT INTO treasury_private.verified_starts (
+    action, registry_account_id, day, canonical_unit_id, content_hash, verified_opening, evidence_ref, reason,
+    after_revocation_id, actor_id)
+  VALUES ('SET', p_registry_account_id, p_day, p_canonical_unit_id, p_content_hash, v_opening, v_evidence, v_reason,
+          v_after, v_actor)
+  RETURNING id INTO v_id;
+
+  -- Le point doit être effectif pour sa propre journée S (refus à la pose).
+  v_read := treasury_private.balances_snapshot(p_day, treasury_private.today());
+  SELECT p INTO v_point
+  FROM jsonb_array_elements(v_read -> 'accounts') a, jsonb_array_elements(a -> 'verified_starts') p
+  WHERE (a ->> 'registry_account_id')::uuid = p_registry_account_id AND (p ->> 'verified_start_id')::uuid = v_id;
+  IF v_point IS NULL OR v_point ->> 'for_date' <> 'EFFECTIVE' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023',
+      MESSAGE = 'TREASURY_VERIFIED_START_NOT_EFFECTIVE',
+      DETAIL = coalesce(v_point ->> 'suspension', 'UNKNOWN');
+  END IF;
+
+  INSERT INTO treasury_private.events (event_type, actor_id, payload, reason)
+  VALUES ('VERIFIED_START_SET', v_actor, jsonb_build_object(
+            'verified_start_id', v_id, 'registry_account_id', p_registry_account_id, 'day', p_day,
+            'canonical_unit_id', p_canonical_unit_id, 'evidence_ref', v_evidence), v_reason);
+  v_result := jsonb_build_object('verified_start_id', v_id, 'day', p_day, 'state', 'EFFECTIVE');
+  RETURN treasury_private.command_finish(p_command_key, v_result);
+END;
+$$;
+
+CREATE FUNCTION public.treasury_admin_revoke_verified_start_v1(
+  p_command_key text, p_verified_start_id uuid, p_reason text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor  uuid := treasury_private.require_admin();
+  v_reason text := btrim(coalesce(p_reason, ''));
+  v_prior  jsonb;
+  v_point  treasury_private.verified_starts%ROWTYPE;
+  v_id     uuid;
+  v_result jsonb;
+BEGIN
+  v_prior := treasury_private.command_begin(v_actor, 'REVOKE_VERIFIED_START', p_command_key,
+    jsonb_build_object('verified_start', p_verified_start_id, 'reason', v_reason));
+  IF v_prior IS NOT NULL THEN RETURN v_prior; END IF;
+  v_reason := treasury_private.require_reason(v_reason);
+  SELECT * INTO v_point FROM treasury_private.verified_starts WHERE id = p_verified_start_id AND action = 'SET';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_VERIFIED_START_UNKNOWN';
+  END IF;
+  IF EXISTS (SELECT 1 FROM treasury_private.verified_starts r WHERE r.revokes_id = p_verified_start_id) THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'TREASURY_VERIFIED_START_ALREADY_REVOKED';
+  END IF;
+  INSERT INTO treasury_private.verified_starts (
+    action, registry_account_id, day, canonical_unit_id, content_hash, verified_opening, evidence_ref, reason,
+    revokes_id, actor_id)
+  VALUES ('REVOKE', v_point.registry_account_id, v_point.day, v_point.canonical_unit_id, v_point.content_hash,
+          v_point.verified_opening, v_point.evidence_ref, v_reason, v_point.id, v_actor)
+  RETURNING id INTO v_id;
+  INSERT INTO treasury_private.events (event_type, actor_id, payload, reason)
+  VALUES ('VERIFIED_START_REVOKED', v_actor, jsonb_build_object(
+            'verified_start_id', p_verified_start_id, 'revocation_id', v_id,
+            'registry_account_id', v_point.registry_account_id, 'day', v_point.day), v_reason);
+  v_result := jsonb_build_object('verified_start_id', p_verified_start_id, 'revocation_id', v_id);
+  RETURN treasury_private.command_finish(p_command_key, v_result);
+END;
+$$;
+
+-- Statut courant des réfutations d'une journée pour l'interface Daily v2 (P2 de
+-- la contre-revue CTO) : la seule autorité est la lecture « Soldes à date » ;
+-- aucune effectivité n'est recalculée dans le navigateur. Hors d'état de la
+-- vérifier, la réponse le dit (verifiable = false) au lieu de la supposer.
+CREATE FUNCTION public.daily_v2_refutation_status_v1(p_day_unit_id text)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_actor uuid;
+  v_unit  record;
+  v_today date := treasury_private.today();
+  v_read  jsonb;
+  v_acc   jsonb;
+BEGIN
+  v_actor := public.daily_stmt_require_decision_actor(false);
+  SELECT s.account_registry_id AS rid, s.accounting_date AS day INTO v_unit
+  FROM public.daily_statement_units_staging s WHERE s.day_unit_id = p_day_unit_id
+  ORDER BY s.created_at, s.id LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'DAY_UNKNOWN',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  IF NOT coalesce((SELECT s.is_open FROM treasury_private.module_switch_events s ORDER BY s.seq DESC LIMIT 1), false) THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'TREASURY_MODULE_CLOSED',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  IF v_unit.rid IS NULL OR NOT EXISTS (SELECT 1 FROM treasury_private.expected_accounts e
+                                       WHERE e.status = 'ACTIVE' AND e.registry_account_id = v_unit.rid) THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'ACCOUNT_NOT_IN_INVENTORY',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  IF v_unit.day > v_today THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'FUTURE_DAY',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  v_read := treasury_private.balances_snapshot(v_unit.day, v_today);
+  SELECT a INTO v_acc FROM jsonb_array_elements(v_read -> 'accounts') a
+  WHERE (a ->> 'registry_account_id')::uuid = v_unit.rid LIMIT 1;
+  IF v_acc IS NULL THEN
+    RETURN jsonb_build_object('day_unit_id', p_day_unit_id, 'verifiable', false, 'cause', 'ACCOUNT_NOT_IN_INVENTORY',
+                              'refutations', '[]'::jsonb);
+  END IF;
+  RETURN jsonb_build_object(
+    'day_unit_id', p_day_unit_id, 'verifiable', true, 'read_at', v_read -> 'read_at',
+    'refutations', coalesce((
+      SELECT jsonb_agg(jsonb_build_object(
+               'refutation_id', f ->> 'refutation_id', 'proof_kind', f ->> 'proof_kind', 'state', f ->> 'state',
+               'causes', f -> 'causes', 'uncovered_sources', (f ->> 'uncovered_sources')::integer)
+             ORDER BY f ->> 'refutation_id')
+      FROM jsonb_array_elements(v_acc -> 'findings') f
+      WHERE f ->> 'kind' = 'REFUTATION_STATUS' AND (f ->> 'day')::date = v_unit.day
+        AND (f ->> 'refutation_id')::uuid IN (SELECT r.id FROM public.daily_statement_version_refutations r
+                                               WHERE r.day_unit_id = p_day_unit_id)), '[]'::jsonb));
+END;
+$$;
+
+-- --------------------------------------------------------------------------
+-- 7. Privilèges minimaux
+-- --------------------------------------------------------------------------
+ALTER TABLE treasury_private.parser_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE treasury_private.verified_starts ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON ALL TABLES IN SCHEMA treasury_private FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA treasury_private FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA treasury_private FROM PUBLIC, anon, authenticated, service_role;
+
+REVOKE ALL ON FUNCTION public.treasury_admin_add_expected_account_v1(text, uuid, text, text, text, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.treasury_admin_set_verified_start_v1(text, uuid, date, uuid, text, text, text, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.treasury_admin_revoke_verified_start_v1(text, uuid, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.treasury_admin_add_expected_account_v1(text, uuid, text, text, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.treasury_admin_set_verified_start_v1(text, uuid, date, uuid, text, text, text, text)
+  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.treasury_admin_revoke_verified_start_v1(text, uuid, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.daily_v2_refutation_status_v1(text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.daily_v2_refutation_status_v1(text) TO authenticated;
+
+COMMENT ON TABLE treasury_private.verified_starts IS
+  'Points de départ vérifiés sur pièce par l''administrateur unique, applicables par période ; ajout seul.';
+COMMENT ON TABLE treasury_private.parser_versions IS
+  'Liste blanche exacte des versions de profil prises en charge par le Lot 1 ; ajout seul, canal opérateur.';
+
+COMMIT;

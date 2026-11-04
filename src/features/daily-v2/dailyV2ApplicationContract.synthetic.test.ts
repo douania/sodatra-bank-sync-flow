@@ -39,6 +39,14 @@ const migrationServerScope = readFileSync(
   'supabase/migrations/20260829120000_daily_v2_controlled_production_pilot_server_scope.sql',
   'utf8',
 );
+const migrationOperational = readFileSync(
+  'supabase/migrations/20261103120000_daily_v2_operational_decisions.sql',
+  'utf8',
+);
+const migrationProvisionalLifecycle = readFileSync(
+  'supabase/migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
 const bisMassGenerator = readFileSync(
   'supabase/tests/daily_statement_units_v2/e2e0r_generate_bis_mass_backfill.ts',
@@ -70,6 +78,17 @@ test('uses the exact Daily v2 RPC names and no direct table mutation', () => {
     'deactivate_daily_statement_account',
     'issue_daily_statement_backfill_grant',
     'revoke_daily_statement_backfill_grant',
+    // Lot 1 opérationnel.
+    'attest_daily_statement_attempt',
+    'revoke_daily_statement_attempt_attestation',
+    'reject_daily_statement_unit',
+    'promote_daily_statement_attempt_units',
+    'supersede_daily_statement_unit_balances',
+    'refute_daily_statement_version',
+    'revoke_daily_statement_version_refutation',
+    // P1 et P2 de la contre-revue CTO de la PR #156 : lectures serveur.
+    'daily_v2_attempt_batch_plan_v1',
+    'daily_v2_refutation_status_v1',
   ]) {
     assert.match(service, new RegExp(`\\.rpc\\(['"]${rpc}['"]`));
     assert.match(types, new RegExp(`${rpc}:`));
@@ -94,6 +113,110 @@ test('keeps the six historical Daily v2 tables and adds the 0U control tables', 
   ]) {
     assert.match(types, new RegExp(`${table}:`));
   }
+  // Lot 1 opérationnel : quatre tables publiques en lecture seule côté client.
+  for (const table of [
+    'daily_statement_attempt_attestations',
+    'daily_statement_version_refutations',
+    'daily_statement_refutation_sources',
+    'daily_statement_correction_pieces',
+  ]) {
+    assert.match(types, new RegExp(`${table}:`));
+    assert.match(migrationOperational, new RegExp(`GRANT SELECT ON TABLE public\\.${table} TO authenticated;`));
+    assert.doesNotMatch(migrationOperational, new RegExp(`GRANT (INSERT|UPDATE|DELETE|ALL)[^;]*public\\.${table}`));
+  }
+});
+
+test('scopes and keys every Lot 1 operational decision on the server', () => {
+  const scopeByRpc: Record<string, 'daily' | 'admin'> = {
+    attest_daily_statement_attempt: 'admin',
+    revoke_daily_statement_attempt_attestation: 'admin',
+    reject_daily_statement_unit: 'daily',
+    promote_daily_statement_attempt_units: 'daily',
+    supersede_daily_statement_unit_balances: 'daily',
+    refute_daily_statement_version: 'daily',
+    revoke_daily_statement_version_refutation: 'daily',
+  };
+  for (const [rpc, scope] of Object.entries(scopeByRpc)) {
+    const body = migrationOperational.split(`CREATE FUNCTION public.${rpc}(`)[1]?.split('\n$$;')[0] ?? '';
+    assert.ok(body.length > 0, `${rpc} defined`);
+    assert.match(body, new RegExp(`daily_v2_private\\.assert_runtime_scope\\('${scope}'\\)`), `${rpc} scope`);
+    assert.match(body, /daily_v2_private\.command_begin\(/, `${rpc} command key`);
+    assert.match(body, /daily_v2_private\.command_finish\(p_command_key,/, `${rpc} recorded result`);
+    assert.match(migrationOperational, new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${rpc}\\([^)]*\\) TO authenticated;`));
+  }
+  // Les lectures de versions restent internes au serveur.
+  for (const internal of ['daily_stmt_version_facts', 'daily_stmt_version_sources', 'daily_stmt_batch_candidates',
+    'daily_stmt_h1_keep_lines', 'daily_stmt_version_compare', 'daily_stmt_version_key']) {
+    assert.match(migrationOperational, new RegExp(`REVOKE ALL ON FUNCTION public\\.${internal}\\([^)]*\\)\\s*FROM PUBLIC, anon, authenticated, service_role`));
+    assert.doesNotMatch(migrationOperational, new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${internal}\\(`));
+  }
+  assert.match(migrationOperational, /CHECK \(command_key ~ '\^\[A-Za-z0-9\._:-\]\{8,120\}\$'\)/);
+  assert.match(service, /return `daily-v2:\$\{globalThis\.crypto\.randomUUID\(\)\}`;/);
+});
+
+/** Corps d'une fonction (CREATE ... jusqu'au $$; final), lignes sans fin de ligne Windows. */
+function functionBody(source: string, header: string): string[] {
+  const lines = source.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex((line) => line.startsWith(header));
+  assert.ok(start >= 0, `${header} found`);
+  const end = lines.findIndex((line, index) => index > start && line === '$$;');
+  return lines.slice(start, end + 1);
+}
+
+/** Lignes ajoutées et retirées d'une redéfinition, en multiensembles. */
+function lineDelta(before: string[], after: string[]) {
+  const count = (lines: string[]) => lines.reduce((map, line) => map.set(line, (map.get(line) ?? 0) + 1), new Map<string, number>());
+  const a = count(before);
+  const b = count(after);
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const [line, n] of a) for (let i = (b.get(line) ?? 0); i < n; i += 1) removed.push(line.trim());
+  for (const [line, n] of b) for (let i = (a.get(line) ?? 0); i < n; i += 1) added.push(line.trim());
+  return { removed, added };
+}
+
+test('redefines the two live ingest cores with the H1 exception only', () => {
+  // Cœur de backfill : source vivante 20260829000000 (0V).
+  const bis = lineDelta(
+    functionBody(migrationBisTimeoutHardening, 'CREATE OR REPLACE FUNCTION public.daily_stmt_pre_ingest_bis_backfill_core_0v('),
+    functionBody(migrationOperational, 'CREATE OR REPLACE FUNCTION public.daily_stmt_pre_ingest_bis_backfill_core_0v('),
+  );
+  assert.deepEqual(bis.removed.sort(), [
+    "'final_status',final_status",
+    "(value ->> 'line_count')::integer AS line_count",
+    "))),'[]'::jsonb) INTO v_events",
+    "ELSE 'staged' END AS final_status",
+    "WHERE d.value ->> 'final_status'<>'duplicate';",
+    "WHERE d.value ->> 'final_status'<>'duplicate';",
+  ].sort());
+  for (const line of bis.added) {
+    assert.match(line,
+      /keep_lines|h1_keep_lines|AS aggregates_status,|daily_stmt_parse_amount_strict\(value ->> '(opening_balance_derived|closing_balance_derived|day_total_debits|day_total_credits)'\)|duplicate_financial_version_differs|^-- |^\(value ->> 'line_count'\)::integer AS line_count,$|AS final_status,$|^\) \|\| CASE WHEN|^ELSE '\{\}'::jsonb END$|^\)\),'\[\]'::jsonb\) INTO v_events$|^THEN public\.daily_stmt_h1_keep_lines|^u\.opening, u\.closing|^CASE WHEN c\.id IS NOT NULL/,
+      `unexpected BIS core change: ${line}`);
+  }
+  // Cœur quotidien et provisoire : source vivante 20260728000000 (0Z).
+  const legacy = lineDelta(
+    functionBody(migrationProvisionalLifecycle, 'CREATE OR REPLACE FUNCTION public.daily_stmt_pre_ingest_legacy_core_0u('),
+    functionBody(migrationOperational, 'CREATE OR REPLACE FUNCTION public.daily_stmt_pre_ingest_legacy_core_0u('),
+  );
+  assert.deepEqual(legacy.removed, ["IF v_final <> 'duplicate' THEN"]);
+  for (const line of legacy.added) {
+    assert.match(line,
+      /keep_lines|v_new_unit|^-- |^IF v_final = 'duplicate' AND NOT v_dup_of_provisional AND v_active_id IS NOT NULL THEN$|^END IF;$|duplicate_financial_version_differs|^v_new_unit\./,
+      `unexpected legacy core change: ${line}`);
+  }
+  // Révocations d'exécution réappliquées, comme la 0Z.
+  assert.match(migrationOperational, /REVOKE ALL ON FUNCTION public\.daily_stmt_pre_ingest_legacy_core_0u\(jsonb, jsonb, jsonb, jsonb\)\s*FROM PUBLIC, anon, authenticated, service_role;/);
+  assert.match(migrationOperational, /REVOKE ALL ON FUNCTION public\.daily_stmt_pre_ingest_bis_backfill_core_0v\(jsonb,jsonb,jsonb,jsonb\)\s*FROM PUBLIC, anon, authenticated, service_role;/);
+  // Enveloppes du dépôt, promotion et remplacement : inchangés.
+  for (const untouched of ['public.pre_ingest_daily_statement_units(', 'public.daily_stmt_pre_ingest_scoped_core_0w(',
+    'public.promote_daily_statement_unit(', 'public.supersede_daily_statement_unit(', 'public.daily_stmt_promote_unit_core(',
+    'public.daily_stmt_promote_scoped_core_0w(']) {
+    assert.doesNotMatch(migrationOperational, new RegExp(`CREATE (OR REPLACE )?FUNCTION ${untouched.replace(/[.(]/g, (c) => `\\${c}`)}`));
+  }
+  assert.equal((migrationOperational.match(/^BEGIN;$/gm) ?? []).length, 1);
+  assert.equal((migrationOperational.match(/^COMMIT;$/gm) ?? []).length, 1);
+  assert.doesNotMatch(migrationOperational, /DROP\s+(TABLE|COLUMN|FUNCTION|INDEX)/i);
 });
 
 test('exposes only a fail-closed read API for the private runtime lock', () => {
@@ -567,6 +690,22 @@ test('gives every Daily v2 network operation an explicit capability', () => {
     deactivateDailyV2Account: 'admin',
     issueDailyV2BackfillGrant: 'admin',
     revokeDailyV2BackfillGrant: 'admin',
+    // Lot 1 opérationnel.
+    listDailyV2DayDeliveries: 'read',
+    listDailyV2AttemptsUnits: 'read',
+    getDailyV2ExportAttempt: 'read',
+    listDailyV2ActiveCanonicalUnits: 'read',
+    listDailyV2AttemptAttestations: 'read',
+    listDailyV2VersionRefutations: 'read',
+    attestDailyV2Attempt: 'admin',
+    revokeDailyV2AttemptAttestation: 'admin',
+    rejectDailyV2Unit: 'promote',
+    promoteDailyV2AttemptUnits: 'promote',
+    supersedeDailyV2UnitBalances: 'promote',
+    refuteDailyV2Version: 'promote',
+    revokeDailyV2VersionRefutation: 'promote',
+    getDailyV2AttemptBatchPlan: 'read',
+    getDailyV2RefutationStatus: 'read',
   };
 
   // Chaque opération réseau publique déclare sa capacité, et une seule.
@@ -692,10 +831,17 @@ test('separates staging line reading from decision actions', () => {
   // StagingTable expose deux permissions distinctes.
   assert.match(tables, /isAdmin: boolean;/);
   assert.match(tables, /canDecide: boolean;/);
-  assert.match(tables, /StagingTable = \(\{ rows, isAdmin, canDecide, onLines, onDecision \}/);
+  assert.match(tables, /StagingTable = \(\{ rows, isAdmin, canDecide, onLines, onDecision, onVersions \}/);
 
-  // Consultation des lignes : règle de rôle existante, inchangée.
-  assert.match(tables, /\{isAdmin && unit\.status !== 'duplicate' && <Button[\s\S]*?onLines\(unit\)/);
+  // Consultation des lignes : règle de rôle existante ; un doublon montre
+  // désormais ses lignes conservées par H1 (Lot 1 opérationnel), sinon aucune.
+  assert.match(tables, /\{isAdmin && <Button[^}]*onClick=\{\(\) => onLines\(unit\)\}/);
+  assert.doesNotMatch(tables, /unit\.status !== 'duplicate'/);
+  assert.match(tables, /Aucune ligne conservée pour cette livraison/);
+  // Versions et décisions : lecture admin ; décisions selon les capacités, dans le dialogue.
+  assert.match(tables, /\{isAdmin && <Button[^}]*onClick=\{\(\) => onVersions\(unit\)\}/);
+  assert.match(page, /<DailyV2DayDecisionsDialog unit=\{versionsUnit\}[\s\S]*?canDecide=\{canDecide\}\s*canAdminister=\{canAdminister\}/);
+  assert.match(page, /<DailyV2BatchApprovalDialog attemptId=\{batchAttemptId\}[\s\S]*?canDecide=\{canDecide\}/);
 
   // Décisions : rendues uniquement avec la capacité promote.
   assert.match(tables, /\{canDecide && unit\.status === 'staged' && <Button[\s\S]*?onDecision\('promote', unit\)/);

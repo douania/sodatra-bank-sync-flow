@@ -30,7 +30,19 @@ SELECT tr_test.assert(has_function_privilege('authenticated', p.oid, 'EXECUTE')
   AND p.prosecdef AND p.proconfig::text LIKE '%search_path=public, pg_temp%', p.oid::regprocedure::text || ' : privilèges minimaux')
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname LIKE 'treasury\_%';
 SELECT tr_test.assert((SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public' AND p.proname LIKE 'treasury\_%') = 5, 'cinq fonctions publiques exactement');
+  WHERE n.nspname = 'public' AND p.proname LIKE 'treasury\_%') = 7,
+  'sept fonctions publiques exactement (cinq du lot, deux des points de départ vérifiés)');
+
+-- Statut des réfutations pour l'interface Daily v2 (P2 de la contre-revue CTO de
+-- la PR #156) : authenticated seul, SECURITY DEFINER, STABLE, chemin épinglé,
+-- rôle admin Daily v2 vérifié, aucune écriture.
+SELECT tr_test.assert(has_function_privilege('authenticated', p.oid, 'EXECUTE')
+  AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
+  AND NOT has_function_privilege('service_role', p.oid, 'EXECUTE')
+  AND p.prosecdef AND p.provolatile = 's' AND p.proconfig::text LIKE '%search_path=public, pg_temp%'
+  AND pg_get_functiondef(p.oid) LIKE '%daily_stmt_require_decision_actor(false)%'
+  AND pg_get_functiondef(p.oid) !~* '(INSERT|UPDATE|DELETE)\s', 'statut des réfutations : lecture admin, privilèges minimaux')
+FROM pg_proc p WHERE p.oid = 'public.daily_v2_refutation_status_v1(text)'::regprocedure;
 
 -- Lecture en une instruction, instantané de l'appelant.
 SELECT tr_test.assert((SELECT provolatile FROM pg_proc WHERE oid = 'public.treasury_balances_at_v1(date)'::regprocedure) = 's',

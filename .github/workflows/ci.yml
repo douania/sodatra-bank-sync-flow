@@ -167,6 +167,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./supabase/tests/treasury_v1_lot1/run_pg17_replay.ps1 -Mutants
 
+      # TREASURY V1 — LOT 1 OPERATIONAL FIX: Daily v2 decisions (attestations,
+      # rejection, balance-only correction, per-source refutation, batch
+      # approval, H1). Interface rules and the interface mutation proof, then
+      # the disposable PostgreSQL 17 replay (payloads from the real pipeline,
+      # interface/server parity, two real-session races) and the existing
+      # LOCAL-E2E-0R chain with the new migration. Synthetic data only.
+      - name: Daily v2 operational decisions (TypeScript and PostgreSQL)
+        shell: pwsh
+        run: |
+          npx tsx --test src/features/daily-v2/dailyV2OperationalDecisions.synthetic.test.ts src/features/daily-v2/dailyV2BalanceOnlyCorrection.synthetic.test.ts src/features/daily-v2/dailyV2DecisionReads.synthetic.test.ts src/features/daily-v2/DailyV2DecisionDialogsSuspension.synthetic.test.tsx
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx tsx src/features/treasury/treasuryMutation.proof.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./supabase/tests/daily_statement_units_v2/run_operational_pg17.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker pull postgres:15-alpine
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bash supabase/tests/daily_statement_units_v2/run_e2e_0r.sh
+
       # PACK 0 (GO_FIX_PACK_0 Node typing) — blocking: the Node project
       # (vite.config.ts and the modules it imports, e.g. the build provenance
       # collector) must typecheck with zero errors. The application project

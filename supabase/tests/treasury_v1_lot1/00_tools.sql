@@ -203,6 +203,22 @@ BEGIN
     (SELECT coalesce(sum(-x), 0) FROM unnest(v_amounts) x WHERE x < 0), (SELECT coalesce(sum(x), 0) FROM unnest(v_amounts) x WHERE x > 0),
     v_open, v_close, p_aggregates, p_validation, p_staging_status, tr_test.id('t_admin'), a.account_registry_id);
 
+  -- Lignes de la livraison, comme le pipeline les stocke (P1 de la contre-revue
+  -- CTO : la lecture vérifie leur concordance avec les faits déclarés).
+  v_running := coalesce(p_opening, 0);
+  FOR i IN 1..cardinality(v_amounts) LOOP
+    v_running := v_running + v_amounts[i];
+    INSERT INTO public.daily_statement_lines_staging (
+      staging_unit_id, attempt_id, day_unit_id, daily_line_hash, daily_occurrence_ordinal, source_line_index,
+      accounting_date, value_date, description_sanitized, debit_amount, credit_amount, signed_amount,
+      running_balance, direction, currency)
+    VALUES (v_staging, a.id, v_day_unit, encode(sha256(convert_to('sline:' || v_staging::text || ':' || i, 'UTF8')), 'hex'),
+      1, i - 1, p_day, CASE WHEN i <= p_value_dated THEN p_day END, 'Opération synthétique',
+      CASE WHEN v_amounts[i] < 0 THEN -v_amounts[i] END, CASE WHEN v_amounts[i] > 0 THEN v_amounts[i] END,
+      v_amounts[i], CASE WHEN p_aggregates = 'derived' THEN v_running END,
+      CASE WHEN v_amounts[i] < 0 THEN 'debit' ELSE 'credit' END, v_currency);
+  END LOOP;
+
   IF NOT p_canonical THEN RETURN v_staging; END IF;
 
   INSERT INTO public.daily_statement_units_canonical (
@@ -266,9 +282,25 @@ BEGIN
   EXECUTE replace(v_def, p_old, p_new);
 END $$;
 REVOKE ALL ON FUNCTION tr_test.mutate(regprocedure, text, text) FROM PUBLIC;
+-- Mutant à cibles alternatives (C7) : la version optimisée et la référence figée
+-- portent la même règle sous deux écritures ; la première trouvée est mutée.
+CREATE FUNCTION tr_test.mutate_first(p_function regprocedure, p_olds text[], p_news text[])
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v_def text := pg_get_functiondef(p_function); v_i integer;
+BEGIN
+  FOR v_i IN 1..cardinality(p_olds) LOOP
+    IF position(p_olds[v_i] IN v_def) > 0 THEN
+      EXECUTE replace(v_def, p_olds[v_i], p_news[v_i]);
+      RETURN;
+    END IF;
+  END LOOP;
+  RAISE EXCEPTION 'MUTANT_TARGET_NOT_FOUND: %', p_function;
+END $$;
+REVOKE ALL ON FUNCTION tr_test.mutate_first(regprocedure, text[], text[]) FROM PUBLIC;
 
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tr_test TO anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION tr_test.mutate(regprocedure, text, text) FROM anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION tr_test.mutate_first(regprocedure, text[], text[]) FROM anon, authenticated, service_role;
 GRANT SELECT ON tr_test.ids TO anon, authenticated, service_role;
 
 SELECT 'PASS 00_tools' AS marker;

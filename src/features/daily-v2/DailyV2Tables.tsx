@@ -62,17 +62,19 @@ export const ListCard = ({ title, loading, error, onRefresh, children }: {
   <Card><CardHeader><div className="flex items-center justify-between"><CardTitle>{title}</CardTitle><Button variant="outline" size="sm" onClick={onRefresh}>Actualiser</Button></div></CardHeader><CardContent>{loading ? <Loading /> : error ? <AccessDenied text="Lecture impossible ou non autorisée." /> : children}</CardContent></Card>
 );
 
-export const StagingTable = ({ rows, isAdmin, canDecide, onLines, onDecision }: {
+export const StagingTable = ({ rows, isAdmin, canDecide, onLines, onDecision, onVersions }: {
   rows: DailyV2StagingUnitRow[];
-  /** Consultation des lignes : regle de role existante (admin). */
+  /** Consultation des lignes : regle de role existante (admin). Un doublon montre les lignes conservees par H1, sinon aucune. */
   isAdmin: boolean;
   /** Actions de decision : role admin ET capacite promote de la cible. */
   canDecide: boolean;
   onLines: (unit: DailyV2StagingUnitRow) => void;
   onDecision: (kind: 'promote' | 'supersede', unit: DailyV2StagingUnitRow) => void;
+  /** Versions de la journee et decisions du Lot 1 operationnel (lecture admin ; decisions selon les capacites). */
+  onVersions: (unit: DailyV2StagingUnitRow) => void;
 }) => (
   <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Statut</TableHead><TableHead>Validation</TableHead><TableHead>Motifs de revue</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
-    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && unit.status !== 'duplicate' && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{canDecide && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{canDecide && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
+    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{isAdmin && <Button variant="outline" size="sm" onClick={() => onVersions(unit)}>Versions</Button>}{canDecide && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{canDecide && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
   </Table></div>
 );
 
@@ -100,7 +102,9 @@ export const AccountAuditTable = ({ rows }: { rows: DailyV2AccountEventRow[] }) 
 export const LinesTable = ({ rows, loading }: {
   rows: Array<DailyV2StagingLineRow | DailyV2CanonicalLineRow>;
   loading: boolean;
-}) => loading ? <Loading /> : (
+}) => loading ? <Loading /> : rows.length === 0 ? (
+  <p className="py-4 text-sm text-muted-foreground">Aucune ligne conservée pour cette livraison (doublon de même version ou lignes non stockées).</p>
+) : (
   <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Valeur</TableHead><TableHead>Libellé normalisé</TableHead><TableHead>Débit</TableHead><TableHead>Crédit</TableHead><TableHead>Solde</TableHead><TableHead>État</TableHead></TableRow></TableHeader>
     <TableBody>{rows.map((line) => <TableRow key={line.id}><TableCell>{formatDate(line.accounting_date)}</TableCell><TableCell>{line.value_date ? formatDate(line.value_date) : '—'}</TableCell><TableCell className="max-w-md break-words">{line.description_sanitized}</TableCell><TableCell>{line.debit_amount === null ? '—' : formatMoney(line.debit_amount, line.currency)}</TableCell><TableCell>{line.credit_amount === null ? '—' : formatMoney(line.credit_amount, line.currency)}</TableCell><TableCell>{line.running_balance === null ? '—' : formatMoney(line.running_balance, line.currency)}</TableCell><TableCell>{'is_active' in line ? (line.is_active ? 'active' : 'inactive') : line.direction}</TableCell></TableRow>)}</TableBody>
   </Table></div>
@@ -112,7 +116,9 @@ export const Pager = ({ page, count, onChange }: { page: number; count: number; 
 };
 
 export const StatusBadge = ({ status }: { status: string }) => (
-  <Badge variant={status === 'conflict' || status === 'promotion_failed' ? 'destructive' : 'secondary'}>{status}</Badge>
+  <Badge variant={status === 'conflict' || status === 'promotion_failed' ? 'destructive' : status === 'rejected' ? 'outline' : 'secondary'}>
+    {status === 'rejected' ? 'rejected (écartée)' : status}
+  </Badge>
 );
 
 const Loading = () => <div className="flex items-center justify-center py-8"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Chargement…</div>;

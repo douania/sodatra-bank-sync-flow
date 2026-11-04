@@ -675,7 +675,8 @@ function hasExpectedExcelSignature(bytes: Uint8Array, extension: string): boolea
   return false;
 }
 
-async function buildRawBytesHash(buffer: ArrayBuffer): Promise<string> {
+/** Empreinte des octets bruts d'un fichier (resélection d'un dépôt Excel, pièce corrective). Calcul inchangé. */
+export async function buildRawBytesHash(buffer: ArrayBuffer): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }

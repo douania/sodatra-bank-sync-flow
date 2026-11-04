@@ -75,6 +75,8 @@ import {
   StatusBadge,
 } from '@/features/daily-v2/DailyV2Tables';
 import { invalidateDailyV2, shortId } from '@/features/daily-v2/dailyV2UiUtils';
+import { DailyV2DayDecisionsDialog } from '@/features/daily-v2/DailyV2DecisionDialogs';
+import { DailyV2BatchApprovalDialog } from '@/features/daily-v2/DailyV2BatchApprovalDialog';
 import DailyV2Reporting from '@/features/daily-v2/DailyV2Reporting';
 import { DailyV2AdminControlsGate } from '@/features/daily-v2/DailyV2AdminControlsGate';
 import { useDailyV2Access } from '@/features/daily-v2/dailyV2Access';
@@ -97,7 +99,7 @@ const READ_ONLY_TARGET_MESSAGE =
   'Cible en lecture seule : cette opération nécessite une cible autorisée (GO CTO distinct).';
 const STAGING_STATUSES: Array<'all' | DailyV2StagingStatus> = [
   'all', 'staged', 'provisional', 'duplicate', 'conflict',
-  'needs_review', 'promoted', 'promotion_failed', 'superseded',
+  'needs_review', 'promoted', 'promotion_failed', 'superseded', 'rejected',
 ];
 
 type LineDialog =
@@ -154,6 +156,8 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   const [lineDialog, setLineDialog] = useState<LineDialog>(null);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialog>(null);
   const [reason, setReason] = useState('');
+  const [versionsUnit, setVersionsUnit] = useState<DailyV2StagingUnitRow | null>(null);
+  const [batchAttemptId, setBatchAttemptId] = useState<string | null>(null);
 
   const isAdmin = roles.includes('admin');
   const canDeposit = isAdmin || roles.includes('manager');
@@ -827,7 +831,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                   return;
                 }
                 setDecisionDialog({ kind, unit });
-              }} />
+              }} onVersions={(unit) => setVersionsUnit(unit)} />
               <Pager page={stagingPage} count={stagingQuery.data?.count ?? 0} onChange={setStagingPage} />
             </ListCard>
           )}
@@ -873,6 +877,12 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
           <LinesTable rows={lineRows ?? []} loading={lineLoading} />
         </DialogContent>
       </Dialog>
+
+      <DailyV2DayDecisionsDialog unit={versionsUnit} onClose={() => setVersionsUnit(null)} canDecide={canDecide}
+        canAdminister={canAdminister} onBatch={(attemptId) => { setVersionsUnit(null); setBatchAttemptId(attemptId); }}
+        onChanged={() => { void invalidateDailyV2(queryClient); }} />
+      <DailyV2BatchApprovalDialog attemptId={batchAttemptId} onClose={() => setBatchAttemptId(null)} canDecide={canDecide}
+        onChanged={() => { void invalidateDailyV2(queryClient); }} />
 
       <Dialog open={decisionDialog !== null} onOpenChange={(open) => !open && closeDecision()}>
         <DialogContent><DialogHeader><DialogTitle>{decisionDialog?.kind === 'supersede' ? 'Supersede canonical' : 'Promouvoir l’unité'}</DialogTitle><DialogDescription>Décision admin auditée. Les conflits ne sont jamais promus automatiquement.</DialogDescription></DialogHeader>

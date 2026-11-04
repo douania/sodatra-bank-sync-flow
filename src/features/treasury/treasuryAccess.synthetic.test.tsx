@@ -52,7 +52,8 @@ const { validateTreasuryRuntimeTarget } = await import('./treasuryRuntimeTarget'
 const service = await import('./treasuryService');
 const { TreasuryRoute } = await import('./TreasuryRoute');
 const { isTreasuryMenuVisible } = await import('./treasuryMenu');
-const { TreasuryError } = await import('./treasuryModel');
+const { parseTreasuryBalances, TreasuryError } = await import('./treasuryModel');
+const { TreasuryVerifiedStartAdmin } = await import('./TreasuryVerifiedStartAdmin');
 
 const PROD = { supabaseUrl: 'https://leakcdbbawzysfqyqsnr.supabase.co', projectId: 'leakcdbbawzysfqyqsnr' };
 const LOCAL = { supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' };
@@ -80,6 +81,10 @@ test('production : lecture et administration refusées avant tout appel réseau'
       'TREASURY_RUNTIME_REFUSED');
     await rejectsWith(service.linkExpectedAccount(key, 'a', 'b', 'Motif synthétique'), 'TREASURY_RUNTIME_REFUSED');
     await rejectsWith(service.retireExpectedAccount(key, 'a', 'Motif synthétique'), 'TREASURY_RUNTIME_REFUSED');
+    await rejectsWith(service.setVerifiedStart(key, { registryAccountId: 'a', day: '2026-10-07',
+      unit: { canonicalUnitId: 'b', contentHash: 'c' }, verifiedOpening: '1300', evidenceRef: 'PIECE', reason: 'Motif synthétique' }),
+    'TREASURY_RUNTIME_REFUSED');
+    await rejectsWith(service.revokeVerifiedStart(key, 'a', 'Motif synthétique'), 'TREASURY_RUNTIME_REFUSED');
     assert.deepEqual(harness.calls, [], JSON.stringify(target));
   }
 });
@@ -187,4 +192,69 @@ test('lecture liée à la session : utilisateur dans la clé, aucun cache conser
   const anonymous = service.treasuryBalancesQuery(null, '2026-10-07');
   assert.equal(anonymous.enabled, false);
   assert.deepEqual(harness.calls, []);
+});
+
+test('points de départ : appel RPC seul, unité et empreinte affichées transmises, aucune table lue', async () => {
+  reset(LOCAL);
+  harness.rpcResult = () => ({ data: { verified_start_id: '60000000-0000-4000-8000-000000000001' }, error: null });
+  const key = service.verifiedStartCommandKeys.keyFor(JSON.stringify(['set-verified-start', 'synthétique']));
+  await service.setVerifiedStart(key, {
+    registryAccountId: '20000000-0000-4000-8000-000000000001', day: '2026-10-07',
+    unit: { canonicalUnitId: '40000000-0000-4000-8000-000000000007', contentHash: 'c'.repeat(64) },
+    verifiedOpening: '1300', evidenceRef: 'PIECE-SYNTH-1', reason: 'Motif synthétique',
+  });
+  await service.revokeVerifiedStart(key, '60000000-0000-4000-8000-000000000001', 'Motif synthétique');
+  assert.deepEqual(harness.calls, [
+    { kind: 'rpc', name: 'treasury_admin_set_verified_start_v1', args: {
+      p_command_key: key, p_registry_account_id: '20000000-0000-4000-8000-000000000001', p_day: '2026-10-07',
+      p_canonical_unit_id: '40000000-0000-4000-8000-000000000007', p_content_hash: 'c'.repeat(64),
+      p_verified_opening: '1300', p_evidence_ref: 'PIECE-SYNTH-1', p_reason: 'Motif synthétique' } },
+    { kind: 'rpc', name: 'treasury_admin_revoke_verified_start_v1', args: {
+      p_command_key: key, p_verified_start_id: '60000000-0000-4000-8000-000000000001', p_reason: 'Motif synthétique' } },
+  ]);
+  harness.rpcResult = () => ({ data: null, error: { message: 'TREASURY_VERIFIED_START_NOT_EFFECTIVE' } });
+  await assert.rejects(service.revokeVerifiedStart(key, 'x', 'Motif synthétique'), (error: unknown) =>
+    error instanceof TreasuryError && error.code === 'TREASURY_VERIFIED_START_NOT_EFFECTIVE'
+    && /rien n’a été enregistré/.test(error.message));
+});
+
+test('panneau des points de départ : unité de la date lue seulement, ouverture jamais affichée ni préremplie', () => {
+  reset(LOCAL);
+  const unitSource = (unit: string, day: string, hash: string) => ({ kind: 'CANONICAL_UNIT', role: 'CLOSING', unit_id: unit,
+    export_id: '50000000-0000-4000-8000-000000000001', day, ingested_at: null, export_ingested_at: null,
+    source_format: 'structured_bank_statement_csv', content_hash: hash });
+  const base = {
+    bank: 'ORA', currency: 'XOF', status: 'NOT_COVERED', reasons: ['CHAIN_UNPROVEN'], balance_at_date: null,
+    observed_balance: { balance: '987654.00', date: '2026-10-07' }, source_format: 'structured_bank_statement_csv',
+    qualification: 'QUALIFIED', qualification_evidence: null,
+    dates: { bank_date_covered: null, age_days: null, bank_date_observed: '2026-10-07', balance_source_day: '2026-10-07' },
+    verified_starts: [], findings: [], counters: { rejected_deliveries: 0, refuted_versions: 0 },
+    value_dates: { total_lines: 0, lines_with_value_date: 0 },
+  };
+  const retained = (unit: string, hash: string) => ({ unit_id: unit, content_hash: hash });
+  const parsed = parseTreasuryBalances({
+    contract: 'treasury_balances_at_v1', as_of: '2026-10-07', today: '2026-11-03', read_at: '2026-11-03T10:00:00+00:00',
+    timezone: 'Africa/Dakar', basis: 'ACCOUNTING_DATE', value_date_window_days: 90,
+    inventory: { fingerprint: 'a'.repeat(64), active_accounts: 2, attested: true, attested_at: null, unlisted_registry_accounts: [] },
+    accounts: [
+      { ...base, expected_account_id: '30000000-0000-4000-8000-000000000001',
+        registry_account_id: '20000000-0000-4000-8000-000000000001', alias: 'ORA principal',
+        sources: [unitSource('40000000-0000-4000-8000-000000000007', '2026-10-07', 'c'.repeat(64))],
+        retained_unit_at_date: retained('40000000-0000-4000-8000-000000000007', 'c'.repeat(64)) },
+      { ...base, expected_account_id: '30000000-0000-4000-8000-000000000002',
+        registry_account_id: '20000000-0000-4000-8000-000000000002', alias: 'ORA second',
+        sources: [unitSource('40000000-0000-4000-8000-000000000005', '2026-10-05', 'd'.repeat(64))],
+        retained_unit_at_date: null },
+    ],
+    consolidation: { currency: 'XOF', status: 'PARTIAL', amount: null, accounts_expected: 2, accounts_available: 0,
+      accounts_not_covered: 2, accounts_blocked: 0, accounts_out_of_scope: 0, registry_accounts_outside_inventory: 0,
+      reasons: ['ACCOUNTS_NOT_COVERED'] },
+  });
+  const html = renderToStaticMarkup(<TreasuryVerifiedStartAdmin result={parsed} onChanged={() => undefined} />);
+  assert.match(html, /Poser un point de départ au 2026-10-07/);
+  assert.match(html, /ORA principal/);
+  assert.doesNotMatch(html, /ORA second/, 'journée source antérieure à D : compte non proposé');
+  assert.doesNotMatch(html, /987654|987 654/, 'aucun solde affiché ni prérempli');
+  assert.match(html, /placeholder="Ouverture lue sur la pièce, francs XOF entiers" value=""/);
+  assert.deepEqual(harness.calls, [], 'aucun appel au rendu');
 });

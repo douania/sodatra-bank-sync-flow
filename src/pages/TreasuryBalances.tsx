@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
 import { TreasuryBalancesView } from '@/features/treasury/TreasuryBalancesView';
 import { TreasuryInventoryAdmin } from '@/features/treasury/TreasuryInventoryAdmin';
+import { TreasuryVerifiedStartAdmin } from '@/features/treasury/TreasuryVerifiedStartAdmin';
 import { defaultAsOf, TreasuryError } from '@/features/treasury/treasuryModel';
 import { treasuryBalancesQuery } from '@/features/treasury/treasuryService';
 
@@ -52,6 +53,7 @@ export default function TreasuryBalances() {
       )}
       {data && <TreasuryBalancesView result={data} />}
       {data && showAdmin && <TreasuryInventoryAdmin result={data} onChanged={() => { void query.refetch(); }} />}
+      {data && showAdmin && <TreasuryVerifiedStartAdmin result={data} onChanged={() => { void query.refetch(); }} />}
     </div>
   );
 }

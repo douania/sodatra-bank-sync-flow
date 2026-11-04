@@ -621,11 +621,21 @@ function detectBankHint(sourceFileName: string | undefined): StructuredBankState
     return 'UNKNOWN';
   }
 
+  // Every non-alphanumeric character separates tokens ("_", "-", "." included).
   const name = deburr(sourceFileName);
-  if (/\bora\b|orabank/.test(name)) {
+  const tokens = name.split(/[^a-z0-9]+/).filter((token) => token !== '');
+  const joined = ` ${tokens.join(' ')} `;
+  const isOra = tokens.includes('ora') || tokens.includes('orab') || name.includes('orabank');
+  // Variante existante conservée à l'identique (sous-chaîne), séparateurs en plus.
+  const isBdk = tokens.includes('bdk') || name.includes('banque de dakar') || joined.includes(' banque de dakar ');
+  // A name designating both banks is ambiguous and never recognized.
+  if (isOra && isBdk) {
+    return 'UNKNOWN';
+  }
+  if (isOra) {
     return 'ORA';
   }
-  if (/\bbdk\b|banque de dakar/.test(name)) {
+  if (isBdk) {
     return 'BDK';
   }
   return 'UNKNOWN';
