@@ -184,11 +184,11 @@ migrations, outils et identités de la suite trésorerie ; charges produites par
 
 | Fichier | Couverture |
 |---|---|
-| `33a_operational_setup.sql` | registre synthétique, autorisation de backfill, rôle admin, verrou ouvert, outils `opx` ; 17 charges réelles présentes |
-| `44_lines_conformity.sql` | contre-revue CTO de la PR #156 : charge réelle aux agrégats décalés (contre-exemple CTO), totaux décalés, soldes courants modifiés ; aucune journée admissible, motif rendu par le plan serveur ; promotion unitaire historique puis lecture « Soldes à date » sans solde ; réfutation contre une retenue non conforme refusée ; correction des seuls soldes ; mordants (sans la condition, la charge serait admissible et le solde décalé disponible) |
+| `33a_operational_setup.sql` | registre synthétique, autorisation de backfill, rôle admin, verrou ouvert, outils `opx` ; 17 charges synthétiques issues du vrai pipeline présentes |
+| `44_lines_conformity.sql` | contre-revue CTO de la PR #156 : charge synthétique issue du vrai pipeline, aux agrégats décalés (contre-exemple CTO ; faux solde non observé sur les relevés réels), totaux décalés, soldes courants modifiés ; aucune journée admissible, motif rendu par le plan serveur ; promotion unitaire historique puis lecture « Soldes à date » sans solde ; réfutation contre une retenue non conforme refusée ; correction des seuls soldes ; mordants (sans la condition, la charge serait admissible et le solde décalé disponible) |
 | `43_version_parity.sql` | test différentiel : 2 000 cas générés, règles de version de l'interface (`dailyV2Types`) = fonctions du serveur ; six issues couvertes |
 | `40_duplicate_financial_version_lines.sql` | H1 : lignes conservées pour un doublon à version différente ; jamais pour même version, provisoire, `unavailable` ou incohérent ; réserve 4.2 (première copie inutilisable, copie valide conservée) |
-| `41_version_comparison.sql` | comparaison à trois issues sur les charges réelles |
+| `41_version_comparison.sql` | comparaison à trois issues sur les charges synthétiques issues du vrai pipeline |
 | `39_balance_only_correction.sql` | correction des seuls soldes : refus (mouvements différents, même version, version inutilisable, lignes non conformes, état périmé), adoption, rejeu |
 | `36_version_refutation.sql` | F1 → C → F2 → redépôt identique de F2 ; pièce ; refus ; révocation ; unicité structurelle |
 | `35_unit_rejection.sql` | écartement : statuts d'origine, contradiction refusée, R1 rejouée, état périmé |

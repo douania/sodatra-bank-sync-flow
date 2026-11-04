@@ -57,8 +57,9 @@ import {
 // affichée en deux temps (P2 de la contre-revue CTO de la PR #156) : la
 // décision enregistrée, puis son effectivité actuelle telle que le serveur la
 // rend (effective, partielle, suspendue, ou non vérifiable) ; aucune
-// effectivité n'est déduite dans le navigateur. Une lecture en échec ou
-// incomplète suspend les décisions qui en dépendent.
+// effectivité n'est déduite dans le navigateur. Une lecture en échec,
+// incomplète ou en cours suspend les décisions qui en dépendent, formulaire
+// déjà ouvert et gestionnaire d'envoi compris.
 
 function amount(value: number | null): string {
   return value === null ? '—' : value.toFixed(2);
@@ -70,8 +71,9 @@ function shortHash(value: string): string {
 
 type Action =
   | { kind: 'reject'; unit: DailyV2StagingUnitRow }
-  | { kind: 'balances'; unit: DailyV2StagingUnitRow }
-  | { kind: 'refute'; version: DailyV2DayVersion }
+  // Version retenue à l'ouverture : la décision vise cette retenue-là.
+  | { kind: 'balances'; unit: DailyV2StagingUnitRow; retainedKey: string | null }
+  | { kind: 'refute'; version: DailyV2DayVersion; retainedKey: string | null }
   | { kind: 'revoke-refutation'; refutation: DailyV2VersionRefutationRow }
   | { kind: 'attest'; attempt: DailyV2ExportAttemptRow; type: DailyV2AttestationType }
   | { kind: 'revoke-attestation'; attestation: DailyV2AttemptAttestationRow };
@@ -88,7 +90,11 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
 }) {
   const queryClient = useQueryClient();
   const dayUnitId = unit?.day_unit_id ?? null;
-  const [action, setAction] = useState<Action | null>(null);
+  // Un formulaire appartient à la journée où il a été ouvert : ouvert sur une
+  // autre journée (dialogue resté monté), il n'est ni affiché ni envoyable.
+  const [opened, setOpened] = useState<{ dayUnitId: string; action: Action } | null>(null);
+  const action = opened !== null && opened.dayUnitId === dayUnitId ? opened.action : null;
+  const setAction = (next: Action | null) => setOpened(next === null || dayUnitId === null ? null : { dayUnitId, action: next });
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -131,6 +137,7 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
   const active = activeQuery.data ?? null;
   const retainedFacts = active ? canonicalVersionFacts(active) : null;
   let versions: DailyV2DayVersion[] = [];
+  let retainedKey: string | null = null;
   let versionError: string | null = null;
   if (readError === null && deliveriesQuery.data && refutationsQuery.data && !activeQuery.isLoading) {
     try {
@@ -138,6 +145,7 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
         units: deliveriesQuery.data.units, attempts: deliveriesQuery.data.attempts, active,
         refutations: refutationsQuery.data.refutations,
       });
+      retainedKey = retainedFacts ? dailyV2VersionKey(retainedFacts) : null;
     } catch {
       versionError = 'Versions non calculables localement (montant hors plage exacte ou contexte manquant) : aucune décision possible.';
     }
@@ -152,13 +160,64 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
     : describeDailyV2RefutationEffect(refutationId, refutationStatusError === null ? refutationStatusQuery.data ?? null : null));
   const unitAttempt = deliveriesQuery.data?.attempts.find((attempt) => attempt.id === unit?.attempt_id) ?? null;
   const attestations = (attestationsQuery.data ?? []).filter((row) => row.attempt_id === unitAttempt?.id);
+  // Formulaire déjà ouvert (contre-revue CTO de 972baaf, P2) : suspendu, bouton
+  // et gestionnaire d'envoi compris, (1) dès qu'une lecture dont dépend sa
+  // décision échoue, devient incomplète ou est en cours de relecture, (2) si,
+  // sur une lecture complète, son sujet a changé ou n'est plus proposé (le
+  // bouton qui l'a ouvert n'existerait plus). Il redevient utilisable sur une
+  // lecture complète où son sujet est inchangé. Le statut des réfutations,
+  // affichage seul, n'en fait pas partie.
+  const fileAction = action?.kind === 'attest' || action?.kind === 'revoke-attestation';
+  const dayFailure = readError ?? versionError;
+  const actionFailure = action === null ? null : (fileAction ? dayFailure ?? attestationsError : dayFailure);
+  const dayInFlight = [deliveriesQuery, activeQuery, refutationsQuery].some((query) => query.isFetching);
+  const actionInFlight = action !== null && actionFailure === null
+    && (dayInFlight || (fileAction && (attestationsQuery.isLoading || attestationsQuery.isFetching)));
+  const currentDelivery = (row: DailyV2StagingUnitRow) => versions.flatMap((version) => version.deliveries)
+    .find((delivery) => delivery.id === row.id && delivery.status === row.status) ?? null;
+  const currentAttestations = activeAttestations(attestations);
+  const subjectStillOffered = (current: Action): boolean => {
+    switch (current.kind) {
+      case 'reject': {
+        const delivery = currentDelivery(current.unit);
+        return delivery !== null && (DAILY_V2_PENDING_STATUSES as readonly string[]).includes(delivery.status);
+      }
+      case 'balances': {
+        const delivery = currentDelivery(current.unit);
+        return delivery !== null && current.retainedKey === retainedKey && isBalanceCorrectionCandidate(delivery, active);
+      }
+      case 'refute': {
+        const version = versions.find((candidate) => candidate.key === current.version.key);
+        return version !== undefined && current.retainedKey === retainedKey && isRefutable(version, retainedFacts);
+      }
+      case 'revoke-refutation':
+        return versions.some((version) => version.refutation?.id === current.refutation.id);
+      case 'attest':
+        return unitAttempt?.id === current.attempt.id
+          && !currentAttestations.some((row) => row.attestation_type === current.type);
+      case 'revoke-attestation':
+        return currentAttestations.some((row) => row.id === current.attestation.id);
+      default:
+        return false;
+    }
+  };
+  const subjectChanged = action !== null && actionFailure === null && !actionInFlight && !subjectStillOffered(action);
+  const actionSuspension = actionFailure !== null
+    ? `${actionFailure} Décision suspendue : rien n’est envoyé tant que ses lectures ne sont pas complètes.`
+    : actionInFlight ? 'Relecture en cours : décision suspendue jusqu’à une lecture complète et à jour.'
+      : subjectChanged ? 'Le sujet de cette décision a changé ou n’est plus proposé dans la lecture actuelle : décision suspendue, fermez puis rouvrez-la.'
+        : null;
+  // Réfutation : sources et faits de la version tels que la lecture actuelle les rend.
+  const refutedVersion = action?.kind === 'refute'
+    ? versions.find((candidate) => candidate.key === action.version.key) ?? action.version : null;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['daily-v2'] });
     onChanged();
   };
 
-  const decision = useMutation<unknown, Error, { signature: unknown[]; run: (key: string) => Promise<unknown>; done: string }>({
+  type DecisionVariables = { signature: unknown[]; run: (key: string) => Promise<unknown>; done: string };
+  const decision = useMutation<unknown, Error, DecisionVariables>({
     mutationFn: async ({ signature, run }) => {
       const key = dailyV2DecisionCommandKeys.keyFor(JSON.stringify(signature));
       const result = await run(key);
@@ -173,11 +232,22 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
     },
     onError: (error) => setMessage(error.message),
   });
+  // Seul point d'envoi des décisions de ce dialogue : refuse tout envoi suspendu.
+  const submit = (variables: DecisionVariables) => {
+    if (actionSuspension !== null) {
+      setMessage('Décision non envoyée : formulaire suspendu.');
+      return;
+    }
+    decision.mutate(variables);
+  };
 
-  const close = () => {
-    setAction(null);
+  const reset = () => {
+    setOpened(null);
     setReason('');
     setMessage(null);
+  };
+  const close = () => {
+    reset();
     onClose();
   };
 
@@ -245,7 +315,7 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
                       <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'reject', unit: delivery })}>Écarter</Button>
                     )}
                     {canDecide && isBalanceCorrectionCandidate(delivery, active) && (
-                      <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'balances', unit: delivery })}>
+                      <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'balances', unit: delivery, retainedKey })}>
                         Corriger les seuls soldes
                       </Button>
                     )}
@@ -254,7 +324,7 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
               </ul>
               <div className="mt-2 flex flex-wrap gap-2">
                 {canDecide && isRefutable(version, retainedFacts) && (
-                  <Button size="sm" variant="destructive" onClick={() => setAction({ kind: 'refute', version })}>
+                  <Button size="sm" variant="destructive" onClick={() => setAction({ kind: 'refute', version, retainedKey })}>
                     Réfuter cette version
                   </Button>
                 )}
@@ -273,15 +343,20 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
           )}
           {unitAttempt && readError === null && (
             <FileSection attempt={unitAttempt} attestations={attestations}
-              canAdminister={canAdminister && attestationsError === null && !attestationsQuery.isLoading}
-              canDecide={canDecide && attestationsError === null && !attestationsQuery.isLoading}
+              canAdminister={canAdminister && versionError === null && attestationsError === null && !attestationsQuery.isLoading}
+              canDecide={canDecide && versionError === null && attestationsError === null && !attestationsQuery.isLoading}
               onAttest={(type) => setAction({ kind: 'attest', attempt: unitAttempt, type })}
               onRevoke={(attestation) => setAction({ kind: 'revoke-attestation', attestation })}
-              onBatch={() => onBatch(unitAttempt.id)} />
+              onBatch={() => { reset(); onBatch(unitAttempt.id); }} />
           )}
         </div>
         {action && (
           <div className="space-y-2 rounded border bg-muted/30 p-3 text-sm" aria-label="Décision en cours">
+            {/* Lecture en échec : déjà annoncée par l'alerte de la journée ; relecture
+                en cours : état transitoire (annonce polie) ; sujet changé : alerte. */}
+            {actionSuspension && (
+              <p role={subjectChanged ? 'alert' : 'status'} className="text-destructive">{actionSuspension}</p>
+            )}
             {action.kind === 'reject' && (
               <p>Écarter la livraison du {action.unit.accounting_date} ({action.unit.status}). Un écartement sort une livraison de
                 l’attente ; il ne lève ni une contradiction ni une incertitude.</p>
@@ -293,14 +368,15 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
             {action.kind === 'revoke-refutation' && <p>Révoquer la réfutation : la version redevient une contradiction ou une incertitude.</p>}
             {action.kind === 'revoke-attestation' && <p>Révoquer l’attestation {action.attestation.attestation_type}.</p>}
             {action.kind === 'refute' && active && deliveriesQuery.data && (
-              <RefuteForm version={action.version} active={active} deliveries={deliveriesQuery.data}
-                reason={reason} pending={decision.isPending}
-                onSubmit={(proof) => decision.mutate({
+              <RefuteForm version={refutedVersion ?? action.version} active={active} deliveries={deliveriesQuery.data}
+                reason={reason} pending={decision.isPending} suspended={actionSuspension !== null}
+                onSubmit={(proof) => submit({
                   signature: ['refute', action.version.key, proof, reason],
                   run: (key) => refuteDailyV2Version(key, {
                     dayUnitId: active.day_unit_id, refutedVersionKey: action.version.key,
-                    expectedRetainedVersionKey: dailyV2VersionKey(canonicalVersionFacts(active)),
-                    expectedSources: action.version.sources.map(({ raw_text_hash, account_registry_id, first_seen_at }) =>
+                    // Retenue visée à l'ouverture : le serveur refuse si elle a changé (STALE).
+                    expectedRetainedVersionKey: action.retainedKey ?? dailyV2VersionKey(canonicalVersionFacts(active)),
+                    expectedSources: (refutedVersion ?? action.version).sources.map(({ raw_text_hash, account_registry_id, first_seen_at }) =>
                       ({ raw_text_hash, account_registry_id, first_seen_at })),
                     proof, reason,
                   }),
@@ -309,7 +385,8 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
             )}
             {action.kind === 'attest' && (
               <AttestForm attempt={action.attempt} type={action.type} reason={reason} pending={decision.isPending}
-                onSubmit={(rawTextHash, evidenceRef, currency) => decision.mutate({
+                suspended={actionSuspension !== null}
+                onSubmit={(rawTextHash, evidenceRef, currency) => submit({
                   signature: ['attest', action.attempt.id, action.type, rawTextHash, evidenceRef, currency, reason],
                   run: (key) => attestDailyV2Attempt(key, {
                     attemptId: action.attempt.id, attestationType: action.type, rawTextHash,
@@ -324,24 +401,25 @@ export function DailyV2DayDecisionsDialog({ unit, onClose, canDecide, canAdminis
               <Button variant="outline" size="sm" onClick={() => setAction(null)}>Annuler</Button>
               {(action.kind === 'reject' || action.kind === 'balances' || action.kind === 'revoke-refutation'
                 || action.kind === 'revoke-attestation') && (
-                <Button size="sm" disabled={reason.trim() === '' || decision.isPending} onClick={() => {
+                <Button size="sm" disabled={reason.trim() === '' || decision.isPending || actionSuspension !== null} onClick={() => {
+                  if (reason.trim() === '' || decision.isPending) return;
                   if (action.kind === 'reject') {
-                    decision.mutate({ signature: ['reject', action.unit.id, action.unit.status, active?.id ?? null,
+                    submit({ signature: ['reject', action.unit.id, action.unit.status, active?.id ?? null,
                       active?.active_day_content_hash ?? null, reason],
                     run: (key) => rejectDailyV2Unit(key, { unit: action.unit, activeCanonical: active, reason }),
                     done: 'Livraison écartée.' });
                   } else if (action.kind === 'balances' && active) {
                     const versionKey = dailyV2VersionKey(stagingVersionFacts(action.unit));
-                    decision.mutate({ signature: ['balances', active.id, action.unit.id, versionKey, reason],
+                    submit({ signature: ['balances', active.id, action.unit.id, versionKey, reason],
                       run: (key) => supersedeDailyV2UnitBalances(key, { canonicalUnitId: active.id,
                         correctiveStagingUnitId: action.unit.id, expectedCorrectiveVersionKey: versionKey, reason }),
                       done: 'Soldes corrigés.' });
                   } else if (action.kind === 'revoke-refutation') {
-                    decision.mutate({ signature: ['revoke-refutation', action.refutation.id, reason],
+                    submit({ signature: ['revoke-refutation', action.refutation.id, reason],
                       run: (key) => revokeDailyV2VersionRefutation(key, action.refutation.id, reason),
                       done: 'Réfutation révoquée.' });
                   } else if (action.kind === 'revoke-attestation') {
-                    decision.mutate({ signature: ['revoke-attestation', action.attestation.id, reason],
+                    submit({ signature: ['revoke-attestation', action.attestation.id, reason],
                       run: (key) => revokeDailyV2AttemptAttestation(key, action.attestation.id, reason),
                       done: 'Attestation révoquée.' });
                   }
@@ -401,17 +479,21 @@ function FileSection({ attempt, attestations, canAdminister, canDecide, onAttest
   );
 }
 
-function AttestForm({ attempt, type, reason, pending, onSubmit }: {
+function AttestForm({ attempt, type, reason, pending, suspended, onSubmit }: {
   attempt: DailyV2ExportAttemptRow;
   type: DailyV2AttestationType;
   reason: string;
   pending: boolean;
+  /** Lecture nécessaire en échec, incomplète ou en cours : aucun envoi. */
+  suspended: boolean;
   onSubmit: (rawTextHash: string, evidenceRef: string, currency: string | null) => void;
 }) {
   const [hash, setHash] = useState<string | null>(null);
   const [evidence, setEvidence] = useState('');
   const [currency, setCurrency] = useState('');
   const matches = hash !== null && hash === attempt.raw_text_hash;
+  const ready = matches && evidence.trim() !== '' && reason.trim() !== '' && !pending && !suspended
+    && (type !== 'TRUSTED_CURRENCY' || currency.trim() !== '');
   return (
     <div className="space-y-2">
       <p>Resélectionnez le fichier déposé : son empreinte est recalculée localement, sans téléversement.</p>
@@ -426,21 +508,22 @@ function AttestForm({ attempt, type, reason, pending, onSubmit }: {
       )}
       <Input aria-label="Référence de preuve" placeholder="Référence de preuve" value={evidence}
         onChange={(event) => setEvidence(event.target.value)} />
-      <Button size="sm" disabled={!matches || evidence.trim() === '' || reason.trim() === '' || pending
-        || (type === 'TRUSTED_CURRENCY' && currency.trim() === '')}
-      onClick={() => onSubmit(hash!, evidence, type === 'TRUSTED_CURRENCY' ? currency.trim().toUpperCase() : null)}>
+      <Button size="sm" disabled={!ready}
+        onClick={() => ready && onSubmit(hash!, evidence, type === 'TRUSTED_CURRENCY' ? currency.trim().toUpperCase() : null)}>
         Attester
       </Button>
     </div>
   );
 }
 
-function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: {
+function RefuteForm({ version, active, deliveries, reason, pending, suspended, onSubmit }: {
   version: DailyV2DayVersion;
   active: DailyV2CanonicalUnitRow;
   deliveries: { units: DailyV2StagingUnitRow[]; attempts: DailyV2ExportAttemptRow[] };
   reason: string;
   pending: boolean;
+  /** Lecture nécessaire en échec, incomplète ou en cours : aucun envoi. */
+  suspended: boolean;
   onSubmit: (proof: DailyV2RefutationProof) => void;
 }) {
   const [kind, setKind] = useState<'FRESH_DELIVERY' | 'BANK_PIECE'>('FRESH_DELIVERY');
@@ -481,7 +564,7 @@ function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: 
     && /^\d{4}-\d{2}-\d{2}$/.test(issuedOn)
     && (!needs.balances || (isDailyV2AmountText(values.opening) && isDailyV2AmountText(values.closing)))
     && (!needs.totals || (isDailyV2AmountText(values.debits) && isDailyV2AmountText(values.credits)));
-  const ready = allJustified && reason.trim() !== '' && !pending
+  const ready = allJustified && reason.trim() !== '' && !pending && !suspended
     && (kind === 'FRESH_DELIVERY' ? fresh !== null : pieceReady);
   const valueOrNull = (text: string, needed: boolean) => (needed && text.trim() !== '' ? text.trim() : null);
 
@@ -492,8 +575,9 @@ function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: 
         {verdicts.map((verdict) => (
           <li key={`${verdict.source.raw_text_hash}|${verdict.source.account_registry_id}`}>
             <span className="font-mono">{shortHash(verdict.source.raw_text_hash)}</span> — première apparition le {verdict.firstSeenDay}
-            {' '}({verdict.source.deliveries} livraison(s)) : {bound === null ? 'preuve à choisir'
-              : verdict.justified ? 'justifiée' : 'non justifiée (preuve pas strictement postérieure)'}
+            {' '}({verdict.source.deliveries} livraison(s)) : {bound !== null
+              ? (verdict.justified ? 'justifiée' : 'non justifiée (preuve pas strictement postérieure)')
+              : kind === 'FRESH_DELIVERY' && fresh !== null ? 'borne de la livraison indisponible' : 'preuve à choisir'}
           </li>
         ))}
       </ul>
@@ -507,6 +591,9 @@ function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: 
       </div>
       {kind === 'FRESH_DELIVERY' && boundsError && (
         <p role="alert" className="text-destructive">{boundsError} Aucune livraison fraîche ne peut être retenue comme preuve.</p>
+      )}
+      {kind === 'FRESH_DELIVERY' && !boundsError && boundsQuery.isFetching && (
+        <p role="status" className="text-xs">Lecture des journées du fichier en cours : bornes indisponibles.</p>
       )}
       {kind === 'FRESH_DELIVERY' && (
         <select aria-label="Livraison fraîche de la version retenue" className="w-full rounded border px-2 py-1"
@@ -554,7 +641,7 @@ function RefuteForm({ version, active, deliveries, reason, pending, onSubmit }: 
           </label>
         </div>
       )}
-      <Button size="sm" variant="destructive" disabled={!ready} onClick={() => onSubmit(kind === 'FRESH_DELIVERY'
+      <Button size="sm" variant="destructive" disabled={!ready} onClick={() => ready && onSubmit(kind === 'FRESH_DELIVERY'
         ? { kind: 'FRESH_DELIVERY', staging_unit_id: fresh!.id }
         : {
           kind: 'BANK_PIECE', piece_sha256: pieceHash!, piece_reference: pieceReference.trim(),

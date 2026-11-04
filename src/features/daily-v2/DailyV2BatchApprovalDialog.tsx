@@ -59,6 +59,10 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
     onClose();
   };
   const tooLarge = plan !== null && plan.admissible.length > plan.maxDays;
+  // Même condition pour le bouton et son gestionnaire d'envoi (jamais d'envoi sur
+  // un plan absent, périmé ou en relecture).
+  const confirmable = canDecide && plan !== null && !planQuery.isError && plan.admissible.length > 0 && !tooLarge
+    && reason.trim() !== '' && !approve.isPending;
 
   return (
     <Dialog open={attemptId !== null} onOpenChange={(open) => !open && close()}>
@@ -115,9 +119,8 @@ export function DailyV2BatchApprovalDialog({ attemptId, onClose, canDecide, onCh
         {message && <p role="status" className="text-sm">{message}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={close}>Annuler</Button>
-          <Button disabled={!canDecide || !plan || planQuery.isError || plan.admissible.length === 0 || tooLarge
-            || reason.trim() === '' || approve.isPending}
-          onClick={() => plan && attemptId && approve.mutate({ attemptId, expected: plan.expected, reason })}>
+          <Button disabled={!confirmable}
+            onClick={() => confirmable && plan && attemptId && approve.mutate({ attemptId, expected: plan.expected, reason })}>
             Confirmer l’approbation des {plan?.admissible.length ?? 0} journée(s)
           </Button>
         </DialogFooter>

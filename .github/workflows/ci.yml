@@ -176,7 +176,7 @@ jobs:
       - name: Daily v2 operational decisions (TypeScript and PostgreSQL)
         shell: pwsh
         run: |
-          npx tsx --test src/features/daily-v2/dailyV2OperationalDecisions.synthetic.test.ts src/features/daily-v2/dailyV2BalanceOnlyCorrection.synthetic.test.ts src/features/daily-v2/dailyV2DecisionReads.synthetic.test.ts
+          npx tsx --test src/features/daily-v2/dailyV2OperationalDecisions.synthetic.test.ts src/features/daily-v2/dailyV2BalanceOnlyCorrection.synthetic.test.ts src/features/daily-v2/dailyV2DecisionReads.synthetic.test.ts src/features/daily-v2/DailyV2DecisionDialogsSuspension.synthetic.test.tsx
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npx tsx src/features/treasury/treasuryMutation.proof.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

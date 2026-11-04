@@ -181,7 +181,7 @@ artefact MCP.
 
 | Constat CTO | Correction | Preuve |
 |---|---|---|
-| **P1** — charge réelle aux agrégats décalés de 1 000 000 XOF lue `AVAILABLE` à 1 000 110 XOF (l'équation ouverture + crédits − débits = clôture ne suffisait pas) | Règle unique `daily_stmt_line_facts_conform` : nombre de lignes, totaux et chaîne des soldes courants de l'ouverture à la clôture (ordre du fichier ou son inverse exact) ; appliquée aux lignes staging (`daily_stmt_staging_lines_conform`) et canonical (`daily_stmt_canonical_lines_conform`). Lecture « Soldes à date » : une passe, une fenêtre (`canon_agg`, `stg_agg`) ; unité non conforme → `UNIT_FINANCIAL_FACTS_INCOHERENT`, jamais de solde ; livraison non conforme → non propre, son fichier ne prouve ni clôture ni réfutation ; doublon sans lignes propre seulement si une version retenue de mêmes faits a des lignes conformes ; constat `LINES_NOT_CONFORMING`. Approbation groupée : journées aux lignes non conformes inadmissibles. Réfutation : refusée si la version retenue a des lignes non conformes, ou si le fichier de la livraison fraîche porte une journée aux lignes non conformes | `44_lines_conformity.sql` (contre-exemple CTO sur la charge du pipeline réel : plus de solde ; variantes totaux à net égal et soldes courants ; promotion unitaire historique puis lecture ; réfutation refusée ; correction des seuls soldes ; deux mordants : sans la condition, la charge serait admissible et le solde décalé redeviendrait `AVAILABLE` à 1 000 110 XOF) ; `46_operational.sql` scénarios O, P et N bis (unité, fichier, doublon sans lignes, profil décroissant, nombre, totaux, chaîne interne, faits de livraison incohérents) ; mutants m76 (unité), m77 (fichier), m78 (protection entière) tués sur les deux versions ; H1 et « première copie inutilisable puis copie valide » : `40_duplicate_financial_version_lines.sql` et scénario L inchangés, verts |
+| **P1** — charge synthétique issue du vrai pipeline, aux agrégats décalés de 1 000 000 XOF, lue `AVAILABLE` à 1 000 110 XOF (l'équation ouverture + crédits − débits = clôture ne suffisait pas) ; ce faux solde n'a pas été observé sur les relevés réels | Règle unique `daily_stmt_line_facts_conform` : nombre de lignes, totaux et chaîne des soldes courants de l'ouverture à la clôture (ordre du fichier ou son inverse exact) ; appliquée aux lignes staging (`daily_stmt_staging_lines_conform`) et canonical (`daily_stmt_canonical_lines_conform`). Lecture « Soldes à date » : une passe, une fenêtre (`canon_agg`, `stg_agg`) ; unité non conforme → `UNIT_FINANCIAL_FACTS_INCOHERENT`, jamais de solde ; livraison non conforme → non propre, son fichier ne prouve ni clôture ni réfutation ; doublon sans lignes propre seulement si une version retenue de mêmes faits a des lignes conformes ; constat `LINES_NOT_CONFORMING`. Approbation groupée : journées aux lignes non conformes inadmissibles. Réfutation : refusée si la version retenue a des lignes non conformes, ou si le fichier de la livraison fraîche porte une journée aux lignes non conformes | `44_lines_conformity.sql` (contre-exemple CTO sur une charge synthétique issue du vrai pipeline : plus de solde ; variantes totaux à net égal et soldes courants ; promotion unitaire historique puis lecture ; réfutation refusée ; correction des seuls soldes ; deux mordants : sans la condition, la charge serait admissible et le solde décalé redeviendrait `AVAILABLE` à 1 000 110 XOF) ; `46_operational.sql` scénarios O, P et N bis (unité, fichier, doublon sans lignes, profil décroissant, nombre, totaux, chaîne interne, faits de livraison incohérents) ; mutants m76 (unité), m77 (fichier), m78 (protection entière) tués sur les deux versions ; H1 et « première copie inutilisable puis copie valide » : `40_duplicate_financial_version_lines.sql` et scénario L inchangés, verts |
 | **P2** — lectures non paginées (livraisons, fichiers, journées, unités retenues, attestations, réfutations, sources) | Cœur pur `dailyV2DecisionReadCore.ts` : pages de 500 jusqu'au total exact annoncé, décalage égal aux lignes reçues, tri stable terminé par l'identifiant (ou la clé primaire), identifiants découpés en lots de 100, plafond de sûreté ; erreur, total absent ou modifié, page vide, ligne répétée, fichier associé manquant → `DAILY_V2_READ_INCOMPLETE`. Interfaces : lecture en échec signalée, décisions dépendantes suspendues (versions non construites, attestations et approbation groupée retirées, preuve fraîche non proposée) | `dailyV2DecisionReads.synthetic.test.ts` (faux PostgREST : 1 234 réfutations dont la révocation en troisième page, 1 101 livraisons dont une nouvelle source en dernière réponse avec un plafond serveur de 300 lignes, 250 fichiers en trois lots, sept cas de lecture incomplète) ; contrat des interfaces dans `dailyV2OperationalDecisions.synthetic.test.ts` |
 | **P2** — ancienne réfutation affichée acquise après changement de l'unité retenue | Effectivité calculée par le serveur seul : constat `REFUTATION_STATUS` de la lecture (`EFFECTIVE`, `PARTIAL` avec sources non couvertes, `SUSPENDED` avec causes `RETAINED_VERSION_CHANGED`, `RETAINED_VERSION_UNUSABLE`, `PROOF_NO_LONGER_VALID`, `SOURCE_NOT_JUSTIFIED`, `NEW_SOURCE_UNCOVERED`) et lecture `daily_v2_refutation_status_v1` (administrateur ; `verifiable = false` avec motif si le module est fermé, la journée inconnue ou le compte hors inventaire). Interface : décision enregistrée, puis effectivité actuelle telle que le serveur la rend, avec l'heure de la lecture, ou « non vérifiable » (lecture en cours, en échec ou impossible) ; plus aucun calcul de couverture dans le navigateur ; sources non couvertes comptées hors couverture par l'adoption. Plan d'approbation groupée lu de même sur le serveur (`daily_v2_attempt_batch_plan_v1`) | `46_operational.sql` : effective, partielle (nouvelle source F2), suspendue (justificatif invalidé ; version retenue changée par une correction des seuls soldes = cas CTO), lecture serveur avant/après, refus sans rôle admin, journée inconnue, module fermé ; mutants m79 (partielle ignorée) et m80 (changement de retenue ignoré) ; TypeScript : cas CTO (décision enregistrée visible, effectivité « Suspendue », jamais « effective » sans lecture serveur), réponses hors contrat refusées |
 
@@ -306,3 +306,75 @@ Doutes rapportés, non modifiés :
 - Diagnostic des ruptures BIS hors périmètre.
 - Merge, application staging ou production, ouverture du module ou des verrous : GO
   distincts.
+
+## 9. Correction après la contre-revue CTO de `972baaf` (même GO reconduit)
+
+Verdict CTO sur `972baaf` : `FAIL` ciblé. Le P1 du faux solde est levé ; lectures paginées et
+effectivité lue sur le serveur acceptées ; un P2 d'interface reste à corriger. Correction
+limitée à l'interface : aucune migration, aucun SQL, aucun test PostgreSQL modifié (suites SQL
+et relevés réels non rejoués, conformément au GO) ; aucune dépendance, aucun `.env`, aucun
+seuil CI, aucun artefact MCP.
+
+### 9.1 Constat → correction → preuve
+
+| Constat | Correction | Preuve |
+|---|---|---|
+| **P2 (CTO)** — un formulaire déjà ouvert échappait à la suspension : après une relecture en erreur `DAILY_V2_READ_INCOMPLETE`, « Confirmer » restait actif et envoyait la décision malgré l'annonce « Les décisions de la journée sont suspendues » | Lectures nécessaires par décision : journée (livraisons, unité retenue, réfutations) pour l'écartement, la correction des seuls soldes, la réfutation et sa révocation ; journée et attestations pour l'attestation et sa révocation. Lecture en échec, incomplète ou en cours, ou versions non calculables → formulaire suspendu : message dans le formulaire, bouton d'envoi inactif, point d'envoi unique (`submit`) qui refuse tout envoi suspendu ; sous-formulaires de réfutation et d'attestation inactifs et gardés jusque dans leur gestionnaire. La saisie est conservée ; le formulaire redevient utilisable sur une lecture complète. Le statut des réfutations (affichage seul) n'en fait pas partie | `DailyV2DecisionDialogsSuspension.synthetic.test.tsx` : séquence CTO exacte (ouverture d'« Écarter », relecture `DAILY_V2_READ_INCOMPLETE`, bouton inactif, gestionnaire sans envoi, puis envoi unique après une lecture complète) ; sept formulaires (écartement, correction des seuls soldes, révocation de réfutation, réfutation par livraison fraîche, par pièce corrective, attestation d'identité, révocation d'attestation) × chaque lecture nécessaire × {échec, relecture en cours} ; versions devenues non calculables ; le harnais CTO d'origine échoue désormais sur son assertion « bouton reste actif après erreur » |
+| **P2 (relecture indépendante, préexistant)** — un formulaire survivait au changement de journée (dialogue resté monté, passage à l'approbation groupée sans fermeture) et s'envoyait sur les lectures d'une autre journée ; la révocation n'envoie qu'un identifiant, que le serveur accepte | Le formulaire porte la journée où il a été ouvert : sur une autre journée, il n'est ni affiché ni envoyable ; passage à l'approbation groupée = formulaire, raison et message remis à zéro | Journée changée avec approbation groupée puis retour à la première journée ; journée changée sans fermeture |
+| **P3 (relecture)** — sujet figé à l'ouverture : après une relecture complète, le formulaire redevenait actif même si son sujet avait changé | Sujet revérifié sur chaque lecture complète, selon la condition d'affichage du bouton qui l'a ouvert : livraison retrouvée avec le même statut (encore en attente, ou encore candidate à la correction des soldes), version retrouvée par sa clé et réfutable, réfutation active, même fichier sans attestation de même type, attestation active ; la réfutation et la correction des soldes visent la version retenue de l'ouverture (`expectedRetainedVersionKey` transmise telle quelle). Sinon : suspension et alerte « le sujet de cette décision a changé ». La réfutation lit sources et faits de la version dans la lecture actuelle | Dix cas de sujet changé (livraison écartée ou passée à `needs_review`, soldes déjà retenus, retenue changée pour la correction et la réfutation, réfutation révoquée, livraisons remplacées, version devenue retenue, identité attestée, attestation révoquée) ; autre fichier de la même journée ; sources à jour (nouvelle source justifiée transmise, non justifiée bloquante) |
+| **P3 (relecture)** — périmètre et annonces | Boutons de fichier masqués si les versions ne sont pas calculables (« aucune décision possible ») ; message du formulaire annoncé poliment pour une lecture en échec (déjà annoncée par l'alerte de la journée) ou en cours, en alerte pour un sujet changé ; borne de livraison indisponible et lecture des journées du fichier signalées. Approbation groupée : bouton et gestionnaire partagent la même condition | Cas « versions non calculables » ; gestionnaire de l'approbation groupée sans raison |
+| **P3 (CTO)** — § 8.1 : « charge réelle » | « Charge synthétique issue du vrai pipeline » et mention que le faux solde n'a pas été observé sur les relevés réels ; même alignement dans le README des tests Daily v2 (trois lignes de ce lot) | § 8.1, `supabase/tests/daily_statement_units_v2/README.md` |
+
+Le test compte 27 cas. Sur le code de `972baaf`, 24 échouent : le défaut est reproduit. Trois
+passent : la limitation du périmètre (statut des réfutations et attestations sans effet sur
+l'écartement), l'approbation groupée sur plan relu (déjà protégée) et la valeur transmise de la
+retenue. Ce sont des cas de non-régression. Quatorze mutants ciblés (garde d'envoi, relecture en cours, journée du
+formulaire, remise à zéro, revérification du sujet, même statut, même fichier, retenue de la
+réfutation, retenue de la correction, sources à jour, bouton inactif, gestionnaire de
+l'approbation groupée, périmètre des attestations, boutons de fichier) : chacun tué par au
+moins un cas. Le test exécute les deux dialogues et leurs sous-composants : l'état local est
+conservé, les gestionnaires sont ceux du dernier rendu. Lectures, mutation, services réseau et
+primitives d'interface sont remplacés au chargement par un hook de résolution Node, sans
+dépendance ajoutée. Le comportement simulé de TanStack Query v5 est celui que documente la
+bibliothèque : données conservées sur une relecture en échec.
+
+### 9.2 Contrôles
+
+| Contrôle | Résultat |
+|---|---|
+| Test d'interaction (nouveau) | 27/27 ; 27/27 aussi sans `navigator` (simulation de la CI Node 20) |
+| Étape CI ciblée du lot (quatre fichiers) | 49/49 |
+| `test:daily-v2-application` · `test:daily-v2-reporting` | 108/108 · 70/70 |
+| Daily v2 tableau de bord · session et accès | 34/34 · 11/11 |
+| `test:treasury-balances` | 28/28 |
+| Typecheck | 16 erreurs, identiques à la base ; projet Node 0 |
+| ESLint | 178 erreurs, 11 avertissements, identiques à la base ; fichiers modifiés sans constat |
+| Build | PASS ; artefact MCP inchangé |
+| Suites PostgreSQL, relevés réels, C7 | non rejoués : aucun code serveur modifié |
+
+### 9.3 Relecture indépendante
+
+Deux relectures en lecture seule. Première : `FAIL` sur le changement de journée (P2
+préexistant) et cinq réserves P3, traitées ci-dessus. Seconde, sur la correction :
+`PASS_WITH_RESERVES`, aucun P1 ni P2, aucun chemin d'envoi restant, aucun faux positif sur
+les cas légitimes rejoués (journée sans retenue, attestation de devise, deux livraisons d'une
+même version). Ses deux trous de test (même statut, même fichier) et sa réserve sur la
+retenue visée sont traités. Réserves maintenues :
+
+- La signature de commande d'une réfutation ne contient ni les sources attendues ni la
+  retenue. Après une réponse perdue puis une relecture qui les change, la même clé serait
+  réutilisée avec une autre requête, et le serveur répondrait `DAILY_STMT_COMMAND_KEY_REUSED`.
+  L'échec est sûr, mais déroutant. Hors autorisation : la dérivation des clés de commande
+  relève de l'idempotence.
+- Un formulaire laissé ouvert réapparaît si l'on revient à la même journée sans fermer le
+  dialogue. Il est alors revérifié sur les lectures de cette journée.
+- Le mode hors ligne (`fetchStatus` en pause) n'est pas traité comme une relecture en cours ;
+  le serveur revérifie toute décision sous verrou.
+
+### 9.4 Réserves et limites
+
+- **C7 inchangé** : p95 4,84 s pour un objectif de 1 s. La réserve vaut pour une éventuelle
+  fusion du module fermé ; la qualification d'usage quotidien à ce volume n'est pas acquise.
+  Les contrôles de conformité sont conservés.
+- **Étape CI ciblée du lot** : complétée du nouveau fichier de test, sans changement de seuil.
+- **Merge, application staging ou production, ouverture du module** : GO distincts.

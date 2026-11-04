@@ -45,7 +45,14 @@ Livré en local :
   verdict `FAIL`) : lignes stockées contrôlées contre les faits déclarés (aucun solde ni
   preuve tirés d'une unité ou d'un fichier non conforme), lectures des décisions exhaustives
   (lecture incomplète signalée, décisions suspendues), effectivité des réfutations et plan
-  d'approbation groupée lus sur le serveur ; nouvelle relecture indépendante traitée.
+  d'approbation groupée lus sur le serveur ; nouvelle relecture indépendante traitée ;
+- correction après la contre-revue CTO de `972baaf` (même GO reconduit, verdict `FAIL` ciblé
+  sur l'interface) : un formulaire de décision déjà ouvert est suspendu, bouton et
+  gestionnaire d'envoi compris, dès qu'une lecture dont il dépend échoue, devient incomplète
+  ou est en cours, ou que son sujet (livraison, version, version retenue, réfutation,
+  fichier, attestation) a changé ; formulaire lié à sa journée et abandonné au passage à
+  l'approbation groupée ; boutons de fichier masqués si les versions ne sont pas calculables ;
+  test d'interaction sur chaque type de décision (27 cas, 14 mutants tués).
 
 Résultats sur les 12 relevés réels (base jetable, simulations étiquetées), mesures C7 et
 limites : `docs/TREASURY_V1_LOT1_OPERATIONAL_FIX_REPORT.md`.
