@@ -14,7 +14,8 @@ param(
 #     opérationnel, données Daily v2 et habilitations existantes, relevé de la
 #     surface d'accès, migration du lot, comparaison de surface, puis les deux
 #     migrations du Lot 1 opérationnel sur cette base peuplée, seconde
-#     comparaison de surface, puis les suites du lot ;
+#     comparaison de surface, puis la migration des refus d'état périmé
+#     (SQLSTATE 22023) et sa comparaison de surface, puis les suites du lot ;
 #   - « fresh » : chaîne complète AVEC la migration du lot sur une base neuve,
 #     puis les mêmes suites ; avec -Mutants, preuves de mordant.
 
@@ -26,6 +27,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $testDir = 'supabase/tests/treasury_v1_lot1'
 $lotMigration = '20261102090000_treasury_v1_lot1_bank_balances.sql'
 $operationalMigrations = @('20261103120000_daily_v2_operational_decisions.sql', '20261103130000_treasury_v1_lot1_operational_fix.sql')
+$staleRefusalMigration = '20261106120000_treasury_v1_lot1_stale_refusal_sqlstate.sql'
 $expectedRaceResult = 'RESULT|AVAILABLE|1300.00|QUALIFIED|null'
 $script:containerName = $null
 
@@ -89,7 +91,7 @@ function Stop-Container {
 function Invoke-Chain([switch]$WithoutLot) {
   Invoke-File 'supabase/tests/full_chain_replay/00_platform_shim_minimal.sql' | Out-Null
   $files = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'supabase/migrations') -Filter '*.sql' | Sort-Object Name
-  $excluded = if ($WithoutLot) { @($lotMigration) + $operationalMigrations } else { @() }
+  $excluded = if ($WithoutLot) { @($lotMigration) + $operationalMigrations + @($staleRefusalMigration) } else { @() }
   $applied = 0
   foreach ($file in $files) {
     if ($excluded -contains $file.Name) { continue }
@@ -230,6 +232,10 @@ try {
   foreach ($migration in $operationalMigrations) { Invoke-File "supabase/migrations/$migration" | Out-Null }
   Write-Output 'OPERATIONAL FIX migrations applied on the populated database'
   Invoke-File "$testDir/62_surface_compare_operational.sql"
+  Invoke-File "$testDir/63_stale_sqlstate_before.sql"
+  Invoke-File "supabase/migrations/$staleRefusalMigration" | Out-Null
+  Write-Output 'STALE REFUSAL SQLSTATE migration applied on the populated database'
+  Invoke-File "$testDir/64_surface_compare_stale_sqlstate.sql"
   Invoke-File "$testDir/10_structure_security.sql"
   Invoke-LotSuites
   Stop-Container
