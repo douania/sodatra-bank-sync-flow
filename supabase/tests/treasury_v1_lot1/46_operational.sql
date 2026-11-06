@@ -589,6 +589,16 @@ SELECT tr_test.expect_error(format('SELECT public.treasury_admin_set_verified_st
   (SELECT active_day_content_hash FROM public.daily_statement_units_canonical WHERE account_registry_id = tr_test.id('op_vs')
      AND accounting_date = '2026-10-04' AND status = 'ingested'),
   '300', 'Releve de solde synthetique', 'Point sur une journee contredite'), 'TREASURY_VERIFIED_START_NOT_EFFECTIVE');
+-- État périmé : refus 22023, jamais 40001 (rejoué en boucle par PostgREST, sans réponse).
+-- Branche 1 : unité retenue introuvable.
+SELECT tr_test.expect_error_state(format('SELECT public.treasury_admin_set_verified_start_v1(%L, %L::uuid, %L::date, %L::uuid, %L, %L, %L, %L)',
+  tr_test.key('op-vs-unknown-unit'), tr_test.id('op_vs'), '2026-10-03', gen_random_uuid(),
+  (SELECT active_day_content_hash FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_vs_03')),
+  '250', 'Releve de solde synthetique', 'Unite retenue introuvable'), '22023', 'TREASURY_VERIFIED_START_STALE');
+-- Branche 2 : l'unité n'est plus celle qui a été lue (empreinte de journée différente).
+SELECT tr_test.expect_error_state(format('SELECT public.treasury_admin_set_verified_start_v1(%L, %L::uuid, %L::date, %L::uuid, %L, %L, %L, %L)',
+  tr_test.key('op-vs-changed-unit'), tr_test.id('op_vs'), '2026-10-03', tr_test.id('u_op_vs_03'), repeat('0', 64),
+  '250', 'Releve de solde synthetique', 'Unite qui n est plus celle lue'), '22023', 'TREASURY_VERIFIED_START_STALE');
 SELECT tr_test.put('vs_op', (public.treasury_admin_set_verified_start_v1(tr_test.key('op-vs'), tr_test.id('op_vs'), '2026-10-03',
   tr_test.id('u_op_vs_03'), (SELECT active_day_content_hash FROM public.daily_statement_units_canonical WHERE id = tr_test.id('u_op_vs_03')),
   '250', 'Releve de solde synthetique', 'Point de depart synthetique') ->> 'verified_start_id')::uuid);

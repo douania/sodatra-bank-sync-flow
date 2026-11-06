@@ -69,6 +69,22 @@ BEGIN
   RAISE EXCEPTION 'TEST_FAILED: erreur [%] attendue, instruction réussie : %', p_fragment, p_sql;
 END $$;
 
+-- Refus attendu avec son SQLSTATE exact : un refus métier ne doit pas porter un
+-- code d'échec de sérialisation (40001), que PostgREST rejoue en boucle sans répondre.
+CREATE FUNCTION tr_test.expect_error_state(p_sql text, p_sqlstate text, p_fragment text)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    IF position(p_fragment IN SQLERRM) = 0 OR SQLSTATE <> p_sqlstate THEN
+      RAISE EXCEPTION 'TEST_FAILED: attendu [% %] obtenu [% %]', p_sqlstate, p_fragment, SQLSTATE, SQLERRM;
+    END IF;
+    RETURN;
+  END;
+  RAISE EXCEPTION 'TEST_FAILED: erreur [% %] attendue, instruction réussie : %', p_sqlstate, p_fragment, p_sql;
+END $$;
+
 -- Lecture d'un compte (par nom de test du registre ou du compte attendu) à la date D.
 CREATE FUNCTION tr_test.read_as(p_user text, p_as_of date)
 RETURNS jsonb LANGUAGE plpgsql AS $$

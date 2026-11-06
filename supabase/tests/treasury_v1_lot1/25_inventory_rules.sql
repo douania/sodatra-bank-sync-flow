@@ -57,8 +57,9 @@ SELECT tr_test.assert_eq((SELECT count(*)::text FROM jsonb_array_elements(tr_tes
 
 -- Attestation : ce que l'administrateur a vu, et rien d'autre.
 SELECT tr_test.as_user('t_admin');
-SELECT tr_test.expect_error($$SELECT public.treasury_admin_attest_inventory_v1(tr_test.key('a-1'), repeat('0', 64),
-  'Empreinte périmée')$$, 'TREASURY_INVENTORY_CHANGED');
+-- Empreinte périmée : refus 22023, jamais 40001 (rejoué en boucle par PostgREST, sans réponse).
+SELECT tr_test.expect_error_state($$SELECT public.treasury_admin_attest_inventory_v1(tr_test.key('a-1'), repeat('0', 64),
+  'Empreinte périmée')$$, '22023', 'TREASURY_INVENTORY_CHANGED');
 RESET ROLE;
 DO $$
 DECLARE v_fp text := tr_test.read_as('t_reader', '2026-10-01') -> 'inventory' ->> 'fingerprint'; v jsonb; v2 jsonb;
