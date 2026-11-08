@@ -5,9 +5,19 @@
 --   00_supabase_local_shim.sql + 01_seed_synthetic_identities.sql
 --   + 02_payload_helpers.sql (hex64 / day_content_hash / mk_guard)
 --   + migrations 20260708130000 (0H), 0U, 0U3, 0U4
---   + 20260728000000_daily_v2_provisional_lifecycle_0z.sql (0Z).
+--   + 20260728000000_daily_v2_provisional_lifecycle_0z.sql (0Z)
+--   + jusqu'à 20261103120000 (décisions opérationnelles) et
+--     20261108120000_daily_v2_d1_late_provisional_same_version.sql (D1),
+--   comme dans run_e2e_0r.sh.
 -- Données 100 % synthétiques (banque ORA, devise XOF, septembre 2026, compte
 -- provisionné par la RPC registre — fingerprint généré côté serveur).
+--
+-- Exception documentée à D-0H-4 (D1, arbitrage CTO Q1) : une unité demandée
+-- provisoire est comparée au canonical actif de sa journée. Si sa version
+-- complète est identique, cohérente et aux lignes conformes, elle est reçue
+-- puis retirée (« superseded », motif late_provisional_same_version_superseded) ;
+-- elle n'est jamais promouvable. Toute autre provisoire suit le cycle 0Z
+-- inchangé (Z6b, Z6c).
 -- ============================================================================
 \set ON_ERROR_STOP on
 SET datestyle TO 'ISO, MDY';
@@ -66,6 +76,11 @@ CREATE OR REPLACE FUNCTION poc_test.z_mk_unit(
     'requested_unit_status', p_status)
 $$;
 
+-- Réserve CTO R2 (D1) : le solde courant est cumulé selon la POSITION de la
+-- ligne dans la journée (index 0, 1, ... => 10, 20, ... ; ouverture 0, clôture
+-- 10 x N, comme l'unité) ; il ne dérive plus de l'ordinal d'occurrence, qui
+-- garde son sens (1 = première occurrence d'un contenu, contenus distincts ici).
+-- La chaîne non conforme est construite à part (z_mk_line_nonconform).
 CREATE OR REPLACE FUNCTION poc_test.z_mk_line(
   p_bank text, p_fp text, p_date text, p_hash text, p_ordinal integer, p_idx integer
 ) RETURNS jsonb LANGUAGE sql AS $$
@@ -80,14 +95,24 @@ CREATE OR REPLACE FUNCTION poc_test.z_mk_line(
     'debit_amount', NULL,
     'credit_amount', 10.00,
     'signed_amount', 10.00,
-    'running_balance', (10.00 * p_ordinal)::numeric(18, 2),
+    'running_balance', (10.00 * (p_idx + 1))::numeric(18, 2),
     'direction', 'credit',
     'currency', 'XOF')
 $$;
 
+-- Scénario non conforme distinct : même ligne, solde courant figé à 10.00 (la
+-- chaîne ne mène pas à la clôture déclarée dès deux lignes).
+CREATE OR REPLACE FUNCTION poc_test.z_mk_line_nonconform(
+  p_bank text, p_fp text, p_date text, p_hash text, p_ordinal integer, p_idx integer
+) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT poc_test.z_mk_line(p_bank, p_fp, p_date, p_hash, p_ordinal, p_idx)
+         || jsonb_build_object('running_balance', 10.00::numeric(18, 2))
+$$;
+
 -- Dépôt mono-journée via le wrapper 0U réel ; mémorise l'issue sous préfixe.
+-- p_conform = false : lignes de z_mk_line_nonconform (scénario distinct).
 CREATE OR REPLACE FUNCTION poc_test.z_deposit(
-  p_prefix text, p_date text, p_hashes text[], p_status text, p_ref text
+  p_prefix text, p_date text, p_hashes text[], p_status text, p_ref text, p_conform boolean DEFAULT true
 ) RETURNS jsonb LANGUAGE plpgsql AS $fn$
 DECLARE
   v_fp    text := poc_test.ctx_get('z_fp');
@@ -97,7 +122,9 @@ DECLARE
   v_i     integer;
 BEGIN
   FOR v_i IN 1 .. array_length(p_hashes, 1) LOOP
-    v_lines := v_lines || poc_test.z_mk_line('ORA', v_fp, p_date, p_hashes[v_i], 1, v_i - 1);
+    v_lines := v_lines || CASE WHEN p_conform
+      THEN poc_test.z_mk_line('ORA', v_fp, p_date, p_hashes[v_i], 1, v_i - 1)
+      ELSE poc_test.z_mk_line_nonconform('ORA', v_fp, p_date, p_hashes[v_i], 1, v_i - 1) END;
   END LOOP;
   v_res := public.pre_ingest_daily_statement_units(
     poc_test.z_mk_attempt('ORA', v_fp, v_acc, p_prefix, p_date, p_date, p_ref),
@@ -260,28 +287,97 @@ SELECT poc_test.expect_error(
 ROLLBACK;
 
 -- ----------------------------------------------------------------------------
--- Z6 : ref périmée sur journée déjà canonical => provisional de bruit,
---      toujours jamais promouvable (gate 0H inchangée).
+-- Z6a : ref périmée sur journée déjà canonical, livraison de version complète
+--       identique et conforme => reçue puis retirée (D1), jamais promouvable.
 -- ----------------------------------------------------------------------------
+SELECT poc_test.assert(
+  (SELECT public.daily_stmt_canonical_lines_conform(c.id) FROM public.daily_statement_units_canonical c
+   WHERE c.day_unit_id = poc_test.ctx_get('z4_duid') AND c.status = 'ingested'),
+  'Z6a: prerequis R2 : les lignes retenues du 15/09 sont conformes (soldes courants 10 puis 20)');
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_manager());
 SELECT poc_test.z_deposit('z6', '15/09/2026',
   ARRAY[poc_test.hex64('z_l1'), poc_test.hex64('z_l2')], 'provisional', '15/09/2026');
 COMMIT;
-SELECT poc_test.assert(poc_test.ctx_get('z6_status') = 'provisional',
-  'Z6: ref perimee => provisional held (bruit documente, hors arbitrage canonical)');
+SELECT poc_test.assert(poc_test.ctx_get('z6_status') = 'superseded'
+  AND (SELECT status FROM public.daily_statement_units_staging
+       WHERE id = poc_test.ctx_get('z6_staging')::uuid) = 'superseded',
+  'Z6a: version identique et conforme au canonical => retiree (superseded, D1)');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_lines_staging
+   WHERE staging_unit_id = poc_test.ctx_get('z6_staging')::uuid) = 2,
+  'Z6a: premiere copie du fichier : lignes conservees');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_import_events
+   WHERE staging_unit_id = poc_test.ctx_get('z6_staging')::uuid) = 2
+  AND (SELECT count(*) FROM public.daily_statement_import_events
+       WHERE staging_unit_id = poc_test.ctx_get('z6_staging')::uuid
+         AND event_type = 'status_changed' AND previous_status = 'provisional' AND new_status = 'superseded'
+         AND safe_details ->> 'reason_code' = 'late_provisional_same_version_superseded') = 1,
+  'Z6a: deux evenements (reception, retrait D1 audite)');
+SELECT poc_test.assert(poc_test.z_live_provisional(poc_test.ctx_get('z6_duid')) = 0,
+  'Z6a: aucune provisional vivante ne conteste la journee retenue');
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_admin());
 SELECT poc_test.expect_error(
   format($q$ SELECT public.promote_daily_statement_unit(%L::uuid) $q$,
          poc_test.ctx_get('z6_staging')),
+  '%DAILY_STMT_PROMOTE_GATE%',
+  'Z6a: une livraison retiree n est jamais promouvable');
+ROLLBACK;
+
+-- ----------------------------------------------------------------------------
+-- Z6c : mêmes faits, chaîne des soldes non conforme (scénario distinct) =>
+--       provisional de bruit vivante, jamais promouvable.
+-- ----------------------------------------------------------------------------
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.z_deposit('z6c', '15/09/2026',
+  ARRAY[poc_test.hex64('z_l1'), poc_test.hex64('z_l2')], 'provisional', '15/09/2026', false);
+COMMIT;
+SELECT poc_test.assert(poc_test.ctx_get('z6c_status') = 'provisional'
+  AND NOT public.daily_stmt_staging_lines_conform(poc_test.ctx_get('z6c_staging')::uuid),
+  'Z6c: memes faits, lignes non conformes => provisional vivante (non retiree)');
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid) $q$,
+         poc_test.ctx_get('z6c_staging')),
   '%DAILY_STMT_PROVISIONAL_NOT_PROMOTABLE%',
-  'Z6: une provisional vivante reste jamais promouvable');
+  'Z6c: une provisional vivante reste jamais promouvable');
+ROLLBACK;
+
+-- ----------------------------------------------------------------------------
+-- Z6b : version divergente => provisional vivante (balaie Z6c, redépôt 0Z),
+--       toujours jamais promouvable (gate 0H inchangée).
+-- ----------------------------------------------------------------------------
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_manager());
+SELECT poc_test.z_deposit('z6b', '15/09/2026',
+  ARRAY[poc_test.hex64('z_l1')], 'provisional', '15/09/2026');
+COMMIT;
+SELECT poc_test.assert(poc_test.ctx_get('z6b_status') = 'provisional',
+  'Z6b: ref perimee, version divergente => provisional held (hors arbitrage canonical)');
+SELECT poc_test.assert(
+  (SELECT status FROM public.daily_statement_units_staging
+   WHERE id = poc_test.ctx_get('z6c_staging')::uuid) = 'superseded'
+  AND (SELECT count(*) FROM public.daily_statement_import_events
+       WHERE staging_unit_id = poc_test.ctx_get('z6c_staging')::uuid
+         AND safe_details ->> 'reason_code' = 'provisional_superseded_by_redeposit') = 1,
+  'Z6b: la provisional Z6c est balayee par le redepot (cycle 0Z inchange)');
+BEGIN;
+SELECT poc_test.as_user(poc_test.uid_admin());
+SELECT poc_test.expect_error(
+  format($q$ SELECT public.promote_daily_statement_unit(%L::uuid) $q$,
+         poc_test.ctx_get('z6b_staging')),
+  '%DAILY_STMT_PROVISIONAL_NOT_PROMOTABLE%',
+  'Z6b: une provisional vivante reste jamais promouvable');
 ROLLBACK;
 
 -- ----------------------------------------------------------------------------
 -- Z7 : redépôt clos identique au canonical => duplicate R1 ET balayage de la
---      provisional de bruit (la clôture balaie quel que soit le verdict).
+--      provisional de bruit (la clôture balaie quel que soit le verdict) ; la
+--      livraison déjà retirée par D1 (Z6a) n'est pas touchée.
 -- ----------------------------------------------------------------------------
 BEGIN;
 SELECT poc_test.as_user(poc_test.uid_manager());
@@ -296,9 +392,16 @@ SELECT poc_test.assert(
   'Z7: aucune ligne re-stagee par le duplicate R1');
 SELECT poc_test.assert(
   (SELECT status FROM public.daily_statement_units_staging
-   WHERE id = poc_test.ctx_get('z6_staging')::uuid) = 'superseded'
+   WHERE id = poc_test.ctx_get('z6b_staging')::uuid) = 'superseded'
+  AND (SELECT count(*) FROM public.daily_statement_import_events
+       WHERE staging_unit_id = poc_test.ctx_get('z6b_staging')::uuid
+         AND safe_details ->> 'reason_code' = 'provisional_superseded_by_day_closure') = 1
   AND poc_test.z_live_provisional(poc_test.ctx_get('z7_duid')) = 0,
   'Z7: la provisional de bruit est balayee meme sur verdict duplicate');
+SELECT poc_test.assert(
+  (SELECT count(*) FROM public.daily_statement_import_events
+   WHERE staging_unit_id = poc_test.ctx_get('z6_staging')::uuid) = 2,
+  'Z7: la livraison retiree par D1 (Z6a) n est pas touchee par le balayage');
 
 -- ----------------------------------------------------------------------------
 -- Z8 : convergence d'un backlog LEGACY (plusieurs provisional vivantes

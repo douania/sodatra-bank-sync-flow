@@ -47,7 +47,14 @@ const migrationProvisionalLifecycle = readFileSync(
   'supabase/migrations/20260728000000_daily_v2_provisional_lifecycle_0z.sql',
   'utf8',
 );
+const migrationFoundation = readFileSync('supabase/migrations/20260708130000_daily_statement_units_v2.sql', 'utf8');
+const migrationD1 = readFileSync(
+  'supabase/migrations/20261108120000_daily_v2_d1_late_provisional_same_version.sql',
+  'utf8',
+);
 const e2eRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_e2e_0r.sh', 'utf8');
+const operationalRunner = readFileSync('supabase/tests/daily_statement_units_v2/run_operational_pg17.ps1', 'utf8');
+const treasuryRunner = readFileSync('supabase/tests/treasury_v1_lot1/run_pg17_replay.ps1', 'utf8');
 const bisMassGenerator = readFileSync(
   'supabase/tests/daily_statement_units_v2/e2e0r_generate_bis_mass_backfill.ts',
   'utf8',
@@ -217,6 +224,117 @@ test('redefines the two live ingest cores with the H1 exception only', () => {
   assert.equal((migrationOperational.match(/^BEGIN;$/gm) ?? []).length, 1);
   assert.equal((migrationOperational.match(/^COMMIT;$/gm) ?? []).length, 1);
   assert.doesNotMatch(migrationOperational, /DROP\s+(TABLE|COLUMN|FUNCTION|INDEX)/i);
+});
+
+test('adds the D1 late provisional retirement to the deposit and promotion cores only', () => {
+  const d1 = migrationD1.replace(/\r\n/g, '\n');
+  // Exactement cinq fonctions : deux redéfinies, trois internes nouvelles.
+  const created = [...d1.matchAll(/^CREATE (OR REPLACE )?FUNCTION (public\.[a-z0-9_]+)\(/gm)]
+    .map((match) => `${match[1] ? 'replace' : 'create'} ${match[2]}`).sort();
+  assert.deepEqual(created, [
+    'create public.daily_stmt_payload_lines_conform',
+    'create public.daily_stmt_provisional_same_version',
+    'create public.daily_stmt_retire_same_version_provisionals',
+    'replace public.daily_stmt_pre_ingest_legacy_core_0u',
+    'replace public.daily_stmt_promote_unit_core',
+  ]);
+  // Cœur du dépôt : source vivante 20261103120000 ; seuls changent deux tests.
+  const depositBefore = functionBody(migrationOperational, 'CREATE OR REPLACE FUNCTION public.daily_stmt_pre_ingest_legacy_core_0u(');
+  const depositAfter = functionBody(migrationD1, 'CREATE OR REPLACE FUNCTION public.daily_stmt_pre_ingest_legacy_core_0u(');
+  assert.deepEqual(depositAfter.slice(0, 10), depositBefore.slice(0, 10), 'signature and attributes unchanged');
+  const deposit = lineDelta(depositBefore, depositAfter);
+  assert.deepEqual(deposit.removed.sort(), [
+    "IF v_final <> 'duplicate' OR v_keep_lines THEN",
+    "IF v_req_status[v_i] = 'provisional' AND v_live_provisional <> 1 THEN",
+  ]);
+  assert.equal(deposit.added.length, 102);
+  for (const line of deposit.added) {
+    assert.match(line,
+      /^$|^-- |v_d1_|\(D1\)|^END IF;$|^IF FOUND THEN$|^v_unit := p_units -> \(v_i - 1\);$|^FROM public\.daily_statement_units_canonical$|^WHERE day_unit_id = v_day_unit_ids\[v_i\] AND status = 'ingested';$|^v_final := '(provisional|superseded)';$|^SELECT EXISTS \($|^SELECT 1$|^FROM public\.daily_statement_units_staging s$|^JOIN public\.daily_statement_export_attempts a ON a\.id = s\.attempt_id$|^WHERE s\.day_unit_id = v_day_unit_ids\[v_i\]$|^AND s\.(status IN \('provisional', 'superseded'\)|day_content_hash = v_content_hashes\[v_i\])$|^AND a\.raw_text_hash = v_rth$|^AND nullif\(btrim\(a\.parser_version\), ''\) IS NOT NULL AND a\.parser_version = nullif\(btrim\(coalesce\(p_attempt ->> 'parser_version', ''\)\), ''\)$|^AND public\.daily_stmt_staging_lines_conform\(s\.id\)$|^AND NOT EXISTS \(SELECT 1 FROM public\.daily_statement_lines_staging l WHERE l\.staging_unit_id = s\.id GROUP BY l\.source_line_index, l\.daily_occurrence_ordinal HAVING count\(\*\) > 1\)$|^ELSIF v_req_status\[v_i\] = 'provisional' THEN$|^UPDATE public\.daily_statement_units_staging$|^SET status = 'superseded'$|^PERFORM public\.daily_stmt_append_audit_event\($|^v_day_unit_ids\[v_i\], v_rth,$|^'status_changed', 'provisional', 'superseded',$|^jsonb_build_object\($|^'(day_unit_id', v_day_unit_ids\[v_i\]|previous_status', 'provisional'|new_status', 'superseded'|reason_code', 'late_provisional_same_version_superseded'),$|^\);$|^WHERE id = v_staging_unit_id AND status = 'provisional';$|^v_actor, v_attempt_id, v_staging_unit_id, v_active_id,$|^ELSE 'retired_at_deposit_lines_stored' END\)$|^PERFORM public\.daily_stmt_retire_same_version_provisionals\(v_day_unit_ids\[v_i\], v_active_id, v_actor, v_attempt_id, v_rth, v_staging_unit_id\);$|^RAISE EXCEPTION 'DAILY_STMT_D1_POSTCONDITION: the late delivery must be retired exactly once \(rollback\)';$/,
+      `unexpected D1 deposit core change: ${line}`);
+  }
+  for (const required of [
+    'v_d1_retire := coalesce(v_d1_same AND v_d1_coherent AND v_d1_conform, false);',
+    "IF (v_final <> 'duplicate' OR v_keep_lines) AND NOT v_d1_copy_exists THEN",
+    'AND NOT v_d1_retire',
+    "IF v_req_status[v_i] = 'provisional' AND NOT v_d1_retire AND v_live_provisional <> 1 THEN",
+    'AND NOT EXISTS (SELECT 1 FROM public.daily_statement_lines_staging l WHERE l.staging_unit_id = s.id GROUP BY l.source_line_index, l.daily_occurrence_ordinal HAVING count(*) > 1)',
+    "AND nullif(btrim(a.parser_version), '') IS NOT NULL AND a.parser_version = nullif(btrim(coalesce(p_attempt ->> 'parser_version', '')), '')",
+  ]) {
+    assert.ok(deposit.added.includes(required), `missing D1 deposit line: ${required}`);
+  }
+  assert.match(deposit.added.join('\n'), /v_d1_same := public\.daily_stmt_version_compare\([^\n]*\) = 'SAME_VERSION';/);
+  // Cœur de promotion : source vivante 20260708130000 ; un seul appel ajouté.
+  const promotionBefore = functionBody(migrationFoundation, 'CREATE OR REPLACE FUNCTION public.daily_stmt_promote_unit_core(');
+  const promotionAfter = functionBody(migrationD1, 'CREATE OR REPLACE FUNCTION public.daily_stmt_promote_unit_core(');
+  assert.deepEqual(promotionAfter.slice(0, 8), promotionBefore.slice(0, 8), 'signature and attributes unchanged');
+  const promotion = lineDelta(promotionBefore, promotionAfter);
+  assert.deepEqual(promotion.removed, []);
+  assert.deepEqual(promotion.added.filter((line) => line !== '' && !line.startsWith('-- ')), [
+    'PERFORM public.daily_stmt_retire_same_version_provisionals(v_unit.day_unit_id, p_new_canonical_id, p_actor, v_unit.attempt_id, NULL, NULL);',
+  ]);
+  // Fonctions internes : jamais SECURITY DEFINER, toutes révoquées, aucun GRANT.
+  for (const internal of ['daily_stmt_payload_lines_conform', 'daily_stmt_provisional_same_version',
+    'daily_stmt_retire_same_version_provisionals']) {
+    assert.doesNotMatch(functionBody(migrationD1, `CREATE FUNCTION public.${internal}(`).join('\n'), /SECURITY DEFINER/);
+  }
+  for (const revoked of ['daily_stmt_payload_lines_conform', 'daily_stmt_provisional_same_version',
+    'daily_stmt_retire_same_version_provisionals', 'daily_stmt_pre_ingest_legacy_core_0u', 'daily_stmt_promote_unit_core']) {
+    assert.match(d1, new RegExp(`REVOKE ALL ON FUNCTION public\\.${revoked}\\([^)]*\\)\\s*FROM PUBLIC, anon, authenticated, service_role;`));
+  }
+  assert.doesNotMatch(d1, /^\s*GRANT /m);
+  // Corrections C1, C2 et W5 du verdict CTO : garde d'ordre sur les valeurs
+  // entières d'index et d'ordinal ; doublons du cycle provisoire candidats au
+  // dépôt et à l'activation, avec provenance R1-provisional, copie conforme du
+  // même fichier et de même version d'analyse, jamais preuve de réfutation.
+  const conform = functionBody(migrationD1, 'CREATE FUNCTION public.daily_stmt_payload_lines_conform(').join('\n');
+  assert.match(conform, /GROUP BY \(x\.value ->> 'source_line_index'\)::integer, \(x\.value ->> 'daily_occurrence_ordinal'\)::integer HAVING count\(\*\) > 1\) THEN/);
+  assert.doesNotMatch(conform, /GROUP BY x\.value ->> 'source_line_index'/);
+  assert.match(conform, /greatest\(\(x\.value ->> 'source_line_index'\)::numeric, \(x\.value ->> 'daily_occurrence_ordinal'\)::numeric\) > 2147483647\) THEN\n\s*RETURN false;/);
+  const predicate = functionBody(migrationD1, 'CREATE FUNCTION public.daily_stmt_provisional_same_version(').join('\n');
+  assert.match(predicate, /e\.event_type = 'unit_duplicate' AND e\.new_status = 'duplicate' AND e\.canonical_unit_id IS NULL AND e\.safe_details ->> 'reason_code' = 'provisional_redeposit_duplicate'/);
+  assert.match(predicate, /AND ao\.raw_text_hash = v_rth\n\s*AND nullif\(btrim\(ao\.parser_version\), ''\) IS NOT NULL AND ao\.parser_version = v_pv\n\s*AND o\.day_content_hash = v_s\.day_content_hash/);
+  assert.match(predicate, /AND NOT EXISTS \(SELECT 1 FROM public\.daily_statement_version_refutations r WHERE r\.proof_staging_unit_id = v_s\.id\)/);
+  assert.match(predicate, /AND public\.daily_stmt_staging_lines_conform\(o\.id\)/);
+  const retire = functionBody(migrationD1, 'CREATE FUNCTION public.daily_stmt_retire_same_version_provisionals(').join('\n');
+  assert.equal((retire.match(/s\.status IN \('provisional', 'duplicate'\)/g) ?? []).length, 3);
+  assert.doesNotMatch(retire, /s\.status = 'duplicate' AND p_exclude_staging_unit_id IS NULL/);
+  assert.match(retire, /'provisional_duplicate_retired_at_deposit'/);
+  assert.doesNotMatch(retire, /\bDELETE\b/);
+  // Migration additive : une transaction, aucun objet de schéma ni donnée modifiés hors fonctions.
+  assert.equal((d1.match(/^BEGIN;$/gm) ?? []).length, 1);
+  assert.equal((d1.match(/^COMMIT;$/gm) ?? []).length, 1);
+  const topLevel = d1.replace(/\$\$[\s\S]*?\$\$/g, '$$ $$').split('\n').filter((line) => !line.startsWith('--')).join('\n');
+  assert.doesNotMatch(topLevel, /\b(DROP|ALTER|CREATE (TABLE|INDEX|POLICY|TRIGGER|VIEW|SCHEMA)|INSERT|UPDATE|DELETE|TRUNCATE)\b/i);
+  // Enveloppes, cœurs 0w et 0v, décisions et lecteur Trésorerie : inchangés.
+  for (const untouched of ['public.pre_ingest_daily_statement_units(', 'public.daily_stmt_pre_ingest_scoped_core_0w(',
+    'public.promote_daily_statement_unit(', 'public.daily_stmt_promote_scoped_core_0w(',
+    'public.supersede_daily_statement_unit(', 'public.daily_stmt_supersede_scoped_core_0w(',
+    'public.supersede_daily_statement_unit_balances(', 'public.promote_daily_statement_attempt_units(',
+    'public.reject_daily_statement_unit(', 'public.refute_daily_statement_version(',
+    'public.daily_stmt_pre_ingest_bis_backfill_core_0v(', 'public.daily_stmt_version_compare(',
+    'public.daily_stmt_line_facts_conform(', 'treasury_private.balances_snapshot(']) {
+    assert.doesNotMatch(d1, new RegExp(`CREATE (OR REPLACE )?FUNCTION ${untouched.replace(/[.(]/g, (c) => `\\${c}`)}`));
+  }
+  // Réponse du dépôt : « superseded » déjà accepté par le client (R4).
+  assert.match(service, /const preIngestResponseSchema = z\.object\(\{[\s\S]*?unit_status: z\.enum\(\[[\s\S]*?'superseded',[\s\S]*?\]\)/);
+  // Runners : D1 appliquée après les décisions opérationnelles ; suites D1 rejouées.
+  const e2e = e2eRunner.replace(/\r\n/g, '\n');
+  assert.match(e2e, /MIGRATION_D1="\$REPO_ROOT\/supabase\/migrations\/20261108120000_daily_v2_d1_late_provisional_same_version\.sql"/);
+  assert.match(e2e, /--single-transaction < "\$MIGRATION_OPERATIONAL" >\/dev\/null\n"\$\{PSQL\[@\]\}" --single-transaction < "\$MIGRATION_D1" >\/dev\/null\n"\$\{PSQL\[@\]\}" < "\$SCRIPT_DIR\/42_operational_guard\.sql"/);
+  for (const suite of ['45a_d1_setup', '45b_d1_deposit_rules', '45c_d1_treasury_reading', '46a_d1_race_setup',
+    '46b_d1_race_late_deposit_holds_a', '46c_d1_race_promotion_waits_b', '46d_d1_race_promotion_holds_a',
+    '46e_d1_race_late_deposit_waits_b', '46f_d1_race_twin_deposit_holds_a', '46g_d1_race_twin_deposit_waits_b',
+    '46h_d1_race_asserts']) {
+    assert.ok(operationalRunner.includes(suite), `operational runner replays ${suite}`);
+  }
+  // Runner Trésorerie (C3) : D1 hors de la chaîne initiale du scénario upgrade,
+  // appliquée après ses dépendances, définitions effectives vérifiées.
+  const treasury = treasuryRunner.replace(/\r\n/g, '\n');
+  assert.match(treasury, /\$d1Migration = '20261108120000_daily_v2_d1_late_provisional_same_version\.sql'/);
+  assert.match(treasury, /\$excluded = if \(\$WithoutLot\) \{ @\(\$lotMigration\) \+ \$operationalMigrations \+ @\(\$staleRefusalMigration\) \+ @\(\$d1Migration\) \}/);
+  assert.match(treasury, /Invoke-File "supabase\/migrations\/\$staleRefusalMigration"[\s\S]*?64_surface_compare_stale_sqlstate\.sql"\n {2}Invoke-File "supabase\/migrations\/\$d1Migration"/);
+  assert.equal((treasury.match(/^\s*Assert-D1Effective '/gm) ?? []).length, 4);
 });
 
 test('exposes only a fail-closed read API for the private runtime lock', () => {
