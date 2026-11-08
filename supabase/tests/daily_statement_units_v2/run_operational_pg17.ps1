@@ -4,7 +4,10 @@ param([string]$Image = 'postgres:17-alpine')
 # données synthétiques. Chaîne complète des migrations (l'administrateur unique
 # vient du module chèques), outils et identités de la suite trésorerie, charges
 # produites par le VRAI pipeline (opfix_generate_payloads.ts), puis les suites
-# 34 à 41 et deux courses à sessions réelles. Aucune connexion à une base
+# 34 à 41 et deux courses à sessions réelles ; enfin D1 (livraison provisoire
+# tardive de version identique) : suites 45a à 45c, mordants compris, et cinq
+# courses à sessions réelles en trois paires de sessions (46a à 46h). Aucune
+# connexion à une base
 # préexistante, au staging ou à la production.
 
 $ErrorActionPreference = 'Stop'
@@ -99,6 +102,14 @@ try {
   Invoke-Race '38b_race_promote_session_a.sql' '38c_race_reject_session_b.sql' 'RACE_A_COMMITTED' 'RACE_B_REFUSED' '38 reject versus promote'
   Invoke-Race '38d_race_replay_session_a.sql' '38e_race_replay_session_b.sql' 'REPLAY_A_COMMITTED' 'REPLAY_B_DONE' '38 lost-response replay'
   Invoke-File "$testDir/38f_decision_concurrency_asserts.sql"
+  # D1 : règles du dépôt, lecture « Soldes à date » par le vrai dépôt, courses.
+  foreach ($suite in '45a_d1_setup', '45b_d1_deposit_rules', '45c_d1_treasury_reading', '46a_d1_race_setup') {
+    Invoke-File "$testDir/$suite.sql"
+  }
+  Invoke-Race '46b_d1_race_late_deposit_holds_a.sql' '46c_d1_race_promotion_waits_b.sql' 'D1_RACE_A_COMMITTED' 'D1_RACE_B_DONE' '46 C4+C1 late redeposits hold the day lock, promotion waits'
+  Invoke-Race '46d_d1_race_promotion_holds_a.sql' '46e_d1_race_late_deposit_waits_b.sql' 'D1_RACE_A_COMMITTED' 'D1_RACE_B_DONE' '46 C5+C2 promotion holds the day lock, late redeposit waits'
+  Invoke-Race '46f_d1_race_twin_deposit_holds_a.sql' '46g_d1_race_twin_deposit_waits_b.sql' 'D1_RACE_A_COMMITTED' 'D1_RACE_B_DONE' '46 C3 twin late deposits beside a divergent live provisional'
+  Invoke-File "$testDir/46h_d1_race_asserts.sql"
   Write-Output 'DAILY_V2_OPERATIONAL_DECISIONS_PG17_PASS'
 } finally {
   if ($script:containerName) {

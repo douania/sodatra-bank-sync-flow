@@ -63,9 +63,10 @@ wait
 $PSQL -f 24_concurrency_asserts.sql
 
 # 6. Cycle de vie provisional 0Z : la suite 16 exige la chaîne additive
-#    complète (0U/0U3/0U4/0Z) par-dessus le socle 0H. Elle s'exécute APRÈS
-#    les suites 10-15 et la concurrence, qui déposent en style 0H (sans
-#    registre) et seraient refusées par le wrapper 0U.
+#    complète (0U/0U3/0U4/0Z, puis jusqu'aux décisions opérationnelles et à D1)
+#    par-dessus le socle 0H. Elle s'exécute APRÈS les suites 10-15 et la
+#    concurrence, qui déposent en style 0H (sans registre) et seraient refusées
+#    par le wrapper 0U.
 $PSQL --single-transaction -f ../../migrations/20260715000000_daily_v2_account_registry_review_visibility.sql
 $PSQL --single-transaction -f ../../migrations/20260715010000_daily_v2_historical_identity_adoption_bridge.sql
 $PSQL --single-transaction -f ../../migrations/20260716000000_daily_v2_legacy_fingerprint_compatibility.sql
@@ -75,6 +76,11 @@ $PSQL --single-transaction -f ../../migrations/20260730180000_daily_v2_runtime_l
 $PSQL -f 18_runtime_lock_read_api.sql
 $PSQL -f 17a_server_readonly_guard_pre.sql
 $PSQL -f 18a_runtime_lock_read_api_enabled.sql
+$PSQL --single-transaction -f ../../migrations/20260829000000_daily_v2_bis_backfill_atomic_ingest_timeout_hardening.sql
+$PSQL --single-transaction -f ../../migrations/20260829120000_daily_v2_controlled_production_pilot_server_scope.sql
+$PSQL -f 33_controlled_production_server_scope.sql
+$PSQL --single-transaction -f ../../migrations/20261103120000_daily_v2_operational_decisions.sql
+$PSQL --single-transaction -f ../../migrations/20261108120000_daily_v2_d1_late_provisional_same_version.sql
 $PSQL -f 16_provisional_lifecycle_0z.sql
 $PSQL -f 17b_server_readonly_guard_post.sql
 $PSQL -f 18_runtime_lock_read_api.sql
@@ -201,6 +207,48 @@ scopes serveur, rejoue toutes ses suites (« doublon sans lignes » et cardinali
 backfill inchangées) et vérifie les gardes des quatre nouvelles tables publiques
 et de la lecture du plan d'approbation groupée (`42_operational_guard.sql`,
 `42b_operational_guard_post.sql`).
+
+## D1 — livraison provisoire tardive de version identique
+
+Suites 45 et 46 : PostgreSQL 17 seulement (`run_operational_pg17.ps1`). Sous
+PostgreSQL 15 (`run_e2e_0r.sh`), la migration D1 est appliquée et exercée par la
+suite 16 et par les suites rejouées après elle.
+
+Migration `20261108120000_daily_v2_d1_late_provisional_same_version.sql` : une
+livraison demandée provisoire dont la version complète est celle du canonical
+actif de la journée (relation `SAME_VERSION`, égalité numérique, absences
+comprises), cohérente et aux lignes conformes (règle commune
+`daily_stmt_line_facts_conform`) est reçue puis retirée (`superseded`, motif
+`late_provisional_same_version_superseded`). L'activation d'une version
+(promotion unitaire ou groupée, remplacement, correction des seuls soldes)
+retire de même les seules provisoires vivantes identiques ; les divergentes,
+incohérentes ou non conformes restent vivantes. Une livraison retirée garde ses
+lignes, sauf copie conforme déjà détenue par le même fichier (redépôt). Elle
+n'est ni promouvable, ni source de réfutation, ni preuve de clôture. Un ordre de
+lignes ambigu (index de ligne et ordinal de même valeur entière, « 1 » et « 01 »
+compris) n'est jamais retiré. Au dépôt comme à l'activation, les doublons
+R1-provisional de la version active (redépôts du fichier tardif pendant la
+fenêtre « déposée, non promue », réceptions héritées) sont retirés de même, si
+leur réception R1-provisional est auditée, qu'une livraison du cycle provisoire
+du même fichier, reçue sous la même version d'analyse identifiée, détient une
+copie conforme de leurs lignes, et qu'aucune réfutation ne les désigne comme
+preuve ; un doublon du canonical, d'une autre version, sans copie conforme de
+son fichier ou d'une autre version d'analyse reste inchangé. La dispense de
+copie au dépôt exige aussi la même version d'analyse identifiée.
+
+`run_operational_pg17.ps1` rejoue les suites D1 après les suites 34 à 41 ;
+`run_e2e_0r.sh` applique la migration D1 après les décisions opérationnelles,
+avant `42_operational_guard.sql`, de sorte que `16_provisional_lifecycle_0z.sql`
+(Z6a, Z6b, Z6c) et les suites suivantes s'exécutent sur les cœurs D1. La suite 16
+exige donc, en plus de la chaîne de la section « Lancement », les migrations
+jusqu'à `20261103120000` et la migration D1.
+
+| Fichier | Couverture |
+|---|---|
+| `45a_d1_setup.sql` | outils `d1` : constructeurs à préimage indépendante, comptes provisionnés par la RPC registre et inscrits à l'inventaire Trésorerie, module ouvert et formats CSV ORABANK et BDK qualifiés (fixtures), manager synthétique, mutations et exécution « sans D1 » |
+| `45b_d1_deposit_rules.sql` | V1 à V24 : retrait de la version identique, versions divergentes, `unavailable`, 10.5 = 10.50, incohérente, non conforme, divergente préservée à l'identique, héritées, fenêtre déposée-non promue, promotion groupée, remplacement, correction des soldes, promotion sans activation, clôture, BDK multi-journées, gardes, portée et rôles, redépôts (une copie de lignes par fichier), privilèges, parité de la règle de la charge, ordre de lignes ambigu, verrou de journée exigé, conformité des lignes stockées à l'activation, activation avec identique et divergente vivantes ; V25 (corrections C1 et W5) : retrait des doublons du cycle provisoire et témoins fermés (doublon canonique légitime, copie non conforme, version financière différente, autre fichier, doublon hérité retiré au dépôt, copie de faits différents, copie hors du cycle provisoire, version d'analyse différente, absente ou blanche, doublon désigné comme preuve de réfutation) ; V26 (correction C2) : collisions numériques d'index et d'ordinal (« 1 » / « 01 ») au dépôt et à l'activation, témoin à zéros initiaux ; oracle numérique de V20 ; V27 : dispense de copie refusée à une copie à ordre ambigu ; V28 : index hors du domaine entier sans erreur ; V29 : dispense de copie exigeant la même version d'analyse ; mordants M1 à M23 (M2a, M2b, M3b) |
+| `45c_d1_treasury_reading.sql` | T1 à T7 par le vrai dépôt : B-17 synthétique, ordres de Q5, oracle Q6 et redépôts avec correction ultérieure, canonical présent sans preuve de clôture, divergente préservée, équivalents synthétiques CD et CF (BDK et ORABANK, avec et sans D1), non-régression BDK ; C1 : réceptions répétées du fichier tardif, ordres A à D convergents (statuts, audit, lignes, une source, lecture avant et après correction) ; W4 puis redépôt conforme de Y : doublon justifié retiré au dépôt, une source, lecture après correction identique à un compte sans fichier tardif ; caractérisation P2-1 (coexistence acceptée) ; mordants M1, M4, M2b, M10, M16 |
+| `46a`–`46h` | cinq courses à sessions réelles : dépôt tardif contre promotion, promotion contre dépôt tardif (même état final), deux redépôts identiques à côté d'une divergente vivante, deux redépôts du fichier tardif pendant que la promotion attend (C4) et redépôt pendant une promotion (C5) : même état final, même lecture avant et après correction |
 
 ## Rappel d'arbitrage (lot 0J)
 

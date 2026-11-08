@@ -11,13 +11,17 @@ param(
 # seules cibles sont des conteneurs créés ici, nommés de façon unique et
 # supprimés à la fin. Deux scénarios, chacun dans son conteneur :
 #   - « upgrade » : chaîne complète SANS la migration du lot ni celles du Lot 1
-#     opérationnel, données Daily v2 et habilitations existantes, relevé de la
-#     surface d'accès, migration du lot, comparaison de surface, puis les deux
-#     migrations du Lot 1 opérationnel sur cette base peuplée, seconde
-#     comparaison de surface, puis la migration des refus d'état périmé
-#     (SQLSTATE 22023) et sa comparaison de surface, puis les suites du lot ;
+#     opérationnel, ni D1 qui en dépend, données Daily v2 et habilitations
+#     existantes, relevé de la surface d'accès, migration du lot, comparaison de
+#     surface, puis les deux migrations du Lot 1 opérationnel sur cette base
+#     peuplée, seconde comparaison de surface, puis la migration des refus d'état
+#     périmé (SQLSTATE 22023) et sa comparaison de surface, puis D1 (livraison
+#     provisoire tardive) après ses dépendances, puis les suites du lot ;
 #   - « fresh » : chaîne complète AVEC la migration du lot sur une base neuve,
 #     puis les mêmes suites ; avec -Mutants, preuves de mordant.
+# Dans les deux scénarios, les définitions effectives des cinq fonctions D1
+# portent D1 avant les suites, ont la même empreinte dans les deux scénarios et
+# n'ont pas changé en fin de scénario.
 
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSVersion.Major -ge 7) { $PSStyle.OutputRendering = 'PlainText' }
@@ -28,6 +32,8 @@ $testDir = 'supabase/tests/treasury_v1_lot1'
 $lotMigration = '20261102090000_treasury_v1_lot1_bank_balances.sql'
 $operationalMigrations = @('20261103120000_daily_v2_operational_decisions.sql', '20261103130000_treasury_v1_lot1_operational_fix.sql')
 $staleRefusalMigration = '20261106120000_treasury_v1_lot1_stale_refusal_sqlstate.sql'
+# D1 redéfinit le cœur de dépôt de la migration opérationnelle : jamais avant elle.
+$d1Migration = '20261108120000_daily_v2_d1_late_provisional_same_version.sql'
 $expectedRaceResult = 'RESULT|AVAILABLE|1300.00|QUALIFIED|null'
 $script:containerName = $null
 
@@ -91,14 +97,50 @@ function Stop-Container {
 function Invoke-Chain([switch]$WithoutLot) {
   Invoke-File 'supabase/tests/full_chain_replay/00_platform_shim_minimal.sql' | Out-Null
   $files = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'supabase/migrations') -Filter '*.sql' | Sort-Object Name
-  $excluded = if ($WithoutLot) { @($lotMigration) + $operationalMigrations + @($staleRefusalMigration) } else { @() }
+  $excluded = if ($WithoutLot) { @($lotMigration) + $operationalMigrations + @($staleRefusalMigration) + @($d1Migration) } else { @() }
   $applied = 0
   foreach ($file in $files) {
     if ($excluded -contains $file.Name) { continue }
     Invoke-File ('supabase/migrations/' + $file.Name) | Out-Null
     $applied++
   }
-  Write-Output ("CHAIN applied ({0} migrations{1})" -f $applied, $(if ($WithoutLot) { ', lot and operational fix excluded' } else { '' }))
+  Write-Output ("CHAIN applied ({0} migrations{1})" -f $applied, $(if ($WithoutLot) { ', lot, operational fix and D1 excluded' } else { '' }))
+}
+
+# D1 effective : le cœur de dépôt et le cœur de promotion installés portent les
+# appels D1 ; empreinte des cinq définitions D1, comparée à l'attendue si fournie.
+function Assert-D1Effective([string]$label, [string]$expected) {
+  $sql = @'
+DO $$
+DECLARE
+  v_f1 text := pg_get_functiondef('public.daily_stmt_pre_ingest_legacy_core_0u(jsonb,jsonb,jsonb,jsonb)'::regprocedure);
+  v_f2 text := pg_get_functiondef('public.daily_stmt_promote_unit_core(uuid,uuid,uuid)'::regprocedure);
+BEGIN
+  IF position('v_d1_retire := coalesce(v_d1_same AND v_d1_coherent AND v_d1_conform, false);' IN v_f1) = 0
+     OR position('PERFORM public.daily_stmt_retire_same_version_provisionals(v_day_unit_ids[v_i], v_active_id, v_actor, v_attempt_id, v_rth, v_staging_unit_id);' IN v_f1) = 0 THEN
+    RAISE EXCEPTION 'D1_NOT_EFFECTIVE: installed deposit core does not carry D1';
+  END IF;
+  IF position('PERFORM public.daily_stmt_retire_same_version_provisionals(v_unit.day_unit_id, p_new_canonical_id, p_actor, v_unit.attempt_id, NULL, NULL);' IN v_f2) = 0 THEN
+    RAISE EXCEPTION 'D1_NOT_EFFECTIVE: installed promotion core does not carry D1';
+  END IF;
+END $$;
+SELECT 'D1SIG|' || md5(string_agg(pg_get_functiondef(f::regprocedure), E'\n' ORDER BY f))
+FROM unnest(ARRAY['public.daily_stmt_pre_ingest_legacy_core_0u(jsonb,jsonb,jsonb,jsonb)',
+                  'public.daily_stmt_promote_unit_core(uuid,uuid,uuid)',
+                  'public.daily_stmt_payload_lines_conform(jsonb,text,integer,numeric,numeric,text,numeric,numeric)',
+                  'public.daily_stmt_provisional_same_version(uuid,uuid)',
+                  'public.daily_stmt_retire_same_version_provisionals(text,uuid,uuid,uuid,text,uuid)']) f;
+'@
+  $ErrorActionPreference = 'Continue'
+  $output = $sql | docker exec -e PGOPTIONS=--client-min-messages=warning -i $script:containerName psql -q -At -v ON_ERROR_STOP=1 -U postgres -d postgres 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "D1 effective check failed ($label)`n$($output -join [Environment]::NewLine)" }
+  $ErrorActionPreference = 'Stop'
+  $signature = @($output | Where-Object { "$_" -like 'D1SIG|*' })[0]
+  if (-not $signature) { throw "D1 effective check returned no signature ($label)" }
+  $signature = "$signature".Substring(6)
+  if ($expected -and $signature -ne $expected) { throw "D1 definitions differ ($label): $signature, expected $expected" }
+  Write-Output "PASS D1 effective ($label) : deposit and promotion cores carry D1, signature $signature$(if ($expected) { ' (unchanged)' } else { '' })"
+  $script:d1Signature = $signature
 }
 
 function Start-SqlJob([string]$relativePath) {
@@ -236,13 +278,19 @@ try {
   Invoke-File "supabase/migrations/$staleRefusalMigration" | Out-Null
   Write-Output 'STALE REFUSAL SQLSTATE migration applied on the populated database'
   Invoke-File "$testDir/64_surface_compare_stale_sqlstate.sql"
+  Invoke-File "supabase/migrations/$d1Migration" | Out-Null
+  Write-Output 'D1 migration applied on the populated database, after its dependencies'
+  Assert-D1Effective 'upgrade, after D1'
+  $upgradeD1Signature = $script:d1Signature
   Invoke-File "$testDir/10_structure_security.sql"
   Invoke-LotSuites
+  Assert-D1Effective 'upgrade, end of scenario' $upgradeD1Signature
   Stop-Container
 
   Write-Output '== scenario fresh'
   Start-Container 'fresh'
   Invoke-Chain
+  Assert-D1Effective 'fresh, after the ordered chain (same definitions as upgrade)' $upgradeD1Signature
   Invoke-File "$testDir/00_tools.sql"
   Invoke-File "$testDir/10_structure_security.sql"
   Invoke-File "$testDir/05_users_governance.sql"
@@ -257,6 +305,7 @@ try {
     Invoke-Sql "ALTER FUNCTION public.treasury_balances_at_v1(date) STABLE; ALTER FUNCTION treasury_private.balances_snapshot(date, date) STABLE;" 'm04 revert' | Out-Null
     Invoke-File "$testDir/52_race_restore.sql"
   }
+  Assert-D1Effective 'fresh, end of scenario' $upgradeD1Signature
   Write-Output 'TREASURY_V1_LOT1_PG17_REPLAY_PASS'
 } finally {
   Stop-Container

@@ -39,6 +39,10 @@ MIGRATION_SERVER_SCOPE="$REPO_ROOT/supabase/migrations/20260829120000_daily_v2_c
 # Lot 1 opérationnel : décisions Daily v2 et exception H1 dans les deux cœurs
 # vivants du dépôt ; les scénarios suivants s'exécutent sur ces cœurs.
 MIGRATION_OPERATIONAL="$REPO_ROOT/supabase/migrations/20261103120000_daily_v2_operational_decisions.sql"
+# D1 : retrait d'une livraison provisoire tardive de version identique au
+# canonical actif (cœur du dépôt et cœur de promotion redéfinis) ; la suite 16
+# et les scénarios suivants s'exécutent sur ces cœurs.
+MIGRATION_D1="$REPO_ROOT/supabase/migrations/20261108120000_daily_v2_d1_late_provisional_same_version.sql"
 IMAGE="postgres:15-alpine"
 PGPASSWORD_LOCAL="e2e0r_throwaway"
 
@@ -94,6 +98,7 @@ fi
 [ -f "$MIGRATION_BIS_TIMEOUT_HARDENING" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_BIS_TIMEOUT_HARDENING"; exit 1; }
 [ -f "$MIGRATION_SERVER_SCOPE" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_SERVER_SCOPE"; exit 1; }
 [ -f "$MIGRATION_OPERATIONAL" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_OPERATIONAL"; exit 1; }
+[ -f "$MIGRATION_D1" ] || { echo "TEST_FAILED: migration introuvable: $MIGRATION_D1"; exit 1; }
 [ -x "$REPO_ROOT/node_modules/.bin/tsx" ] || { echo "TEST_FAILED: node_modules/.bin/tsx introuvable"; exit 1; }
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -183,8 +188,9 @@ echo "--- [3/6] shim, identites synthetiques et migration Daily v2"
 "${PSQL[@]}" < "$SCRIPT_DIR/33_controlled_production_server_scope.sql"
 "${PSQL[@]}" < "$SCRIPT_DIR/26_e2e0r_historical_adoption_assert.sql"
 "${PSQL[@]}" --single-transaction < "$MIGRATION_OPERATIONAL" >/dev/null
+"${PSQL[@]}" --single-transaction < "$MIGRATION_D1" >/dev/null
 "${PSQL[@]}" < "$SCRIPT_DIR/42_operational_guard.sql"
-echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur + API read-only + hardening BIS + scopes serveur + decisions operationnelles appliquees"
+echo "migrations Daily v2 historique + additives 0U/0U3/0U4/0Z + garde serveur + API read-only + hardening BIS + scopes serveur + decisions operationnelles + D1 appliquees"
 
 # --- 4. Chargement des payloads réels + suite E2E ----------------------------
 echo ""
