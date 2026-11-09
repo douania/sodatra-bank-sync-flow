@@ -1081,3 +1081,33 @@ export const DAILY_V2_STAGING_DECISION_STALE_MESSAGES: Record<DailyV2StagingDeci
   UNIT_NOT_IN_VIEW: 'Décision périmée : cette unité n’apparaît plus dans la revue affichée.',
   UNIT_CHANGED: 'Décision périmée : l’unité a changé depuis l’ouverture (statut, contenu, compte ou tentative).',
 };
+
+/** État de la dernière lecture du registre des comptes de la revue (TanStack conserve les données après un échec). */
+export interface DailyV2ReviewRegistryRead {
+  /** Lecture en cours, ou en attente du réseau (TanStack « paused ») : les comptes affichés ne sont pas confirmés. */
+  refreshing: boolean;
+  failed: boolean;
+}
+
+export type DailyV2DecisionRegistryHold = 'REGISTRY_REFRESHING' | 'REGISTRY_READ_FAILED';
+
+/**
+ * Une décision sur une unité rattachée au registre dépend de la dernière lecture de ce registre : elle est suspendue
+ * pendant une relecture et refusée tant que la dernière lecture a échoué, même si des comptes lus plus tôt restent en
+ * cache. Elle ne reprend qu'après une lecture saine, puis les contrôles de contexte existants. Une unité historique
+ * sans compte du registre n'en dépend pas. Garde d'interface : le serveur reste seul juge.
+ */
+export function checkDailyV2DecisionRegistryRead(
+  unit: Pick<DailyV2StagingUnitRow, 'account_registry_id'>,
+  registry: DailyV2ReviewRegistryRead,
+): DailyV2DecisionRegistryHold | null {
+  if (unit.account_registry_id === null) return null;
+  if (registry.refreshing) return 'REGISTRY_REFRESHING';
+  if (registry.failed) return 'REGISTRY_READ_FAILED';
+  return null;
+}
+
+export const DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES: Record<DailyV2DecisionRegistryHold, string> = {
+  REGISTRY_REFRESHING: 'Décision suspendue : le registre des comptes est en cours de lecture. La confirmation reprendra une fois le registre lu.',
+  REGISTRY_READ_FAILED: 'Décision suspendue : la dernière lecture du registre des comptes a échoué. Les comptes éventuellement affichés viennent d’une lecture antérieure ; relisez le registre avant de confirmer.',
+};

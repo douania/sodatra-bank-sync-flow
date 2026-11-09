@@ -4,8 +4,10 @@ import test from 'node:test';
 import { buildDailyV2BackfillIncrementalDelta } from './dailyV2IncrementalDelta';
 import type { DailyV2PreIngestPayload, DailyV2RpcLine, DailyV2RpcUnit } from './dailyV2Types';
 import {
+  DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES,
   DAILY_V2_STAGING_DECISION_STALE_MESSAGES,
   captureDailyV2StagingDecisionContext,
+  checkDailyV2DecisionRegistryRead,
   checkDailyV2StagingDecisionCurrent,
   describeDailyV2StagingAccount,
   formatDailyV2AccountOption,
@@ -1085,4 +1087,21 @@ test('keeps a decision only while the view and the exact unit are unchanged (rev
     assert.equal(check.unit, null);
   }
   for (const message of Object.values(DAILY_V2_STAGING_DECISION_STALE_MESSAGES)) assert.match(message, /^Décision (périmée|suspendue)/);
+});
+
+test('holds a decision on a registered unit while the account registry is re-read or its last read failed (review C1)', () => {
+  const registered = reviewUnit('10000000-0000-4000-8000-000000000001', REVIEW_ACCOUNT_A);
+  const historical = reviewUnit('10000000-0000-4000-8000-000000000002', null);
+  const read = (refreshing: boolean, failed: boolean) => ({ refreshing, failed });
+  assert.equal(checkDailyV2DecisionRegistryRead(registered, read(false, false)), null);
+  assert.equal(checkDailyV2DecisionRegistryRead(registered, read(true, false)), 'REGISTRY_REFRESHING');
+  // Échec avec comptes en cache : refus tant qu'aucune lecture saine n'a eu lieu.
+  assert.equal(checkDailyV2DecisionRegistryRead(registered, read(false, true)), 'REGISTRY_READ_FAILED');
+  // Nouvelle tentative après échec (TanStack : erreur conservée pendant la relecture) : toujours suspendue.
+  assert.equal(checkDailyV2DecisionRegistryRead(registered, read(true, true)), 'REGISTRY_REFRESHING');
+  // Une unité historique sans compte du registre n'en dépend pas.
+  for (const [refreshing, failed] of [[false, false], [true, false], [false, true], [true, true]]) {
+    assert.equal(checkDailyV2DecisionRegistryRead(historical, read(refreshing, failed)), null);
+  }
+  for (const message of Object.values(DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES)) assert.match(message, /^Décision suspendue/);
 });

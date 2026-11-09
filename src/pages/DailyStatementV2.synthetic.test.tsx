@@ -18,6 +18,8 @@ interface HostNode { type: string; props: Props; children: Array<HostNode | stri
 interface Instance { slots: Array<{ value: unknown; deps?: unknown[] }> }
 interface CacheEntry {
   status: 'pending' | 'success' | 'error'; data?: unknown; error?: unknown; fetching: boolean;
+  /** Relecture en attente du réseau (TanStack « paused » : isFetching faux, données et statut inchangés). */
+  paused?: boolean;
   queryFn: () => Promise<unknown>; promise: Promise<void>;
 }
 
@@ -36,6 +38,10 @@ const ui = {
   staging: (_input: Record<string, unknown>) => ({ rows: [] as DailyV2StagingUnitRow[], count: 0 }),
   /** Échec de la lecture du registre de la revue (toutes banques), pour l'état « registre indisponible ». */
   reviewRegistryFails: false,
+  /** Barrière optionnelle de la lecture du registre de la revue : la relecture reste en cours tant qu'elle n'est pas levée. */
+  reviewRegistryGate: null as Promise<void> | null,
+  /** Unité canonical active renvoyée au supersede (fictive). */
+  activeCanonical: null as null | { id: string },
   /** Barrière optionnelle du dépôt RPC : le dépôt reste en cours tant qu'elle n'est pas levée. */
   depositGate: null as Promise<void> | null,
   versionsUnit: undefined as unknown,
@@ -85,7 +91,7 @@ const ui = {
     ));
   },
   useQuery(options: { queryKey: unknown[]; queryFn: () => Promise<unknown>; enabled?: boolean }) {
-    const idle = { data: undefined, error: null, isError: false, isLoading: false, isPending: false, isFetching: false, refetch: () => {} };
+    const idle = { data: undefined, error: null, isError: false, isLoading: false, isPending: false, isFetching: false, isPaused: false, refetch: () => {} };
     if (options.enabled === false) return idle;
     const key = JSON.stringify(options.queryKey);
     let entry = ui.cache.get(key);
@@ -99,6 +105,7 @@ const ui = {
     return {
       data: current.data, error: current.error ?? null, isError: current.status === 'error',
       isLoading: current.status === 'pending', isPending: current.status === 'pending', isFetching: current.fetching,
+      isPaused: current.paused === true,
       refetch: () => { if (!current.fetching) ui.fetchEntry(current); },
     };
   },
@@ -139,6 +146,7 @@ const serviceStub = [
   recordingService('getDailyV2MutationsEnabled', 'true'),
   `export async function listDailyV2Accounts(...args) {
     globalThis.__dv2Page.calls.push({ name: 'listDailyV2Accounts', args });
+    if (globalThis.__dv2Page.reviewRegistryGate && !args[0].bank) await globalThis.__dv2Page.reviewRegistryGate;
     if (globalThis.__dv2Page.reviewRegistryFails && !args[0].bank) throw new Error('lecture du registre en échec (fictif)');
     return globalThis.__dv2Page.accounts.filter((a) => (!args[0].bank || a.bank === args[0].bank)
       && (!args[0].currency || a.currency === args[0].currency) && (args[0].includeInactive || a.status === 'active'));
@@ -150,7 +158,7 @@ const serviceStub = [
   recordingService('listDailyV2BackfillGrants', '[]'),
   recordingService('listDailyV2StagingLines', '[]'),
   recordingService('listDailyV2CanonicalLines', '[]'),
-  recordingService('getActiveDailyV2CanonicalUnit', 'null'),
+  recordingService('getActiveDailyV2CanonicalUnit', 'globalThis.__dv2Page.activeCanonical'),
   `export async function preIngestDailyV2WithIncrementalDelta(...args) {
     globalThis.__dv2Page.calls.push({ name: 'preIngestDailyV2WithIncrementalDelta', args });
     if (globalThis.__dv2Page.depositGate) await globalThis.__dv2Page.depositGate;
@@ -392,6 +400,8 @@ function reset(): void {
   ui.batchAttemptId = undefined;
   ui.roles = ['admin'];
   ui.reviewRegistryFails = false;
+  ui.reviewRegistryGate = null;
+  ui.activeCanonical = null;
   ui.depositGate = null;
 }
 
@@ -451,7 +461,7 @@ test('a new file never inherits the previous date: it is cleared visibly and the
   await screen.drop('030626 ORA ONLINE.csv', oraCsv());
   assert.match(screen.text(), /Fichier courant : 030626 ORA ONLINE\.csv/);
   assert.match(screen.text(), /Date lue dans le nom du fichier : 03\/06\/2026/);
-  assert.match(screen.text(), /Date qui sera transmise : aucune — sans date, la dernière journée ORABANK du fichier restera provisoire\./);
+  assert.match(screen.text(), /Date qui sera transmise : aucune — sans date, la dernière journée ORABANK du fichier sera demandée provisoire\./);
   assert.match(screen.text(), /Banque reconnue d’après le nom du fichier : ORABANK\./);
 
   await screen.click('Utiliser cette date');
@@ -485,7 +495,10 @@ test('the deposit requires an explicit confirmation of the date for this very pr
   await screen.drop('030626 ORA ONLINE.csv', oraCsv());
   await screen.type('Date de référence export', '03/06/2026');
   await screen.click('Préparer');
-  assert.match(screen.text(), /Journées provisoires \(non closes\) : 03\/06\/2026 · journées closes : 2 · dernière journée du fichier : 03\/06\/2026/);
+  assert.match(screen.text(), /Journées demandées provisoires : 03\/06\/2026 · journées non provisoires : 2 · dernière journée du fichier : 03\/06\/2026/);
+  // C2 : le décompte reste celui du payload ; aucune clôture ni disponibilité n'est affirmée par l'interface.
+  assert.match(screen.text(), /Statuts demandés par cette préparation : ils ne démontrent ni la clôture bancaire d’une journée ni sa disponibilité en Trésorerie, vérifiées côté serveur\./);
+  assert.doesNotMatch(screen.text(), /journées? (sont |seront )?closes?|serait close/i);
   assert.match(screen.text(), /Compte du dépôt\s*Exploitation Dakar/);
   assert.match(screen.text(), /Je confirme que la date d’export 03\/06\/2026 correspond au fichier « 030626 ORA ONLINE\.csv », pour le compte « Exploitation Dakar »\./);
   assert.equal(screen.checkbox().props.checked, false);
@@ -518,7 +531,7 @@ test('a date earlier than the file itself blocks the deposit, even when the guar
   await screen.click('Préparer');
   assert.match(screen.text(), /Date incohérente : dépôt bloqué/);
   assert.match(screen.text(), /Date incohérente : 02\/06\/2026 est antérieure à la dernière journée du fichier \(03\/06\/2026\)/);
-  assert.match(screen.text(), /Journées provisoires \(non closes\) : 02\/06\/2026, 03\/06\/2026/);
+  assert.match(screen.text(), /Journées demandées provisoires : 02\/06\/2026, 03\/06\/2026/);
   assert.equal(screen.checkbox().props.disabled, true);
   assert.equal(screen.button('Déposer via RPC').props.disabled, true);
   await screen.setChecked(true);
@@ -532,7 +545,7 @@ test('preparing without a date is an explicit, informed choice (A)', async () =>
   await screen.drop('030626 ORAB ONLINE.csv', oraCsv());
   await screen.click('Préparer');
   assert.match(screen.text(), /Date de référence export\s*aucune/);
-  assert.match(screen.text(), /ORABANK sans date de référence : la dernière journée du fichier \(03\/06\/2026\) reste provisoire\./);
+  assert.match(screen.text(), /ORABANK sans date de référence : la dernière journée du fichier \(03\/06\/2026\) est demandée provisoire\./);
   assert.match(screen.text(), /Le nom du fichier porte la date 03\/06\/2026, mais aucune date de référence n’est transmise\./);
   assert.match(screen.text(), /Je confirme déposer « 030626 ORAB ONLINE\.csv » sans date de référence export, pour le compte « Exploitation Dakar »\./);
   await screen.setChecked(true);
@@ -690,8 +703,8 @@ test('a date later than the export date of the file name blocks the deposit (A, 
   await screen.type('Date de référence export', '04/06/2026');
   await screen.click('Préparer');
   assert.match(screen.text(), /Date incohérente : dépôt bloqué/);
-  assert.match(screen.text(), /Date incohérente : 04\/06\/2026 est postérieure à la date d’export lue dans le nom du fichier \(03\/06\/2026\) ; la journée d’export serait close à tort\./);
-  assert.match(screen.text(), /Journées provisoires \(non closes\) : aucune/);
+  assert.match(screen.text(), /Date incohérente : 04\/06\/2026 est postérieure à la date d’export lue dans le nom du fichier \(03\/06\/2026\) ; la journée d’export, peut-être incomplète, ne serait plus demandée provisoire\./);
+  assert.match(screen.text(), /Journées demandées provisoires : aucune/);
   assert.equal(screen.checkbox().props.disabled, true);
   assert.equal(screen.button('Déposer via RPC').props.disabled, true);
   await screen.setChecked(true);
@@ -801,12 +814,193 @@ test('while the account registry is unavailable, accounts are shown as such and 
   (screen.button('Confirmer').props.onClick as () => void)();
   await screen.settle();
   assert.equal(callsOf('promoteDailyV2Unit').length, 0);
-  assert.ok(ui.toasts.some((toast) => toast.kind === 'error' && /n’est pas identifiable/.test(toast.message)));
+  // Depuis C1, le refus nomme sa cause première : la lecture du registre a échoué (aucun compte en cache ici).
+  assert.ok(ui.toasts.some((toast) => toast.kind === 'error' && /dernière lecture du registre des comptes a échoué/.test(toast.message)));
+  assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
   // Une unité historique sans compte du registre reste décidable comme avant.
   await screen.click('Annuler');
   await screen.click('Promouvoir', screen.row(historical));
   await screen.click('Confirmer');
   assert.deepEqual(callsOf('promoteDailyV2Unit'), [[historical, undefined]]);
+});
+
+// --- C1 : décisions dépendant du registre des comptes (contre-revue CTO de 607c0bb) ---
+
+const CANONICAL_A = '60000000-0000-4000-8000-00000000000a';
+const HISTORICAL = '10000000-0000-4000-8000-0000000000c3';
+
+test('CTO reproduction: a failed registry re-read with cached accounts no longer lets a promotion through (C1)', async () => {
+  const { screen } = await reviewScreen();
+  // 1. registre lu ; 2. promotion ouverte ; 3. relecture du registre en échec, anciennes données conservées.
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  ui.reviewRegistryFails = true;
+  ui.invalidate(['daily-v2', 'accounts', 'review']);
+  await screen.settle();
+  assert.match(screen.text(screen.row(UNIT_A)), /Exploitation Dakar/, 'données du registre conservées en cache');
+  // 4. la confirmation n'est plus active et son gestionnaire, appelé quand même, ne promeut rien.
+  assert.equal(screen.button('Confirmer').props.disabled, true);
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await screen.settle();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 0);
+});
+
+test('a failed registry re-read suspends a promotion, keeps the dialog, and resumes only after a healthy read (C1)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  const capturedBeforeFailure = screen.button('Confirmer').props.onClick as () => void;
+  ui.reviewRegistryFails = true;
+  ui.invalidate(['daily-v2', 'accounts', 'review']);
+  await screen.settle();
+  // Cache affiché mais signalé ; décision suspendue avec son motif, dialogue conservé.
+  assert.match(screen.text(screen.stagingTab()), /Dernière lecture du registre des comptes en échec/);
+  assert.match(screen.text(), /Décision suspendue : la dernière lecture du registre des comptes a échoué/);
+  assert.equal(screen.button('Confirmer').props.disabled, true);
+  capturedBeforeFailure();
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await screen.settle();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 0);
+  assert.equal(ui.toasts.filter((toast) => toast.kind === 'error' && /dernière lecture du registre des comptes a échoué/.test(toast.message)).length, 2);
+  assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
+  // Une relecture encore en échec ne débloque rien.
+  await screen.click('Relire la revue et le registre');
+  assert.equal(screen.button('Confirmer').props.disabled, true);
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await screen.settle();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 0);
+  // Lecture saine : reprise après les contrôles de contexte existants.
+  ui.reviewRegistryFails = false;
+  await screen.click('Relire la revue et le registre');
+  assert.doesNotMatch(screen.text(), /Dernière lecture du registre des comptes en échec/);
+  assert.equal(screen.button('Confirmer').props.disabled, false);
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined]]);
+});
+
+test('a registry re-read in progress suspends a supersede without losing its reason; a failed one refuses it (C1)', async () => {
+  const { screen, units } = await reviewScreen();
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A, { status: 'conflict' }));
+  ui.activeCanonical = { id: CANONICAL_A };
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  await screen.click('Supersede', screen.row(UNIT_A));
+  await screen.typeInto((node) => node.type === 'textarea', 'Remplacement fictif');
+  // Relecture du registre en cours : suspension, dialogue et motif conservés, aucun appel.
+  let release: () => void = () => {};
+  ui.reviewRegistryGate = new Promise<void>((resolve) => { release = resolve; });
+  ui.invalidate(['daily-v2', 'accounts', 'review']);
+  screen.render();
+  assert.match(screen.text(), /Décision suspendue : le registre des comptes est en cours de lecture/);
+  assert.equal(screen.button('Confirmer').props.disabled, true);
+  (screen.button('Confirmer').props.onClick as () => void)();
+  screen.render();
+  assert.ok(ui.toasts.some((toast) => toast.kind === 'error' && /registre des comptes est en cours de lecture/.test(toast.message)));
+  assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
+  assert.equal(findAll(screen.tree, (node) => node.type === 'textarea')[0].props.value, 'Remplacement fictif');
+  // La relecture se termine en échec : refus, toujours sans appel.
+  ui.reviewRegistryFails = true;
+  release();
+  await screen.settle();
+  assert.match(screen.text(), /Décision suspendue : la dernière lecture du registre des comptes a échoué/);
+  assert.equal(screen.button('Confirmer').props.disabled, true);
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await screen.settle();
+  assert.equal(callsOf('getActiveDailyV2CanonicalUnit').length, 0);
+  assert.equal(callsOf('supersedeDailyV2Unit').length, 0);
+  assert.equal(findAll(screen.tree, (node) => node.type === 'textarea')[0].props.value, 'Remplacement fictif');
+  // Lecture saine : le supersede reprend avec l'unité et le motif exacts.
+  ui.reviewRegistryGate = null;
+  ui.reviewRegistryFails = false;
+  await screen.click('Relire la revue et le registre');
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('supersedeDailyV2Unit'), [[{ oldCanonicalUnitId: CANONICAL_A, newStagingUnitId: UNIT_A, reason: 'Remplacement fictif' }]]);
+});
+
+test('historical units without a registry account stay decidable while the registry is re-read or failed (C1)', async () => {
+  const { screen, units } = await reviewScreen();
+  units.set(HISTORICAL, unit(HISTORICAL, null));
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  ui.reviewRegistryFails = true;
+  ui.invalidate(['daily-v2', 'accounts', 'review']);
+  await screen.settle();
+  await screen.click('Promouvoir', screen.row(HISTORICAL));
+  assert.doesNotMatch(screen.text(), /Décision suspendue/);
+  assert.equal(screen.button('Confirmer').props.disabled, false);
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[HISTORICAL, undefined]]);
+  // Pendant une relecture du registre : l'unité rattachée est suspendue, l'unité historique reste décidable.
+  let release: () => void = () => {};
+  ui.reviewRegistryFails = false;
+  ui.reviewRegistryGate = new Promise<void>((resolve) => { release = resolve; });
+  ui.invalidate(['daily-v2', 'accounts', 'review']);
+  screen.render();
+  (screen.button('Promouvoir', screen.row(UNIT_A)).props.onClick as () => void)();
+  screen.render();
+  assert.equal(screen.button('Confirmer').props.disabled, true);
+  // Promotion de l'unité rattachée, gestionnaire appelé directement pendant la relecture : suspendue, sans appel.
+  const toastsBefore = ui.toasts.length;
+  (screen.button('Confirmer').props.onClick as () => void)();
+  screen.render();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1, 'aucune promotion de l’unité rattachée');
+  assert.ok(ui.toasts.slice(toastsBefore).some((toast) => toast.kind === 'error' && /registre des comptes est en cours de lecture/.test(toast.message)));
+  assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
+  assert.match(screen.text(screen.labelled('Unité concernée').children), /Exploitation Dakar/);
+  (screen.button('Annuler').props.onClick as () => void)();
+  screen.render();
+  (screen.button('Promouvoir', screen.row(HISTORICAL)).props.onClick as () => void)();
+  screen.render();
+  assert.equal(screen.button('Confirmer').props.disabled, false);
+  (screen.button('Confirmer').props.onClick as () => void)();
+  release();
+  await screen.settle();
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[HISTORICAL, undefined], [HISTORICAL, undefined]]);
+});
+
+test('a re-read waiting for the network (paused) suspends a decision like a re-read in progress (C1, contre-revue)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  const registry = ui.cache.get(JSON.stringify(['daily-v2', 'accounts', 'review', true]));
+  const staging = [...ui.cache.entries()].find(([key]) => key.startsWith('["daily-v2","staging",'))?.[1];
+  assert.ok(registry && staging, 'lectures de la revue et du registre en cache');
+  const refusedWhile = (pattern: RegExp) => {
+    assert.equal(screen.button('Confirmer').props.disabled, true);
+    const before = ui.toasts.length;
+    (screen.button('Confirmer').props.onClick as () => void)();
+    screen.render();
+    assert.ok(ui.toasts.slice(before).some((toast) => toast.kind === 'error' && pattern.test(toast.message)));
+    assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
+  };
+  // TanStack « paused » : isFetching faux, données et statut inchangés, lecture non confirmée.
+  registry.paused = true;
+  screen.render();
+  assert.match(screen.text(), /Décision suspendue : le registre des comptes est en cours de lecture/);
+  refusedWhile(/registre des comptes est en cours de lecture/);
+  registry.paused = false;
+  staging.paused = true;
+  screen.render();
+  assert.match(screen.text(), /Revue en cours d’actualisation/);
+  refusedWhile(/revue est en cours d’actualisation/);
+  staging.paused = false;
+  await screen.settle();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 0);
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined]]);
+});
+
+test('the no-date BDK hint and a date after the last day never claim any closing (C2, contre-revue)', async () => {
+  const screen = await importScreen();
+  // Export du 04/06 dont la dernière opération date du 03/06 : date postérieure au contenu, égale au nom (non bloquant).
+  await screen.drop('040626 ORA ONLINE.csv', oraCsv());
+  await screen.type('Date de référence export', '04/06/2026');
+  await screen.click('Préparer');
+  assert.match(screen.text(), /04\/06\/2026 est postérieure à la dernière journée du fichier \(03\/06\/2026\) : aucune journée du fichier n’est demandée provisoire\./);
+  assert.match(screen.text(), /Journées demandées provisoires : aucune · journées non provisoires : 3/);
+  assert.doesNotMatch(screen.text(), /seront closes|sont closes|serait close|journées closes/i);
+  // BDK sans date : aucune journée demandée provisoire, sans affirmation de clôture.
+  await screen.choose('Banque', 'BDK');
+  await screen.drop('030626 BDK ONLINE.csv', oraCsv());
+  assert.match(screen.text(), /Date qui sera transmise : aucune — sans date, aucune journée du fichier ne sera demandée provisoire\./);
+  assert.doesNotMatch(screen.text(), /seront closes|sont closes|serait close|journées closes/i);
 });
 
 test('a deposit followed by a redeposit of the same file keeps the same payload and needs a fresh confirmation each time (non-regression)', async () => {

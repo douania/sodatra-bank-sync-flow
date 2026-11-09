@@ -66,8 +66,10 @@ import type {
   DailyV2StagingDecisionContext,
 } from '@/features/daily-v2/dailyV2Types';
 import {
+  DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES,
   DAILY_V2_STAGING_DECISION_STALE_MESSAGES,
   captureDailyV2StagingDecisionContext,
+  checkDailyV2DecisionRegistryRead,
   checkDailyV2StagingDecisionCurrent,
   describeDailyV2StagingAccount,
   formatDailyV2AccountOption,
@@ -169,15 +171,15 @@ function exportReferenceIssueMessages(assessment: DailyV2ExportReferenceAssessme
   return assessment.issues.map((issue) => {
     switch (issue) {
       case 'ORA_WITHOUT_REFERENCE_DATE':
-        return `ORABANK sans date de référence : la dernière journée du fichier (${latest}) reste provisoire.`;
+        return `ORABANK sans date de référence : la dernière journée du fichier (${latest}) est demandée provisoire.`;
       case 'FILE_NAME_DATE_NOT_USED':
         return `Le nom du fichier porte la date ${assessment.fileNameDate}, mais aucune date de référence n’est transmise.`;
       case 'REFERENCE_BEFORE_LATEST_DAY':
         return `Date incohérente : ${reference} est antérieure à la dernière journée du fichier (${latest}). Corrigez la date avant tout dépôt.`;
       case 'REFERENCE_AFTER_LATEST_DAY':
-        return `${reference} est postérieure à la dernière journée du fichier (${latest}) : toutes les journées du fichier seront closes.`;
+        return `${reference} est postérieure à la dernière journée du fichier (${latest}) : aucune journée du fichier n’est demandée provisoire.`;
       case 'REFERENCE_AFTER_FILE_NAME_DATE':
-        return `Date incohérente : ${reference} est postérieure à la date d’export lue dans le nom du fichier (${assessment.fileNameDate}) ; la journée d’export serait close à tort. Corrigez la date avant tout dépôt.`;
+        return `Date incohérente : ${reference} est postérieure à la date d’export lue dans le nom du fichier (${assessment.fileNameDate}) ; la journée d’export, peut-être incomplète, ne serait plus demandée provisoire. Corrigez la date avant tout dépôt.`;
       case 'FILE_NAME_DATE_BEFORE_CONTENT':
         return `La date lue dans le nom du fichier (${assessment.fileNameDate}) est antérieure à sa dernière journée (${latest}) : le nom ne décrit pas le contenu, vérifiez la date d’export.`;
       case 'REFERENCE_DIFFERS_FROM_FILE_NAME':
@@ -544,13 +546,18 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
     ? new Map(reviewAccounts.map((account) => [account.id, account] as const))
     : null;
   const reviewKey = JSON.stringify([stagingAccount, stagingStatus, stagingReview, stagingPage]);
+  // Une relecture en attente du réseau (TanStack « paused ») n'a pas encore confirmé les données affichées.
+  const stagingRefreshing = stagingQuery.isFetching || stagingQuery.isPaused;
+  const registryRefreshing = reviewAccountsQuery.isFetching || reviewAccountsQuery.isPaused;
   const reviewView = {
     reviewKey,
-    refreshing: stagingQuery.isFetching,
+    refreshing: stagingRefreshing,
     // TanStack conserve les anciennes lignes après une relecture en échec : elles ne valent pas vue courante.
     failed: stagingQuery.isError,
     rows: stagingQuery.data?.rows ?? [],
     accountsById: reviewAccountsById,
+    // Idem pour le registre : un échec de relecture laisse les comptes en cache, qui ne valent plus lecture courante.
+    registry: { refreshing: registryRefreshing, failed: reviewAccountsQuery.isError },
   };
   const reviewViewRef = useRef(reviewView);
   const decisionRef = useRef(decisionDialog);
@@ -669,6 +676,12 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
       closeDecision();
       return;
     }
+    const registryHold = checkDailyV2DecisionRegistryRead(check.unit, view.registry);
+    if (registryHold !== null) {
+      // Suspension : le dialogue et la raison saisie restent ouverts jusqu'à une lecture saine du registre.
+      toast.error(DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES[registryHold]);
+      return;
+    }
     if (!isDailyV2StagingAccountIdentified(describeDailyV2StagingAccount(check.unit, view.accountsById))) {
       toast.error(UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE);
       return;
@@ -693,6 +706,13 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
     : null;
   const decisionAccount = decisionDialog ? describeDailyV2StagingAccount(decisionDialog.unit, reviewAccountsById) : null;
   const decisionAccountIdentified = decisionAccount !== null && isDailyV2StagingAccountIdentified(decisionAccount);
+  const decisionRegistryHold = decisionDialog ? checkDailyV2DecisionRegistryRead(decisionDialog.unit, reviewView.registry) : null;
+  const decisionReadFailed = (stagingQuery.isError && !stagingRefreshing) || decisionRegistryHold === 'REGISTRY_READ_FAILED';
+  // Relecture explicite de la revue et du registre, accessible depuis le dialogue resté ouvert après un échec.
+  const refreshReview = () => {
+    void stagingQuery.refetch();
+    void reviewAccountsQuery.refetch();
+  };
   const reasonRequired = decisionDialog?.kind === 'supersede' ||
     (decisionDialog?.kind === 'promote' &&
       (decisionDialog.unit.validation_status === 'needs_review' ||
@@ -868,8 +888,8 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                       <p data-reference-date-used={referenceDate.trim() || 'none'}>
                         Date qui sera transmise : <strong>{referenceDate.trim() || 'aucune'}</strong>
                         {!referenceDate.trim() && (bank === 'ORA'
-                          ? ' — sans date, la dernière journée ORABANK du fichier restera provisoire.'
-                          : ' — sans date, toutes les journées du fichier seront closes.')}
+                          ? ' — sans date, la dernière journée ORABANK du fichier sera demandée provisoire.'
+                          : ' — sans date, aucune journée du fichier ne sera demandée provisoire.')}
                       </p>
                     </div>
                   )}
@@ -983,9 +1003,12 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                     {preparedAssessment && (
                       <div className="space-y-3 rounded border p-3 text-sm" aria-label="Contrôle de la date d’export">
                         <p>
-                          Journées provisoires (non closes) : <strong>{preparedAssessment.provisionalDates.join(', ') || 'aucune'}</strong>
-                          {' '}· journées closes : <strong>{preparedAssessment.closedDatesCount}</strong>
+                          Journées demandées provisoires : <strong>{preparedAssessment.provisionalDates.join(', ') || 'aucune'}</strong>
+                          {' '}· journées non provisoires : <strong>{preparedAssessment.nonProvisionalDatesCount}</strong>
                           {' '}· dernière journée du fichier : <strong>{preparedAssessment.latestAccountingDate}</strong>
+                        </p>
+                        <p className="text-muted-foreground">
+                          Statuts demandés par cette préparation : ils ne démontrent ni la clôture bancaire d’une journée ni sa disponibilité en Trésorerie, vérifiées côté serveur.
                         </p>
                         {preparedAssessment.issues.length > 0 && (
                           <Alert variant={preparedAssessment.blocking ? 'destructive' : 'default'}>
@@ -1075,7 +1098,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
 
         <TabsContent value="staging">
           {!canReadStaging ? <AccessDenied text="Staging réservé aux rôles admin et manager." /> : (
-            <ListCard title="Unités staging" loading={stagingQuery.isLoading} error={stagingQuery.isError} onRefresh={() => stagingQuery.refetch()}>
+            <ListCard title="Unités staging" loading={stagingQuery.isLoading} error={stagingQuery.isError} onRefresh={refreshReview}>
               <div className="mb-4 grid max-w-4xl gap-3 sm:grid-cols-3">
                 <Select value={stagingAccount} onValueChange={(value: DailyV2StagingAccountFilter) => { setStagingAccount(value); setStagingPage(0); closeReviewDecisions(); }}>
                   <SelectTrigger aria-label="Filtrer par compte"><SelectValue /></SelectTrigger>
@@ -1100,6 +1123,11 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                   </SelectContent>
                 </Select>
               </div>
+              {reviewAccountsQuery.isError && reviewAccountsById !== null && (
+                <p className="mb-2 text-sm text-destructive" data-review-registry="failed">
+                  Dernière lecture du registre des comptes en échec : les comptes affichés viennent d’une lecture antérieure et peuvent être périmés. Les décisions sur les unités rattachées au registre sont suspendues jusqu’à une relecture réussie.
+                </p>
+              )}
               {stagingAccountLabel !== null && (
                 <p className="mb-2 text-sm text-muted-foreground" data-staging-account-filter={stagingAccount}>
                   Filtre serveur appliqué avant la pagination : <strong>{stagingAccountLabel}</strong> — {stagingQuery.data?.count ?? 0} unité(s).
@@ -1178,11 +1206,20 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
           {decisionDialog && !decisionAccountIdentified && (
             <Alert variant="destructive"><AlertTitle>Compte non identifiable</AlertTitle><AlertDescription>{UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE}</AlertDescription></Alert>
           )}
-          {decisionDialog && stagingQuery.isFetching && (
+          {decisionDialog && stagingRefreshing && (
             <p className="text-sm text-muted-foreground">Revue en cours d’actualisation : la confirmation reprend une fois la liste relue.</p>
           )}
-          {decisionDialog && stagingQuery.isError && !stagingQuery.isFetching && (
+          {decisionDialog && stagingQuery.isError && !stagingRefreshing && (
             <p className="text-sm text-destructive">{REVIEW_READ_FAILED_MESSAGE}</p>
+          )}
+          {decisionRegistryHold === 'REGISTRY_REFRESHING' && (
+            <p className="text-sm text-muted-foreground">{DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES.REGISTRY_REFRESHING}</p>
+          )}
+          {decisionRegistryHold === 'REGISTRY_READ_FAILED' && (
+            <p className="text-sm text-destructive">{DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES.REGISTRY_READ_FAILED}</p>
+          )}
+          {decisionDialog && decisionReadFailed && (
+            <div><Button size="sm" variant="outline" onClick={refreshReview}>Relire la revue et le registre</Button></div>
           )}
           {decisionDialog && decisionDialog.unit.review_reason_codes.length > 0 && (
             <Alert>
@@ -1191,7 +1228,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
             </Alert>
           )}
           {reasonRequired && <Field label="Raison obligatoire"><Textarea value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></Field>}
-          <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={!canDecide || Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending || stagingQuery.isFetching || stagingQuery.isError || !decisionAccountIdentified} onClick={confirmDecision}>Confirmer</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={!canDecide || Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending || stagingRefreshing || stagingQuery.isError || decisionRegistryHold !== null || !decisionAccountIdentified} onClick={confirmDecision}>Confirmer</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

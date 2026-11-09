@@ -665,24 +665,24 @@ test('assesses the effect of the export reference date on a really prepared payl
     });
   };
 
-  // Date du jour d'export = dernière journée = nom du fichier : seule cette journée reste provisoire.
+  // Date du jour d'export = dernière journée = nom du fichier : seule cette journée est demandée provisoire.
   const exact = await prepareWith('030626 ORA ONLINE.csv', 'ORA', '03/06/2026');
   assert.deepEqual(exact.provisionalDates, ['03/06/2026']);
-  assert.equal(exact.closedDatesCount, 2);
+  assert.equal(exact.nonProvisionalDatesCount, 2);
   assert.deepEqual(exact.issues, []);
   assert.equal(exact.blocking, false);
 
-  // Ancienne date conservée par erreur (antérieure au fichier) : journées closes rouvertes, dépôt bloqué.
+  // Ancienne date conservée par erreur (antérieure au fichier) : journées non provisoires redemandées provisoires, dépôt bloqué.
   const stale = await prepareWith('030626 ORA ONLINE.csv', 'ORA', '02/06/2026');
   assert.deepEqual(stale.provisionalDates, ['02/06/2026', '03/06/2026']);
   assert.deepEqual(stale.issues, ['REFERENCE_BEFORE_LATEST_DAY', 'REFERENCE_DIFFERS_FROM_FILE_NAME']);
-  assert.equal(stale.provisionalDates.length + stale.closedDatesCount, 3);
+  assert.equal(stale.provisionalDates.length + stale.nonProvisionalDatesCount, 3);
   assert.equal(stale.blocking, true);
 
-  // Date d'un fichier plus récent conservée : la journée d'export serait close à tort ; dépôt bloqué.
+  // Date d'un fichier plus récent conservée : la journée d'export ne serait plus demandée provisoire ; dépôt bloqué.
   const later = await prepareWith('030626 ORA ONLINE.csv', 'ORA', '21/06/2026');
   assert.deepEqual(later.provisionalDates, []);
-  assert.equal(later.closedDatesCount, 3);
+  assert.equal(later.nonProvisionalDatesCount, 3);
   assert.deepEqual(later.issues, ['REFERENCE_AFTER_LATEST_DAY', 'REFERENCE_AFTER_FILE_NAME_DATE']);
   assert.equal(later.blocking, true);
 

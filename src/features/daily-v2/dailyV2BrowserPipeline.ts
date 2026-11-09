@@ -695,11 +695,12 @@ export type DailyV2ExportReferenceIssue =
   | 'FILE_NAME_DATE_NOT_USED'
   /** Date antérieure à la dernière journée du fichier : incohérente, dépôt bloqué par l'interface. */
   | 'REFERENCE_BEFORE_LATEST_DAY'
-  /** Date postérieure à la dernière journée : toutes les journées du fichier sont closes. */
+  /** Date postérieure à la dernière journée : aucune journée du fichier n'est demandée provisoire. */
   | 'REFERENCE_AFTER_LATEST_DAY'
   /**
-   * Date postérieure à la date d'export lue dans le nom : la journée d'export, peut-être incomplète, serait
-   * close à tort. Incohérente avec le fichier courant : dépôt bloqué par l'interface.
+   * Date postérieure à la date d'export lue dans le nom : la journée d'export, peut-être incomplète, ne serait
+   * plus demandée provisoire. Incohérente avec le fichier courant : dépôt bloqué par l'interface (restriction
+   * prudente de l'interface, ratifiée par le CTO ; ce n'est pas une preuve bancaire).
    */
   | 'REFERENCE_AFTER_FILE_NAME_DATE'
   /** Date antérieure à celle lue dans le nom du fichier (sens prudent : davantage de journées provisoires). */
@@ -715,7 +716,11 @@ export interface DailyV2ExportReferenceAssessment {
   fileNameDate: string | null;
   latestAccountingDate: string;
   provisionalDates: string[];
-  closedDatesCount: number;
+  /**
+   * Nombre de journées préparées sans statut provisoire demandé. Simple décompte du payload : il ne démontre ni
+   * une clôture bancaire ni une disponibilité en Trésorerie, vérifiées côté serveur.
+   */
+  nonProvisionalDatesCount: number;
   issues: DailyV2ExportReferenceIssue[];
   /**
    * Vrai lorsque la date contredit le fichier lui-même (antérieure à sa dernière journée, ou postérieure à la
@@ -768,7 +773,7 @@ export function assessDailyV2ExportReferenceDate(input: {
     fileNameDate,
     latestAccountingDate,
     provisionalDates,
-    closedDatesCount: input.units.length - provisionalDates.length,
+    nonProvisionalDatesCount: input.units.length - provisionalDates.length,
     issues,
     blocking: issues.includes('REFERENCE_BEFORE_LATEST_DAY') || issues.includes('REFERENCE_AFTER_FILE_NAME_DATE'),
   };
