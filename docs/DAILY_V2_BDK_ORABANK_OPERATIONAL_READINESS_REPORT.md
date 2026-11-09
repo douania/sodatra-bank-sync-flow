@@ -5,6 +5,60 @@ Base : `main` `ac2284098464d8338bb6d8cf8cb7e661e93a6d45`.
 Branche : `codex/daily-v2-bdk-orabank-operational-readiness`, dans un worktree isolé.
 Les checkouts existants (Collections, Pack 2 et autres) sont intacts : aucun stash, aucun nettoyage.
 
+Correctifs : `GO_FIX_DAILY_V2_BDK_ORABANK_OPERATIONAL_READINESS`, après le verdict CTO FAIL ciblé sur `607c0bb`. Même
+branche, même draft PR #159. Trois points corrigés, détaillés au §0 :
+
+- C1 : une décision dépendant du registre des comptes restait confirmable après un échec de relecture du registre ;
+- C2 : le décompte des journées non provisoires était présenté comme une clôture ;
+- C3 : deux fichiers de tests du pack n'étaient pas exécutés par la CI.
+
+## 0. Correctifs après la contre-revue CTO de `607c0bb`
+
+### C1 — Registre en erreur avec données en cache
+
+- **Défaut reproduit** : registre lu, promotion ouverte, relecture du registre en échec avec les anciennes données
+  conservées par TanStack, puis confirmation encore active et promotion envoyée. Le gestionnaire ne contrôlait que la
+  liste staging, jamais l'état de lecture du registre.
+- **Correction** (`checkDailyV2DecisionRegistryRead`, dans `dailyV2Types.ts`) : pour une unité rattachée au registre,
+  - pendant une relecture du registre, la décision est **suspendue** ;
+  - si la dernière lecture a échoué, elle est **refusée**, même avec des comptes en cache ;
+  - elle ne reprend qu'après une lecture saine, puis les contrôles de contexte existants (vue, unité, compte
+    identifiable).
+- La garde est dans le gestionnaire de confirmation lui-même. Il relit l'état du registre validé au dernier rendu
+  (`reviewViewRef`), y compris s'il a été capturé plus tôt. Le bouton est en plus désactivé.
+- Une relecture en attente du réseau (état TanStack « paused », où `isFetching` est faux et les données inchangées) est
+  traitée comme une relecture en cours, pour le registre comme pour la liste staging (observation de la contre-revue).
+- Pendant la suspension, le dialogue et la raison saisie sont conservés. Le dialogue propose « Relire la revue et le
+  registre » ; le bouton « Actualiser » de la liste relit aussi le registre.
+- La carte de revue signale quand les comptes affichés viennent d'une lecture antérieure, après un échec.
+- Inchangés : les contrôles de la liste staging (actualisation, échec de relecture) et des décisions périmées.
+- Une unité historique sans compte du registre reste décidable pendant une relecture ou après un échec du registre,
+  dont elle ne dépend pas.
+- Changement de message : quand le registre n'a jamais pu être lu, le refus nomme désormais sa cause première (« la
+  dernière lecture du registre des comptes a échoué ») ; l'alerte « Compte non identifiable » reste affichée. Le test
+  existant concerné (P3-4) est mis à jour en conséquence.
+
+### C2 — Journées non provisoires, sans affirmation de clôture
+
+- Le décompte affiché après préparation est celui du payload : « Journées demandées provisoires » et « journées non
+  provisoires ». Le champ de l'aide est renommé `nonProvisionalDatesCount` (anciennement `closedDatesCount`).
+- Une phrase l'explique : ces statuts demandés ne démontrent ni la clôture bancaire d'une journée ni sa disponibilité en
+  Trésorerie, vérifiées côté serveur.
+- Les affirmations « toutes les journées seront closes » et « la journée d'export serait close à tort » sont retirées.
+  Elles deviennent « aucune journée du fichier n'est (ne sera) demandée provisoire » et « la journée d'export, peut-être
+  incomplète, ne serait plus demandée provisoire ».
+- Les statuts du payload et les règles du pipeline et du serveur sont inchangés.
+- Le blocage d'une date postérieure à la date d'export du nom est **ratifié par le CTO comme restriction prudente de
+  l'interface**. Ce n'est pas une preuve bancaire.
+
+### C3 — Tests du pack dans la CI
+
+- `.github/workflows/ci.yml` : une seule ligne ajoutée dans l'étape existante « Structured statement and Daily v2
+  tests » :
+  `npx tsx --test src/pages/DailyStatementV2.synthetic.test.tsx src/features/daily-v2/dailyV2StagingAccountFilter.synthetic.test.ts`.
+- Les tests déjà exécutés sont conservés. Aucun changement de permissions, secrets, déclencheurs, déploiement,
+  dépendances, `package.json` ni lockfile.
+
 Contexte : la recette réelle D1 BDK/ORABANK `rd1-dceebe` est close en `PASS_WITH_RESERVES`. Ce pack corrige trois
 difficultés d'exploitation qu'elle a relevées, sans toucher au serveur :
 
@@ -29,10 +83,13 @@ aucune dépendance, aucun accès staging ou production.
   - sans date, seule la dernière journée ORABANK l'est ;
   - pour BDK et les profils Excel sans date, aucune journée n'est provisoire.
 - Le risque d'exploitation est double :
-  - une date restée d'un autre fichier clôt à tort la journée d'export, si elle est postérieure ;
-  - ou elle rouvre comme provisoires des journées closes, si elle est antérieure.
-- Un fichier BDK déposé sans date clôt même le jour d'export.
+  - une date restée d'un autre fichier retire à tort le statut provisoire demandé pour la journée d'export, si elle
+    est postérieure ;
+  - ou elle redemande provisoires des journées qui ne l'étaient pas, si elle est antérieure.
+- Un fichier BDK déposé sans date ne demande aucune journée provisoire, pas même le jour d'export.
 - La recette a dû rattraper un tel cas avant dépôt.
+- Ces statuts sont ceux que la préparation demande. La clôture bancaire et la disponibilité en Trésorerie restent
+  vérifiées côté serveur.
 
 ### B — Revue staging
 
@@ -85,13 +142,14 @@ Alias pris en charge par la règle du parseur, vérifiés par tests :
 
 | Fichier | Changement |
 |---|---|
-| `src/pages/DailyStatementV2.tsx` | A : avis de date effacée avec sa cause, date lue dans le nom (bouton explicite), date transmise affichée, effet de la date sur la préparation, confirmation obligatoire liée à cette préparation et nommant le compte, dépôt refusé si la date contredit le fichier ou si le compte a changé, invalidation au provisionnement, formulaire conservé s'il change pendant un dépôt. B : filtre de compte, colonne Compte, identité de l'unité dans la décision, gardes de décision périmée, d'actualisation, d'échec de relecture et de compte non identifiable. C : banque reconnue par le nom affichée avant préparation |
+| `src/pages/DailyStatementV2.tsx` | A : avis de date effacée avec sa cause, date lue dans le nom (bouton explicite), date transmise affichée, effet de la date sur la préparation (journées demandées provisoires et non provisoires, sans affirmation de clôture), confirmation obligatoire liée à cette préparation et nommant le compte, dépôt refusé si la date contredit le fichier ou si le compte a changé, invalidation au provisionnement, formulaire conservé s'il change pendant un dépôt. B : filtre de compte, colonne Compte, identité de l'unité dans la décision, gardes de décision périmée, d'actualisation, d'échec de relecture, de lecture du registre (C1) et de compte non identifiable, relecture de la revue et du registre depuis le dialogue. C : banque reconnue par le nom affichée avant préparation |
 | `src/features/daily-v2/DailyV2Tables.tsx` | Colonne « Compte » (alias, numéro masqué du registre, état inactif ou registre indisponible, tentative et unité courtes) ; repère `data-staging-unit` |
-| `src/features/daily-v2/dailyV2Types.ts` | Type du filtre ; aides pures : libellé et identification du compte, contexte et contrôle de décision, messages de péremption |
+| `src/features/daily-v2/dailyV2Types.ts` | Type du filtre ; aides pures : libellé et identification du compte, contexte et contrôle de décision, messages de péremption, garde de lecture du registre (`checkDailyV2DecisionRegistryRead`) et ses messages |
 | `src/features/daily-v2/dailyV2SupabaseService.ts` | `listDailyV2StagingUnits` : filtre `account` (tous, sans compte du registre, ou identifiant exact) appliqué côté serveur avant la pagination ; filtre mal formé refusé avant toute requête (`STAGING_ACCOUNT_FILTER_INVALID`) |
-| `src/features/daily-v2/dailyV2BrowserPipeline.ts` | Aides pures `readDailyV2FileNameExportDate` et `assessDailyV2ExportReferenceDate` ; `prepareDailyV2BrowserDeposit` inchangé |
+| `src/features/daily-v2/dailyV2BrowserPipeline.ts` | Aides pures `readDailyV2FileNameExportDate` et `assessDailyV2ExportReferenceDate` (décompte `nonProvisionalDatesCount`) ; `prepareDailyV2BrowserDeposit` inchangé |
 | `src/services/structuredBankStatementCsvParser.ts` | Export `detectStructuredBankStatementCsvBankHint` : la règle existante, à l'identique, pour l'affichage préalable |
-| Tests | Voir §4. Dans `dailyV2ApplicationContract.synthetic.test.ts` : trois assertions de contrat de source étendues, et deux tests des aides de revue ajoutés |
+| `.github/workflows/ci.yml` | C3 : une ligne dans l'étape existante, qui exécute les tests de page et du filtre de compte |
+| Tests | Voir §4. Dans `dailyV2ApplicationContract.synthetic.test.ts` : trois assertions de contrat de source étendues, et trois tests des aides de revue ajoutés (dont la garde du registre) |
 
 ## 3. Comportement livré
 
@@ -105,12 +163,14 @@ Alias pris en charge par la règle du parseur, vérifiés par tests :
 - Avant préparation, la page affiche :
   - le fichier courant ;
   - la date lue dans le nom (`JJMMAA` en tête), avec un bouton « Utiliser cette date » qui n'agit jamais seul ;
-  - la date qui sera transmise, ou « aucune » avec son effet (dernière journée ORABANK provisoire, ou toutes les
-    journées closes).
+  - la date qui sera transmise, ou « aucune » avec son effet (dernière journée ORABANK demandée provisoire, ou aucune
+    journée demandée provisoire).
 - Après préparation, la page affiche :
   - le fichier et le compte du dépôt ;
   - la date de référence réellement inscrite au payload ;
-  - les journées provisoires, le nombre de journées closes et la dernière journée du fichier ;
+  - les journées demandées provisoires, le nombre de journées non provisoires et la dernière journée du fichier ;
+  - une phrase rappelant que ces statuts demandés ne démontrent ni la clôture bancaire ni la disponibilité en
+    Trésorerie, vérifiées côté serveur ;
   - les points à vérifier.
 - Points à vérifier :
 
@@ -119,13 +179,13 @@ Alias pris en charge par la règle du parseur, vérifiés par tests :
 | `ORA_WITHOUT_REFERENCE_DATE` | ORABANK sans date | confirmation |
 | `FILE_NAME_DATE_NOT_USED` | date du nom (cohérente avec le contenu) non transmise | confirmation |
 | `FILE_NAME_DATE_BEFORE_CONTENT` | date du nom antérieure à la dernière journée : le nom ne décrit pas le contenu et n'est plus utilisé pour juger la date | confirmation |
-| `REFERENCE_AFTER_LATEST_DAY` | date postérieure à la dernière journée : toutes les journées closes | confirmation |
+| `REFERENCE_AFTER_LATEST_DAY` | date postérieure à la dernière journée : aucune journée du fichier n'est demandée provisoire | confirmation |
 | `REFERENCE_DIFFERS_FROM_FILE_NAME` | date antérieure à celle du nom (sens prudent) | confirmation |
 | `REFERENCE_BEFORE_LATEST_DAY` | date antérieure à la dernière journée du fichier | **dépôt bloqué** |
-| `REFERENCE_AFTER_FILE_NAME_DATE` | date postérieure à la date d'export du nom, quand le nom décrit le contenu : la journée d'export serait close à tort | **dépôt bloqué** |
+| `REFERENCE_AFTER_FILE_NAME_DATE` | date postérieure à la date d'export du nom, quand le nom décrit le contenu : la journée d'export, peut-être incomplète, ne serait plus demandée provisoire | **dépôt bloqué** |
 
-- Le blocage d'une date postérieure au nom (`REFERENCE_AFTER_FILE_NAME_DATE`) est un **choix prudent de ce pack, soumis
-  à ratification CTO**.
+- Le blocage d'une date postérieure au nom (`REFERENCE_AFTER_FILE_NAME_DATE`) est **ratifié par le CTO comme
+  restriction prudente de l'interface**. Ce n'est pas une preuve bancaire.
   - Il reste un simple signalement sans date dans le nom, ou quand la date égale celle du nom sans opération ce jour-là.
 - Le dépôt exige de cocher la confirmation « Je confirme que la date d'export … correspond au fichier …, pour le compte
   … », ou « … sans date de référence export, pour le compte … ».
@@ -171,8 +231,12 @@ Alias pris en charge par la règle du parseur, vérifiés par tests :
   - Elle est seulement suspendue, sans fermeture et sans perte de la raison saisie, si :
     - la liste est en cours d'actualisation ;
     - la dernière relecture a échoué (TanStack conserve alors les anciennes lignes).
+  - Pour une unité rattachée au registre, elle est aussi suspendue pendant une relecture du registre, et refusée tant
+    que sa dernière lecture a échoué, même avec des comptes en cache (C1). Le dialogue reste ouvert et propose de
+    relire la revue et le registre ; la reprise suit une lecture saine et les contrôles ci-dessus.
   - Elle est refusée si le compte de l'unité n'est pas identifiable (registre indisponible, ou compte absent du
     registre lu).
+  - Une unité historique sans compte du registre ne dépend pas du registre et reste décidable comme avant.
 
 ### C — ORAB
 
@@ -186,7 +250,7 @@ inchangées.
 ## 4. Vérifications
 
 Environnement : Node 22.23.1, npm 10.9.8, TypeScript 5.6.3, ESLint 9.13.0, avec les dépendances du lockfile
-(`npm ci`).
+(`npm ci`). Mesures rejouées sur le code final des correctifs C1 à C3.
 
 | Contrôle | Baseline `ac22840` | Branche |
 |---|---|---|
@@ -201,11 +265,12 @@ Environnement : Node 22.23.1, npm 10.9.8, TypeScript 5.6.3, ESLint 9.13.0, avec 
 | `test:structured-csv-all` | 135 / 135 |
 | `test:structured-csv-e2b` | 49 / 49 |
 | `test:structured-excel` | 21 / 21 |
-| `test:daily-v2-application` | 115 / 115 |
+| `test:daily-v2-application` | 116 / 116 |
 | `test:daily-v2-reporting` | 70 / 70 |
 | Commandes CI dashboard, session, décisions opérationnelles | 34 / 34, 11 / 11, 49 / 49 |
 | `test:build-provenance` | 12 / 12 |
-| Nouveaux fichiers de tests du pack, hors CI (page 19, service 4) | 23 / 23 |
+| Nouvelle ligne CI (C3) : page 25 et filtre de compte 4 | 29 / 29 |
+| Page, filtre de compte et pipeline sans `navigator` (Node 20 simulé) | 55 / 55 |
 
 Couverture des tests ajoutés :
 
@@ -219,11 +284,15 @@ Couverture des tests ajoutés :
   avec `bankHint`. C'est une garde de non-régression.
 - **Aides de revue** (dans `dailyV2ApplicationContract.synthetic.test.ts`, exécuté par la CI) :
   - libellé et identification du compte, dont le registre indisponible ;
-  - chaque motif de péremption, champ par champ.
-- **Page** (`src/pages/DailyStatementV2.synthetic.test.tsx`, 19 tests) : interactions réelles avec la page et le vrai
-  pipeline.
+  - chaque motif de péremption, champ par champ ;
+  - garde de lecture du registre : lecture saine, relecture, échec, relecture après échec, et unités historiques
+    jamais retenues (C1).
+- **Page** (`src/pages/DailyStatementV2.synthetic.test.tsx`, 25 tests, exécuté par la CI depuis C3) : interactions
+  réelles avec la page et le vrai pipeline.
   - Changement de fichier et de date, avis et causes, invalidation.
   - Confirmation obligatoire, renouvelée à chaque préparation et nommant le compte.
+  - Décompte des journées demandées provisoires et non provisoires, phrase de vérification serveur, aucune affirmation
+    de clôture (C2).
   - Dates incohérentes bloquées, même après contournement du bouton et de la case.
   - Dépôt sans date en connaissance de cause.
   - Provisionnement d'un compte qui invalide la préparation.
@@ -235,6 +304,16 @@ Couverture des tests ajoutés :
   - Décisions ciblées et fermées au changement de compte ou de page.
   - Décisions refusées ou suspendues : unité changée ou sortie de la vue, actualisation, relecture en échec, compte
     non identifiable, gestionnaire capturé avant un changement de compte.
+  - Registre des comptes (C1), cinq tests :
+    - reproduction exacte du parcours du CTO ;
+    - promotion : comptes en cache après un échec, gestionnaire courant et gestionnaire capturé avant l'échec appelés
+      directement, nouvel échec, puis reprise après une lecture saine ;
+    - supersede : relecture en cours (suspension, dialogue et raison conservés), relecture terminée en échec (refus,
+      aucun appel), puis reprise avec l'unité, le canonical et la raison exacts ;
+    - unité historique sans compte, décidable pendant l'échec et pendant la relecture, alors que la promotion de
+      l'unité rattachée, gestionnaire appelé directement pendant la relecture, est suspendue sans appel ;
+    - relecture en attente du réseau (« paused »), du registre puis de la liste : suspension, puis reprise.
+  - Libellés C2 de la date postérieure à la dernière journée et de l'indice BDK sans date, sans affirmation de clôture.
   - Dépôt puis redépôt identiques.
   - Le harnais reproduit TanStack v5 : une relecture conserve les données, avec `isFetching` vrai.
 - **Service** (`dailyV2StagingAccountFilter.synthetic.test.ts`, 4 tests) : sur la requête HTTP réellement émise par le
@@ -246,10 +325,19 @@ Couverture des tests ajoutés :
 Preuves complémentaires :
 
 - **Mutation** : rejoués sur le code de `ac22840` dans un worktree temporaire, ensuite supprimé :
-  - les 19 tests de page échouent ;
+  - les 19 tests de page d'origine échouent ;
   - 3 des 4 tests de service échouent ; le quatrième, « tous les comptes », vérifie le comportement inchangé ;
   - les fichiers parseur, pipeline et contrat ne chargent pas, faute des nouveaux exports ;
   - les deux tests ORAB, isolés, passent sur `ac22840`, ce qui confirme le diagnostic C.
+- **Reproduction C1** : les quatre premiers tests C1 ont d'abord été exécutés sur le code de page de `607c0bb`, seul le
+  harnais étant étendu (barrière de relecture du registre, canonical actif fictif). Ils échouent tous les quatre ; dans
+  la reproduction du CTO, « Confirmer » reste actif après l'échec de relecture du registre. Ils passent après
+  correction.
+- **Mutants ciblés** sur le code final, page restaurée ensuite à l'identique (empreinte vérifiée) : tous tués.
+  - Promotion qui ignore la relecture du registre (survivant de la contre-revue).
+  - Indice BDK sans date, et message de date postérieure à la dernière journée, ramenés à « seront closes » (deux
+    survivants de la contre-revue).
+  - Relecture « paused » ignorée, pour le registre puis pour la liste.
 - **Node 20** : les tests du pack (pipeline, page, service) passent sans la globale `navigator`, absente en CI. Les
   crochets de chargement `module.register` qu'ils utilisent sont déjà employés par un test exécuté en CI
   (`DailyV2DecisionDialogsSuspension`).
@@ -268,6 +356,24 @@ Revue indépendante (seconde IA, en lecture seule), deux passes :
   antérieure au contenu » (P3-A) et la relecture en échec (P3-B) ont ensuite été traités.
 - Restent les points du §6 et du §8.
 
+Contre-revue indépendante des correctifs C1 à C3 (seconde IA, en lecture seule) :
+
+- Verdicts : C1, C2 et C3 corrigés ; aucun P0 ni P1.
+- Méthode :
+  - sémantique TanStack v5 vérifiée sur la version installée ;
+  - fidélité du harnais contrôlée ;
+  - 18 mutants rejoués sur une copie jetable, 15 tués ;
+  - simulation Node 20 sans `navigator` (27 sur 27).
+- Observations traitées :
+  - P2 : aucun test n'appelait directement la promotion pendant une relecture du registre. Le test est ajouté.
+  - P3 : deux libellés C2 n'étaient pas couverts (indice BDK sans date, date postérieure à la dernière journée). Ils
+    sont désormais testés.
+  - P3 : les messages de suspension parlaient de « relecture » et de « comptes affichés » même quand le registre n'a
+    jamais été lu. Les messages sont reformulés.
+  - P3 : une relecture « paused » (hors ligne) levait la suspension. Elle est désormais traitée comme une relecture en
+    cours.
+- Observation rapportée sans modification : voir §6, point 3.
+
 ## 5. Discipline de version du parseur
 
 - Le parseur CSV garde la version `structured-csv-0b`, et le runtime navigateur `daily-v2-browser-0q`.
@@ -283,18 +389,25 @@ Revue indépendante (seconde IA, en lecture seule), deux passes :
 
 ## 6. Hors périmètre identifié (non appliqué)
 
-1. **CI** : la page (19 tests) et le service (4 tests) ne sont pas encore exécutés par la CI, qui liste ses fichiers
-   explicitement. Il faudrait les ajouter à la commande « LOCAL-E2E » de `.github/workflows/ci.yml`, ou à un script de
-   `package.json`. Ces deux fichiers sont hors du périmètre autorisé.
-   - Fichiers : `src/pages/DailyStatementV2.synthetic.test.tsx`,
-     `src/features/daily-v2/dailyV2StagingAccountFilter.synthetic.test.ts`.
-   - Les tests du pipeline, du parseur et des aides de revue, eux, y sont déjà.
-2. `src/services/bankIdentity.ts` (rapports multi-banques historiques) ne reconnaît pas `ORAB`. Ce module n'est pas le
+1. `src/services/bankIdentity.ts` (rapports multi-banques historiques) ne reconnaît pas `ORAB`. Ce module n'est pas le
    pipeline Daily v2.
-3. Le rapport privé de la recette `rd1-dceebe` classe `ora_211026_orab` « BLOCKED » par erreur (§1-C). Sa
-   rectification relève d'une autorisation distincte.
-4. Les dialogues Versions et approbation groupée (Lot 1) ne sont pas modifiés. Ils sont refermés au changement de vue
+2. Les dialogues Versions et approbation groupée (Lot 1) ne sont pas modifiés. Ils sont refermés au changement de vue
    et gardent leurs propres gardes.
+3. Observation de la contre-revue, **antérieure au pack et hors des trois points C1 à C3** : le gestionnaire de
+   confirmation ne revérifie ni la raison obligatoire ni une décision déjà en cours.
+   - Seul le bouton porte ces deux gardes. Un appel direct ou double pourrait donc envoyer une promotion sans sa raison
+     obligatoire, ou l'envoyer deux fois.
+   - Une raison de supersede vide reste refusée par le service ; pour la promotion, le serveur reste juge.
+   - Correctif possible : reprendre ces deux contrôles dans le gestionnaire, à partir de l'unité relue. Non appliqué :
+     à arbitrer par le CTO.
+
+Points traités depuis `607c0bb`, sous les extensions du GO FIX :
+
+- Le branchement CI des tests de page et du filtre de compte est fait (C3, §0).
+- Le rapport privé de la recette `rd1-dceebe`, hors dépôt, porte un rectificatif ORAB daté du 09/11 (son §11). Le
+  classement BLOCKED reprenait un diagnostic ancien ; le rejet n'est pas reproductible sur `ac22840`.
+  Ce fichier n'a toutefois pas été déposé pendant la campagne. Les observations historiques et la clôture de la
+  campagne sont conservées ; aucun nouveau rejeu réel n'a été effectué.
 
 ## 7. Protocole de qualification staging ultérieure (préparation seulement)
 
@@ -310,7 +423,8 @@ exclue.
    - Les profils Excel (ATB, BICIS, BIS, BRIDGE), BIS backfill et NSIA sont exclus.
 2. **Dates prouvées**
    - Série contiguë de quotidiens réels, avec la date d'export de chaque fichier confirmée à l'écran.
-   - Cas couverts : journée close, provisoire tardive, ordre inversé, redépôt identique et mensuel.
+   - Cas couverts : journée non provisoire (statut final vérifié côté serveur), provisoire tardive, ordre inversé,
+     redépôt identique et mensuel.
    - Pour une réfutation, attendre J+1 ne suffit pas : la preuve doit apporter une journée effectivement postérieure au
      jour de première réception des sources, selon la règle applicative.
    - Le fichier `ORAB` du 21/10 entre dans la série.
@@ -356,10 +470,12 @@ Limites :
 
 - Les gardes de date et de décision sont des gardes d'interface ; le pipeline accepte toujours une date antérieure à la
   dernière journée, comme le prévoit son contrat.
-- Le blocage d'une date postérieure au nom est un choix à ratifier (§3-A).
+- Le blocage d'une date postérieure au nom est ratifié comme restriction prudente de l'interface ; ce n'est pas une
+  preuve bancaire (§3-A).
+- Les journées « non provisoires » ne sont qu'un décompte du payload : la clôture bancaire et la disponibilité en
+  Trésorerie restent vérifiées côté serveur et ne sont pas démontrées par ce pack.
 - Les interactions sont testées par un harnais Node, et non dans un navigateur réel ; ses dialogues ne sont pas modaux.
 - Aucune exécution staging.
-- Deux fichiers de tests restent à brancher sur la CI (§6).
 - Nits non traités, sans effet de sécurité :
   - le type du filtre de compte reste une chaîne ;
   - un utilisateur à la fois manager et auditor lit le registre de la revue comme le formulaire d'import, en comptes
