@@ -125,6 +125,12 @@ export interface DailyV2StagingUnitRow {
   created_by: string | null;
 }
 
+/**
+ * Filtre de compte de la revue staging : tous les comptes, les unités sans compte du registre
+ * (historique), ou l'identifiant exact d'un compte du registre. Appliqué côté serveur avant la pagination.
+ */
+export type DailyV2StagingAccountFilter = string;
+
 export interface DailyV2StagingLineRow {
   id: string;
   staging_unit_id: string;
@@ -951,4 +957,157 @@ type DailyV2TableDefinition<Row extends object> = {
   Insert: Record<string, never>;
   Update: Record<string, never>;
   Relationships: [];
+};
+
+// --- Revue staging : identification du compte et décisions ciblées -----------
+
+/** Compte d'une unité staging tel que l'opérateur peut l'identifier : alias et numéro déjà masqué du registre. */
+export interface DailyV2StagingAccountLabel {
+  /**
+   * `registered` : compte lu dans le registre ; `not_visible` : compte rattaché mais absent du registre lu avec
+   * ces droits (un manager ne lit que les comptes actifs) ; `registry_unavailable` : registre pas encore lu ou en
+   * échec ; `unregistered` : unité historique sans compte du registre.
+   */
+  state: 'registered' | 'not_visible' | 'registry_unavailable' | 'unregistered';
+  alias: string;
+  masked: string | null;
+  inactive: boolean;
+}
+
+/** Un compte de décision doit être identifiable : registre lu et compte présent, ou unité historique sans compte. */
+export function isDailyV2StagingAccountIdentified(label: DailyV2StagingAccountLabel): boolean {
+  return label.state === 'registered' || label.state === 'unregistered';
+}
+
+/** `accountsById` vaut `null` tant que le registre n'a pas été lu avec succès. */
+export function describeDailyV2StagingAccount(
+  unit: Pick<DailyV2StagingUnitRow, 'account_registry_id'>,
+  accountsById: ReadonlyMap<string, DailyV2AccountRegistryRow> | null,
+): DailyV2StagingAccountLabel {
+  if (unit.account_registry_id === null) {
+    return { state: 'unregistered', alias: 'Sans compte du registre', masked: null, inactive: false };
+  }
+  if (accountsById === null) {
+    return { state: 'registry_unavailable', alias: 'Registre des comptes indisponible', masked: null, inactive: false };
+  }
+  const account = accountsById.get(unit.account_registry_id);
+  if (!account) {
+    return { state: 'not_visible', alias: 'Compte non visible avec vos droits', masked: null, inactive: false };
+  }
+  return {
+    state: 'registered',
+    alias: account.safe_alias,
+    masked: account.account_number_masked,
+    inactive: account.status === 'inactive',
+  };
+}
+
+/** Libellé d'un compte dans le filtre : alias, numéro masqué, banque/devise, état. Jamais l'empreinte. */
+export function formatDailyV2AccountOption(account: DailyV2AccountRegistryRow): string {
+  const masked = account.account_number_masked ? ` — ${account.account_number_masked}` : '';
+  const inactive = account.status === 'inactive' ? ' (inactif)' : '';
+  return `${account.safe_alias}${masked} · ${account.bank}/${account.currency}${inactive}`;
+}
+
+/** Contexte figé à l'ouverture d'une décision : vue de revue (compte, filtres, page) et identité exacte de l'unité. */
+export interface DailyV2StagingDecisionContext {
+  reviewKey: string;
+  unitId: string;
+  attemptId: string;
+  accountRegistryId: string | null;
+  dayUnitId: string;
+  dayContentHash: string;
+  status: DailyV2StagingStatus;
+}
+
+export function captureDailyV2StagingDecisionContext(
+  reviewKey: string,
+  unit: DailyV2StagingUnitRow,
+): DailyV2StagingDecisionContext {
+  return {
+    reviewKey,
+    unitId: unit.id,
+    attemptId: unit.attempt_id,
+    accountRegistryId: unit.account_registry_id,
+    dayUnitId: unit.day_unit_id,
+    dayContentHash: unit.day_content_hash,
+    status: unit.status,
+  };
+}
+
+export type DailyV2StagingDecisionStaleReason =
+  | 'CONTEXT_CHANGED'
+  | 'VIEW_REFRESHING'
+  | 'UNIT_NOT_IN_VIEW'
+  | 'UNIT_CHANGED';
+
+/** Forme non discriminée (configuration TypeScript non stricte : pas de narrowing fiable, cf. BASELINES §3). */
+export interface DailyV2StagingDecisionCheck {
+  /** Unité relue dans la page courante lorsque la décision est encore valable, sinon `null`. */
+  unit: DailyV2StagingUnitRow | null;
+  staleReason: DailyV2StagingDecisionStaleReason | null;
+}
+
+/**
+ * Une décision n'est confirmée que si la vue de revue n'a pas changé depuis son ouverture et si l'unité,
+ * relue dans la page courante, porte toujours le même identifiant, la même tentative, le même compte,
+ * la même journée, le même contenu et le même statut. Sinon elle est périmée et doit être rouverte.
+ * Garde d'interface : le serveur reste seul juge (droits, verrous, statuts).
+ */
+export function checkDailyV2StagingDecisionCurrent(
+  context: DailyV2StagingDecisionContext,
+  view: { reviewKey: string; refreshing: boolean; rows: readonly DailyV2StagingUnitRow[] },
+): DailyV2StagingDecisionCheck {
+  const stale = (staleReason: DailyV2StagingDecisionStaleReason): DailyV2StagingDecisionCheck => ({ unit: null, staleReason });
+  if (view.reviewKey !== context.reviewKey) return stale('CONTEXT_CHANGED');
+  if (view.refreshing) return stale('VIEW_REFRESHING');
+  const unit = view.rows.find((row) => row.id === context.unitId);
+  if (!unit) return stale('UNIT_NOT_IN_VIEW');
+  if (
+    unit.attempt_id !== context.attemptId ||
+    unit.account_registry_id !== context.accountRegistryId ||
+    unit.day_unit_id !== context.dayUnitId ||
+    unit.day_content_hash !== context.dayContentHash ||
+    unit.status !== context.status
+  ) {
+    return stale('UNIT_CHANGED');
+  }
+  return { unit, staleReason: null };
+}
+
+export const DAILY_V2_STAGING_DECISION_STALE_MESSAGES: Record<DailyV2StagingDecisionStaleReason, string> = {
+  CONTEXT_CHANGED: 'Décision périmée : le compte, les filtres ou la page de la revue ont changé depuis son ouverture.',
+  VIEW_REFRESHING: 'Décision suspendue : la revue est en cours d’actualisation. La confirmation reprendra une fois la liste relue.',
+  UNIT_NOT_IN_VIEW: 'Décision périmée : cette unité n’apparaît plus dans la revue affichée.',
+  UNIT_CHANGED: 'Décision périmée : l’unité a changé depuis l’ouverture (statut, contenu, compte ou tentative).',
+};
+
+/** État de la dernière lecture du registre des comptes de la revue (TanStack conserve les données après un échec). */
+export interface DailyV2ReviewRegistryRead {
+  /** Lecture en cours, ou en attente du réseau (TanStack « paused ») : les comptes affichés ne sont pas confirmés. */
+  refreshing: boolean;
+  failed: boolean;
+}
+
+export type DailyV2DecisionRegistryHold = 'REGISTRY_REFRESHING' | 'REGISTRY_READ_FAILED';
+
+/**
+ * Une décision sur une unité rattachée au registre dépend de la dernière lecture de ce registre : elle est suspendue
+ * pendant une relecture et refusée tant que la dernière lecture a échoué, même si des comptes lus plus tôt restent en
+ * cache. Elle ne reprend qu'après une lecture saine, puis les contrôles de contexte existants. Une unité historique
+ * sans compte du registre n'en dépend pas. Garde d'interface : le serveur reste seul juge.
+ */
+export function checkDailyV2DecisionRegistryRead(
+  unit: Pick<DailyV2StagingUnitRow, 'account_registry_id'>,
+  registry: DailyV2ReviewRegistryRead,
+): DailyV2DecisionRegistryHold | null {
+  if (unit.account_registry_id === null) return null;
+  if (registry.refreshing) return 'REGISTRY_REFRESHING';
+  if (registry.failed) return 'REGISTRY_READ_FAILED';
+  return null;
+}
+
+export const DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES: Record<DailyV2DecisionRegistryHold, string> = {
+  REGISTRY_REFRESHING: 'Décision suspendue : le registre des comptes est en cours de lecture. La confirmation reprendra une fois le registre lu.',
+  REGISTRY_READ_FAILED: 'Décision suspendue : la dernière lecture du registre des comptes a échoué. Les comptes éventuellement affichés viennent d’une lecture antérieure ; relisez le registre avant de confirmer.',
 };

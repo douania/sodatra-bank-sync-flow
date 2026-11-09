@@ -6,14 +6,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type {
-  DailyV2AuditEventRow,
-  DailyV2AccountEventRow,
-  DailyV2CanonicalLineRow,
-  DailyV2CanonicalUnitRow,
-  DailyV2ReviewReasonCode,
-  DailyV2StagingLineRow,
-  DailyV2StagingUnitRow,
+import {
+  describeDailyV2StagingAccount,
+  type DailyV2AccountRegistryRow,
+  type DailyV2AuditEventRow,
+  type DailyV2AccountEventRow,
+  type DailyV2CanonicalLineRow,
+  type DailyV2CanonicalUnitRow,
+  type DailyV2ReviewReasonCode,
+  type DailyV2StagingLineRow,
+  type DailyV2StagingUnitRow,
 } from './dailyV2Types';
 
 const PAGE_SIZE = 20;
@@ -62,8 +64,24 @@ export const ListCard = ({ title, loading, error, onRefresh, children }: {
   <Card><CardHeader><div className="flex items-center justify-between"><CardTitle>{title}</CardTitle><Button variant="outline" size="sm" onClick={onRefresh}>Actualiser</Button></div></CardHeader><CardContent>{loading ? <Loading /> : error ? <AccessDenied text="Lecture impossible ou non autorisée." /> : children}</CardContent></Card>
 );
 
-export const StagingTable = ({ rows, isAdmin, canDecide, onLines, onDecision, onVersions }: {
+export const StagingAccountCell = ({ unit, accountsById }: {
+  unit: DailyV2StagingUnitRow;
+  accountsById: ReadonlyMap<string, DailyV2AccountRegistryRow> | null;
+}) => {
+  const account = describeDailyV2StagingAccount(unit, accountsById);
+  return (
+    <div className="min-w-48 space-y-1 text-sm" data-account-state={account.state}>
+      <div className="font-medium">{account.alias}{account.inactive ? ' (inactif)' : ''}</div>
+      <div className="text-xs text-muted-foreground">{account.masked ?? 'Identifiant masqué indisponible'}</div>
+      <div className="text-xs text-muted-foreground">Tentative {unit.attempt_id.slice(0, 8)} · unité {unit.id.slice(0, 8)}</div>
+    </div>
+  );
+};
+
+export const StagingTable = ({ rows, accountsById, isAdmin, canDecide, onLines, onDecision, onVersions }: {
   rows: DailyV2StagingUnitRow[];
+  /** Registre lisible avec les droits existants (admin : tous ; manager : comptes actifs) ; `null` s'il n'est pas lu. */
+  accountsById: ReadonlyMap<string, DailyV2AccountRegistryRow> | null;
   /** Consultation des lignes : regle de role existante (admin). Un doublon montre les lignes conservees par H1, sinon aucune. */
   isAdmin: boolean;
   /** Actions de decision : role admin ET capacite promote de la cible. */
@@ -73,8 +91,8 @@ export const StagingTable = ({ rows, isAdmin, canDecide, onLines, onDecision, on
   /** Versions de la journee et decisions du Lot 1 operationnel (lecture admin ; decisions selon les capacites). */
   onVersions: (unit: DailyV2StagingUnitRow) => void;
 }) => (
-  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Banque</TableHead><TableHead>Statut</TableHead><TableHead>Validation</TableHead><TableHead>Motifs de revue</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
-    <TableBody>{rows.map((unit) => <TableRow key={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{isAdmin && <Button variant="outline" size="sm" onClick={() => onVersions(unit)}>Versions</Button>}{canDecide && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{canDecide && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
+  <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Compte</TableHead><TableHead>Banque</TableHead><TableHead>Statut</TableHead><TableHead>Validation</TableHead><TableHead>Motifs de revue</TableHead><TableHead>Lignes</TableHead><TableHead>Débits</TableHead><TableHead>Crédits</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+    <TableBody>{rows.map((unit) => <TableRow key={unit.id} data-staging-unit={unit.id}><TableCell>{formatDate(unit.accounting_date)}</TableCell><TableCell><StagingAccountCell unit={unit} accountsById={accountsById} /></TableCell><TableCell>{unit.bank} / {unit.currency}</TableCell><TableCell><StatusBadge status={unit.status} /></TableCell><TableCell>{unit.validation_status} / {unit.aggregates_status}</TableCell><TableCell className="min-w-80"><ReviewReasonList codes={unit.review_reason_codes} /></TableCell><TableCell>{unit.line_count}</TableCell><TableCell>{formatMoney(unit.day_total_debits, unit.currency)}</TableCell><TableCell>{formatMoney(unit.day_total_credits, unit.currency)}</TableCell><TableCell><div className="flex gap-2">{isAdmin && <Button variant="outline" size="sm" onClick={() => onLines(unit)}><Eye className="mr-1 h-4 w-4" />Lignes</Button>}{isAdmin && <Button variant="outline" size="sm" onClick={() => onVersions(unit)}>Versions</Button>}{canDecide && unit.status === 'staged' && <Button size="sm" onClick={() => onDecision('promote', unit)}>Promouvoir</Button>}{canDecide && unit.status === 'conflict' && <Button variant="destructive" size="sm" onClick={() => onDecision('supersede', unit)}>Supersede</Button>}</div></TableCell></TableRow>)}</TableBody>
   </Table></div>
 );
 

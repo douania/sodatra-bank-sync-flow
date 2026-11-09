@@ -24,6 +24,7 @@ import type {
   DailyV2RefutationStatusRead,
   DailyV2ReportingUnitRow,
   DailyV2ServerBatchPlan,
+  DailyV2StagingAccountFilter,
   DailyV2StagingLineRow,
   DailyV2StagingStatus,
   DailyV2StagingUnitRow,
@@ -61,6 +62,7 @@ const dailyV2Supabase = supabase as unknown as SupabaseClient<DailyV2Database>;
 const MAX_SAFE_REASON_LENGTH = 200;
 const INCREMENTAL_CANONICAL_PAGE_SIZE = 1000;
 const INCREMENTAL_CANONICAL_MAX_ROWS = 4000;
+const UUID_FILTER_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const accountRegistryCommonShape = {
   id: z.string().uuid(),
@@ -528,12 +530,21 @@ export async function listDailyV2StagingUnits(input: {
   pageSize: number;
   status?: 'all' | DailyV2StagingStatus;
   review?: 'all' | 'required' | 'clear';
+  /** Filtre serveur appliqué avant la pagination : le décompte et les pages portent sur le compte choisi. */
+  account?: DailyV2StagingAccountFilter;
 }): Promise<DailyV2Page<DailyV2StagingUnitRow>> {
   assertAuthorizedDailyV2Target('read');
+  const account = input.account ?? 'all';
+  if (account !== 'all' && account !== 'unregistered' && !UUID_FILTER_PATTERN.test(account)) {
+    throw new DailyV2ServiceError('Filtre de compte invalide.', 'STAGING_ACCOUNT_FILTER_INVALID');
+  }
   const { page, pageSize, from, to } = normalizePage(input.page, input.pageSize);
   let query = dailyV2Supabase
     .from('daily_statement_units_staging')
-    .select('*', { count: 'exact' })
+    .select('*', { count: 'exact' });
+  if (account === 'unregistered') query = query.is('account_registry_id', null);
+  else if (account !== 'all') query = query.eq('account_registry_id', account);
+  query = query
     .order('accounting_date', { ascending: false })
     .order('created_at', { ascending: false })
     .range(from, to);
