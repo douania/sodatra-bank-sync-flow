@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as XLSX from 'xlsx';
 import {
+  assessDailyV2ExportReferenceDate,
   prepareDailyV2BrowserDeposit as prepareDailyV2BrowserDepositImpl,
+  readDailyV2FileNameExportDate,
+  type DailyV2SupportedBank,
   type PrepareDailyV2BrowserInput,
 } from './dailyV2BrowserPipeline';
 
@@ -577,4 +580,158 @@ test('rejects daily windows above 45 days', async () => {
   assert.equal(result.success, false);
   assert.ok('errors' in result);
   if ('errors' in result) assert.match(result.errors.join(' '), /above the 45-day/i);
+});
+
+// --- Pack DAILY-V2-BDK-ORABANK-OPERATIONAL-READINESS ------------------------
+// C : reconnaissance ORAB par le pipeline réellement utilisé (cas `ora_211026_orab`, données fictives).
+
+test('accepts ORAB-named ORABANK CSVs through the real pipeline, identical to the ORA name, parser version unchanged (C)', async () => {
+  const reference = await prepareDailyV2BrowserDeposit({
+    file: file('030626 ORA ONLINE.csv', validCsv()),
+    bank: 'ORA',
+    currency: 'XOF',
+    accountFingerprint: 'fp-synthetic-orab-v2',
+  });
+  assert.equal(reference.success, true);
+  if (!reference.success) return;
+  for (const name of ['030626 ORAB ONLINE.csv', '030626_ORAB_ONLINE.csv', '030626-ORAB-ONLINE.csv', 'ORABANK 030626.csv']) {
+    const result = await prepareDailyV2BrowserDeposit({
+      file: file(name, validCsv()),
+      bank: 'ORA',
+      currency: 'XOF',
+      accountFingerprint: 'fp-synthetic-orab-v2',
+    });
+    assert.equal(result.success, true, name);
+    if (!result.success) return;
+    assert.equal(result.payload.p_attempt.parser_version, 'structured-csv-0b', name);
+    assert.equal(result.payload.p_attempt.runtime_version, 'daily-v2-browser-0q', name);
+    assert.equal(result.payload.p_attempt.raw_text_hash, reference.payload.p_attempt.raw_text_hash, name);
+    assert.deepEqual(result.payload.p_units, reference.payload.p_units, name);
+    assert.deepEqual(result.payload.p_lines, reference.payload.p_lines, name);
+    assert.equal(JSON.stringify(result.payload).includes(name), false, `${name} : nom jamais transmis`);
+  }
+});
+
+test('refuses ORAB names declared under another bank, and ambiguous or partial bank names (C)', async () => {
+  const cases: Array<[string, DailyV2SupportedBank]> = [
+    ['030626 ORAB ONLINE.csv', 'BDK'],
+    ['030626 ORAB BDK ONLINE.csv', 'ORA'],
+    ['030626 ORAB BDK ONLINE.csv', 'BDK'],
+    ['030626 ORABANK BDK.csv', 'ORA'],
+    ['030626 BORAB ONLINE.csv', 'ORA'],
+    ['030626 ORABX ONLINE.csv', 'ORA'],
+  ];
+  for (const [name, bank] of cases) {
+    const result = await prepareDailyV2BrowserDeposit({
+      file: file(name, validCsv()),
+      bank,
+      currency: 'XOF',
+      accountFingerprint: 'fp-synthetic-orab-refusal-v2',
+    });
+    assert.equal(result.success, false, `${name} / ${bank}`);
+    assert.ok('errors' in result);
+    if ('errors' in result) assert.match(result.errors.join(' '), /does not match the parser bank hint/i, name);
+  }
+});
+
+// A : date d'export — lecture du nom de fichier et effet de la date sur une préparation réelle.
+
+test('reads an export date only from a leading DDMMYY token of the file name (A)', () => {
+  assert.equal(readDailyV2FileNameExportDate('211026 ORAB ONLINE.csv'), '21/10/2026');
+  assert.equal(readDailyV2FileNameExportDate('  090726_BDK_ONLINE.csv'), '09/07/2026');
+  assert.equal(readDailyV2FileNameExportDate('031126-BDK-ONLINE.csv'), '03/11/2026');
+  for (const name of ['BDK OCTOBRE-26.csv', 'ORABANK OCT-26.csv', '2110261 ORA ONLINE.csv',
+    '311126 BDK ONLINE.csv', 'releve 211026 ORA ONLINE.csv', 'SYNTHETIC ORA ONLINE.csv']) {
+    assert.equal(readDailyV2FileNameExportDate(name), null, name);
+  }
+});
+
+test('assesses the effect of the export reference date on a really prepared payload (A)', async () => {
+  const prepareWith = async (name: string, bank: DailyV2SupportedBank, exportReferenceDate?: string) => {
+    const result = await prepareDailyV2BrowserDeposit({
+      file: file(name, validCsv()),
+      bank,
+      currency: 'XOF',
+      accountFingerprint: 'fp-synthetic-reference-v2',
+      exportReferenceDate,
+    });
+    assert.equal(result.success, true, `${name} / ${exportReferenceDate ?? 'sans date'}`);
+    if (!result.success) throw new Error('préparation attendue');
+    return assessDailyV2ExportReferenceDate({
+      fileName: result.diagnostic.sourceFileName,
+      bank,
+      exportReferenceDate: result.payload.p_attempt.export_reference_date,
+      units: result.payload.p_units,
+    });
+  };
+
+  // Date du jour d'export = dernière journée = nom du fichier : seule cette journée reste provisoire.
+  const exact = await prepareWith('030626 ORA ONLINE.csv', 'ORA', '03/06/2026');
+  assert.deepEqual(exact.provisionalDates, ['03/06/2026']);
+  assert.equal(exact.closedDatesCount, 2);
+  assert.deepEqual(exact.issues, []);
+  assert.equal(exact.blocking, false);
+
+  // Ancienne date conservée par erreur (antérieure au fichier) : journées closes rouvertes, dépôt bloqué.
+  const stale = await prepareWith('030626 ORA ONLINE.csv', 'ORA', '02/06/2026');
+  assert.deepEqual(stale.provisionalDates, ['02/06/2026', '03/06/2026']);
+  assert.deepEqual(stale.issues, ['REFERENCE_BEFORE_LATEST_DAY', 'REFERENCE_DIFFERS_FROM_FILE_NAME']);
+  assert.equal(stale.provisionalDates.length + stale.closedDatesCount, 3);
+  assert.equal(stale.blocking, true);
+
+  // Date d'un fichier plus récent conservée : la journée d'export serait close à tort ; dépôt bloqué.
+  const later = await prepareWith('030626 ORA ONLINE.csv', 'ORA', '21/06/2026');
+  assert.deepEqual(later.provisionalDates, []);
+  assert.equal(later.closedDatesCount, 3);
+  assert.deepEqual(later.issues, ['REFERENCE_AFTER_LATEST_DAY', 'REFERENCE_AFTER_FILE_NAME_DATE']);
+  assert.equal(later.blocking, true);
+
+  // Export du 04/06 sans opération ce jour-là : date = nom, postérieure à la dernière journée ; signalé, non bloquant.
+  const quietExportDay = await prepareWith('040626 ORA ONLINE.csv', 'ORA', '04/06/2026');
+  assert.deepEqual(quietExportDay.provisionalDates, []);
+  assert.deepEqual(quietExportDay.issues, ['REFERENCE_AFTER_LATEST_DAY']);
+  assert.equal(quietExportDay.blocking, false);
+
+  // Date antérieure au nom mais égale à la dernière journée : sens prudent (journée provisoire) ; signalé, non bloquant.
+  const earlierThanName = await prepareWith('040626 ORA ONLINE.csv', 'ORA', '03/06/2026');
+  assert.deepEqual(earlierThanName.provisionalDates, ['03/06/2026']);
+  assert.deepEqual(earlierThanName.issues, ['REFERENCE_DIFFERS_FROM_FILE_NAME']);
+  assert.equal(earlierThanName.blocking, false);
+
+  // Sans date lue dans le nom, une date postérieure reste un simple signalement (mensuel déposé après la fin du mois).
+  const monthlyLater = await prepareWith('ORABANK JUIN-26.csv', 'ORA', '02/07/2026');
+  assert.deepEqual(monthlyLater.issues, ['REFERENCE_AFTER_LATEST_DAY']);
+  assert.equal(monthlyLater.blocking, false);
+
+  // Date du nom antérieure au contenu (nom AAMMJJ lu 26/10/2021, ou fichier renommé) : le nom ne juge plus la date
+  // saisie ; signalé, et seule la cohérence avec le contenu reste bloquante.
+  for (const name of ['020626 BDK ONLINE.csv', '261021 BDK ONLINE.csv']) {
+    const onLastDay = await prepareWith(name, 'BDK', '03/06/2026');
+    assert.deepEqual(onLastDay.issues, ['FILE_NAME_DATE_BEFORE_CONTENT'], name);
+    assert.equal(onLastDay.blocking, false, name);
+    const after = await prepareWith(name, 'BDK', '04/06/2026');
+    assert.deepEqual(after.issues, ['FILE_NAME_DATE_BEFORE_CONTENT', 'REFERENCE_AFTER_LATEST_DAY'], name);
+    assert.equal(after.blocking, false, name);
+    const before = await prepareWith(name, 'BDK', '02/06/2026');
+    assert.deepEqual(before.issues, ['FILE_NAME_DATE_BEFORE_CONTENT', 'REFERENCE_BEFORE_LATEST_DAY'], name);
+    assert.equal(before.blocking, true, name);
+    const without = await prepareWith(name, 'BDK');
+    assert.deepEqual(without.issues, ['FILE_NAME_DATE_BEFORE_CONTENT'], name);
+  }
+
+  // ORABANK sans date : règle existante (dernière journée provisoire) et date du nom non transmise.
+  const oraWithout = await prepareWith('030626 ORAB ONLINE.csv', 'ORA');
+  assert.equal(oraWithout.referenceDate, null);
+  assert.deepEqual(oraWithout.provisionalDates, ['03/06/2026']);
+  assert.deepEqual(oraWithout.issues, ['ORA_WITHOUT_REFERENCE_DATE', 'FILE_NAME_DATE_NOT_USED']);
+
+  // BDK sans date : aucune journée provisoire, y compris le jour d'export lu dans le nom.
+  const bdkWithout = await prepareWith('030626 BDK ONLINE.csv', 'BDK');
+  assert.deepEqual(bdkWithout.provisionalDates, []);
+  assert.deepEqual(bdkWithout.issues, ['FILE_NAME_DATE_NOT_USED']);
+
+  // Mensuel sans date dans le nom ni saisie : aucun point signalé.
+  const monthly = await prepareWith('BDK JUIN-26.csv', 'BDK');
+  assert.deepEqual(monthly.issues, []);
+  assert.equal(monthly.fileNameDate, null);
 });

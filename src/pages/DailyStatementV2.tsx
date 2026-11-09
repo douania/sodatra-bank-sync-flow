@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, Upload } from 'lucide-react';
@@ -15,11 +15,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  assessDailyV2ExportReferenceDate,
   prepareDailyV2BrowserDeposit,
+  readDailyV2FileNameExportDate,
   type DailyV2BrowserRequestedMode,
+  type DailyV2ExportReferenceAssessment,
   type DailyV2SupportedBank,
   type PrepareDailyV2BrowserResult,
 } from '@/features/daily-v2/dailyV2BrowserPipeline';
+import { detectStructuredBankStatementCsvBankHint } from '@/services/structuredBankStatementCsvParser';
 import {
   DailyV2ServiceError,
   getActiveDailyV2CanonicalUnit,
@@ -58,6 +62,16 @@ import type {
   DailyV2StagingUnitRow,
   DailyV2SupersedeResponse,
   DailyV2AuditEventRow,
+  DailyV2StagingAccountFilter,
+  DailyV2StagingDecisionContext,
+} from '@/features/daily-v2/dailyV2Types';
+import {
+  DAILY_V2_STAGING_DECISION_STALE_MESSAGES,
+  captureDailyV2StagingDecisionContext,
+  checkDailyV2StagingDecisionCurrent,
+  describeDailyV2StagingAccount,
+  formatDailyV2AccountOption,
+  isDailyV2StagingAccountIdentified,
 } from '@/features/daily-v2/dailyV2Types';
 import {
   AccessDenied,
@@ -108,9 +122,71 @@ type LineDialog =
   | null;
 
 type DecisionDialog =
-  | { kind: 'promote'; unit: DailyV2StagingUnitRow }
-  | { kind: 'supersede'; unit: DailyV2StagingUnitRow }
+  | { kind: 'promote' | 'supersede'; unit: DailyV2StagingUnitRow; context: DailyV2StagingDecisionContext }
   | null;
+
+type PreparedDeposit = Extract<PrepareDailyV2BrowserResult, { success: true }>;
+
+/** Date effacée par un changement de contexte, avec sa cause, pour que l'effacement ne soit jamais silencieux. */
+type ClearedReferenceDate = { date: string; cause: 'new_file' | 'first_file' | 'bank' } | null;
+
+const REVIEW_READ_FAILED_MESSAGE =
+  'Décision suspendue : la relecture de la revue a échoué. Actualisez la liste avant de confirmer.';
+
+const UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE =
+  'Décision impossible : le compte de cette unité n’est pas identifiable (registre indisponible ou compte absent du registre lu).';
+
+function clearedReferenceDateMessage(cleared: NonNullable<ClearedReferenceDate>, fileName: string): string {
+  switch (cleared.cause) {
+    case 'new_file':
+      return `La date saisie pour le fichier précédent (${cleared.date}) n’est pas reprise. Saisissez la date d’export de « ${fileName} », ou préparez sans date en connaissance de cause.`;
+    case 'first_file':
+      return `La date saisie avant le choix du fichier (${cleared.date}) n’est pas reprise. Saisissez la date d’export de « ${fileName} », ou préparez sans date en connaissance de cause.`;
+    case 'bank':
+      return `La date saisie (${cleared.date}) a été effacée par le changement de banque. Saisissez la date d’export de « ${fileName} », ou préparez sans date en connaissance de cause.`;
+    default:
+      return `La date saisie (${cleared.date}) a été effacée.`;
+  }
+}
+
+const BANK_LABELS: Record<string, string> = {
+  BDK: 'BDK', ORA: 'ORABANK', ATB: 'ATB', BICIS: 'BICIS', BIS: 'BIS', BRIDGE: 'BRIDGE BANK',
+};
+
+/** Effet de la date de référence sur la préparation affichée, relu du payload (statuts calculés par le pipeline). */
+function assessPrepared(prepared: PreparedDeposit): DailyV2ExportReferenceAssessment {
+  return assessDailyV2ExportReferenceDate({
+    fileName: prepared.diagnostic.sourceFileName,
+    bank: prepared.diagnostic.bank,
+    exportReferenceDate: prepared.payload.p_attempt.export_reference_date,
+    units: prepared.payload.p_units,
+  });
+}
+
+function exportReferenceIssueMessages(assessment: DailyV2ExportReferenceAssessment): string[] {
+  const reference = assessment.referenceDate ?? '';
+  const latest = assessment.latestAccountingDate;
+  return assessment.issues.map((issue) => {
+    switch (issue) {
+      case 'ORA_WITHOUT_REFERENCE_DATE':
+        return `ORABANK sans date de référence : la dernière journée du fichier (${latest}) reste provisoire.`;
+      case 'FILE_NAME_DATE_NOT_USED':
+        return `Le nom du fichier porte la date ${assessment.fileNameDate}, mais aucune date de référence n’est transmise.`;
+      case 'REFERENCE_BEFORE_LATEST_DAY':
+        return `Date incohérente : ${reference} est antérieure à la dernière journée du fichier (${latest}). Corrigez la date avant tout dépôt.`;
+      case 'REFERENCE_AFTER_LATEST_DAY':
+        return `${reference} est postérieure à la dernière journée du fichier (${latest}) : toutes les journées du fichier seront closes.`;
+      case 'REFERENCE_AFTER_FILE_NAME_DATE':
+        return `Date incohérente : ${reference} est postérieure à la date d’export lue dans le nom du fichier (${assessment.fileNameDate}) ; la journée d’export serait close à tort. Corrigez la date avant tout dépôt.`;
+      case 'FILE_NAME_DATE_BEFORE_CONTENT':
+        return `La date lue dans le nom du fichier (${assessment.fileNameDate}) est antérieure à sa dernière journée (${latest}) : le nom ne décrit pas le contenu, vérifiez la date d’export.`;
+      case 'REFERENCE_DIFFERS_FROM_FILE_NAME':
+        return `La date saisie (${reference}) est antérieure à celle lue dans le nom du fichier (${assessment.fileNameDate}).`;
+      default:
+        return 'Contrôle de date non reconnu : vérifiez la date avant tout dépôt.';
+    }
+  });
+}
 
 const DailyStatementV2 = () => {
   const { user } = useAuth();
@@ -127,6 +203,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   const queryClient = useQueryClient();
   const { lifetime } = useDailyV2SessionScope();
   const preparationEpoch = useRef(0);
+  const depositEpoch = useRef(-1);
   const [file, setFile] = useState<File | null>(null);
   const [bank, setBank] = useState<DailyV2SupportedBank>('BDK');
   const [currency, setCurrency] = useState('XOF');
@@ -142,11 +219,16 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   const [grantMaxUnits, setGrantMaxUnits] = useState('4000');
   const [grantExpiresAt, setGrantExpiresAt] = useState('');
   const [grantRevocationReason, setGrantRevocationReason] = useState('');
-  const [prepared, setPrepared] = useState<Extract<PrepareDailyV2BrowserResult, { success: true }> | null>(null);
+  const [prepared, setPrepared] = useState<PreparedDeposit | null>(null);
+  // Confirmation explicite de la date d'export, liée à CETTE préparation : toute nouvelle préparation l'annule.
+  const [confirmedPreparation, setConfirmedPreparation] = useState<PreparedDeposit | null>(null);
+  // Date effacée par un changement de fichier ou de banque, affichée pour que l'effacement ne soit jamais silencieux.
+  const [clearedReferenceDate, setClearedReferenceDate] = useState<ClearedReferenceDate>(null);
   const [prepareErrors, setPrepareErrors] = useState<string[]>([]);
   const [depositResult, setDepositResult] = useState<DailyV2PreIngestResponse | null>(null);
   const [incrementalDelta, setIncrementalDelta] = useState<DailyV2IncrementalDeltaSummary | null>(null);
   const [stagingPage, setStagingPage] = useState(0);
+  const [stagingAccount, setStagingAccount] = useState<DailyV2StagingAccountFilter>('all');
   const [stagingStatus, setStagingStatus] = useState<'all' | DailyV2StagingStatus>('all');
   const [stagingReview, setStagingReview] = useState<'all' | 'required' | 'clear'>('all');
   const [canonicalPage, setCanonicalPage] = useState(0);
@@ -228,6 +310,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   const resetPrepared = useCallback(() => {
     preparationEpoch.current++;
     setPrepared(null);
+    setConfirmedPreparation(null);
     setPrepareErrors([]);
     setDepositResult(null);
     setIncrementalDelta(null);
@@ -237,17 +320,20 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
     if (canPrepareLocally) return;
     setFile(null);
     setReferenceDate('');
+    setClearedReferenceDate(null);
     setBackfillGrantId('');
     resetPrepared();
   }, [canPrepareLocally, resetPrepared]);
 
+  // Un nouveau fichier n'hérite jamais de la date du précédent : elle est effacée, et l'effacement est signalé.
   const onDrop = useCallback((accepted: File[]) => {
     if (!canPrepareLocally) return;
     setFile(accepted[0] ?? null);
+    setClearedReferenceDate(referenceDate.trim() ? { date: referenceDate.trim(), cause: file ? 'new_file' : 'first_file' } : null);
     setReferenceDate('');
     setBackfillGrantId('');
     resetPrepared();
-  }, [canPrepareLocally, resetPrepared]);
+  }, [canPrepareLocally, file, referenceDate, resetPrepared]);
 
   const dropzone = useDropzone({
     onDrop,
@@ -305,13 +391,31 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
     mutationFn: async () => {
       if (!canSubmitDeposit) throw new DailyV2ServiceError(READ_ONLY_TARGET_MESSAGE);
       if (!prepared) throw new DailyV2ServiceError('Aucun payload validé à déposer.');
+      if (confirmedPreparation !== prepared) {
+        throw new DailyV2ServiceError('Confirmez la date d’export du fichier courant avant le dépôt.');
+      }
+      if (assessPrepared(prepared).blocking) {
+        throw new DailyV2ServiceError('Date d’export incohérente avec le fichier : dépôt refusé.');
+      }
+      if (prepared.payload.p_attempt.account_registry_id !== selectedAccount?.id) {
+        throw new DailyV2ServiceError('Le compte sélectionné a changé depuis la préparation : préparez de nouveau.');
+      }
+      depositEpoch.current = preparationEpoch.current;
       return preIngestDailyV2WithIncrementalDelta(prepared.payload);
     },
     onSuccess: async (result) => {
+      // Le formulaire n'est vidé que s'il n'a pas changé pendant le dépôt : un fichier ou une date saisis
+      // entre-temps sont conservés, et toute préparation alors en cours devient périmée.
+      const formUnchanged = depositEpoch.current === preparationEpoch.current;
+      preparationEpoch.current++;
       setIncrementalDelta(result.incrementalDelta);
-      setPrepared(null);
-      setFile(null);
-      setReferenceDate('');
+      if (formUnchanged) {
+        setPrepared(null);
+        setConfirmedPreparation(null);
+        setFile(null);
+        setReferenceDate('');
+        setClearedReferenceDate(null);
+      }
       if (result.outcome === 'no_changes') {
         setDepositResult(null);
         toast.success('Aucune nouvelle journée BIS à déposer', {
@@ -347,7 +451,10 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
       setNewAccountMasked('');
       await queryClient.invalidateQueries({ queryKey: ['daily-v2', 'accounts'] });
       if (!lifetime.isActive()) return;
+      // Le compte sélectionné change : la préparation et sa confirmation, faites pour l'ancien compte, tombent.
       setAccountRegistryId(account.id);
+      setBackfillGrantId('');
+      resetPrepared();
       toast.success('Compte Daily v2 provisionné');
     },
     onError: (error) => showSafeError(error, 'Provisionnement impossible.'),
@@ -414,15 +521,54 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   });
 
   const stagingQuery = useQuery<DailyV2Page<DailyV2StagingUnitRow>>({
-    queryKey: ['daily-v2', 'staging', stagingPage, stagingStatus, stagingReview],
+    queryKey: ['daily-v2', 'staging', stagingPage, stagingStatus, stagingReview, stagingAccount],
     queryFn: () => listDailyV2StagingUnits({
       page: stagingPage,
       pageSize: PAGE_SIZE,
       status: stagingStatus,
       review: stagingReview,
+      account: stagingAccount,
     }),
     enabled: canReadStaging,
   });
+  // Registre de la revue, toutes banques : mêmes droits de lecture que le formulaire d'import
+  // (admin : comptes actifs et inactifs ; manager : comptes actifs, borné aussi par la RLS).
+  const reviewAccountsQuery = useQuery<DailyV2AccountRegistryRow[]>({
+    queryKey: ['daily-v2', 'accounts', 'review', isAdmin],
+    queryFn: () => listDailyV2Accounts({ includeInactive: isAdmin }),
+    enabled: canReadStaging,
+  });
+  const reviewAccounts = reviewAccountsQuery.data ?? [];
+  // `null` tant que le registre n'a pas été lu : « indisponible », jamais confondu avec « non visible ».
+  const reviewAccountsById = reviewAccountsQuery.data
+    ? new Map(reviewAccounts.map((account) => [account.id, account] as const))
+    : null;
+  const reviewKey = JSON.stringify([stagingAccount, stagingStatus, stagingReview, stagingPage]);
+  const reviewView = {
+    reviewKey,
+    refreshing: stagingQuery.isFetching,
+    // TanStack conserve les anciennes lignes après une relecture en échec : elles ne valent pas vue courante.
+    failed: stagingQuery.isError,
+    rows: stagingQuery.data?.rows ?? [],
+    accountsById: reviewAccountsById,
+  };
+  const reviewViewRef = useRef(reviewView);
+  const decisionRef = useRef(decisionDialog);
+  // Synchronisées dès le commit (avant tout événement suivant) : la confirmation relit la vue validée.
+  useLayoutEffect(() => {
+    reviewViewRef.current = reviewView;
+    decisionRef.current = decisionDialog;
+  });
+  const filteredAccount = reviewAccountsById?.get(stagingAccount);
+  const stagingAccountLabel = stagingAccount === 'all'
+    ? null
+    : stagingAccount === 'unregistered'
+      ? 'Sans compte du registre'
+      : filteredAccount
+        ? formatDailyV2AccountOption(filteredAccount)
+        : reviewAccountsById === null
+          ? 'Registre des comptes indisponible'
+          : 'Compte non visible avec vos droits';
   const canonicalQuery = useQuery<DailyV2Page<DailyV2CanonicalUnitRow>>({
     queryKey: ['daily-v2', 'canonical', canonicalPage, canonicalStatus],
     queryFn: () => listDailyV2CanonicalUnits({ page: canonicalPage, pageSize: PAGE_SIZE, status: canonicalStatus }),
@@ -496,6 +642,57 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
     setDecisionDialog(null);
     setReason('');
   };
+  // Tout changement de vue de revue (compte, filtres, page) ferme les décisions ouvertes sur l'ancienne vue.
+  const closeReviewDecisions = () => {
+    closeDecision();
+    setVersionsUnit(null);
+    setBatchAttemptId(null);
+  };
+  // Une confirmation relit la vue et le dialogue réellement ouverts après le dernier rendu validé, et non
+  // ceux capturés par le gestionnaire : même un gestionnaire d'un rendu antérieur ne décide pas sur une vue périmée.
+  const confirmDecision = () => {
+    const open = decisionRef.current;
+    if (!open || open !== decisionDialog) return;
+    const view = reviewViewRef.current;
+    if (view.failed) {
+      toast.error(REVIEW_READ_FAILED_MESSAGE);
+      return;
+    }
+    const check = checkDailyV2StagingDecisionCurrent(open.context, view);
+    if (check.staleReason === 'VIEW_REFRESHING') {
+      // Simple suspension : le dialogue et la raison saisie restent ouverts jusqu'à la fin de la relecture.
+      toast.error(DAILY_V2_STAGING_DECISION_STALE_MESSAGES.VIEW_REFRESHING);
+      return;
+    }
+    if (check.staleReason !== null || check.unit === null) {
+      toast.error(DAILY_V2_STAGING_DECISION_STALE_MESSAGES[check.staleReason ?? 'UNIT_NOT_IN_VIEW']);
+      closeDecision();
+      return;
+    }
+    if (!isDailyV2StagingAccountIdentified(describeDailyV2StagingAccount(check.unit, view.accountsById))) {
+      toast.error(UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE);
+      return;
+    }
+    if (open.kind === 'promote') promoteMutation.mutate({ unit: check.unit, approvalReason: reason.trim() || undefined });
+    else supersedeMutation.mutate({ unit: check.unit, supersedeReason: reason });
+  };
+  const preparedAssessment = prepared ? assessPrepared(prepared) : null;
+  const preparationConfirmed = prepared !== null && confirmedPreparation === prepared;
+  const preparedAccount = prepared
+    ? accounts.find((account) => account.id === prepared.payload.p_attempt.account_registry_id) ?? null
+    : null;
+  const preparedAccountLabel = preparedAccount
+    ? `${preparedAccount.safe_alias}${preparedAccount.account_number_masked ? ` — ${preparedAccount.account_number_masked}` : ''}`
+    : 'compte introuvable dans le registre lu';
+  // Défense en profondeur : une préparation faite pour un autre compte que celui sélectionné n'est jamais déposable.
+  const preparedAccountChanged = prepared !== null && prepared.payload.p_attempt.account_registry_id !== selectedAccount?.id;
+  const depositBlocked = !preparationConfirmed || Boolean(preparedAssessment?.blocking) || preparedAccountChanged;
+  const fileNameDate = file ? readDailyV2FileNameExportDate(file.name) : null;
+  const csvBankHint = file && file.name.trim().toLowerCase().endsWith('.csv')
+    ? detectStructuredBankStatementCsvBankHint(file.name)
+    : null;
+  const decisionAccount = decisionDialog ? describeDailyV2StagingAccount(decisionDialog.unit, reviewAccountsById) : null;
+  const decisionAccountIdentified = decisionAccount !== null && isDailyV2StagingAccountIdentified(decisionAccount);
   const reasonRequired = decisionDialog?.kind === 'supersede' ||
     (decisionDialog?.kind === 'promote' &&
       (decisionDialog.unit.validation_status === 'needs_review' ||
@@ -592,8 +789,8 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Banque">
-                      <Select value={bank} onValueChange={(value: DailyV2SupportedBank) => { setBank(value); setAccountRegistryId(''); setReferenceDate(''); setRequestedMode('daily'); setBackfillGrantId(''); resetPrepared(); }}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
+                      <Select value={bank} onValueChange={(value: DailyV2SupportedBank) => { setBank(value); setAccountRegistryId(''); setClearedReferenceDate(referenceDate.trim() ? { date: referenceDate.trim(), cause: 'bank' } : null); setReferenceDate(''); setRequestedMode('daily'); setBackfillGrantId(''); resetPrepared(); }}>
+                        <SelectTrigger aria-label="Banque"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="BDK">BDK</SelectItem>
                           <SelectItem value="ORA">ORABANK</SelectItem>
@@ -609,7 +806,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                     </Field>
                     <Field label="Compte pré-provisionné">
                       <Select value={accountRegistryId} onValueChange={(value) => { setAccountRegistryId(value); setBackfillGrantId(''); resetPrepared(); }}>
-                        <SelectTrigger><SelectValue placeholder={accountsQuery.isLoading ? 'Chargement…' : 'Choisir un compte actif'} /></SelectTrigger>
+                        <SelectTrigger aria-label="Compte pré-provisionné"><SelectValue placeholder={accountsQuery.isLoading ? 'Chargement…' : 'Choisir un compte actif'} /></SelectTrigger>
                         <SelectContent>
                           {accounts.filter((account) => account.status === 'active').map((account) => (
                             <SelectItem key={account.id} value={account.id}>
@@ -620,7 +817,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                       </Select>
                     </Field>
                     <Field label="Date de référence export (DD/MM/YYYY)">
-                      <Input value={referenceDate} onChange={(e) => { setReferenceDate(e.target.value); resetPrepared(); }} placeholder={bank === 'ORA' ? 'Recommandée pour ORA' : 'Optionnelle'} />
+                      <Input aria-label="Date de référence export" value={referenceDate} onChange={(e) => { setReferenceDate(e.target.value); setClearedReferenceDate(null); resetPrepared(); }} placeholder={bank === 'ORA' ? 'Recommandée pour ORA' : 'Optionnelle'} />
                     </Field>
                     <Field label="Mode de dépôt">
                       <Select value={requestedMode} onValueChange={(value: DailyV2BrowserRequestedMode) => { setRequestedMode(value); setBackfillGrantId(''); resetPrepared(); }}>
@@ -644,11 +841,43 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                       </Field>
                     )}
                   </div>
+                  {file && (
+                    <div className="space-y-2 rounded border p-3 text-sm" aria-label="Fichier et date d’export">
+                      <p>Fichier courant : <strong>{file.name}</strong></p>
+                      {csvBankHint !== null && (
+                        <p data-bank-hint={csvBankHint}>
+                          {csvBankHint === 'UNKNOWN'
+                            ? 'Aucune banque reconnue dans le nom du fichier : la préparation sera refusée. Noms reconnus : ORA, ORAB ou ORABANK ; BDK ou BANQUE DE DAKAR, sans les deux à la fois.'
+                            : `Banque reconnue d’après le nom du fichier : ${BANK_LABELS[csvBankHint]}${csvBankHint !== bank ? ` — ne correspond pas à la banque choisie (${BANK_LABELS[bank]}) : la préparation sera refusée.` : '.'}`}
+                        </p>
+                      )}
+                      {clearedReferenceDate && (
+                        <Alert>
+                          <AlertTitle>Date précédente effacée</AlertTitle>
+                          <AlertDescription>{clearedReferenceDateMessage(clearedReferenceDate, file.name)}</AlertDescription>
+                        </Alert>
+                      )}
+                      {fileNameDate && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>Date lue dans le nom du fichier : <strong>{fileNameDate}</strong></span>
+                          {referenceDate.trim() !== fileNameDate && (
+                            <Button size="sm" variant="outline" onClick={() => { setReferenceDate(fileNameDate); setClearedReferenceDate(null); resetPrepared(); }}>Utiliser cette date</Button>
+                          )}
+                        </div>
+                      )}
+                      <p data-reference-date-used={referenceDate.trim() || 'none'}>
+                        Date qui sera transmise : <strong>{referenceDate.trim() || 'aucune'}</strong>
+                        {!referenceDate.trim() && (bank === 'ORA'
+                          ? ' — sans date, la dernière journée ORABANK du fichier restera provisoire.'
+                          : ' — sans date, toutes les journées du fichier seront closes.')}
+                      </p>
+                    </div>
+                  )}
                   <div className="flex gap-2">
-                    <Button onClick={() => prepareMutation.mutate()} disabled={!file || !selectedAccount || (requestedMode === 'backfill' && !backfillGrantId) || prepareMutation.isPending}>
+                    <Button onClick={() => prepareMutation.mutate()} disabled={!file || !selectedAccount || (requestedMode === 'backfill' && !backfillGrantId) || prepareMutation.isPending || depositMutation.isPending}>
                       {prepareMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Préparer
                     </Button>
-                    <Button variant="outline" onClick={() => { setFile(null); setAccountRegistryId(''); setReferenceDate(''); setBackfillGrantId(''); resetPrepared(); }}>Réinitialiser</Button>
+                    <Button variant="outline" onClick={() => { setFile(null); setAccountRegistryId(''); setReferenceDate(''); setClearedReferenceDate(null); setBackfillGrantId(''); resetPrepared(); }}>Réinitialiser</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -747,7 +976,43 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                       <Fact label="Unités à revoir" value={String(prepared.diagnostic.reviewRequiredUnitsCount)} />
                       <Fact label="Lignes" value={String(prepared.diagnostic.lineCount)} />
                       <Fact label="Provisional" value={String(prepared.diagnostic.provisionalUnitsCount)} />
+                      <Fact label="Fichier préparé" value={prepared.diagnostic.sourceFileName} />
+                      <Fact label="Compte du dépôt" value={preparedAccountLabel} />
+                      <Fact label="Date de référence export" value={prepared.payload.p_attempt.export_reference_date ?? 'aucune'} />
                     </div>
+                    {preparedAssessment && (
+                      <div className="space-y-3 rounded border p-3 text-sm" aria-label="Contrôle de la date d’export">
+                        <p>
+                          Journées provisoires (non closes) : <strong>{preparedAssessment.provisionalDates.join(', ') || 'aucune'}</strong>
+                          {' '}· journées closes : <strong>{preparedAssessment.closedDatesCount}</strong>
+                          {' '}· dernière journée du fichier : <strong>{preparedAssessment.latestAccountingDate}</strong>
+                        </p>
+                        {preparedAssessment.issues.length > 0 && (
+                          <Alert variant={preparedAssessment.blocking ? 'destructive' : 'default'}>
+                            <AlertTitle>{preparedAssessment.blocking ? 'Date incohérente : dépôt bloqué' : 'Points à vérifier avant confirmation'}</AlertTitle>
+                            <AlertDescription>
+                              <ul className="list-disc pl-5">{exportReferenceIssueMessages(preparedAssessment).map((message) => <li key={message}>{message}</li>)}</ul>
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <label className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={preparationConfirmed}
+                            disabled={preparedAssessment.blocking}
+                            onChange={(event) => setConfirmedPreparation(event.target.checked ? prepared : null)}
+                          />
+                          <span>
+                            {preparedAssessment.referenceDate
+                              ? `Je confirme que la date d’export ${preparedAssessment.referenceDate} correspond au fichier « ${prepared.diagnostic.sourceFileName} », pour le compte « ${preparedAccountLabel} ».`
+                              : `Je confirme déposer « ${prepared.diagnostic.sourceFileName} » sans date de référence export, pour le compte « ${preparedAccountLabel} ».`}
+                          </span>
+                        </label>
+                        {preparedAccountChanged && (
+                          <p className="text-destructive">Le compte sélectionné a changé depuis cette préparation : préparez de nouveau.</p>
+                        )}
+                      </div>
+                    )}
                     {prepared.diagnostic.reviewReasonCodes.length > 0 && (
                       <Alert>
                         <AlertTitle>Revue humaine requise</AlertTitle>
@@ -756,7 +1021,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                         </AlertDescription>
                       </Alert>
                     )}
-                    <Button onClick={() => depositMutation.mutate()} disabled={!canSubmitDeposit || depositMutation.isPending}>
+                    <Button onClick={() => depositMutation.mutate()} disabled={!canSubmitDeposit || depositMutation.isPending || depositBlocked}>
                       {depositMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Déposer via RPC
                     </Button>
                     {!canSubmitDeposit && (
@@ -811,13 +1076,23 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
         <TabsContent value="staging">
           {!canReadStaging ? <AccessDenied text="Staging réservé aux rôles admin et manager." /> : (
             <ListCard title="Unités staging" loading={stagingQuery.isLoading} error={stagingQuery.isError} onRefresh={() => stagingQuery.refetch()}>
-              <div className="mb-4 grid max-w-2xl gap-3 sm:grid-cols-2">
-                <Select value={stagingStatus} onValueChange={(value: 'all' | DailyV2StagingStatus) => { setStagingStatus(value); setStagingPage(0); }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+              <div className="mb-4 grid max-w-4xl gap-3 sm:grid-cols-3">
+                <Select value={stagingAccount} onValueChange={(value: DailyV2StagingAccountFilter) => { setStagingAccount(value); setStagingPage(0); closeReviewDecisions(); }}>
+                  <SelectTrigger aria-label="Filtrer par compte"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les comptes</SelectItem>
+                    {reviewAccounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>{formatDailyV2AccountOption(account)}</SelectItem>
+                    ))}
+                    <SelectItem value="unregistered">Sans compte du registre</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={stagingStatus} onValueChange={(value: 'all' | DailyV2StagingStatus) => { setStagingStatus(value); setStagingPage(0); closeReviewDecisions(); }}>
+                  <SelectTrigger aria-label="Filtrer par statut"><SelectValue /></SelectTrigger>
                   <SelectContent>{STAGING_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
                 </Select>
-                <Select value={stagingReview} onValueChange={(value: 'all' | 'required' | 'clear') => { setStagingReview(value); setStagingPage(0); }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={stagingReview} onValueChange={(value: 'all' | 'required' | 'clear') => { setStagingReview(value); setStagingPage(0); closeReviewDecisions(); }}>
+                  <SelectTrigger aria-label="Filtrer par revue"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Toutes les revues</SelectItem>
                     <SelectItem value="required">Revue requise</SelectItem>
@@ -825,14 +1100,20 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
                   </SelectContent>
                 </Select>
               </div>
-              <StagingTable rows={stagingQuery.data?.rows ?? []} isAdmin={isAdmin} canDecide={canDecide} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => {
+              {stagingAccountLabel !== null && (
+                <p className="mb-2 text-sm text-muted-foreground" data-staging-account-filter={stagingAccount}>
+                  Filtre serveur appliqué avant la pagination : <strong>{stagingAccountLabel}</strong> — {stagingQuery.data?.count ?? 0} unité(s).
+                </p>
+              )}
+              <StagingTable rows={stagingQuery.data?.rows ?? []} accountsById={reviewAccountsById} isAdmin={isAdmin} canDecide={canDecide} onLines={(unit) => setLineDialog({ kind: 'staging', id: unit.id, title: `${unit.bank} ${unit.accounting_date}` })} onDecision={(kind, unit) => {
                 if (!canDecide) {
                   toast.error(READ_ONLY_TARGET_MESSAGE);
                   return;
                 }
-                setDecisionDialog({ kind, unit });
+                setReason('');
+                setDecisionDialog({ kind, unit, context: captureDailyV2StagingDecisionContext(reviewKey, unit) });
               }} onVersions={(unit) => setVersionsUnit(unit)} />
-              <Pager page={stagingPage} count={stagingQuery.data?.count ?? 0} onChange={setStagingPage} />
+              <Pager page={stagingPage} count={stagingQuery.data?.count ?? 0} onChange={(page) => { setStagingPage(page); closeReviewDecisions(); }} />
             </ListCard>
           )}
         </TabsContent>
@@ -886,6 +1167,23 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
 
       <Dialog open={decisionDialog !== null} onOpenChange={(open) => !open && closeDecision()}>
         <DialogContent><DialogHeader><DialogTitle>{decisionDialog?.kind === 'supersede' ? 'Supersede canonical' : 'Promouvoir l’unité'}</DialogTitle><DialogDescription>Décision admin auditée. Les conflits ne sont jamais promus automatiquement.</DialogDescription></DialogHeader>
+          {decisionDialog && decisionAccount && (
+            <div className="grid gap-2 rounded border p-3 text-sm sm:grid-cols-2" aria-label="Unité concernée">
+              <Fact label="Compte" value={`${decisionAccount.alias}${decisionAccount.inactive ? ' (inactif)' : ''}${decisionAccount.masked ? ` — ${decisionAccount.masked}` : ''}`} />
+              <Fact label="Journée" value={`${decisionDialog.unit.accounting_date} · ${decisionDialog.unit.bank}/${decisionDialog.unit.currency}`} />
+              <Fact label="Tentative" value={decisionDialog.unit.attempt_id.slice(0, 8)} />
+              <Fact label="Unité" value={decisionDialog.unit.id.slice(0, 8)} />
+            </div>
+          )}
+          {decisionDialog && !decisionAccountIdentified && (
+            <Alert variant="destructive"><AlertTitle>Compte non identifiable</AlertTitle><AlertDescription>{UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE}</AlertDescription></Alert>
+          )}
+          {decisionDialog && stagingQuery.isFetching && (
+            <p className="text-sm text-muted-foreground">Revue en cours d’actualisation : la confirmation reprend une fois la liste relue.</p>
+          )}
+          {decisionDialog && stagingQuery.isError && !stagingQuery.isFetching && (
+            <p className="text-sm text-destructive">{REVIEW_READ_FAILED_MESSAGE}</p>
+          )}
           {decisionDialog && decisionDialog.unit.review_reason_codes.length > 0 && (
             <Alert>
               <AlertTitle>Motifs à examiner avant décision</AlertTitle>
@@ -893,11 +1191,7 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
             </Alert>
           )}
           {reasonRequired && <Field label="Raison obligatoire"><Textarea value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></Field>}
-          <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={!canDecide || Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending} onClick={() => {
-            if (!decisionDialog) return;
-            if (decisionDialog.kind === 'promote') promoteMutation.mutate({ unit: decisionDialog.unit, approvalReason: reason.trim() || undefined });
-            else supersedeMutation.mutate({ unit: decisionDialog.unit, supersedeReason: reason });
-          }}>Confirmer</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={!canDecide || Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending || stagingQuery.isFetching || stagingQuery.isError || !decisionAccountIdentified} onClick={confirmDecision}>Confirmer</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

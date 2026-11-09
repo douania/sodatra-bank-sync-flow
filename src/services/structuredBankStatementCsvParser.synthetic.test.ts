@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  detectStructuredBankStatementCsvBankHint,
   parseStructuredBankStatementCsv
 } from './structuredBankStatementCsvParser';
 
@@ -262,6 +263,15 @@ test('recognizes ORABANK name variants and separators, and refuses ambiguous nam
   for (const name of ['BORAB ONLINE.csv', 'ORABX ONLINE.csv', 'ORAB BDK.csv', 'ORABANK BDK.csv', 'synthetic-export.csv']) {
     assert.equal(hint(name), 'UNKNOWN', name);
   }
+});
+
+test('exposes the exact file-name bank rule of the parser, without changing the parsed document', () => {
+  const body = validOraLikeCsv();
+  for (const name of ['211026 ORAB ONLINE.csv', '211026_ORA_ONLINE.csv', 'ORABANK OCT-26.csv', 'BDK OCTOBRE-26.csv',
+    'BANQUE DE DAKAR.csv', 'ORAB BDK.csv', 'BORAB ONLINE.csv', 'ORABX ONLINE.csv', 'synthetic-export.csv', '']) {
+    assert.equal(detectStructuredBankStatementCsvBankHint(name), parseStructuredBankStatementCsv(body, { sourceFileName: name }).bankHint, name);
+  }
+  assert.equal(detectStructuredBankStatementCsvBankHint(undefined), 'UNKNOWN');
 });
 
 test('keeps the same lines for the same content under two recognized names (C1)', () => {

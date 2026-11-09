@@ -614,6 +614,17 @@ function matchColumns(row: string[]): ColumnMap {
   return columns;
 }
 
+/**
+ * Banque reconnue d'après le seul nom de fichier, par la règle exacte du parseur (aucune lecture du contenu).
+ * Information préalable de l'opérateur uniquement : le pipeline reste seul juge du dépôt, et le document
+ * analysé (dont `bankHint`) est inchangé — la version `structured-csv-0b` n'est donc pas affectée.
+ */
+export function detectStructuredBankStatementCsvBankHint(
+  sourceFileName: string | undefined
+): StructuredBankStatementDocument['bankHint'] {
+  return detectBankHint(sourceFileName);
+}
+
 function detectBankHint(sourceFileName: string | undefined): StructuredBankStatementDocument['bankHint'] {
   // Bank identity is inferred only from a trusted source name, never from the
   // transactional body (counterparty labels routinely mention other banks).

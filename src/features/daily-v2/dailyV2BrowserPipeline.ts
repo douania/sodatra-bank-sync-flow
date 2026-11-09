@@ -675,6 +675,105 @@ function hasExpectedExcelSignature(bytes: Uint8Array, extension: string): boolea
   return false;
 }
 
+/**
+ * Date d'export lue dans le nom de fichier, uniquement sous la forme d'un premier jeton JJMMAA
+ * (« 211026 ORAB ONLINE.csv » → 21/10/2026). Simple suggestion affichée à l'opérateur : elle n'est
+ * jamais appliquée sans action explicite et ne participe ni à l'analyse ni au payload.
+ */
+export function readDailyV2FileNameExportDate(fileName: string): string | null {
+  const match = /^(\d{2})(\d{2})(\d{2})(?![0-9])/.exec(fileName.trim());
+  if (!match) return null;
+  const candidate = `${match[1]}/${match[2]}/20${match[3]}`;
+  const errors: string[] = [];
+  return requireStrictDate(candidate, 'fileNameDate', errors) ?? null;
+}
+
+export type DailyV2ExportReferenceIssue =
+  /** ORABANK sans date : la dernière journée du fichier est maintenue provisoire. */
+  | 'ORA_WITHOUT_REFERENCE_DATE'
+  /** Aucune date transmise alors que le nom du fichier en porte une. */
+  | 'FILE_NAME_DATE_NOT_USED'
+  /** Date antérieure à la dernière journée du fichier : incohérente, dépôt bloqué par l'interface. */
+  | 'REFERENCE_BEFORE_LATEST_DAY'
+  /** Date postérieure à la dernière journée : toutes les journées du fichier sont closes. */
+  | 'REFERENCE_AFTER_LATEST_DAY'
+  /**
+   * Date postérieure à la date d'export lue dans le nom : la journée d'export, peut-être incomplète, serait
+   * close à tort. Incohérente avec le fichier courant : dépôt bloqué par l'interface.
+   */
+  | 'REFERENCE_AFTER_FILE_NAME_DATE'
+  /** Date antérieure à celle lue dans le nom du fichier (sens prudent : davantage de journées provisoires). */
+  | 'REFERENCE_DIFFERS_FROM_FILE_NAME'
+  /**
+   * Date lue dans le nom antérieure à la dernière journée du fichier : le nom ne décrit pas le contenu
+   * (convention différente, fichier renommé). Il n'est alors pas utilisé pour juger la date saisie.
+   */
+  | 'FILE_NAME_DATE_BEFORE_CONTENT';
+
+export interface DailyV2ExportReferenceAssessment {
+  referenceDate: string | null;
+  fileNameDate: string | null;
+  latestAccountingDate: string;
+  provisionalDates: string[];
+  closedDatesCount: number;
+  issues: DailyV2ExportReferenceIssue[];
+  /**
+   * Vrai lorsque la date contredit le fichier lui-même (antérieure à sa dernière journée, ou postérieure à la
+   * date d'export de son nom) : l'interface refuse alors le dépôt.
+   */
+  blocking: boolean;
+}
+
+/**
+ * Effet de la date de référence sur un payload préparé, pour l'afficher avant toute confirmation.
+ * Lecture pure du payload : les statuts demandés sont ceux calculés par le pipeline, inchangés.
+ */
+export function assessDailyV2ExportReferenceDate(input: {
+  fileName: string;
+  bank: DailyV2SupportedBank;
+  exportReferenceDate: string | null;
+  units: ReadonlyArray<Pick<DailyV2RpcUnit, 'accounting_date' | 'requested_unit_status'>>;
+}): DailyV2ExportReferenceAssessment {
+  if (input.units.length === 0) throw new Error('A prepared payload carries at least one unit.');
+  const referenceDate = input.exportReferenceDate?.trim() || null;
+  const fileNameDate = readDailyV2FileNameExportDate(input.fileName);
+  const latestAccountingDate = input.units.reduce(
+    (current, unit) => (strictDateToUtc(unit.accounting_date) > strictDateToUtc(current) ? unit.accounting_date : current),
+    input.units[0].accounting_date,
+  );
+  const provisionalDates = input.units
+    .filter((unit) => unit.requested_unit_status === 'provisional')
+    .map((unit) => unit.accounting_date)
+    .sort((a, b) => strictDateToUtc(a) - strictDateToUtc(b));
+  const issues: DailyV2ExportReferenceIssue[] = [];
+  const latest = strictDateToUtc(latestAccountingDate);
+  // Le nom ne sert de repère que s'il est compatible avec le contenu (date d'export ≥ dernière journée).
+  const nameDescribesContent = fileNameDate !== null && strictDateToUtc(fileNameDate) >= latest;
+  if (fileNameDate !== null && !nameDescribesContent) issues.push('FILE_NAME_DATE_BEFORE_CONTENT');
+  if (referenceDate === null) {
+    if (input.bank === 'ORA') issues.push('ORA_WITHOUT_REFERENCE_DATE');
+    if (nameDescribesContent) issues.push('FILE_NAME_DATE_NOT_USED');
+  } else {
+    const reference = strictDateToUtc(referenceDate);
+    if (reference < latest) issues.push('REFERENCE_BEFORE_LATEST_DAY');
+    if (reference > latest) issues.push('REFERENCE_AFTER_LATEST_DAY');
+    if (nameDescribesContent && fileNameDate !== null) {
+      const named = strictDateToUtc(fileNameDate);
+      if (reference > named) issues.push('REFERENCE_AFTER_FILE_NAME_DATE');
+      else if (reference < named) issues.push('REFERENCE_DIFFERS_FROM_FILE_NAME');
+    }
+  }
+  return {
+    referenceDate,
+    fileNameDate,
+    latestAccountingDate,
+    provisionalDates,
+    closedDatesCount: input.units.length - provisionalDates.length,
+    issues,
+    blocking: issues.includes('REFERENCE_BEFORE_LATEST_DAY') || issues.includes('REFERENCE_AFTER_FILE_NAME_DATE'),
+  };
+}
+
 /** Empreinte des octets bruts d'un fichier (resélection d'un dépôt Excel, pièce corrective). Calcul inchangé. */
 export async function buildRawBytesHash(buffer: ArrayBuffer): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);

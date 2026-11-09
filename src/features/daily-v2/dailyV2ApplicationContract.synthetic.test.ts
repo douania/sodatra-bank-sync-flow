@@ -3,6 +3,16 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { buildDailyV2BackfillIncrementalDelta } from './dailyV2IncrementalDelta';
 import type { DailyV2PreIngestPayload, DailyV2RpcLine, DailyV2RpcUnit } from './dailyV2Types';
+import {
+  DAILY_V2_STAGING_DECISION_STALE_MESSAGES,
+  captureDailyV2StagingDecisionContext,
+  checkDailyV2StagingDecisionCurrent,
+  describeDailyV2StagingAccount,
+  formatDailyV2AccountOption,
+  isDailyV2StagingAccountIdentified,
+  type DailyV2AccountRegistryRow,
+  type DailyV2StagingUnitRow,
+} from './dailyV2Types';
 
 const app = readFileSync('src/App.tsx', 'utf8');
 const layout = readFileSync('src/components/Layout.tsx', 'utf8');
@@ -918,7 +928,10 @@ test('separates local staging preparation from fail-closed server persistence', 
   assert.equal((page.match(/if \(!canDecide\) throw new DailyV2ServiceError/g) ?? []).length, 2);
 
   // Actions neutralisées sans la capacité ; saisies admin locales conservées pendant le polling.
-  assert.match(page, /disabled=\{!canSubmitDeposit \|\| depositMutation\.isPending\}/);
+  // Pack operational readiness : les deux gardes d'origine restent en tête ; s'y ajoute `depositBlocked`
+  // (confirmation de la date pour cette préparation, date cohérente avec le fichier, compte inchangé).
+  assert.match(page, /disabled=\{!canSubmitDeposit \|\| depositMutation\.isPending \|\| depositBlocked\}/);
+  assert.match(page, /const depositBlocked = !preparationConfirmed \|\| Boolean\(preparedAssessment\?\.blocking\) \|\| preparedAccountChanged;/);
   assert.match(page, /disabled=\{!canDecide \|\| Boolean\(reasonRequired/);
   assert.match(
     page,
@@ -949,7 +962,8 @@ test('separates staging line reading from decision actions', () => {
   // StagingTable expose deux permissions distinctes.
   assert.match(tables, /isAdmin: boolean;/);
   assert.match(tables, /canDecide: boolean;/);
-  assert.match(tables, /StagingTable = \(\{ rows, isAdmin, canDecide, onLines, onDecision, onVersions \}/);
+  // Pack operational readiness : le registre lisible identifie le compte de chaque ligne (lecture seule).
+  assert.match(tables, /StagingTable = \(\{ rows, accountsById, isAdmin, canDecide, onLines, onDecision, onVersions \}/);
 
   // Consultation des lignes : règle de rôle existante ; un doublon montre
   // désormais ses lignes conservées par H1 (Lot 1 opérationnel), sinon aucune.
@@ -971,7 +985,7 @@ test('separates staging line reading from decision actions', () => {
   // les décisions : en production read-only, Lignes reste rendu, jamais
   // Promouvoir ni Supersede ; en staging admin, ils ne reviennent que lorsque
   // le verrou serveur autorise explicitement les mutations.
-  assert.match(page, /<StagingTable rows=\{stagingQuery\.data\?\.rows \?\? \[\]\} isAdmin=\{isAdmin\} canDecide=\{canDecide\}/);
+  assert.match(page, /<StagingTable rows=\{stagingQuery\.data\?\.rows \?\? \[\]\} accountsById=\{reviewAccountsById\} isAdmin=\{isAdmin\} canDecide=\{canDecide\}/);
 });
 
 test('blocks the Daily v2 page and navigation for the user-only role', () => {
@@ -997,4 +1011,78 @@ test('blocks the Daily v2 page and navigation for the user-only role', () => {
     layout,
     /\.filter\(\(item\) => item\.href !== '\/daily-statements' \|\| canAccessPage\)/,
   );
+});
+// --- Revue staging (pack DAILY-V2-BDK-ORABANK-OPERATIONAL-READINESS, B) ------
+// Identification du compte et péremption des décisions : fonctions pures, données fictives.
+// Placés ici pour être exécutés par la CI (`test:daily-v2-application`).
+
+const REVIEW_ACCOUNT_A = '20000000-0000-4000-8000-00000000000a';
+const REVIEW_ACCOUNT_B = '20000000-0000-4000-8000-00000000000b';
+
+function reviewAccount(id: string, alias: string, masked: string | null, status: 'active' | 'inactive' = 'active'): DailyV2AccountRegistryRow {
+  return {
+    id, created_at: '2026-11-01T08:00:00Z', created_by: '50000000-0000-4000-8000-000000000001', bank: 'BDK', currency: 'XOF',
+    safe_alias: alias, fingerprint_scheme: 'sha256_hex_v1', account_fingerprint: 'e'.repeat(64),
+    account_number_masked: masked, status, deactivated_at: null, deactivated_by: null, deactivation_reason: null,
+  };
+}
+
+function reviewUnit(id: string, accountId: string | null, overrides: Partial<DailyV2StagingUnitRow> = {}): DailyV2StagingUnitRow {
+  return {
+    id, attempt_id: '30000000-0000-4000-8000-000000000001', day_unit_id: 'd'.repeat(64), bank: 'BDK',
+    account_fingerprint: 'f'.repeat(64), account_registry_id: accountId, currency: 'XOF', accounting_date: '2026-10-05',
+    day_content_hash: 'c'.repeat(64), line_count: 1, day_total_debits: 0, day_total_credits: 1,
+    opening_balance_derived: null, closing_balance_derived: null, aggregates_status: 'derived', validation_status: 'valid',
+    review_reason_codes: [], status: 'staged', created_at: '2026-11-09T10:00:00Z', created_by: null, ...overrides,
+  };
+}
+
+test('describes the staging account by alias and masked number, never by fingerprint (review B)', () => {
+  const accounts = new Map([[REVIEW_ACCOUNT_A, reviewAccount(REVIEW_ACCOUNT_A, 'Exploitation', '****1234')],
+    [REVIEW_ACCOUNT_B, reviewAccount(REVIEW_ACCOUNT_B, 'Ancien compte', null, 'inactive')]]);
+  assert.deepEqual(describeDailyV2StagingAccount(reviewUnit('u1', REVIEW_ACCOUNT_A), accounts),
+    { state: 'registered', alias: 'Exploitation', masked: '****1234', inactive: false });
+  assert.deepEqual(describeDailyV2StagingAccount(reviewUnit('u2', REVIEW_ACCOUNT_B), accounts),
+    { state: 'registered', alias: 'Ancien compte', masked: null, inactive: true });
+  const absent = describeDailyV2StagingAccount(reviewUnit('u3', '20000000-0000-4000-8000-00000000000c'), accounts);
+  assert.equal(absent.state, 'not_visible');
+  const unavailable = describeDailyV2StagingAccount(reviewUnit('u4', REVIEW_ACCOUNT_A), null);
+  assert.equal(unavailable.state, 'registry_unavailable');
+  const historical = describeDailyV2StagingAccount(reviewUnit('u5', null), null);
+  assert.equal(historical.state, 'unregistered');
+  assert.deepEqual([absent, unavailable, historical].map(isDailyV2StagingAccountIdentified), [false, false, true]);
+  assert.equal(isDailyV2StagingAccountIdentified(describeDailyV2StagingAccount(reviewUnit('u1', REVIEW_ACCOUNT_A), accounts)), true);
+  assert.equal(formatDailyV2AccountOption(reviewAccount(REVIEW_ACCOUNT_A, 'Exploitation', '****1234')), 'Exploitation — ****1234 · BDK/XOF');
+  assert.equal(formatDailyV2AccountOption(reviewAccount(REVIEW_ACCOUNT_B, 'Ancien compte', null, 'inactive')), 'Ancien compte · BDK/XOF (inactif)');
+  const rendered = JSON.stringify([...accounts.values()].map(formatDailyV2AccountOption));
+  assert.equal(rendered.includes('e'.repeat(64)), false);
+});
+
+test('keeps a decision only while the view and the exact unit are unchanged (review B)', () => {
+  const opened = reviewUnit('10000000-0000-4000-8000-000000000001', REVIEW_ACCOUNT_A);
+  const context = captureDailyV2StagingDecisionContext('["all","all","all",0]', opened);
+  const view = (rows: DailyV2StagingUnitRow[], overrides: Partial<{ reviewKey: string; refreshing: boolean }> = {}) =>
+    ({ reviewKey: '["all","all","all",0]', refreshing: false, rows, ...overrides });
+
+  const current = checkDailyV2StagingDecisionCurrent(context, view([reviewUnit('other', REVIEW_ACCOUNT_B), { ...opened }]));
+  assert.equal(current.staleReason, null);
+  assert.equal(current.unit?.id, opened.id);
+
+  assert.equal(checkDailyV2StagingDecisionCurrent(context, view([opened], { reviewKey: `["${REVIEW_ACCOUNT_A}","all","all",0]` })).staleReason, 'CONTEXT_CHANGED');
+  assert.equal(checkDailyV2StagingDecisionCurrent(context, view([opened], { reviewKey: '["all","all","all",1]' })).staleReason, 'CONTEXT_CHANGED');
+  assert.equal(checkDailyV2StagingDecisionCurrent(context, view([opened], { refreshing: true })).staleReason, 'VIEW_REFRESHING');
+  assert.equal(checkDailyV2StagingDecisionCurrent(context, view([reviewUnit('other', REVIEW_ACCOUNT_A)])).staleReason, 'UNIT_NOT_IN_VIEW');
+  for (const change of [
+    { attempt_id: '30000000-0000-4000-8000-000000000002' },
+    { account_registry_id: REVIEW_ACCOUNT_B },
+    { account_registry_id: null },
+    { day_unit_id: 'e'.repeat(64) },
+    { day_content_hash: 'a'.repeat(64) },
+    { status: 'promoted' as const },
+  ]) {
+    const check = checkDailyV2StagingDecisionCurrent(context, view([{ ...opened, ...change }]));
+    assert.equal(check.staleReason, 'UNIT_CHANGED', JSON.stringify(change));
+    assert.equal(check.unit, null);
+  }
+  for (const message of Object.values(DAILY_V2_STAGING_DECISION_STALE_MESSAGES)) assert.match(message, /^Décision (périmée|suspendue)/);
 });
