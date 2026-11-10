@@ -66,6 +66,7 @@ import type {
   DailyV2StagingDecisionContext,
 } from '@/features/daily-v2/dailyV2Types';
 import {
+  DAILY_V2_DECISION_REASON_REQUIRED_MESSAGE,
   DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES,
   DAILY_V2_STAGING_DECISION_STALE_MESSAGES,
   captureDailyV2StagingDecisionContext,
@@ -73,6 +74,7 @@ import {
   checkDailyV2StagingDecisionCurrent,
   describeDailyV2StagingAccount,
   formatDailyV2AccountOption,
+  isDailyV2DecisionReasonRequired,
   isDailyV2StagingAccountIdentified,
 } from '@/features/daily-v2/dailyV2Types';
 import {
@@ -134,6 +136,9 @@ type ClearedReferenceDate = { date: string; cause: 'new_file' | 'first_file' | '
 
 const REVIEW_READ_FAILED_MESSAGE =
   'Décision suspendue : la relecture de la revue a échoué. Actualisez la liste avant de confirmer.';
+
+const DECISION_IN_FLIGHT_MESSAGE =
+  'Une décision est déjà en cours d’envoi : attendez son résultat avant d’en confirmer une autre.';
 
 const UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE =
   'Décision impossible : le compte de cette unité n’est pas identifiable (registre indisponible ou compte absent du registre lu).';
@@ -561,11 +566,21 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   };
   const reviewViewRef = useRef(reviewView);
   const decisionRef = useRef(decisionDialog);
-  // Synchronisées dès le commit (avant tout événement suivant) : la confirmation relit la vue validée.
+  const reasonRef = useRef(reason);
+  // Synchronisées dès le commit (avant tout événement suivant) : la confirmation relit la vue, le dialogue et le
+  // motif validés, jamais ceux capturés par un gestionnaire d'un rendu antérieur.
   useLayoutEffect(() => {
     reviewViewRef.current = reviewView;
     decisionRef.current = decisionDialog;
+    reasonRef.current = reason;
   });
+  // Une seule décision (promotion ou supersede) en vol à la fois. `isPending` n'est connu qu'au rendu suivant :
+  // le verrou est posé synchroniquement par la confirmation et levé à la fin de la mutation (succès ou échec),
+  // ce qui laisse une nouvelle tentative explicite après un échec.
+  const decisionInFlightRef = useRef(false);
+  const releaseDecision = () => {
+    decisionInFlightRef.current = false;
+  };
   const filteredAccount = reviewAccountsById?.get(stagingAccount);
   const stagingAccountLabel = stagingAccount === 'all'
     ? null
@@ -617,7 +632,11 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
       if (!lifetime.isActive()) return;
       toast.success(`Promotion : ${result.outcome}`);
     },
-    onError: (error) => showSafeError(error, 'Promotion impossible.'),
+    onError: (error) => {
+      showSafeError(error, 'Promotion impossible.');
+      rereadReviewAfterFailedDecision();
+    },
+    onSettled: releaseDecision,
   });
 
   const supersedeMutation = useMutation<
@@ -642,10 +661,25 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
       if (!lifetime.isActive()) return;
       toast.success(`Supersede : ${result.outcome}`);
     },
-    onError: (error) => showSafeError(error, 'Supersede impossible.'),
+    onError: (error) => {
+      showSafeError(error, 'Supersede impossible.');
+      rereadReviewAfterFailedDecision();
+    },
+    onSettled: releaseDecision,
   });
 
+  // Un échec peut être ambigu (réponse perdue après l'enregistrement serveur) : la revue est relue, et une nouvelle
+  // tentative passe par la suspension « relecture en cours » puis par le contrôle de fraîcheur de l'unité.
+  function rereadReviewAfterFailedDecision() {
+    // Suspension immédiate, sans attendre le rendu (même principe que `closeDecision`) : un gestionnaire appelé avant le
+    // prochain commit voit une relecture en cours ; la vue relue, synchronisée au commit, remplace cette marque.
+    reviewViewRef.current = { ...reviewViewRef.current, refreshing: true };
+    void queryClient.invalidateQueries({ queryKey: ['daily-v2', 'staging'] });
+  }
   const closeDecision = () => {
+    // Le dialogue est retiré aussi de la référence, sans attendre le commit : un gestionnaire appelé entre la fin
+    // d'une décision (verrou levé) et le rendu suivant ne retrouve plus le dialogue décidé.
+    decisionRef.current = null;
     setDecisionDialog(null);
     setReason('');
   };
@@ -660,6 +694,10 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
   const confirmDecision = () => {
     const open = decisionRef.current;
     if (!open || open !== decisionDialog) return;
+    if (decisionInFlightRef.current) {
+      toast.error(DECISION_IN_FLIGHT_MESSAGE);
+      return;
+    }
     const view = reviewViewRef.current;
     if (view.failed) {
       toast.error(REVIEW_READ_FAILED_MESSAGE);
@@ -686,8 +724,33 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
       toast.error(UNIDENTIFIED_DECISION_ACCOUNT_MESSAGE);
       return;
     }
-    if (open.kind === 'promote') promoteMutation.mutate({ unit: check.unit, approvalReason: reason.trim() || undefined });
-    else supersedeMutation.mutate({ unit: check.unit, supersedeReason: reason });
+    // Motif du dernier rendu validé, sans espaces de bord. Même règle que le bouton : exigé si l'unité capturée à
+    // l'ouverture OU l'unité relue l'exige (suspension : dialogue et motif conservés).
+    const decisionReason = reasonRef.current.trim();
+    const reasonNeeded = isDailyV2DecisionReasonRequired(open.kind, open.unit)
+      || isDailyV2DecisionReasonRequired(open.kind, check.unit);
+    if (reasonNeeded && decisionReason === '') {
+      toast.error(DAILY_V2_DECISION_REASON_REQUIRED_MESSAGE);
+      return;
+    }
+    decisionInFlightRef.current = true;
+    // Levée aussi par les rappels de l'appel (observateur, non filtrés par la portée de session), en plus de
+    // `onSettled` du hook : le verrou ne survit jamais à la décision tant que la page reste montée. Un résultat rejeté
+    // par la portée (rappels du hook filtrés) a une issue inconnue : la revue est relue, comme après un échec.
+    const settle = {
+      onSettled: (_data: unknown, error: unknown) => {
+        releaseDecision();
+        if (error instanceof DailyV2ExpiredViewError) rereadReviewAfterFailedDecision();
+      },
+    };
+    try {
+      if (open.kind === 'promote') promoteMutation.mutate({ unit: check.unit, approvalReason: decisionReason || undefined }, settle);
+      else supersedeMutation.mutate({ unit: check.unit, supersedeReason: decisionReason }, settle);
+    } catch (error) {
+      // Un échec synchrone de lancement ne laisse jamais le verrou posé.
+      releaseDecision();
+      throw error;
+    }
   };
   const preparedAssessment = prepared ? assessPrepared(prepared) : null;
   const preparationConfirmed = prepared !== null && confirmedPreparation === prepared;
@@ -713,11 +776,17 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
     void stagingQuery.refetch();
     void reviewAccountsQuery.refetch();
   };
-  const reasonRequired = decisionDialog?.kind === 'supersede' ||
-    (decisionDialog?.kind === 'promote' &&
-      (decisionDialog.unit.validation_status === 'needs_review' ||
-       decisionDialog.unit.aggregates_status === 'unavailable' ||
-       decisionDialog.unit.review_reason_codes.length > 0));
+  // Motif affiché et exigé selon l'unité capturée à l'ouverture ET selon la même unité relue dans la vue courante.
+  const decisionRereadUnit = decisionDialog
+    ? reviewView.rows.find((row) => row.id === decisionDialog.unit.id) ?? null
+    : null;
+  const reasonRequired = decisionDialog !== null && (
+    isDailyV2DecisionReasonRequired(decisionDialog.kind, decisionDialog.unit) ||
+    (decisionRereadUnit !== null && isDailyV2DecisionReasonRequired(decisionDialog.kind, decisionRereadUnit)));
+  // Codes à examiner : ceux de l'unité capturée et ceux de la même unité relue, pour justifier ce qui est exigé.
+  const decisionReviewCodes = decisionDialog
+    ? [...new Set([...decisionDialog.unit.review_reason_codes, ...(decisionRereadUnit?.review_reason_codes ?? [])])]
+    : [];
   const lineRows = lineDialog?.kind === 'staging' ? stagingLinesQuery.data : canonicalLinesQuery.data;
   const lineLoading = lineDialog?.kind === 'staging' ? stagingLinesQuery.isLoading : canonicalLinesQuery.isLoading;
 
@@ -1221,13 +1290,14 @@ const DailyStatementWorkspace = ({ userId, roles }: { userId: string; roles: rea
           {decisionDialog && decisionReadFailed && (
             <div><Button size="sm" variant="outline" onClick={refreshReview}>Relire la revue et le registre</Button></div>
           )}
-          {decisionDialog && decisionDialog.unit.review_reason_codes.length > 0 && (
+          {decisionDialog && decisionReviewCodes.length > 0 && (
             <Alert>
               <AlertTitle>Motifs à examiner avant décision</AlertTitle>
-              <AlertDescription className="mt-2"><ReviewReasonList codes={decisionDialog.unit.review_reason_codes} /></AlertDescription>
+              <AlertDescription className="mt-2"><ReviewReasonList codes={decisionReviewCodes} /></AlertDescription>
             </Alert>
           )}
-          {reasonRequired && <Field label="Raison obligatoire"><Textarea value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></Field>}
+          {/* Un motif saisi reste visible, et donc relisible, même si une relecture lève l'obligation : rien n'est transmis à l'insu. */}
+          {(reasonRequired || reason.trim() !== '') && <Field label={reasonRequired ? 'Raison obligatoire' : 'Raison saisie (sera transmise)'}><Textarea value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></Field>}
           <DialogFooter><Button variant="outline" onClick={closeDecision}>Annuler</Button><Button disabled={!canDecide || Boolean(reasonRequired && !reason.trim()) || promoteMutation.isPending || supersedeMutation.isPending || stagingRefreshing || stagingQuery.isError || decisionRegistryHold !== null || !decisionAccountIdentified} onClick={confirmDecision}>Confirmer</Button></DialogFooter>
         </DialogContent>
       </Dialog>
