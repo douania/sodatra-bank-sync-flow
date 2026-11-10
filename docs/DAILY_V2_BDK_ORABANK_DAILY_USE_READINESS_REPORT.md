@@ -23,6 +23,30 @@ Deux versions restent distinguées :
 
 Aucun résultat du pilote n'est attribué au correctif.
 
+## 0. Corrections documentaires (`GO_FIX_DAILY_V2_BDK_ORABANK_DAILY_USE_READINESS`)
+
+FAIL CTO ciblé sur `2345a0d`, portant sur la procédure et le scénario. Même branche, même draft PR #160. Corrections
+appliquées uniquement à la procédure, à ce rapport et aux documents privés du pilote :
+
+| Point | Correction | Références |
+|---|---|---|
+| C1 — procédure et version hébergée | La version `26a40d0` n'a pas le verrou synchrone. Consigne courante : un seul clic, attendre, relire les statuts si le résultat est ambigu. La garde du correctif est réservée à sa future publication, après contrôle ciblé. | Procédure §0, §5, §6 et §8 ; rapport §2 et §4 |
+| C2 — statuts, provisoires, doublons, S3 | `staged` = livraison en attente de décision. Provisoire traitée par un fichier ultérieur, sans garantie à J+1. Seconde livraison identique possiblement restée `staged` jusqu'à un nouvel arbitrage. Statut `needs_review` distingué des indicateurs portés par une livraison `staged`. S3 décrite comme `staged`, validation `needs_review`, maintenue volontairement en attente. | Procédure §4, §5 et §7 ; rapport §3 ; scénario privé §4 et §5 |
+| C3 — retour arrière des migrations | Fermeture des verrous = confinement des écritures, pas une restauration. Retour arrière DB à préparer pour les migrations exactes, après inventaire. PITR = option distincte, sous GO spécifique. | Rapport §5.6 |
+| C4 — acquis ORAB | Dépôt ORAB contrôlé dans `opr-dcf057` (AR) rappelé dans la matrice, distinct du nouveau pilote quotidien. | Rapport §6 ; scénario privé §5 |
+
+Code inchangé : les quatre fichiers applicatifs et de tests gardent les blobs de `2345a0d` :
+
+| Fichier | Blob |
+|---|---|
+| `DailyStatementV2.tsx` | `07a6daf5` |
+| `DailyStatementV2.synthetic.test.tsx` | `dd63fe07` |
+| `dailyV2Types.ts` | `6ea53738` |
+| `dailyV2ApplicationContract.synthetic.test.ts` | `f4063b6c` |
+
+Les résultats 41/41 (ligne C3 de la CI) et 117/117 (`test:daily-v2-application`) ont été mesurés sur ce code ; le CTO
+les a rejoués à la relecture. Ils ne sont pas relancés dans cette passe documentaire.
+
 ## 1. Correctif du gestionnaire de confirmation
 
 ### 1.1 Diagnostic sur `88ef056`
@@ -195,6 +219,25 @@ Voir §8.
 - les erreurs et critères de suspension ;
 - la fin de séance et la préparation du compte nominatif.
 
+Version et gardes (C1) :
+
+- la procédure vaut pour la version hébergée `26a40d0`, qui ne contient pas le verrou synchrone du §1 ;
+- consigne courante : un seul clic, attendre le résultat, et relire les statuts avant toute nouvelle tentative si le
+  résultat est ambigu ;
+- le double envoi n'y est pas présenté comme empêché par l'interface ;
+- la garde du correctif ne sera revendiquée qu'après son merge, sa publication et le contrôle ciblé du §4 ;
+- les dialogues d'approbation groupée et de versions restent hors correctif (§1.7).
+
+Statuts (C2) :
+
+- `staged` désigne une livraison en attente de décision. Ce statut ne prouve ni une journée bancaire complète ni sa
+  disponibilité en Trésorerie ;
+- une provisoire est traitée par un fichier ultérieur et par les contrôles serveur, sans garantie automatique à J+1 ;
+- après promotion de la première livraison, une seconde livraison identique peut rester `staged` : son classement
+  `duplicate` intervient lors d'un nouvel arbitrage serveur, notamment si sa promotion est tentée ;
+- le statut de livraison `needs_review` est distinct des indicateurs de validation et des motifs de revue portés par
+  une livraison `staged`.
+
 Comptes :
 
 - le compte A reste le compte de recette staging ;
@@ -225,6 +268,16 @@ hors dépôt. Aucun fichier bancaire, montant, IBAN ni numéro complet n'est ver
     les nouveaux comptes du pilote ;
   - les livraisons restées `staged` sur les comptes inactifs de `opr-dcf057` ne sont pas touchées ;
   - verrous fermés, module Trésorerie fermé, aucune activité concurrente.
+- **Effets attendus, à constater** (aucun n'est encore observé) :
+  - redépôt identique avant promotion : nouvelles livraisons `staged` ;
+  - après promotion de la première livraison, la seconde peut rester `staged`. La tentative de la promouvoir doit
+    produire l'arbitrage `duplicate`, sans nouvelle version active ni double comptage ;
+  - provisoires : traitement par un fichier ultérieur, constaté tel quel, sans garantie à J+1 ;
+  - incident synthétique S3 :
+    - répétition locale : statut demandé `staged`, validation `needs_review`, motifs
+      `RUNNING_BALANCE_CHAIN_INCOHERENT` et `AGGREGATES_UNAVAILABLE` ;
+    - le scénario prévoit l'examen des motifs et un maintien volontaire en attente, sans promotion ;
+    - le statut serveur reste à constater.
 - **Trois séances sur des journées ouvrées de réception réelle sont requises.** Un historique déposé en une fois ne
   les remplace pas. Le journal des séances est tenu dans le rapport privé.
 
@@ -241,14 +294,15 @@ Résultats par séance : voir §3.1, complété à chaque séance.
 ## 4. Contrôle ciblé du correctif après sa future publication (préparation)
 
 À exécuter seulement après les GO de merge et de déploiement correspondants, sur le site staging publié, avec la
-provenance du nouveau build vérifiée. Unités synthétiques uniquement.
+provenance du nouveau build vérifiée. Unités synthétiques uniquement. Jusqu'à ce contrôle, ni la procédure ni le pilote
+ne revendiquent la garde du correctif.
 
 1. Double clic sur « Confirmer » (promotion, puis supersede) : un seul appel RPC observé, et un message « Une décision
    est déjà en cours d'envoi ».
 2. Unité relue avec un code de revue après l'ouverture du dialogue : refus sans appel, puis champ du motif affiché.
 3. Motif vide ou blanc : refus sans appel, y compris sans lecture de l'unité canonical active pour le supersede.
-4. Échec simulé (verrou serveur fermé pendant le dialogue) : message d'échec, dialogue conservé, puis succès d'une
-   nouvelle tentative après réouverture du verrou.
+4. Échec simulé (verrou serveur fermé pendant le dialogue) : message d'échec, dialogue conservé, revue relue, puis
+   succès d'une nouvelle tentative après réouverture du verrou.
 5. Non-régression : registre en échec ou en relecture, décision périmée, filtre de compte.
 
 ## 5. Dossier de mise en service (production)
@@ -320,19 +374,39 @@ Migrations du dépôt dont la présence en production n'est pas établie :
 Les clôtures antérieures indiquent leur application au staging seulement. Le frontend de production publié le 30/10
 précède #156 à #159 : **NON VÉRIFIÉ**.
 
+Les migrations nécessaires seront déterminées après l'inventaire autorisé (§5.6, point 1). Aucune application générale
+des migrations manquantes n'est acquise.
+
 ### 5.6 Actions à soumettre sous GO production dédiés
 
-Une action par GO. Chacune avec préflight en lecture, contrôle avant/après et retour arrière prêt :
+Une action par GO. Chacune avec préflight en lecture, contrôle avant/après, et mesure de confinement ou retour arrière
+préparés.
+
+Confinement et retour arrière ne sont pas équivalents :
+
+- **Confinement** : la fermeture du verrou maître et des scopes Daily v2 bloque les écritures métier. Elle ne restaure
+  ni le schéma, ni les fonctions, ni les données.
+- **Retour arrière de base de données** : il se prépare pour les migrations exactes retenues, après inventaire et
+  comparaison des définitions avant et après (tables, fonctions, droits, politiques, déclencheurs). Le script et la
+  preuve du retour à l'état antérieur sont soumis avec le GO de la migration.
+- **PITR** : option de restauration distincte, qui ramène toute la base à un instant donné. Les écritures postérieures
+  de tous les modules sont alors perdues. Elle exige une analyse de ses impacts et un GO spécifique.
+
+Rien de cela n'est préparé ni testé dans ce pack : aucun script de restauration, aucun test PITR, aucun accès
+production.
+
+Actions :
 
 1. `GO_PRODUCTION_DAILY_V2_DAILY_USE_READ_ONLY_PREFLIGHT` :
    - ledger, signatures de fonctions (dont D1), droits, politiques ;
    - verrous Daily v2 ;
    - frontend servi, avec sa provenance ;
    - Auth (Site URL, URL de redirection).
-2. `GO_PRODUCTION_DAILY_V2_DAILY_USE_MIGRATIONS` : migrations manquantes, dans l'ordre du dépôt, une soumission par
-   migration.
-   - Retour arrière : restauration ponctuelle (PITR) préparée et testée sur le staging. Sinon, retour applicatif par
-     fermeture des verrous, les données restant conservées.
+2. `GO_PRODUCTION_DAILY_V2_DAILY_USE_MIGRATIONS` : seulement les migrations exactes que l'inventaire du point 1 aura
+   montrées nécessaires, dans l'ordre du dépôt, une soumission par migration.
+   - Retour arrière : préparé pour ces migrations exactes, après comparaison des définitions avant et après.
+   - Confinement immédiat en cas d'anomalie : fermeture des verrous, qui n'annule pas la migration.
+   - PITR : seulement sur GO spécifique, après analyse d'impacts.
 3. `GO_PRODUCTION_DAILY_V2_DAILY_USE_FRONTEND_PUBLISH` : publication du commit fusionné comprenant le correctif, après
    vérification d'empreinte du bundle et de sa cible unique.
    - Retour arrière : republication de la version précédente identifiée par sa provenance.
@@ -340,7 +414,7 @@ Une action par GO. Chacune avec préflight en lecture, contrôle avant/après et
    - Retour arrière : retrait du rôle, puis désactivation du compte, sans suppression d'audit.
 5. `GO_PRODUCTION_DAILY_V2_DAILY_USE_FIRST_SESSION` : ouverture bornée du maître et du scope `daily`, puis première
    séance selon la procédure, puis fermeture.
-   - Retour arrière : fermeture immédiate des verrous ; données et audits conservés.
+   - Confinement : fermeture immédiate des verrous ; données et audits conservés. Ce n'est pas une restauration.
 
 ## 6. Trésorerie : matrice de qualification des formats (préparation)
 
@@ -348,8 +422,8 @@ Aucun statut n'est modifié. La disponibilité des soldes exige son GO dédié.
 
 | Banque | Format / version | Statut au registre Trésorerie | Preuves disponibles | Manque |
 |---|---|---|---|---|
-| BDK | CSV `structured-csv-0b` | non qualifié (`NOT_COVERED`, `FORMAT_NOT_QUALIFIED`) | Revue pilote du 06/11 : prêt sous conditions ; `rd1-dceebe` : 21/21 journées concordantes avec le mensuel, provisoires puis clôturées ; `opr-dcf057` | Qualification sous GO dédié ; série quotidienne réelle du pilote ; contrôle d'absence de faux solde |
-| ORABANK (`ORA`, `ORAB`, `ORABANK`) | CSV `structured-csv-0b` | non qualifié | Revue pilote du 06/11 : prêt sous conditions ; `rd1-dceebe` : 12/12, retraits D1 justifiés ; `ORAB` 21/10 non déposé en campagne | Idem, plus un dépôt réel `ORAB` (prévu au pilote) |
+| BDK | CSV `structured-csv-0b` | non qualifié (`NOT_COVERED`, `FORMAT_NOT_QUALIFIED`) | Revue pilote du 06/11 : prêt sous conditions ; `rd1-dceebe` : 21/21 journées concordantes avec le mensuel ; `opr-dcf057` (BR) : 21 livraisons et 1 journée active concordantes | Qualification sous GO dédié ; série quotidienne réelle du pilote `dur-961120` ; contrôle d'absence de faux solde |
+| ORABANK (`ORA`, `ORAB`, `ORABANK`) | CSV `structured-csv-0b` | non qualifié | Revue pilote du 06/11 : prêt sous conditions ; `rd1-dceebe` : 12/12, retraits D1 justifiés (fichier `ORAB` non déposé dans cette campagne : constat historique) ; `opr-dcf057` (AR) : `ora_211026_orab` déposé et contrôlé, 2 tentatives, 14 livraisons concordantes, 1 journée active concordante | Qualification sous GO dédié ; série quotidienne réelle du pilote `dur-961120`, dont son étape `ORAB` (O3), distincte de l'acquis `opr-dcf057` ; contrôle d'absence de faux solde |
 | ATB, BICIS | Excel | restreints (revue pilote du 06/11) | qualification locale | hors périmètre |
 | BRIDGE, BIS, NSIA | — | pas prêts | — | hors périmètre |
 
@@ -367,7 +441,7 @@ Restent aussi maintenus :
 - la garde après révocation ;
 - CRLF/m14 ;
 - O2 ;
-- la promotion non testée d'une livraison identique restée `staged`, exercée par le pilote (§3) ;
+- la promotion non testée d'une livraison identique restée `staged`, à exercer par le pilote (§3) ;
 - ORAB dans `bankIdentity.ts`.
 
 Limites :

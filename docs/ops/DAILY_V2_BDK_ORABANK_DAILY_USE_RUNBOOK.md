@@ -9,7 +9,14 @@ Pack : `DAILY-V2-BDK-ORABANK-DAILY-USE-READINESS`. Document opérateur, sans eff
 - **Où** :
   - pilote : le site staging hébergé `https://cash-sync-wiz.lovable.app`, adossé au staging Supabase
     `gbbsqcscryygqlmqncyv`, dans la version publiée et vérifiée `26a40d0` (sources `88ef056`) ;
-  - production : non ouverte. Son ouverture exige des GO production dédiés (rapport du pack, §7).
+  - production : non ouverte. Son ouverture exige des GO production dédiés (rapport du pack, §5).
+- **Version et gardes d'interface** :
+  - cette procédure vaut pour la version hébergée actuelle `26a40d0`. Celle-ci n'empêche pas un second envoi d'une
+    décision pendant qu'une première est en cours : la discipline « un seul clic, puis attendre » est donc la seule
+    protection côté interface ; le serveur reste seul juge ;
+  - le correctif du gestionnaire de confirmation (draft PR #160) n'est pas publié. Sa garde ne s'appliquera aux
+    promotions et supersedes unitaires qu'après son merge, sa publication et son contrôle ciblé, chacun sous GO ;
+  - les dialogues « Approbation groupée du fichier » et « Versions et décisions » restent hors de ce correctif.
 - **Quoi** :
   - relevés quotidiens CSV structurés BDK et ORABANK, au format `structured_bank_statement_csv`, lus par le parseur
     `structured-csv-0b` et le runtime `daily-v2-browser-0q` ;
@@ -68,8 +75,11 @@ Ces actions ne relèvent pas de l'opérateur ; elles encadrent chaque séance pe
    - le compte masqué du fichier correspond au compte choisi. En cas d'écart, la préparation est refusée : ne pas
      forcer ;
    - la période correspond au fichier attendu ;
-   - si la date d'export est le dernier jour du fichier, ce jour est demandé **provisoire**. Il pourra être incomplet ;
-     il sera remplacé par le fichier suivant.
+   - si la date d'export est le dernier jour du fichier, ce jour est demandé **provisoire**. Il peut être incomplet et
+     n'est jamais promouvable tel quel.
+     - La journée est traitée par un fichier ultérieur qui la contient, déposé et arbitré normalement par le serveur
+       (§7).
+     - Ni le fichier du lendemain ni une clôture automatique ne sont garantis.
 4. Si l'écran affiche **« Date incohérente : dépôt bloqué »** (date antérieure au contenu, ou postérieure à la date lue
    dans le nom), corriger la date ou s'arrêter. Ne jamais contourner ce blocage.
 5. Cocher la case de confirmation qui reprend la date, le nom du fichier et le compte. Toute nouvelle préparation la
@@ -78,45 +88,72 @@ Ces actions ne relèvent pas de l'opérateur ; elles encadrent chaque séance pe
 ## 5. Dépôt et contrôle des journées proposées
 
 1. Cliquer **une seule fois** sur **Déposer via RPC**, puis attendre le message de fin.
-2. La carte « Résultat du dépôt » donne la tentative et le statut de chaque journée :
+   - Si le résultat est ambigu (aucun message, erreur réseau, page rechargée), ouvrir d'abord l'onglet **Staging**,
+     filtré sur le compte, pour relire les livraisons avant tout nouveau dépôt.
+2. La carte « Résultat du dépôt » donne la tentative et le statut de chaque livraison :
 
-| Statut | Signification | Action |
+| Statut de livraison | Signification | Action |
 |---|---|---|
-| `staged` | Journée complète en attente de validation | Valider (§6) après contrôle |
-| `provisional` | Jour d'export, possiblement incomplet | Aucune ; jamais promouvable |
-| `duplicate` | Identique à la journée déjà active | Aucune ; rien n'est compté deux fois |
+| `staged` | Livraison en attente de décision. Ce statut ne prouve ni une journée bancaire complète ni sa disponibilité en Trésorerie | Examiner la validation et les motifs de revue, puis valider (§6) ou laisser en attente |
+| `provisional` | Journée demandée provisoire (en général le jour d'export), possiblement incomplète | Aucune ; jamais promouvable ; traitée par un fichier ultérieur (§7) |
+| `duplicate` | Classée identique à la journée active par l'arbitrage serveur, au dépôt ou lors d'une tentative de promotion | Aucune ; rien n'est compté deux fois |
 | `conflict` | Contenu différent de la journée active | S'arrêter et signaler (§7) |
-| `needs_review` ou motifs de revue | Contrôle humain nécessaire | Examiner ; motif obligatoire pour valider |
+| `needs_review` | Livraison placée en revue par le serveur ; la liste ne propose pas « Promouvoir » pour ce statut | Examiner ; signaler si inattendu |
 
-3. Un redépôt identique **avant** validation crée de nouvelles livraisons `staged` ; ce n'est pas une erreur. Valider
-   une seule livraison par journée : la seconde sera classée `duplicate` par le serveur (§7).
+   Indicateurs à ne pas confondre avec le statut `needs_review` :
+   - sur une livraison `staged`, la colonne « Validation » (`needs_review`, agrégats `unavailable`) et la colonne
+     « Motifs de revue » signalent des contrôles à examiner ;
+   - la promotion reste alors proposée, mais exige un motif ;
+   - examiner les motifs avant toute décision. Une livraison peut être laissée volontairement en attente.
+
+3. Un redépôt identique **avant** validation crée de nouvelles livraisons `staged` ; ce n'est pas une erreur.
+   - Après la promotion de la première livraison, la seconde livraison identique peut rester `staged` : elle n'est pas
+     normalisée automatiquement.
+   - Son classement `duplicate` intervient lors d'un nouvel arbitrage serveur, notamment si sa promotion est tentée
+     (§7).
+   - Valider une seule livraison par journée.
 
 ## 6. Validation et consultation
 
 1. Onglet **Staging** : filtrer sur le compte, puis sur le statut `staged`.
 2. Pour une journée isolée : **Promouvoir**, vérifier l'encadré « Unité concernée » (compte, journée, tentative), puis
    **Confirmer** :
-   - **un seul clic**, puis attendre le message ; un second clic pendant l'envoi n'envoie rien de plus ;
+   - **un seul clic**, puis attendre le message. Ne pas recliquer pendant l'envoi : la version actuelle n'empêche pas
+     un second envoi (§0) ;
    - si un motif est demandé, saisir un motif clair et non vide ;
    - si le dialogue affiche « Décision suspendue » (relecture en cours ou en échec), attendre la relecture ou cliquer
      sur « Relire la revue et le registre », puis confirmer de nouveau ;
    - « Décision périmée » ferme le dialogue : rouvrir la journée depuis la liste à jour.
 3. Pour toutes les journées d'un fichier : **Versions**, puis **Approuver le fichier en groupe**.
    - Vérifier le plan affiché par le serveur (journées admissibles et motifs d'exclusion).
-   - Saisir un motif, puis confirmer **une seule fois**.
-4. Après chaque envoi, s'il réussit, le dialogue se ferme et la liste est relue. S'il échoue, le dialogue reste ouvert
-   et une nouvelle tentative explicite est possible, après lecture du message.
+   - Saisir un motif, puis confirmer **une seule fois** et attendre le résultat. Ce dialogue ne protège pas d'un second
+     envoi ; un résultat ambigu se traite comme au point 4.
+4. Après chaque envoi, s'il réussit, le dialogue se ferme et la liste est relue.
+   - S'il échoue, ou si le résultat est ambigu (aucun message, erreur réseau, page rechargée), ne pas renvoyer
+     aussitôt.
+   - D'abord relire les statuts : « Relire la revue et le registre », ou onglet **Staging** filtré sur le compte et la
+     journée.
+   - Si la journée est déjà `promoted` ou `duplicate`, ou si une version est active dans **Canonical**, ne rien
+     renvoyer.
+   - Sinon, une seule nouvelle tentative explicite, après lecture du message. Un second échec relève du §8.
 5. Onglets **Canonical** et **Reporting** : vérifier que les journées validées apparaissent, une seule version active
    par journée. Comparer les effectifs et totaux au relevé bancaire.
 
 ## 7. Cas particuliers
 
-- **Doublon** (`duplicate`) : la journée est déjà active à l'identique. Rien à faire ; le serveur l'a écartée sans
-  nouvelle version ni double comptage.
+- **Doublon** (`duplicate`) : la journée est déjà active à l'identique.
+  - Ce classement est fait par le serveur, au dépôt, ou lors d'une tentative de promotion d'une livraison identique
+    restée `staged`.
+  - Rien à faire : aucune nouvelle version, aucun double comptage.
+  - Une livraison identique restée `staged` n'est pas reclassée tant qu'aucun nouvel arbitrage n'a lieu.
 - **Provisoire** (`provisional`) :
   - ne pas tenter de la valider ;
-  - le fichier du lendemain apporte la journée complète ;
-  - une provisoire tardive identique à la version active est retirée automatiquement par le serveur (D1).
+  - la journée est traitée par un fichier ultérieur qui la contient. Ce fichier est déposé et arbitré normalement :
+    `staged`, `duplicate` ou `conflict` selon ce qui est actif ;
+  - aucune complétude ni clôture n'est garantie à J+1 ;
+  - une provisoire identique à la version active peut être retirée par le serveur (règle D1), si ses contrôles le
+    permettent ;
+  - une provisoire différente reste vivante et visible : la noter, et la signaler si elle persiste.
 - **Arrivée hors ordre** : déposer normalement. Le serveur classe chaque journée selon ce qui est déjà actif.
 - **Conflit** (`conflict`) : une version différente est déjà active.
   - Ne pas faire de « Supersede » en exploitation courante.
@@ -132,7 +169,9 @@ les cas suivants :
 - cible affichée différente du staging attendu, ou mention « Pilote production » ;
 - message d'erreur portant un code, échec répété d'une même action, ou session expirée qui revient ;
 - compte masqué, banque ou période différents de ceux attendus ;
-- statut inattendu (`conflict`, `promotion_failed`, `rejected`) ou nombre de journées différent du relevé ;
+- statut inattendu (`conflict`, `needs_review`, `promotion_failed`, `rejected`) ou nombre de journées différent du
+  relevé ;
+- résultat d'une décision resté ambigu après relecture des statuts ;
 - deux versions actives pour une même journée, ou totaux différents du relevé ;
 - verrou fermé en cours de séance, ou fin du créneau de 30 minutes ;
 - fichier modifié, renommé à la main ou d'origine incertaine.
