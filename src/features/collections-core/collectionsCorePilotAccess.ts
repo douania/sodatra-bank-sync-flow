@@ -8,6 +8,31 @@ import type { CollectionEntryInput } from './collectionsCoreTypes';
 const uuidSchema = z.string().uuid();
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const optionalDateSchema = z.union([dateSchema, z.literal('')]);
+const hashSchema = z.string().regex(/^[0-9a-f]{64}$/);
+
+const phaseBDatasetSchema = z
+  .object({
+    remittanceItemId: uuidSchema,
+    dailyLineId: uuidSchema,
+    canonicalUnitId: uuidSchema,
+    dailyLineHash: hashSchema,
+    accountRegistryId: uuidSchema,
+    accountingDate: dateSchema,
+    creditAmount: z.number().positive(),
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    sourceAttemptId: uuidSchema,
+    sourceRawTextHash: hashSchema,
+    dateFrom: dateSchema,
+    dateTo: dateSchema,
+    evidenceBasis: z.enum(['EXACT_CREDIT', 'NET_OF_DISCOUNT']),
+    settledGrossAmount: z.number().positive(),
+    proposalReason: z.string().min(1),
+    proposalCommandKey: z.string().min(1),
+    confirmationReason: z.string().min(1),
+    confirmationCommandKey: z.string().min(1),
+    expiresAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
 
 const entrySchema = z
   .object({
@@ -34,6 +59,7 @@ const datasetSchema = z
     entryCommandKey: z.string().min(1),
     validationReason: z.string().min(1),
     validationCommandKey: z.string().min(1),
+    phaseB: phaseBDatasetSchema.optional(),
   })
   .strict();
 
@@ -42,6 +68,29 @@ export interface CollectionsCorePilotDataset {
   entryCommandKey: string;
   validationReason: string;
   validationCommandKey: string;
+  phaseB?: CollectionsCorePilotPhaseBDataset;
+}
+
+export interface CollectionsCorePilotPhaseBDataset {
+  remittanceItemId: string;
+  dailyLineId: string;
+  canonicalUnitId: string;
+  dailyLineHash: string;
+  accountRegistryId: string;
+  accountingDate: string;
+  creditAmount: number;
+  currency: string;
+  sourceAttemptId: string;
+  sourceRawTextHash: string;
+  dateFrom: string;
+  dateTo: string;
+  evidenceBasis: 'EXACT_CREDIT' | 'NET_OF_DISCOUNT';
+  settledGrossAmount: number;
+  proposalReason: string;
+  proposalCommandKey: string;
+  confirmationReason: string;
+  confirmationCommandKey: string;
+  expiresAt: string;
 }
 
 export interface CollectionsCorePilotManifest {
@@ -72,13 +121,16 @@ export type CollectionsCorePilotAction =
   | 'entry'
   | 'validation'
   | 'audit'
-  | 'phase_b';
+  | 'phase_b_propose'
+  | 'phase_b_review';
 
 export type CollectionsCorePilotCapability =
   | 'ENTRY'
   | 'VALIDATE_REMITTANCE'
   | 'AUDIT'
-  | 'MANAGE_ACCESS';
+  | 'MANAGE_ACCESS'
+  | 'PROPOSE_MATCH'
+  | 'CONFIRM_MATCH';
 
 export interface CollectionsCorePilotAssignment {
   id: string;
@@ -90,12 +142,14 @@ export interface CollectionsCorePilotAssignment {
   createdAt: string;
   revokedAt: string | null;
   revokedBy: string | null;
+  capabilityScope: Record<string, unknown> | null;
 }
 
 export interface CollectionsCorePilotCapabilitySpec {
   actor: 'A' | 'B';
   userId: string;
-  capability: 'ENTRY' | 'VALIDATE_REMITTANCE' | 'AUDIT';
+  capability: 'ENTRY' | 'VALIDATE_REMITTANCE' | 'PROPOSE_MATCH' | 'CONFIRM_MATCH' | 'AUDIT';
+  scope: Record<string, unknown> | null;
 }
 
 const CAMPAIGN_PATTERN =
@@ -192,6 +246,26 @@ function validateDataset(dataset: CollectionsCorePilotDataset, campaignId: strin
   }
   if (dataset.validationCommandKey !== `${campaignId}:VALIDATE`) {
     throw new Error('La clé de commande de validation ne correspond pas à la campagne.');
+  }
+  const phaseB = dataset.phaseB;
+  if (phaseB) {
+    validateSyntheticText(phaseB.proposalReason, campaignId, 'proposalReason', true);
+    validateSyntheticText(phaseB.confirmationReason, campaignId, 'confirmationReason', true);
+    if (phaseB.proposalCommandKey !== `${campaignId}:PROPOSE_MATCH`) {
+      throw new Error('La clé de proposition Phase B ne correspond pas à la campagne.');
+    }
+    if (phaseB.confirmationCommandKey !== `${campaignId}:CONFIRM_MATCH`) {
+      throw new Error('La clé de confirmation Phase B ne correspond pas à la campagne.');
+    }
+    if (phaseB.dateTo < phaseB.dateFrom || Date.parse(phaseB.expiresAt) <= Date.now()) {
+      throw new Error('La fenêtre ou l’expiration Phase B est invalide.');
+    }
+    if (phaseB.evidenceBasis === 'EXACT_CREDIT' && phaseB.creditAmount !== phaseB.settledGrossAmount) {
+      throw new Error('Le dataset Phase B exact contient des montants divergents.');
+    }
+    if (phaseB.evidenceBasis === 'NET_OF_DISCOUNT' && phaseB.creditAmount >= phaseB.settledGrossAmount) {
+      throw new Error('Le dataset Phase B net ne porte aucune retenue positive.');
+    }
   }
 }
 
@@ -295,9 +369,13 @@ export function isCollectionsCorePilotActionAllowed(
   action: CollectionsCorePilotAction,
 ): boolean {
   const actor = collectionsCorePilotActor(manifest, userId);
-  if (!actor || action === 'phase_b') return false;
+  if (!actor) return false;
+  const phaseB = Boolean(manifest.dataset.phaseB);
   if (action === 'route' || action === 'capabilities') return true;
   if (action === 'administration') return actor === 'G';
+  if (action === 'phase_b_propose') return phaseB && actor === 'A';
+  if (action === 'phase_b_review') return phaseB && actor === 'B';
+  if (phaseB) return action === 'audit' && actor === 'B';
   if (action === 'entry') return actor === 'A';
   return actor === 'B';
 }
@@ -350,10 +428,27 @@ export function collectionsCorePilotBootstrapCommandKey(manifest: CollectionsCor
 export function collectionsCorePilotCapabilitySpecs(
   manifest: CollectionsCorePilotManifest,
 ): CollectionsCorePilotCapabilitySpec[] {
+  const phaseB = manifest.dataset.phaseB;
+  if (!phaseB) {
+    return [
+      { actor: 'A', userId: manifest.operatorUserId, capability: 'ENTRY', scope: null },
+      { actor: 'B', userId: manifest.controllerUserId, capability: 'VALIDATE_REMITTANCE', scope: null },
+      { actor: 'B', userId: manifest.controllerUserId, capability: 'AUDIT', scope: null },
+    ];
+  }
+  const scope = {
+    version: 1,
+    mode: 'PILOT_ALLOWLIST_V1',
+    campaign_id: manifest.campaignId,
+    remittance_item_ids: [phaseB.remittanceItemId],
+    daily_line_ids: [phaseB.dailyLineId],
+    daily_line_hashes: [phaseB.dailyLineHash],
+    expires_at: phaseB.expiresAt,
+  };
   return [
-    { actor: 'A', userId: manifest.operatorUserId, capability: 'ENTRY' },
-    { actor: 'B', userId: manifest.controllerUserId, capability: 'VALIDATE_REMITTANCE' },
-    { actor: 'B', userId: manifest.controllerUserId, capability: 'AUDIT' },
+    { actor: 'A', userId: manifest.operatorUserId, capability: 'PROPOSE_MATCH', scope },
+    { actor: 'B', userId: manifest.controllerUserId, capability: 'CONFIRM_MATCH', scope },
+    { actor: 'B', userId: manifest.controllerUserId, capability: 'AUDIT', scope: null },
   ];
 }
 

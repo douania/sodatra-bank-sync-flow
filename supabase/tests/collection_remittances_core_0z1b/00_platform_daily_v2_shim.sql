@@ -64,8 +64,23 @@ CREATE TABLE public.daily_statement_account_registry (
   status text NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive'))
 );
 
+CREATE TABLE public.daily_statement_export_attempts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid REFERENCES auth.users(id),
+  source_file_name_redacted text,
+  raw_text_hash text NOT NULL
+);
+
+CREATE TABLE public.daily_statement_units_staging (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  attempt_id uuid NOT NULL REFERENCES public.daily_statement_export_attempts(id),
+  status text NOT NULL DEFAULT 'promoted'
+);
+
 CREATE TABLE public.daily_statement_units_canonical (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  promoted_from_staging_unit_id uuid REFERENCES public.daily_statement_units_staging(id),
   bank text NOT NULL,
   account_fingerprint text NOT NULL,
   currency text NOT NULL,
@@ -94,7 +109,22 @@ CREATE TABLE public.daily_statement_lines_canonical (
 );
 
 GRANT SELECT ON public.daily_statement_account_registry,public.daily_statement_units_canonical,
-  public.daily_statement_lines_canonical TO authenticated,service_role;
+  public.daily_statement_lines_canonical,public.daily_statement_export_attempts,
+  public.daily_statement_units_staging TO authenticated,service_role;
+
+ALTER TABLE public.daily_statement_units_canonical ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.daily_statement_lines_canonical ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.daily_statement_export_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.daily_statement_units_staging ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY local_daily_units_read ON public.daily_statement_units_canonical FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(),'admin'::public.app_role) OR public.has_role(auth.uid(),'auditor'::public.app_role));
+CREATE POLICY local_daily_lines_read ON public.daily_statement_lines_canonical FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(),'admin'::public.app_role) OR public.has_role(auth.uid(),'auditor'::public.app_role));
+CREATE POLICY local_daily_attempts_read ON public.daily_statement_export_attempts FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(),'admin'::public.app_role) OR public.has_role(auth.uid(),'auditor'::public.app_role));
+CREATE POLICY local_daily_staging_read ON public.daily_statement_units_staging FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(),'admin'::public.app_role) OR public.has_role(auth.uid(),'auditor'::public.app_role));
 
 CREATE SCHEMA poc_test;
 CREATE OR REPLACE FUNCTION poc_test.assert(p_condition boolean,p_message text)

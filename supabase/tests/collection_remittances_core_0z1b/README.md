@@ -13,8 +13,9 @@ powershell -ExecutionPolicy Bypass -File supabase/tests/collection_remittances_c
 The runner creates one unexposed `postgres:17-alpine` container, applies the minimal
 Supabase/Daily v2 shape, reproduces the staging `service_role` default privilege,
 applies the Core migration followed by its additive privilege correction and all
-assertions, exercises a real two-session reservation race, then destroys the
-container in `finally`.
+assertions, exercises a real two-session reservation race, then applies the
+additive Phase B safe-read migration and its scoped matching scenarios. The
+container is destroyed in `finally`.
 
 Expected final markers:
 
@@ -25,5 +26,7 @@ Expected final markers:
 - `CONCURRENT_OVERRESERVATION_BLOCKED`
 - `CONCURRENCY_PASS`
 - `POST_NEGATIVE_PASS`
+- `PHASE_B_SAFE_READ_PASS`
+- `COLLECTION_PHASE_B_SAFE_READ_PG17_PASS`
 - `ALL_COLLECTION_REMITTANCES_CORE_0Z1B_PG17_PASS`
 - `DISPOSABLE_CONTAINER_REMOVED`
