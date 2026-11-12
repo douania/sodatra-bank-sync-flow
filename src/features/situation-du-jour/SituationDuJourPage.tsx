@@ -3,7 +3,8 @@ import type { ChangeEvent, ReactNode } from 'react';
 
 import { COLLECTION_CHECK_LABELS, COLLECTION_FILE_REASON_LABELS, COLLECTION_STATE_LABELS } from './collectionReading';
 import type { CollectionState } from './collectionReading';
-import { FUND_POSITION_INDICATOR_LABELS, FUND_POSITION_REASON_LABELS } from './fundPositionReading';
+import { FUND_POSITION_COMPARISON_REASON_LABELS, FUND_POSITION_INDICATOR_LABELS, FUND_POSITION_REASON_LABELS } from './fundPositionReading';
+import type { ComparisonReason } from './fundPositionReading';
 import { WORKBOOK_REASON_LABELS } from './monthlyWorkbook';
 import { SITUATION_AMBIGUITY_LABELS, SITUATION_FILE_KIND_LABELS } from './situationCompute';
 import type { SituationResult } from './situationCompute';
@@ -203,6 +204,9 @@ function FundPosition({ result }: { result: SituationResult }) {
   const differing = fundPosition.comparisons.filter((comparison) => comparison.status === 'DIFFERENT');
   const equal = fundPosition.comparisons.filter((comparison) => comparison.status === 'EQUAL').length;
   const notComparable = fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE').length;
+  const notComparableReasons = (Object.keys(FUND_POSITION_COMPARISON_REASON_LABELS) as ComparisonReason[])
+    .map((reason) => ({ reason, count: fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE' && comparison.reason === reason).length }))
+    .filter((entry) => entry.count > 0);
   return (
     <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date et la devise sont établies des deux côtés.">
       <p className="text-sm">
@@ -225,6 +229,9 @@ function FundPosition({ result }: { result: SituationResult }) {
         </tbody>
       </table>
       <p className="text-sm">Concordances : {equal} · Écarts : {differing.length} · Non comparables : {notComparable} · Cellules signalées : {fundPosition.reading.issues.length}</p>
+      {notComparableReasons.length > 0 ? (
+        <p className="text-sm text-muted-foreground">Non comparables, sans écart chiffré : {notComparableReasons.map((entry) => `${FUND_POSITION_COMPARISON_REASON_LABELS[entry.reason]} (${entry.count})`).join(' ; ')}</p>
+      ) : null}
       {differing.length > 0 ? (
         <table className="mt-2 w-full border-collapse">
           <thead><tr><th className={CELL}>Banque</th><th className={CELL}>Indicateur</th><th className={NUM}>Déclaré</th><th className={NUM}>Source</th><th className={NUM}>Écart</th></tr></thead>

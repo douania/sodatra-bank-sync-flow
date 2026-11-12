@@ -22,13 +22,15 @@ import {
   detectBankFromText,
   findDayFirstDateInText,
   hiddenSheetNames,
+  isCurrencyToken,
   normalizeLabel,
   readWorkbook,
   sheetNameToIso,
   sumAmounts,
+  tokenize,
   usefulBounds,
 } from './situationCore';
-import type { InMemoryFile, Sheet, SheetBounds, SituationBank } from './situationCore';
+import type { InMemoryFile, Sheet, SituationBank } from './situationCore';
 
 export type WorkbookReason =
   | 'WORKBOOK_UNREADABLE'
@@ -109,8 +111,8 @@ export interface WorkbookEncours {
   tabName: string | null;
   balanceDate: string | null;
   /**
-   * Devise ÉTABLIE par l'onglet retenu : écrite dans son en-tête et seule devise écrite dans tout
-   * l'onglet. `null` : aucune devise établie (absente, multiple, ou écrite seulement dans une ligne).
+   * Devise ÉTABLIE par l'onglet retenu : énoncée par une cellule de son en-tête et seule devise écrite
+   * dans tout l'onglet. `null` : aucune devise établie (absente, multiple, ou écrite seulement dans une ligne).
    */
   currency: string | null;
   ignoredFutureTabs: number;
@@ -174,24 +176,37 @@ function readTitleBank(sheet: Sheet): SituationBank | null {
   return hits.size === 1 ? Array.from(hits)[0] : null;
 }
 
+/** Mots admis autour de la devise dans la cellule d'en-tête qui l'énonce (« Devise : XOF », « Montants en FCFA »). */
+const CURRENCY_STATEMENT_WORDS: ReadonlySet<string> = new Set(['DEVISE', 'CURRENCY', 'MONNAIE', 'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'EN', 'IN']);
+/** Largeur lue pour chercher une devise contradictoire (au-delà des colonnes de montants). */
+const CURRENCY_SCAN_COLUMNS = 60;
+
+/** Devise ÉNONCÉE par une cellule : une seule devise, sans autre mot que des mots neutres ; sinon `null`. */
+function statedCurrency(text: string): string | null {
+  const currencies = currenciesInText(text);
+  if (currencies.length !== 1) return null;
+  return tokenize(text).every((token) => isCurrencyToken(token) || CURRENCY_STATEMENT_WORDS.has(token)) ? currencies[0] : null;
+}
+
 /**
- * Devise ÉTABLIE par l'onglet. Preuve stricte : la devise est écrite dans l'en-tête de l'onglet (au plus
- * tard sur la ligne d'ouverture). Refus large : toute autre devise écrite n'importe où dans l'onglet, par
- * son nom ou son symbole, retire la preuve. Un libellé de ligne (client, description) n'établit jamais la
- * devise ; il peut seulement la contredire.
+ * Devise ÉTABLIE par l'onglet. Preuve stricte : une cellule de l'en-tête de l'onglet (au plus tard sur la
+ * ligne d'ouverture) énonce la devise et rien d'autre. Refus large : toute autre devise écrite n'importe
+ * où dans l'onglet, par son nom ou son symbole, retire la preuve. Un nom propre de l'en-tête (« CFA
+ * MOTORS ») ou un libellé de ligne n'établit jamais la devise ; il peut seulement la contredire.
  */
-function readTabCurrency(sheet: Sheet, headerLastRow: number, bounds: SheetBounds): string | null {
-  const header = new Set<string>();
+function readTabCurrency(sheet: Sheet, headerLastRow: number): string | null {
+  const bounds = usefulBounds(sheet, 2_000, CURRENCY_SCAN_COLUMNS);
+  const stated = new Set<string>();
   const all = new Set<string>();
   for (let row = 1; row <= bounds.lastRow; row += 1) {
     for (let column = 1; column <= bounds.lastColumn; column += 1) {
-      for (const currency of currenciesInText(cellText(cellAt(sheet, row, column)))) {
-        all.add(currency);
-        if (row <= headerLastRow) header.add(currency);
-      }
+      const text = cellText(cellAt(sheet, row, column));
+      for (const currency of currenciesInText(text)) all.add(currency);
+      const currency = row <= headerLastRow ? statedCurrency(text) : null;
+      if (currency) stated.add(currency);
     }
   }
-  return header.size === 1 && all.size === 1 ? Array.from(header)[0] : null;
+  return stated.size === 1 && all.size === 1 ? Array.from(stated)[0] : null;
 }
 
 function readLine(sheet: Sheet, row: number, amount: number): WorkbookLine {
@@ -487,7 +502,7 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
     reason: null,
     tabName,
     balanceDate: accountingDate,
-    currency: readTabCurrency(sheet, openingRow, bounds),
+    currency: readTabCurrency(sheet, openingRow),
     ignoredFutureTabs,
     openingBalance: opening,
     totalBalanceA: totalA,

@@ -43,6 +43,8 @@ export function tokenize(value: string): string[] {
 
 const CURRENCY_TOKENS: Record<string, string> = {
   XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', EURO: 'EUR', EUROS: 'EUR', USD: 'USD', DOLLAR: 'USD', DOLLARS: 'USD', GBP: 'GBP',
+  // Autres codes reconnus : ils ne servent qu'à refuser (une seconde devise écrite retire toute preuve).
+  XAF: 'XAF', CHF: 'CHF', JPY: 'JPY', CNY: 'CNY', CAD: 'CAD', MAD: 'MAD', AED: 'AED', NGN: 'NGN', GHS: 'GHS', GNF: 'GNF', MRU: 'MRU', ZAR: 'ZAR',
 };
 const CURRENCY_SYMBOLS: Record<string, string> = { '€': 'EUR', $: 'USD', '£': 'GBP' };
 

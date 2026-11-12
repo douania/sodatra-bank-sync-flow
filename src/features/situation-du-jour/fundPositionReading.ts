@@ -95,6 +95,13 @@ export interface FundPositionReading {
 export type ComparisonStatus = 'EQUAL' | 'DIFFERENT' | 'NOT_COMPARABLE';
 export type ComparisonReason = 'SOURCE_UNAVAILABLE' | 'DECLARED_ABSENT' | 'DATE_NOT_COMPARABLE' | 'CURRENCY_NOT_COMPARABLE';
 
+export const FUND_POSITION_COMPARISON_REASON_LABELS: Record<ComparisonReason, string> = {
+  SOURCE_UNAVAILABLE: 'source vérifiée indisponible',
+  DECLARED_ABSENT: 'valeur déclarée absente',
+  DATE_NOT_COMPARABLE: 'date non établie ou différente',
+  CURRENCY_NOT_COMPARABLE: 'devise non établie ou différente',
+};
+
 export interface FundPositionComparison {
   bank: SituationBank;
   indicator: 'BANK_BALANCE_VS_STATEMENT' | 'BANK_BALANCE_VS_WORKBOOK' | 'FUND_APPLIED_VS_WORKBOOK' | 'NON_VALIDATED_VS_WORKBOOK';

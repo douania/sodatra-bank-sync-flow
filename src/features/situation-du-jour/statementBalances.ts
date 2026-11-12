@@ -4,9 +4,11 @@
 // du relevé est continue de bout en bout, que l'identité du compte et la
 // devise sont corroborées et que la journée est close. Tout autre cas est
 // affiché « à revoir » ou « indisponible », jamais additionné.
-// Une plage de dates écrite dans un relevé (« du … au … ») ne prouve jamais
-// la clôture ni la couverture d'une journée : elle peut être la borne
-// demandée à l'export, ou une tout autre mention datée.
+// Aucune date IMPRIMÉE par un relevé (plage « du … au … », période annoncée,
+// date du solde final en pied de relevé) ne prouve la clôture ni la
+// couverture d'une journée : elle peut être la borne demandée lors d'un
+// export fait avant la clôture, ou une tout autre mention datée. La seule
+// preuve est une journée ultérieure raccordée à la chaîne des soldes.
 import { parseStructuredBankStatementCsv } from '@/services/structuredBankStatementCsvParser';
 import type { StructuredBankStatementLine } from '@/services/structuredBankStatementCsvParser';
 import { parseStructuredBankStatementExcel } from '@/services/structuredBankStatementExcelParser';
@@ -65,7 +67,7 @@ export const BALANCE_REASON_LABELS: Record<BalanceReason, string> = {
   IDENTITY_NOT_CORROBORATED: 'Identité du compte non corroborée',
   CURRENCY_NOT_CORROBORATED: 'Devise non corroborée',
   DATE_NOT_COVERED: 'Date comptable non couverte par le relevé',
-  DAY_NOT_CLOSED: 'Clôture de la journée non prouvée par le relevé (ni opération d’un jour suivant, ni solde final daté après cette journée)',
+  DAY_NOT_CLOSED: 'Clôture de la journée non prouvée : le relevé ne porte aucune opération d’un jour suivant',
   BALANCE_CHAIN_BROKEN: 'Rupture dans la chaîne des soldes du relevé',
   CONFLICTING_STATEMENTS: 'Relevés contradictoires pour le même compte',
   SEVERAL_ACCOUNTS_FOR_BANK: 'Plusieurs relevés pour cette banque sans identité de compte commune',
@@ -344,8 +346,6 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
   let declaredPeriod: DeclaredPeriod | null = null;
   let headerEarliest: string | null = null;
   let headerLatest: string | null = null;
-  /** Date du solde final que le relevé CSV déclare lui-même (« Solde au <date> »), raccordé à la chaîne par le lecteur. */
-  let closedBefore: string | null = null;
   let periodStart: string | null = null;
   let periodEnd: string | null = null;
   let declaredOpening: number | null = null;
@@ -365,7 +365,6 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
       periodStart = frDateToIso(document.periodStart);
       periodEnd = frDateToIso(document.periodEnd);
       if (periodStart && periodEnd) declaredPeriod = { start: periodStart, end: periodEnd };
-      closedBefore = frDateToIso(document.statementDate);
       declaredOpening = typeof document.openingBalance === 'number' ? document.openingBalance : null;
       declaredClosing = typeof document.declaredClosingBalance === 'number' ? document.declaredClosingBalance : null;
     } else {
@@ -446,16 +445,12 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
     if (!coversLines) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
   }
 
-  // Journée close : la preuve vient du RELEVÉ lui-même, jamais du nom du fichier ni d'une plage de dates
-  // écrite dans son en-tête. Deux preuves seulement :
-  //  1. une journée ultérieure raccordée à la chaîne des soldes (tous formats) ;
-  //  2. CSV : le solde final que le relevé déclare lui-même « au <date> », raccordé à la chaîne par le
-  //     lecteur, à une date postérieure à D.
-  // La journée en cours n'est jamais close et une date future ne prouve rien.
-  if (closedBefore && closedBefore > today) closedBefore = null;
+  // Journée close : la preuve vient des OPÉRATIONS du relevé, jamais du nom du fichier ni d'une date que le
+  // relevé imprime (plage d'en-tête, période annoncée, date du solde final en pied de CSV) : rien n'établit
+  // qu'une telle date n'est pas la borne demandée lors d'un export fait avant la clôture de D. Une seule
+  // preuve : une journée ultérieure raccordée à la chaîne des soldes. La journée en cours n'est jamais close.
   const next = units.find((unit) => unit.date > accountingDate) ?? null;
-  const closedByStatedBalance = closedBefore !== null && accountingDate < closedBefore;
-  const dayClosed = accountingDate < today && (closedByStatedBalance || next !== null);
+  const dayClosed = accountingDate < today && next !== null;
   if (!dayClosed) refuse(evaluation, 'DAY_NOT_CLOSED');
 
   const unitAtDate = units.find((unit) => unit.date === accountingDate) ?? null;
@@ -465,19 +460,13 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
   if (unitAtDate) {
     amount = unitAtDate.closing;
     balanceDate = unitAtDate.date;
+  } else if (!previous || !next) {
+    // Jour sans mouvement : la clôture précédente n'est reportée que si une journée ultérieure raccordée à la
+    // chaîne encadre D. Aucune date imprimée par le relevé ne prouve la couverture.
+    refuse(evaluation, 'DATE_NOT_COVERED');
   } else {
-    // Jour sans mouvement : report de la clôture précédente seulement si la couverture de D est prouvée par
-    // les mêmes preuves que la clôture : une journée ultérieure raccordée à la chaîne, ou le solde final
-    // daté d'un CSV dont la période annoncée, si elle existe, englobe D.
-    const coveredByStatedBalance = closedByStatedBalance
-      && (declaredPeriod === null || (declaredPeriod.start <= accountingDate && accountingDate <= declaredPeriod.end));
-    const coveredByBracketing = previous !== null && next !== null;
-    if (!previous || (!coveredByStatedBalance && !coveredByBracketing)) {
-      refuse(evaluation, 'DATE_NOT_COVERED');
-    } else {
-      amount = previous.closing;
-      balanceDate = previous.date;
-    }
+    amount = previous.closing;
+    balanceDate = previous.date;
   }
 
   if (!evaluation.currencyProof) refuse(evaluation, 'CURRENCY_NOT_CORROBORATED');

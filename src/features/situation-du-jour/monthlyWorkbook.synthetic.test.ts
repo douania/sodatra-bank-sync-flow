@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { readMonthlyWorkbook } from './monthlyWorkbook';
-import { monthlyWorkbookBytes, sheetFromRows, tabName, workbookBytes } from './situationSyntheticFixtures';
+import { monthlyTabSheet, monthlyWorkbookBytes, sheetFromRows, tabName, workbookBytes } from './situationSyntheticFixtures';
 import type { SyntheticTab } from './situationSyntheticFixtures';
 
 const D = '2026-06-03';
@@ -56,13 +56,32 @@ test('devise du classeur : écrite dans l’en-tête de l’onglet et seule devi
   for (const [written, expected] of [['XOF', 'XOF'], ['FCFA', 'XOF'], ['EUR', 'EUR']]) {
     assert.equal(read([tab(D, name, { currency: written })]).currency, expected, written);
   }
-  // Écrite seulement dans une ligne (nom de client) : un libellé de ligne n'établit pas la devise.
-  const lineOnly = read([tab(D, name, { deposits: deposit('SYNTHETIC CFA CLIENT') })]);
-  assert.equal(lineOnly.available, true);
-  assert.equal(lineOnly.currency, null);
-  // En-tête en XOF, autre devise écrite dans une ligne : contradiction, devise non établie.
+  // Écrite seulement dans une ligne, même seule dans sa cellule et sur la ligne qui suit l'ouverture : une
+  // ligne n'établit pas la devise.
+  for (const client of ['SYNTHETIC CFA CLIENT', 'XOF', 'Devise XOF']) {
+    const lineOnly = read([tab(D, name, { depositSectionTitle: false, deposits: deposit(client) })]);
+    assert.equal(lineOnly.available, true, client);
+    assert.equal(lineOnly.currency, null, client);
+  }
+  // Un nom propre écrit dans l'en-tête n'énonce pas la devise ; une cellule d'en-tête qui l'énonce, si.
+  const titled = (title: string, extra: Partial<SyntheticTab> = {}) => {
+    const sheet = monthlyTabSheet(tab(D, name, extra));
+    sheet.F1 = { t: 's', v: title };
+    return readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet }]) }, D, TODAY);
+  };
+  assert.equal(titled('Client principal : CFA MOTORS').available, true);
+  assert.equal(titled('Client principal : CFA MOTORS').currency, null);
+  assert.equal(titled('Montants en FCFA').currency, 'XOF');
+  assert.equal(titled('Devise : XOF / EUR').currency, null);
+  // En-tête en XOF, autre devise écrite ailleurs dans l'onglet : contradiction, devise non établie.
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC EURO CLIENT') })]).currency, null);
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC CLIENT 100 $') })]).currency, null);
+  assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC XAF CLIENT') })]).currency, null);
+  assert.equal(titled('Taux CHF', { currency: 'XOF' }).currency, null);
+  const farColumn = monthlyTabSheet(tab(D, name, { currency: 'XOF' }));
+  farColumn.AB5 = { t: 's', v: 'USD' };
+  farColumn['!ref'] = 'A1:AB40';
+  assert.equal(readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet: farColumn }]) }, D, TODAY).currency, null);
   // La même devise répétée dans une ligne ne contredit rien.
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC FCFA CLIENT') })]).currency, 'XOF');
   // Classeur indisponible : aucune devise.

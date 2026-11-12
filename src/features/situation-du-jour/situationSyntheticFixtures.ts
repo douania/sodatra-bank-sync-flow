@@ -90,8 +90,6 @@ export interface SyntheticCsvOptions {
   declaredClosingOverride?: number;
   /** Fausse le solde initial déclaré (la chaîne ne se raccorde plus). */
   declaredOpeningOverride?: number;
-  /** Date du solde final déclaré en pied de relevé (par défaut la fin de la période annoncée). */
-  closingDate?: string;
 }
 
 /** Relevé CSV de la famille BDK / ORABANK (point-virgule, Windows-1252, ASCII seulement ici). */
@@ -115,7 +113,7 @@ export function csvStatementBytes(options: SyntheticCsvOptions): ArrayBuffer {
     "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
     ...lines,
     `;;Total;${debits};${credits};`,
-    `;;Solde (XOF) au ${fr(options.closingDate ?? options.periodEnd)} : ${options.declaredClosingOverride ?? balance};;;`,
+    `;;Solde (XOF) au ${fr(options.periodEnd)} : ${options.declaredClosingOverride ?? balance};;;`,
   ].join('\r\n');
   const bytes = new Uint8Array(text.length);
   for (let index = 0; index < text.length; index += 1) bytes[index] = text.charCodeAt(index) & 0xff;

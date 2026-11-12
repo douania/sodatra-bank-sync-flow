@@ -31,7 +31,7 @@ function bdkBalances() {
     attestation: { identityAttested: true },
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
-      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }, { date: '2026-06-04', amount: 5 }],
     }),
   }, D, TODAY)]);
 }

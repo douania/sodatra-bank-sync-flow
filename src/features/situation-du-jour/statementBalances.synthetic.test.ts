@@ -19,7 +19,8 @@ function bdk(name = 'SYNTHETIC BDK ONLINE.csv', closingShift = 0, accountSuffix?
     attestation: attestation ?? undefined,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, accountSuffix,
-      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 + closingShift }],
+      // La ligne du 04/06, raccordée à la chaîne, est la preuve de clôture de D.
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 + closingShift }, { date: '2026-06-04', amount: 5 }],
     }),
   };
 }
@@ -161,7 +162,7 @@ test('journée non close : jour du relevé, jour en cours, ligne datée après a
   assert.equal(lineAfterToday.admissible, false);
   assert.equal(lineAfterToday.amount, null);
   assert.deepEqual(lineAfterToday.reasons, ['STATEMENT_NEEDS_REVIEW']);
-  // CSV dont le solde final est daté après aujourd'hui : une date future ne prouve aucune clôture.
+  // CSV dont la période annoncée et le solde final sont datés après aujourd'hui : aucune clôture n'en découle.
   const futureStatedBalance = evaluate({
     name: 'SYNTHETIC BDK ONLINE.csv',
     attestation: ATTESTED,
@@ -214,7 +215,7 @@ test('ligne antidatée, solde déclaré faux, soldes courants absents : relevé 
     attestation: ATTESTED,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, ...overrides,
-      movements: [{ date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
+      movements: [{ date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }, { date: '2026-06-04', amount: 5 }],
     }),
   });
   assert.equal(csv({}).admissible, true);
@@ -367,7 +368,7 @@ test('relevé CSV : la période déclarée doit être ordonnée et englober les 
     attestation: ATTESTED,
     bytes: csvStatementBytes({ periodStart, periodEnd, opening: 1000, movements }),
   });
-  const moves = [{ date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }];
+  const moves = [{ date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }, { date: '2026-06-04', amount: 5 }];
   assert.equal(csv('2026-06-01', '2026-06-04', moves).admissible, true);
   // Lignes étalées sur plus de 45 jours sous une période déclarée de quatre jours.
   const spread = csv('2026-06-01', '2026-06-04', [{ date: '2026-01-05', amount: 10 }, ...moves]);
@@ -440,7 +441,7 @@ test('deux comptes qui ne partagent que leurs derniers chiffres restent deux com
     attestation: ATTESTED,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, withIban: false,
-      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }, { date: '2026-06-04', amount: 5 }],
     }),
   };
   const twoExports = [evaluate(bdk()), evaluate(withoutIban)];
@@ -474,7 +475,7 @@ test('même relevé déposé sous deux banques : aucun des deux n’est compté'
   const ora: StatementInput = {
     name: 'SYNTHETIC ORA ONLINE.csv',
     attestation: ATTESTED,
-    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 300, accountSuffix: '11', movements: [{ date: D, amount: 25 }] }),
+    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 300, accountSuffix: '11', movements: [{ date: D, amount: 25 }, { date: '2026-06-04', amount: 1 }] }),
   };
   assert.equal(consolidateBalances(buildAccountBalances([evaluate(bdk()), evaluate(ora)]))[0].amount, 1050 + 325);
 });
@@ -531,27 +532,30 @@ test('jour sans mouvement : report seulement si la couverture est prouvée', () 
   assert.equal(carried.amount, 460);
   assert.equal(carried.balanceDate, '2026-06-01');
 
-  // CSV sans ligne postérieure à D : le solde final que le relevé déclare « au 04/06 », raccordé à la chaîne,
-  // couvre et clôt D.
-  const statedCsv = (extra: { periodEnd?: string; closingDate?: string }) => evaluate({
+  // CSV sans ligne postérieure à D : ni la période annoncée ni la date du solde final imprimée en pied de
+  // relevé ne prouvent la clôture ou la couverture. L'une et l'autre peuvent être la borne demandée lors
+  // d'un export fait avant la clôture de D, que le calcul soit fait le lendemain ou un mois plus tard.
+  const requested = (periodEnd: string, movements: SyntheticMovement[], today = TODAY) => evaluate({
     name: 'SYNTHETIC ORA ONLINE.csv',
     attestation: ATTESTED,
-    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 400, movements: [{ date: '2026-06-01', amount: 60 }], ...extra }),
-  });
-  const stated = statedCsv({});
-  assert.equal(stated.admissible, true);
-  assert.equal(stated.amount, 460);
-  assert.equal(stated.balanceDate, '2026-06-01');
-  // Le même relevé dont le solde final est daté de D : la période annoncée, seule, ne prouve ni la clôture ni la couverture.
-  const statedAtD = statedCsv({ closingDate: D });
-  assert.equal(statedAtD.admissible, false);
-  assert.equal(statedAtD.amount, null);
-  assert.deepEqual(statedAtD.reasons, ['DAY_NOT_CLOSED', 'DATE_NOT_COVERED']);
-  // Solde final daté après D sous une période annoncée qui s'arrête avant D : document contradictoire, D n'est pas couverte.
-  const contradictory = statedCsv({ periodEnd: '2026-06-02', closingDate: '2026-06-04' });
-  assert.equal(contradictory.admissible, false);
-  assert.equal(contradictory.amount, null);
-  assert.ok(contradictory.reasons.includes('DATE_NOT_COVERED'));
+    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd, opening: 400, movements }),
+  }, D, today);
+  const upToD = [{ date: '2026-06-01', amount: 60 }, { date: D, amount: 10 }];
+  for (const [periodEnd, today] of [['2026-06-04', TODAY], ['2026-06-30', '2026-07-08']]) {
+    const open = requested(periodEnd, upToD, today);
+    assert.equal(open.admissible, false, periodEnd);
+    assert.equal(open.amount, null, periodEnd);
+    assert.deepEqual(open.reasons, ['DAY_NOT_CLOSED'], periodEnd);
+    const quiet = requested(periodEnd, [{ date: '2026-06-01', amount: 60 }], today);
+    assert.equal(quiet.admissible, false, periodEnd);
+    assert.equal(quiet.amount, null, periodEnd);
+    assert.deepEqual(quiet.reasons, ['DAY_NOT_CLOSED', 'DATE_NOT_COVERED'], periodEnd);
+  }
+  // Témoin positif : la même forme avec une opération d'un jour suivant, raccordée à la chaîne.
+  const closedCsv = requested('2026-06-04', [...upToD, { date: '2026-06-04', amount: 1 }]);
+  assert.equal(closedCsv.admissible, true);
+  assert.equal(closedCsv.amount, 470);
+  assert.equal(closedCsv.balanceDate, D);
 
   // Excel : sans ligne postérieure à D, le report n'est pas prouvé, avec ou sans plage de dates dans l'en-tête.
   const single = [{ date: '2026-06-01', amount: 300 }];

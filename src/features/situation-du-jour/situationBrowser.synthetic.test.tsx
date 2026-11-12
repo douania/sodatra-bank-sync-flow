@@ -183,7 +183,7 @@ function syntheticFiles() {
   const made = [
     { name: '040626 SYNTHETIC BDK ONLINE.csv', bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
-      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }],
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }, { date: '2026-06-04', amount: 5 }],
     }) },
     { name: '040626 SYNTHETIC ATB ONLINE.xls', bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES }) },
     { name: 'SYNTHETIC BDK 2026.xlsx', bytes: monthlyWorkbookBytes([{
