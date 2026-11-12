@@ -187,7 +187,7 @@ test('montant négatif ou numéro de chèque nul : jamais une entrée attendue',
   const row = (amount: number, instrument: number): SyntheticCollectionRow => ({
     date: '2026-06-02', instrument, clientBank: 'SYNTHBANK N', client: 'SYNTHETIC CLIENT N', amount, depositBank: 'BICIS',
   });
-  const reading = readCollectionReport(collectionReportBytes([row(-500, 4447001), row(300, 0)]));
+  const reading = readCollectionReport(collectionReportBytes([row(-500, 4447001), row(300, 0), row(0, 4447003)]));
   // Le classeur porte les mêmes écritures : un montant négatif et un numéro de chèque nul.
   const workbook = bicisWorkbook([
     { number: 4447001, client: 'SYNTHETIC CLIENT N', amount: -500 },
@@ -196,10 +196,12 @@ test('montant négatif ou numéro de chèque nul : jamais une entrée attendue',
   assert.equal(workbook.available, true);
   assert.equal(workbook.deposits.available, true);
   const rows = classify(reading.rows, [workbook]);
-  assert.deepEqual(rows.map((entry) => entry.state), ['A_VERIFIER', 'A_VERIFIER']);
-  assert.deepEqual(rows.map((entry) => entry.checkReason), ['AMOUNT_NOT_POSITIVE', 'NO_DEPOSIT_PROOF']);
+  assert.deepEqual(rows.map((entry) => entry.state), ['A_VERIFIER', 'A_VERIFIER', 'A_VERIFIER']);
+  assert.deepEqual(rows.map((entry) => entry.checkReason), ['AMOUNT_NOT_POSITIVE', 'NO_DEPOSIT_PROOF', 'AMOUNT_NOT_POSITIVE']);
   const summary = summarizeCollections(rows, D);
   assert.equal(summary.expectedInflowsTotal, 0);
+  // Le montant « à vérifier » ne compense jamais une ligne positive par une ligne négative.
+  assert.equal(summary.toVerifyAmount, 300);
   assert.deepEqual(summary.expectedInflows, []);
 });
 

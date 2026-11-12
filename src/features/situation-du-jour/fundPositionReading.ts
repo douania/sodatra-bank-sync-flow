@@ -15,6 +15,7 @@ import {
   cellIsoDate,
   findDatesInText,
   hiddenSheetNames,
+  isMonthName,
   normalizeLabel,
   plainUpper,
   readWorkbook,
@@ -125,46 +126,60 @@ function unavailable(reason: FundPositionReason): FundPositionReading {
   };
 }
 
-const CURRENCY_TOKENS: Record<string, string> = { XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', USD: 'USD', GBP: 'GBP' };
+const CURRENCY_TOKENS: Record<string, string> = {
+  XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', EURO: 'EUR', EUROS: 'EUR', USD: 'USD', DOLLAR: 'USD', DOLLARS: 'USD', GBP: 'GBP',
+};
+const CURRENCY_SYMBOLS: Record<string, string> = { '€': 'EUR', $: 'USD', '£': 'GBP' };
 
-/** Mots qui peuvent accompagner la date de référence dans sa cellule sans la rendre douteuse. */
+/** Mots qui peuvent accompagner la date de référence sans la rendre douteuse. */
 const REFERENCE_NEUTRAL_WORDS: ReadonlySet<string> = new Set([
-  'DATE', 'AU', 'DU', 'LE', 'EN', 'AS', 'AT', 'OF', 'ON', 'SITUATION', 'POSITION', 'FUND', 'ARRETE', 'ARRETEE', 'DAILY', 'REPORT', 'JOUR',
+  'DATE', 'AU', 'DU', 'LE', 'EN', 'AS', 'AT', 'OF', 'ON', 'SITUATION', 'POSITION', 'FUND', 'ARRETE', 'ARRETEE', 'DAILY', 'REPORT',
   'DEVISE', 'CURRENCY',
 ]);
 
+const REFERENCE_SCAN_ROWS = 200;
+const REFERENCE_SCAN_COLUMNS = 60;
+
+function onlyNeutralWords(text: string): boolean {
+  return tokenize(text).every((token) => REFERENCE_NEUTRAL_WORDS.has(token) || CURRENCY_TOKENS[token] !== undefined);
+}
+
 /**
- * Date de référence et devise établies PAR LE DOCUMENT. La date est cherchée
- * dans les cellules situées jusqu'à la ligne d'en-tête comprise, sous toutes
- * les écritures lisibles ; elle n'est retenue que si elle est la SEULE date de
- * cette zone et si sa cellule ne dit rien d'autre (une date d'impression, une
- * période ou une date annotée rendent la référence douteuse). La devise doit
- * être la seule devise écrite dans tout l'onglet. À défaut, la valeur reste
- * `null` : la Fund Position est affichée comme référence lue, sans écart chiffré.
+ * Date de référence et devise établies PAR LE DOCUMENT, cherchées dans TOUT
+ * l'onglet. La date n'est retenue que si elle est la seule date écrite, sous
+ * toutes les écritures lisibles, et si rien ne la rend douteuse : pas d'autre
+ * mot que des mots neutres dans sa cellule ni dans la cellule de libellé à sa
+ * gauche (« Imprimé le », « Prochaine revue »), pas de fragment de date non lu
+ * ailleurs (« 2 juin » sans année). La devise doit être la seule devise écrite.
+ * À défaut, la valeur reste `null` : la Fund Position est affichée comme
+ * référence lue, sans écart chiffré.
  */
-function readDocumentReference(
-  sheet: Sheet, headerRow: number, lastRow: number, lastColumn: number,
-): { referenceDate: string | null; currency: string | null } {
+function readDocumentReference(sheet: Sheet): { referenceDate: string | null; currency: string | null } {
+  const bounds = usefulBounds(sheet, REFERENCE_SCAN_ROWS, REFERENCE_SCAN_COLUMNS);
   const dates = new Set<string>();
   const currencies = new Set<string>();
   let doubtfulDate = false;
-  for (let row = 1; row <= lastRow; row += 1) {
-    for (let column = 1; column <= lastColumn; column += 1) {
+  for (let row = 1; row <= bounds.lastRow; row += 1) {
+    for (let column = 1; column <= bounds.lastColumn; column += 1) {
       const cell = cellAt(sheet, row, column);
-      const inReferenceZone = row <= headerRow;
-      const date = inReferenceZone ? cellIsoDate(cell) : null;
-      if (date) dates.add(date);
+      const cellDate = cellIsoDate(cell);
       const text = cellText(cell);
-      if (!text) continue;
-      for (const token of tokenize(text)) if (CURRENCY_TOKENS[token]) currencies.add(CURRENCY_TOKENS[token]);
-      if (!inReferenceZone) continue;
-      const written = findDatesInText(text);
-      if (written.length === 0) continue;
-      for (const entry of written) dates.add(entry.iso);
+      if (text) {
+        for (const token of tokenize(text)) if (CURRENCY_TOKENS[token]) currencies.add(CURRENCY_TOKENS[token]);
+        for (const symbol of Object.keys(CURRENCY_SYMBOLS)) if (text.includes(symbol)) currencies.add(CURRENCY_SYMBOLS[symbol]);
+      }
+      const written = cellDate ? [] : findDatesInText(text);
       let rest = plainUpper(text);
       for (const entry of [...written].reverse()) rest = `${rest.slice(0, entry.index)} ${rest.slice(entry.index + entry.length)}`;
-      const onlyNeutralWords = tokenize(rest).every((token) => REFERENCE_NEUTRAL_WORDS.has(token) || CURRENCY_TOKENS[token] !== undefined);
-      if (written.length > 1 || !onlyNeutralWords) doubtfulDate = true;
+      // Fragment de date non lu (mois sans année, « JJ/MM » isolé) : la référence ne peut plus être tenue pour unique.
+      if (tokenize(rest).some(isMonthName) || /(?<![0-9])\d{1,2}\/\d{1,2}(?![0-9])/.test(rest)) doubtfulDate = true;
+      if (!cellDate && written.length === 0) continue;
+      if (cellDate) dates.add(cellDate);
+      for (const entry of written) dates.add(entry.iso);
+      const leftLabel = column > 1 ? cellText(cellAt(sheet, row, column - 1)) : '';
+      if (written.length > 1 || written.some((entry) => entry.precision !== 'DAY') || !onlyNeutralWords(rest) || !onlyNeutralWords(leftLabel)) {
+        doubtfulDate = true;
+      }
     }
   }
   return {
@@ -238,7 +253,7 @@ export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, tod
   if (!header) {
     return { ...unavailable('HEADER_NOT_FOUND'), tabName: tab.name, tabDate: tab.date };
   }
-  const reference = readDocumentReference(sheet, header.row, bounds.lastRow, bounds.lastColumn);
+  const reference = readDocumentReference(sheet);
   const dateComparable = reference.referenceDate !== null && reference.referenceDate === accountingDate;
   const positionColumn = header.columns.nonValidatedDeposit + 1;
   const issues: FundPositionIssue[] = [];

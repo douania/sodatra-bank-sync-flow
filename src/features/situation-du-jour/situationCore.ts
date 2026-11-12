@@ -144,30 +144,43 @@ const MONTH_NAMES: Record<string, number> = {
   NOV: 11, NOVEMBRE: 11, NOVEMBER: 11, DEC: 12, DECEMBRE: 12, DECEMBER: 12,
 };
 
-export interface DateInText { index: number; length: number; iso: string }
+export interface DateInText {
+  index: number;
+  length: number;
+  iso: string;
+  /** `MONTH` : seuls le mois et l'année sont écrits (le premier jour est retenu, jamais comme preuve). */
+  precision: 'DAY' | 'MONTH';
+}
 
 /** Texte sans accents, en majuscules : repère commun des positions rendues par `findDatesInText`. */
 export function plainUpper(text: string): string {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 }
 
+/** Vrai si le jeton (sans accents, en majuscules) est un nom de mois français ou anglais, abrégé ou non. */
+export function isMonthName(token: string): boolean {
+  return MONTH_NAMES[token] !== undefined;
+}
+
 /**
  * TOUTES les dates lisibles dans un texte libre, dans l'ordre d'écriture :
- * « AAAA-MM-JJ », « J/M/AA(AA) » (séparateur /, . ou -, jour en premier) et
- * « J[er] mois AAAA » (mois français ou anglais, abrégé ou non). Lecture
- * volontairement large : elle sert à refuser une référence ambiguë, jamais à
- * prouver seule une date.
+ * « AAAA-MM-JJ » (séparateur -, / ou .), « J/M/AA(AA) » (jour en premier),
+ * « J[er] mois AAAA », « mois J, AAAA », « mois AAAA » (précision au mois,
+ * premier jour retenu) et, quand une date complète suit dans le même texte,
+ * « J/M » ou « J mois » sans année (l'année de la date suivante est reprise).
+ * Lecture volontairement large : elle sert à REFUSER (limite quotidienne,
+ * référence douteuse). Une preuve exige en plus une formule stricte autour des dates.
  */
 export function findDatesInText(text: string): DateInText[] {
   const plain = plainUpper(text);
   const found: DateInText[] = [];
   const taken = (index: number, length: number) => found.some((entry) => index < entry.index + entry.length && entry.index < index + length);
-  const keep = (index: number, length: number, iso: string | null) => {
-    if (iso && !taken(index, length)) found.push({ index, length, iso });
+  const keep = (index: number, length: number, iso: string | null, precision: DateInText['precision'] = 'DAY') => {
+    if (iso && !taken(index, length)) found.push({ index, length, iso, precision });
   };
-  const isoPattern = /(?<![0-9])(\d{4})-(\d{2})-(\d{2})(?![0-9])/g;
+  const isoPattern = /(?<![0-9])(\d{4})([-/.])(\d{2})\2(\d{2})(?![0-9])/g;
   for (let match = isoPattern.exec(plain); match; match = isoPattern.exec(plain)) {
-    keep(match.index, match[0].length, toIso(Number(match[1]), Number(match[2]), Number(match[3])));
+    keep(match.index, match[0].length, toIso(Number(match[1]), Number(match[3]), Number(match[4])));
   }
   const numeric = /(?<![0-9])(\d{1,2})([/.-])(\d{1,2})\2(\d{4}|\d{2})(?![0-9])/g;
   for (let match = numeric.exec(plain); match; match = numeric.exec(plain)) {
@@ -178,6 +191,33 @@ export function findDatesInText(text: string): DateInText[] {
   for (let match = literal.exec(plain); match; match = literal.exec(plain)) {
     const month = MONTH_NAMES[match[2]];
     keep(match.index, match[0].length, month ? toIso(Number(match[3]), month, Number(match[1])) : null);
+  }
+  const monthFirst = /(?<![A-Z])([A-Z]{3,9})\.?\s+(\d{1,2})(?:ST|ND|RD|TH)?,?\s+(\d{4})(?![0-9])/g;
+  for (let match = monthFirst.exec(plain); match; match = monthFirst.exec(plain)) {
+    const month = MONTH_NAMES[match[1]];
+    keep(match.index, match[0].length, month ? toIso(Number(match[3]), month, Number(match[2])) : null);
+  }
+  const monthYear = /(?<![A-Z])([A-Z]{3,9})\.?\s+(\d{4})(?![0-9])/g;
+  for (let match = monthYear.exec(plain); match; match = monthYear.exec(plain)) {
+    const month = MONTH_NAMES[match[1]];
+    keep(match.index, match[0].length, month ? toIso(Number(match[2]), month, 1) : null, 'MONTH');
+  }
+  // Dates sans année : lues seulement si une date complète suit dans le même texte, dont l'année est reprise.
+  const dated = [...found].sort((a, b) => a.index - b.index);
+  const yearAfter = (index: number): number | null => {
+    const next = dated.find((entry) => entry.index > index);
+    return next ? Number(next.iso.slice(0, 4)) : null;
+  };
+  const shortNumeric = /(?<![0-9/.-])(\d{1,2})\/(\d{1,2})(?![0-9/.-])/g;
+  for (let match = shortNumeric.exec(plain); match; match = shortNumeric.exec(plain)) {
+    const year = yearAfter(match.index);
+    keep(match.index, match[0].length, year ? toIso(year, Number(match[2]), Number(match[1])) : null);
+  }
+  const shortLiteral = /(?<![0-9])(\d{1,2})(?:ER)?\s+([A-Z]{3,9})(?![A-Z])/g;
+  for (let match = shortLiteral.exec(plain); match; match = shortLiteral.exec(plain)) {
+    const month = MONTH_NAMES[match[2]];
+    const year = yearAfter(match.index);
+    keep(match.index, match[0].length, month && year ? toIso(year, month, Number(match[1])) : null);
   }
   return found.sort((a, b) => a.index - b.index);
 }

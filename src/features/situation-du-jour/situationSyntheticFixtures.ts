@@ -84,6 +84,8 @@ export interface SyntheticCsvOptions {
   accountSuffix?: string;
   /** Début du numéro de compte (deux comptes peuvent ne différer que par là). */
   accountPrefix?: string;
+  /** `false` : le relevé ne porte pas de ligne IBAN. */
+  withIban?: boolean;
   /** Fausse le solde final déclaré (le lecteur doit alors demander une revue). */
   declaredClosingOverride?: number;
   /** Fausse le solde initial déclaré (la chaîne ne se raccorde plus). */
@@ -106,7 +108,7 @@ export function csvStatementBytes(options: SyntheticCsvOptions): ArrayBuffer {
     'EXTRAIT DE COMPTE;;;;;',
     `Periode du;${fr(options.periodStart)};au;${fr(options.periodEnd)};;`,
     options.withAccount === false ? ';;;;;' : `Numero de compte;${options.accountPrefix ?? '01401'}-00000000000-${options.accountSuffix ?? '00'} XOF;;;;`,
-    'Code IBAN;SN00SN0000000000000000000000;;;;',
+    options.withIban === false ? ';;;;;' : 'Code IBAN;SN00SN0000000000000000000000;;;;',
     `;;Solde initial (XOF) : ${options.declaredOpeningOverride ?? options.opening};;;`,
     "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
     ...lines,

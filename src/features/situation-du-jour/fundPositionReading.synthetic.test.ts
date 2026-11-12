@@ -187,6 +187,12 @@ test('date de référence : une seule date, écrite sans autre mention, sinon au
     ['situation en écriture ISO et date isolée à D', { dateText: 'Situation au 2026-06-02', currency: 'XOF', texts: ['03/06/26'] }],
     ['seule date du document, mais annotée', { currency: 'XOF', texts: ['Prochaine revue 03/06/2026'] }],
     ['date de D en cellule et date d’impression identique', { date: D, currency: 'XOF', texts: ['Imprimé le 03/06/2026'] }],
+    ['seule date du document, libellée « Imprimé le » dans la cellule voisine', { currency: 'XOF', texts: ['Imprimé le', '03/06/2026'] }],
+    ['situation sans année, autre date à D', { dateText: 'Situation au 02 juin', currency: 'XOF', texts: ['', '03/06/2026'] }],
+    ['situation en écriture anglaise, autre date à D', { dateText: 'As at June 2, 2026', currency: 'XOF', texts: ['', '03/06/2026'] }],
+    ['« date du jour » n’est pas une date de situation', { dateText: 'Date du jour : 03/06/2026', currency: 'XOF' }],
+    ['mois et année seulement, autre date à D', { dateText: 'Juin 2026', currency: 'XOF', texts: ['', '03/06/2026'] }],
+    ['seconde date au-delà de la colonne P', { date: D, currency: 'XOF', texts: ['', '', '', '', '', '02/06/2026'] }],
   ];
   const balances = bdkBalances();
   const workbook = bdkWorkbook();
@@ -200,6 +206,19 @@ test('date de référence : une seule date, écrite sans autre mention, sinon au
       assert.equal(comparison.delta, null, label);
     }
   }
+  // Un mois et une année ne désignent aucun jour, même quand D est le premier du mois.
+  const monthOnly = reading([{ name: tabName('2026-06-02'), rows: ROWS, reference: { dateText: 'Juin 2026', currency: 'XOF' } }], '2026-06-01');
+  assert.equal(monthOnly.available, true);
+  assert.equal(monthOnly.referenceDate, null);
+  assert.equal(monthOnly.dateComparable, false);
+  assert.equal(reading([{ name: tabName('2026-06-02'), rows: ROWS, reference: { dateText: '01/06/2026', currency: 'XOF' } }], '2026-06-01').dateComparable, true);
+  // Une autre date écrite SOUS la ligne d'en-tête, sur la ligne d'une banque : la référence n'est plus unique.
+  const below = reading([{
+    name: tabName('2026-06-04'), reference: AT_D,
+    rows: ROWS.map((row) => (row.label === 'BDK' ? { ...row, note: 'Situation au 02/06/2026' } : row)),
+  }]);
+  assert.equal(below.referenceDate, null);
+  assert.equal(below.dateComparable, false);
 });
 
 test('devise : une seule devise écrite dans tout l’onglet, sinon aucune comparaison', () => {
@@ -210,6 +229,7 @@ test('devise : une seule devise écrite dans tout l’onglet, sinon aucune compa
   const cases: Array<[string, FundTab]> = [
     ['seconde devise écrite dans l’en-tête', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['USD'] } }],
     ['autre devise écrite sur la ligne d’une banque', { name: tabName('2026-06-04'), rows: withNote('USD'), reference: AT_D }],
+    ['autre devise écrite par son symbole', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['Montants en €'] } }],
   ];
   for (const [label, tab] of cases) {
     const fund = reading([tab]);

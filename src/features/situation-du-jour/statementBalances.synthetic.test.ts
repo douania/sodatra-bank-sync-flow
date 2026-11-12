@@ -225,6 +225,21 @@ test('limite quotidienne : une période de plus de 45 jours exclut le relevé, q
     ['formule « du … au … » interrompue par une mention', { headerText: 'Relevé du 01/01/2026 (inclus) au 04/06/2026' }],
     ['deux annonces contradictoires dont une longue', { headerCells: ['Du 01/06/2026 au 04/06/2026', LONG] }],
     ['annonce à trois dates', { headerText: 'Période du 01/01/2026 au 04/06/2026, édité le 04/06/2026' }],
+    ['première date sans année, en lettres', { headerText: 'Période du 1er janvier au 4 juin 2026' }],
+    ['première date sans année, en chiffres', { headerText: 'Du 01/01 au 04/06/2026' }],
+    ['date de début et date de fin sur deux lignes', { titleCells: ['Date début', '01/01/2026'], headerCells: ['Date fin', '04/06/2026'] }],
+    ['début et fin dans une seule cellule', { headerText: 'Date début : 01/01/2026 ; date fin : 04/06/2026' }],
+    ['mois et année seulement', { headerText: 'Période : janvier 2026 à juin 2026' }],
+    ['année en premier, séparée par des barres', { headerText: 'Du 2026/01/01 au 2026/06/04' }],
+    ['écriture anglaise', { headerText: 'From January 1, 2026 to June 4, 2026' }],
+    ['formule « entre … et … »', { headerText: 'Opérations entre le 01/01/2026 et le 04/06/2026' }],
+    ['préambule portant référence, date et solde', { titleCells: ['Référence relevé', 'Date édition', 'Solde initial'], headerText: LONG }],
+    ['préambule en une seule cellule', { titleCells: ['Date et solde de référence'], headerText: LONG }],
+    // Refus prudent assumé : toute date de l'en-tête éloignée des lignes exclut le relevé, même sans rapport avec la période.
+    ['date ancienne sans rapport avec la période', { headerText: 'Compte ouvert le 15/01/2019' }],
+    ['date d’édition très postérieure aux lignes', { headerText: 'Edité le 15/09/2026' }],
+    // Période écrite sous une première ligne ressemblant à un en-tête d'opérations : elle compte pour le refus.
+    ['période longue sous un faux en-tête d’opérations', { titleCells: ['Date', 'Montant', 'Solde'], headerText: LONG }],
   ];
   for (const [label, extra] of cases) {
     const evaluation = withHeader(extra);
@@ -242,7 +257,10 @@ test('période déclarée ambiguë ou mal formée : elle ne prouve aucune clôtu
     bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, headerCells }),
   });
   // Témoins : une annonce unique, écrite en entier, sur deux chiffres d'année ou répétée à l'identique.
-  for (const cells of [['Du 01/06/2026 au 04/06/2026'], ['Du 01/06/26 au 04/06/26'], ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026']]) {
+  for (const cells of [
+    ['Du 01/06/2026 au 04/06/2026'], ['Du 01/06/26 au 04/06/26'], ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026'],
+    ['Période', 'Du', '01/06/2026', 'Au', '04/06/2026'], ['Période : du 1er juin au 4 juin 2026'],
+  ]) {
     assert.equal(withCells(cells).admissible, true, cells.join(' | '));
   }
   for (const cells of [
@@ -255,6 +273,69 @@ test('période déclarée ambiguë ou mal formée : elle ne prouve aucune clôtu
     assert.equal(evaluation.amount, null, cells.join(' | '));
     assert.deepEqual(evaluation.reasons, ['DAY_NOT_CLOSED'], cells.join(' | '));
   }
+});
+
+test('une mention datée qui n’est pas une période ne prouve ni clôture ni couverture', () => {
+  // Dernière ligne à D : seule une formule de période stricte, écrite dans le relevé, peut clore la journée.
+  const withHeader = (extra: { headerText?: string; headerCells?: string[] }, movements = ATB_MOVES, date = D) => evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements, ...extra }),
+  }, date);
+  // Témoin : la formule stricte prouve la clôture.
+  assert.equal(withHeader({ headerText: 'Du 02/06/2026 au 04/06/2026' }).admissible, true);
+  // Témoins : un préambule sans montant, ou tenu dans une seule cellule, n'est pas l'en-tête des opérations ;
+  // la formule stricte écrite dessous reste donc lue comme preuve.
+  for (const titleCells of [['Référence relevé', 'Date édition', 'Solde initial'], ['Date, montant et solde de référence']]) {
+    const preamble = evaluate({
+      name: 'SYNTHETIC ATB ONLINE.xls',
+      attestation: ATTESTED,
+      bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells, headerText: 'Du 02/06/2026 au 04/06/2026' }),
+    });
+    assert.equal(preamble.admissible, true, titleCells.join(' | '));
+    assert.equal(preamble.amount, 5180, titleCells.join(' | '));
+  }
+  const traps: Array<{ headerText?: string; headerCells?: string[] }> = [
+    { headerText: 'Relevé de compte au 03/06/2026, prochain arrêté 04/06/2026' },
+    { headerText: 'Extrait de compte - solde au 03/06/2026 - date de valeur 04/06/2026' },
+    { headerText: 'Date opération - date valeur : 03/06/2026 - 04/06/2026' },
+    { headerText: 'Solde de la veille 02/06/2026 ; mise à jour prévue au 04/06/2026' },
+    { headerCells: ['Date de valeur', '02/06/2026', 'Echéance au', '04/06/2026'] },
+    { headerText: 'Réf. dossier 02-06-26 - 04-06-26' },
+    { headerText: 'Extrait de compte généré le 02/06/2026 ; validité du code au 04/06/2026' },
+    { headerCells: ['Date de dernière connexion', '02/06/2026', 'Session valable jusqu’au', '04/06/2026'] },
+    { headerText: 'Période de validité du certificat : 02/06/2026 ; expire le 04/06/2026' },
+    { headerText: '02/06/2026 - 04/06/2026' },
+    { headerText: 'Date de valeur 02/06/2026 au 04/06/2026' },
+    { headerText: 'Du 02/06/2026, prochain arrêté 04/06/2026' },
+    { headerText: 'Du 02/06/2026 au 04/06/2026 sous réserve' },
+  ];
+  for (const trap of traps) {
+    const label = trap.headerText ?? trap.headerCells!.join(' | ');
+    const evaluation = withHeader(trap);
+    assert.equal(evaluation.admissible, false, label);
+    assert.equal(evaluation.amount, null, label);
+    assert.deepEqual(evaluation.reasons, ['DAY_NOT_CLOSED'], label);
+  }
+  // Une formule stricte écrite SOUS une première ligne d'en-tête d'opérations ne prouve rien.
+  const belowHeader = evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells: ['Date', 'Montant', 'Solde'], headerText: 'Du 02/06/2026 au 04/06/2026' }),
+  });
+  assert.equal(belowHeader.admissible, false);
+  assert.equal(belowHeader.amount, null);
+  assert.ok(belowHeader.reasons.includes('DAY_NOT_CLOSED'));
+  // Jour sans mouvement : la même mention ne prouve pas davantage la couverture de D.
+  const carried = withHeader({ headerText: 'Compte de dépôt ouvert le 01/06/2026 ; prochaine échéance au 04/06/2026' }, [{ date: '2026-06-01', amount: 300 }]);
+  assert.equal(carried.admissible, false);
+  assert.equal(carried.amount, null);
+  assert.ok(carried.reasons.includes('DATE_NOT_COVERED'));
+  // Une période écrite au mois près ne désigne aucun jour : elle ne prouve pas la clôture du 31/05.
+  const monthly = withHeader({ headerText: 'De mai 2026 au juin 2026' }, [{ date: '2026-05-30', amount: 300 }, { date: '2026-05-31', amount: -120 }], '2026-05-31');
+  assert.equal(monthly.admissible, false);
+  assert.deepEqual(monthly.reasons, ['DAY_NOT_CLOSED']);
+  assert.equal(withHeader({ headerText: 'Du 30/05/2026 au 01/06/2026' }, [{ date: '2026-05-30', amount: 300 }, { date: '2026-05-31', amount: -120 }], '2026-05-31').admissible, true);
 });
 
 test('relevé CSV : la période déclarée doit être ordonnée et englober les lignes', () => {
@@ -330,6 +411,20 @@ test('deux comptes qui ne partagent que leurs derniers chiffres restent deux com
   assert.equal(sameAccount.status, 'AVAILABLE');
   assert.equal(sameAccount.amount, 1050);
   assert.deepEqual(sameAccount.sources.map((source) => source.role), ['retained', 'excluded']);
+  // Même compte exporté sans sa ligne IBAN : toujours le même compte, compté une fois.
+  const withoutIban: StatementInput = {
+    name: 'SANS IBAN BDK ONLINE.csv',
+    attestation: ATTESTED,
+    bytes: csvStatementBytes({
+      periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, withIban: false,
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
+    }),
+  };
+  const twoExports = [evaluate(bdk()), evaluate(withoutIban)];
+  assert.equal(twoExports[0].accountKey, twoExports[1].accountKey);
+  const merged = buildAccountBalances(twoExports).find((balance) => balance.bank === 'BDK')!;
+  assert.equal(merged.status, 'AVAILABLE');
+  assert.deepEqual(merged.sources.map((source) => source.role), ['retained', 'duplicate']);
   // Autre compte terminé par les mêmes chiffres : le solde du premier ne vaut pas pour la banque.
   const collision = buildAccountBalances([evaluate(bdk()), evaluate(older('09999'))]).find((balance) => balance.bank === 'BDK')!;
   assert.equal(collision.status, 'TO_REVIEW');

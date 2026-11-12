@@ -335,7 +335,8 @@ export function summarizeCollections(rows: CollectionRow[], accountingDate: stri
     if (row.state === 'DEPOSE_EN_ATTENTE' && row.depositBank && row.amount !== null) {
       inflows.set(row.depositBank, [...(inflows.get(row.depositBank) ?? []), row.amount]);
     }
-    if (row.state === 'A_VERIFIER' && row.amount !== null) toVerify.push(row.amount);
+    // Montants positifs seulement : une ligne négative ne vient jamais en déduction d'une autre.
+    if (row.state === 'A_VERIFIER' && row.amount !== null && row.amount > 0) toVerify.push(row.amount);
     if (row.state === 'CREDITE_DECLARE' && row.instrument === 'EFFET' && row.dueDate && row.dueDate > accountingDate
       && row.depositBank && row.amount !== null) {
       const key = `${row.dueDate}|${row.depositBank}`;

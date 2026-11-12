@@ -27,7 +27,7 @@ import {
   readWorkbook,
   sumAmounts,
 } from './situationCore';
-import type { InMemoryFile, SituationBank } from './situationCore';
+import type { InMemoryFile, Sheet, SituationBank } from './situationCore';
 
 /** Limite de période d'un relevé quotidien (même valeur que Daily v2). */
 export const STATEMENT_MAX_DAILY_PERIOD_DAYS = 45;
@@ -58,7 +58,7 @@ export const BALANCE_REASON_LABELS: Record<BalanceReason, string> = {
   FORMAT_NOT_SUPPORTED_FOR_BANK: 'Format de fichier non prévu pour cette banque',
   PARSER_REFUSED: 'Relevé refusé par le lecteur',
   STATEMENT_NEEDS_REVIEW: 'Relevé à revoir (contrôles du lecteur)',
-  PERIOD_OVER_DAILY_LIMIT: `Période du relevé supérieure à ${STATEMENT_MAX_DAILY_PERIOD_DAYS} jours`,
+  PERIOD_OVER_DAILY_LIMIT: `Période du relevé, ou dates de son en-tête, de plus de ${STATEMENT_MAX_DAILY_PERIOD_DAYS} jours`,
   IDENTITY_NOT_CORROBORATED: 'Identité du compte non corroborée',
   CURRENCY_NOT_CORROBORATED: 'Devise non corroborée',
   DATE_NOT_COVERED: 'Date comptable non couverte par le relevé',
@@ -153,51 +153,72 @@ interface DeclaredPeriod {
   end: string;
 }
 
-/** Familles de libellés d'un en-tête d'opérations : trois familles DISTINCTES au moins sur la même ligne. */
-const OPERATION_HEADER_FAMILIES: ReadonlyArray<ReadonlyArray<string>> = [
-  ['DATE'], ['SOLDE', 'SOLD'], ['MONTANT', 'DEBIT', 'CREDIT'], ['LIBELLE', 'DESCRIPTION', 'REFERENCE'],
-];
+/** Familles de libellés d'un en-tête d'opérations. */
+const OPERATION_HEADER_FAMILIES: Record<'DATE' | 'BALANCE' | 'AMOUNT' | 'LABEL', ReadonlyArray<string>> = {
+  DATE: ['DATE'],
+  BALANCE: ['SOLDE', 'SOLD'],
+  AMOUNT: ['MONTANT', 'DEBIT', 'CREDIT'],
+  LABEL: ['LIBELLE', 'DESCRIPTION', 'REFERENCE'],
+};
 const HEADER_SCAN_ROWS = 60;
 const HEADER_SCAN_COLUMNS = 40;
 
-/** Texte entre deux dates qui les relie en période : « au », « à », « to », tiret. */
-const PERIOD_CONNECTOR = /^(?:AU|A|TO|JUSQU'?\s*AU|-|–|—)$/;
-
 export interface DeclaredPeriodReading {
-  /** Période retenue : une seule annonce, deux dates ordonnées, sans ambiguïté. `null` sinon. */
+  /** Période PROUVÉE : une seule formule stricte « du <date> au <date> » au-dessus de l'en-tête des opérations. */
   period: DeclaredPeriod | null;
-  /** Plus grande étendue (en jours) entre les dates d'une même annonce de période ; 0 si aucune annonce. */
-  widestSpanDays: number;
+  /** Première et dernière dates écrites dans l'en-tête, toutes écritures confondues (`null` si aucune). */
+  earliestDate: string | null;
+  latestDate: string | null;
 }
 
 /**
- * Dates d'un texte qui ANNONCE une période (mot « période », formule « du … au … »,
- * ou deux dates reliées par « au » ou un tiret) ; `null` si le texte n'annonce rien.
+ * Ligne d'en-tête des opérations : au moins trois cellules libellées, de trois
+ * familles distinctes, dont une date et un montant. Un préambule (« Date
+ * édition | Solde initial ») ou une cellule isolée n'en est pas une.
  */
-function periodAnnouncement(text: string): string[] | null {
+function isOperationHeaderRow(sheet: Sheet, row: number): boolean {
+  const families = new Set<string>();
+  let labelledCells = 0;
+  for (let column = 1; column <= HEADER_SCAN_COLUMNS; column += 1) {
+    const tokens = normalizeLabel(cellText(cellAt(sheet, row, column))).split(/[^A-Z]+/);
+    const mine = Object.entries(OPERATION_HEADER_FAMILIES).filter(([, words]) => words.some((word) => tokens.includes(word)));
+    if (mine.length > 0) labelledCells += 1;
+    for (const [family] of mine) families.add(family);
+  }
+  return labelledCells >= 3 && families.size >= 3 && families.has('DATE') && families.has('AMOUNT');
+}
+
+/**
+ * Formule de période et RIEN d'autre : « [Période :] du|de <date> au <date> »,
+ * deux dates au jour près, ordonnées. Tout autre texte portant deux dates
+ * (date de valeur, échéance, validité, référence) n'est pas une période.
+ */
+function strictPeriod(text: string): DeclaredPeriod | null {
   const dates = findDatesInText(text);
-  if (dates.length < 2) return null;
+  if (dates.length !== 2 || dates.some((date) => date.precision !== 'DAY')) return null;
   const plain = plainUpper(text);
-  const linked = dates.slice(1).some((date, index) => {
-    const previous = dates[index];
-    return PERIOD_CONNECTOR.test(plain.slice(previous.index + previous.length, date.index).trim());
-  });
-  const announced = /\bPERIODE?\b/.test(plain) || /\b(?:DU|DE|FROM)\b[^]*\b(?:AU|TO)\b/.test(plain) || linked;
-  return announced ? dates.map((date) => date.iso) : null;
+  const clean = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const before = clean(plain.slice(0, dates[0].index));
+  const between = clean(plain.slice(dates[0].index + dates[0].length, dates[1].index));
+  const after = clean(plain.slice(dates[1].index + dates[1].length));
+  if (!/^(?:PERIODE ?:? ?)?(?:DU|DE)$/.test(before) || between !== 'AU' || after !== '') return null;
+  return dates[0].iso <= dates[1].iso ? { start: dates[0].iso, end: dates[1].iso } : null;
 }
 
 /**
  * Période DÉCLARÉE dans l'en-tête d'un relevé Excel (les lecteurs Daily v2 ne
- * l'exposent pas). Seules les lignes situées AU-DESSUS de la ligne d'en-tête
- * des opérations sont lues : un libellé d'opération ne passe donc jamais pour
- * une période déclarée. Chaque cellule est lue seule, puis la ligne entière
- * (période répartie sur plusieurs cellules). La lecture ferme les deux sens :
- * - la preuve (`period`) exige une annonce unique, de deux dates ordonnées ;
- * - la limite quotidienne s'applique à la plus grande étendue annoncée, même
- *   quand les annonces sont multiples, contradictoires ou mal formées.
+ * l'exposent pas). Deux lectures de sens opposés, chacune fermée :
+ * - PREUVE (`period`) : lecture stricte. Seules les lignes au-dessus de la
+ *   PREMIÈRE ligne d'en-tête des opérations sont lues, cellule par cellule puis
+ *   ligne entière ; il faut une formule stricte, et une seule période distincte.
+ *   Un libellé d'opération ou une mention datée ne prouve jamais une période.
+ * - REFUS (`widestSpanDays`) : lecture large. Toutes les dates lisibles au-dessus
+ *   de la DERNIÈRE ligne d'en-tête des opérations comptent, quelle que soit
+ *   leur écriture : le relevé est exclu dès que ces dates et celles de ses
+ *   lignes s'étendent sur plus de 45 jours.
  */
 export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredPeriodReading {
-  const none: DeclaredPeriodReading = { period: null, widestSpanDays: 0 };
+  const none: DeclaredPeriodReading = { period: null, earliestDate: null, latestDate: null };
   let workbook;
   try {
     workbook = readWorkbook(bytes);
@@ -206,70 +227,62 @@ export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredP
   }
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!sheet) return none;
-  const textAt = (row: number, column: number): string => {
-    const cell = cellAt(sheet, row, column);
-    const date = cellIsoDate(cell);
-    return date ? formatIsoFr(date) : cellText(cell);
-  };
-  let operationHeaderRow: number | null = null;
-  for (let row = 1; row <= HEADER_SCAN_ROWS && operationHeaderRow === null; row += 1) {
-    const families = new Set<number>();
-    for (let column = 1; column <= HEADER_SCAN_COLUMNS; column += 1) {
-      const tokens = normalizeLabel(cellText(cellAt(sheet, row, column))).split(/[^A-Z]+/);
-      OPERATION_HEADER_FAMILIES.forEach((family, index) => {
-        if (family.some((token) => tokens.includes(token))) families.add(index);
-      });
-    }
-    if (families.size >= 3) operationHeaderRow = row;
-  }
-  if (operationHeaderRow === null) return none;
-  const announcements: string[][] = [];
-  for (let row = 1; row < operationHeaderRow; row += 1) {
+  const headerRows: number[] = [];
+  for (let row = 1; row <= HEADER_SCAN_ROWS; row += 1) if (isOperationHeaderRow(sheet, row)) headerRows.push(row);
+  if (headerRows.length === 0) return none;
+  const proofLimit = headerRows[0];
+  const refusalLimit = headerRows[headerRows.length - 1];
+  const periods: DeclaredPeriod[] = [];
+  const writtenDates: string[] = [];
+  for (let row = 1; row < refusalLimit; row += 1) {
     const texts: string[] = [];
     for (let column = 1; column <= HEADER_SCAN_COLUMNS; column += 1) {
-      const text = textAt(row, column);
+      const cell = cellAt(sheet, row, column);
+      const date = cellIsoDate(cell);
+      const text = date ? formatIsoFr(date) : cellText(cell);
       if (text) texts.push(text);
     }
-    const perCell = texts.map(periodAnnouncement).filter((dates): dates is string[] => dates !== null);
+    // Lecture large : la ligne entière, pour qu'une année écrite plus loin sur la ligne serve aux dates sans année.
+    for (const entry of findDatesInText(texts.join(' | '))) writtenDates.push(entry.iso);
+    if (row >= proofLimit) continue;
+    const perCell = texts.map(strictPeriod).filter((period): period is DeclaredPeriod => period !== null);
     if (perCell.length > 0) {
-      announcements.push(...perCell);
+      periods.push(...perCell);
     } else {
-      const wholeRow = periodAnnouncement(texts.join(' '));
-      if (wholeRow) announcements.push(wholeRow);
+      const wholeRow = strictPeriod(texts.join(' '));
+      if (wholeRow) periods.push(wholeRow);
     }
   }
-  if (announcements.length === 0) return none;
-  let widestSpanDays = 0;
-  for (const dates of announcements) {
-    const sorted = [...dates].sort();
-    widestSpanDays = Math.max(widestSpanDays, daysBetween(sorted[0], sorted[sorted.length - 1]) + 1);
-  }
-  const wellFormed = announcements.every((dates) => dates.length === 2 && dates[0] <= dates[1]);
-  const distinct = new Set(announcements.map((dates) => dates.join('|')));
-  const period = wellFormed && distinct.size === 1 ? { start: announcements[0][0], end: announcements[0][1] } : null;
-  return { period, widestSpanDays };
+  const sorted = [...writtenDates].sort();
+  const distinct = new Set(periods.map((period) => `${period.start}|${period.end}`));
+  return {
+    period: distinct.size === 1 ? periods[0] : null,
+    earliestDate: sorted.length > 0 ? sorted[0] : null,
+    latestDate: sorted.length > 0 ? sorted[sorted.length - 1] : null,
+  };
 }
 
 /**
- * Clé de compte tirée du contenu d'un relevé CSV : numéro de compte et IBAN
- * COMPLETS, réduits à une empreinte tenue en mémoire (jamais affichée). Deux
- * comptes qui ne partagent que leurs derniers chiffres restent distincts.
+ * Clé de compte tirée du contenu d'un relevé CSV : numéro de compte COMPLET,
+ * réduit à une empreinte tenue en mémoire (jamais affichée). Deux comptes qui
+ * ne partagent que leurs derniers chiffres restent distincts.
  */
 function csvAccountKey(text: string): string | null {
-  const reduce = (value: string) => value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  let account: string | null = null;
-  let iban: string | null = null;
-  for (const line of text.split(/\r?\n/).slice(0, 60)) {
-    const cells = line.split(/[;\t,]/).map((cell) => cell.replace(/^\s*"?|"?\s*$/g, ''));
-    cells.forEach((cell, index) => {
-      const value = reduce(cells[index + 1] ?? '');
-      if (!value) return;
-      if (account === null && reduce(cell) === 'numerodecompte') account = value;
-      if (iban === null && reduce(cell) === 'codeiban') iban = value;
-    });
+  const reduce = (value: string) => plainUpper(value).replace(/[^A-Z0-9]/g, '');
+  const lines = text.split(/\r?\n/).slice(0, 60);
+  // Séparateur réel du fichier : le plus fréquent dans l'en-tête.
+  const count = (separator: string) => lines.slice(0, 15).join('\n').split(separator).length - 1;
+  const separator = [';', '\t', ','].sort((a, b) => count(b) - count(a))[0];
+  for (const line of lines) {
+    const cells = line.split(separator).map((cell) => cell.replace(/^\s*"?|"?\s*$/g, ''));
+    for (let index = 0; index < cells.length - 1; index += 1) {
+      const value = reduce(cells[index + 1]);
+      if (value && reduce(cells[index]) === 'NUMERODECOMPTE') {
+        return `acct-${digestBytes(new TextEncoder().encode(value).buffer as ArrayBuffer)}`;
+      }
+    }
   }
-  if (account === null) return null;
-  return `acct-${digestBytes(new TextEncoder().encode(`${account}|${iban ?? ''}`).buffer as ArrayBuffer)}`;
+  return null;
 }
 
 function buildDayUnits(lines: StructuredBankStatementLine[]): DayUnit[] | null {
@@ -357,7 +370,8 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
   let lines: StructuredBankStatementLine[] = [];
   let parsedCurrency: string | undefined;
   let declaredPeriod: DeclaredPeriod | null = null;
-  let declaredSpanDays = 0;
+  let headerEarliest: string | null = null;
+  let headerLatest: string | null = null;
   let closedBefore: string | null = null;
   let periodStart: string | null = null;
   let periodEnd: string | null = null;
@@ -403,7 +417,8 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
       periodEnd = frDateToIso(document.periodEnd);
       const declared = readDeclaredPeriodFromExcelHeader(file.bytes.slice(0));
       declaredPeriod = declared.period;
-      declaredSpanDays = declared.widestSpanDays;
+      headerEarliest = declared.earliestDate;
+      headerLatest = declared.latestDate;
     }
   } catch {
     return refuse(evaluation, 'PARSER_REFUSED');
@@ -445,9 +460,11 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
 
   // Une ligne datée après aujourd'hui rend le relevé incohérent : elle ne prouve aucune clôture.
   if (last.date > today) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
-  // Limite quotidienne : elle vaut pour l'étendue des lignes comme pour toute période annoncée dans
-  // l'en-tête, même quand les annonces sont multiples ou mal formées.
-  if (daysBetween(first.date, last.date) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS || declaredSpanDays > STATEMENT_MAX_DAILY_PERIOD_DAYS) {
+  // Limite quotidienne : elle vaut pour l'étendue des lignes, élargie à toute date écrite dans l'en-tête
+  // du relevé, quelle que soit son écriture.
+  const spanStart = headerEarliest !== null && headerEarliest < first.date ? headerEarliest : first.date;
+  const spanEnd = headerLatest !== null && headerLatest > last.date ? headerLatest : last.date;
+  if (daysBetween(spanStart, spanEnd) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS) {
     return refuse(evaluation, 'PERIOD_OVER_DAILY_LIMIT');
   }
   if (declaredPeriod !== null) {
