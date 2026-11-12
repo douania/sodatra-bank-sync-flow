@@ -187,6 +187,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bash supabase/tests/daily_statement_units_v2/run_e2e_0r.sh
 
+      # SITUATION-DU-JOUR-LOCAL — local in-memory screen: statement balances
+      # proven at the accounting date, monthly workbook outstanding items,
+      # Collection Report inflows, Fund Position comparison and the runtime
+      # guard (production always refused). Synthetic data only.
+      - name: Situation du jour contracts
+        run: npm run test:situation-du-jour
+
       # PACK 0 (GO_FIX_PACK_0 Node typing) — blocking: the Node project
       # (vite.config.ts and the modules it imports, e.g. the build provenance
       # collector) must typecheck with zero errors. The application project
