@@ -200,6 +200,7 @@ test('champ « Situation au » : libellé explicite, une date au jour près, éc
   const refused: Array<[string, SyntheticFundPositionReference]> = [
     ['date écrite sans libellé', { dateText: '03/06/2026' }],
     ['autre libellé', { dateText: 'Imprimé le 03/06/2026' }],
+    ['libellé qui n’ouvre pas la cellule', { dateText: 'Voir Situation au 03/06/2026' }],
     ['« date du jour » n’est pas la date de situation', { dateText: 'Date du jour : 03/06/2026' }],
     ['libellé non prévu', { dateText: 'As of 2026-06-03' }],
     ['champ suivi d’une mention', { dateText: 'Situation au 03/06/2026 (provisoire)' }],
@@ -239,6 +240,7 @@ test('champ « Devise » : explicite, écrit une fois, seule devise de l’ongle
   assert.equal(same.currency, 'XOF');
   const cases: Array<[string, FundTab]> = [
     ['devise écrite sans le libellé du champ', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['XOF'] } }],
+    ['libellé « Devise » qui n’ouvre pas la cellule', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['Montants - Devise : XOF'] } }],
     ['champ « Devise » écrit deux fois', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['Devise : XOF'] } }],
     ['champ « Devise » suivi d’une mention', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['Devise : XOF provisoire'] } }],
     ['seconde devise écrite dans l’en-tête', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['USD'] } }],
@@ -321,6 +323,7 @@ test('champ « Unité » : absente, ambiguë ou différente, elle bloque tout é
     ['unité absente', { date: D, currency: 'XOF' }],
     ['unité sans le libellé du champ', { date: D, currency: 'XOF', texts: ['en francs entiers'] }],
     ['unité mal formée', { date: D, currency: 'XOF', unit: 'francs' }],
+    ['libellé « Unité » qui n’ouvre pas la cellule', { date: D, currency: 'XOF', texts: ['Note - Unité : francs entiers'] }],
     ['champ écrit deux fois', { ...AT_D, texts: ['Unité : francs entiers'] }],
     ['unité contredite par une autre mention', { ...AT_D, texts: ['(en milliers)'] }],
   ];

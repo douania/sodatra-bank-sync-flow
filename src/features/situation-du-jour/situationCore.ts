@@ -412,7 +412,7 @@ export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastR
       for (const kind of Object.keys(EXPLICIT_FIELD_LABELS) as ExplicitFieldKind[]) {
         const label = EXPLICIT_FIELD_LABELS[kind].exec(plain);
         if (!label) continue;
-        const own = plain.slice(label[0].length).trim();
+        const own = plain.slice(label.index + label[0].length).trim();
         const right = cellAt(sheet, row, column + 1);
         const rightDate = cellIsoDate(right);
         const value = own !== '' ? own : rightDate ? formatIsoFr(rightDate) : cellText(right);

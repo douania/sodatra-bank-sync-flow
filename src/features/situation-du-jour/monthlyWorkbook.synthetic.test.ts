@@ -84,6 +84,9 @@ test('devise et unité du classeur : champs explicites de l’en-tête, non cont
   assert.equal(withCells({ F1: 'Montants en FCFA' }).currency, null);
   assert.equal(withCells({ F1: 'XOF' }).currency, null);
   assert.equal(withCells({ F1: 'en francs entiers' }).unit, null);
+  // Le libellé du champ doit ouvrir la cellule.
+  assert.equal(withCells({ F1: 'Montants - Devise : XOF' }).currency, null);
+  assert.equal(withCells({ F1: 'Note - Unité : francs entiers' }).unit, null);
   // Champ écrit deux fois : ambigu, même à valeur identique.
   assert.equal(withCells({ F1: 'Devise : XOF' }, { currency: 'XOF' }).currency, null);
   assert.equal(withCells({ F1: 'Unité : francs entiers' }, { unit: 'francs entiers' }).unit, null);
