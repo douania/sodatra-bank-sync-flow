@@ -325,6 +325,112 @@ export function usefulBounds(sheet: Sheet, maxRows = 2_000, maxColumns = 26): Sh
 }
 
 // ---------------------------------------------------------------------------
+// Champs explicites de comparaison : date de situation, devise, unité
+// ---------------------------------------------------------------------------
+
+/** Unité dans laquelle un document exprime ses montants. */
+export type AmountUnit = 'UNITS' | 'THOUSANDS' | 'MILLIONS';
+
+export const AMOUNT_UNIT_LABELS: Record<AmountUnit, string> = {
+  UNITS: 'francs entiers',
+  THOUSANDS: 'milliers',
+  MILLIONS: 'millions',
+};
+
+const UNIT_CLASS_TOKENS: Record<string, AmountUnit> = {
+  ENTIER: 'UNITS', ENTIERS: 'UNITS', MILLIER: 'THOUSANDS', MILLIERS: 'THOUSANDS', THOUSAND: 'THOUSANDS', THOUSANDS: 'THOUSANDS',
+  KXOF: 'THOUSANDS', KFCFA: 'THOUSANDS', MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS',
+};
+/** Mots admis autour de l'unité dans la valeur du champ (« francs entiers », « milliers de francs »). */
+const UNIT_NEUTRAL_TOKENS: ReadonlySet<string> = new Set(['FRANC', 'FRANCS', 'EN', 'DE']);
+
+type ExplicitFieldKind = 'situationDate' | 'currency' | 'unit';
+/** Libellé du champ, en tête de cellule, sur le texte sans accents et en majuscules. */
+const EXPLICIT_FIELD_LABELS: Record<ExplicitFieldKind, RegExp> = {
+  situationDate: /^\s*(?:SITUATION\s+AU|DATE\s+DE\s+SITUATION)(?![A-Z0-9])\s*:?\s*/,
+  currency: /^\s*DEVISE(?![A-Z0-9])\s*:?\s*/,
+  unit: /^\s*UNITE(?:\s+DES\s+MONTANTS)?(?![A-Z0-9])\s*:?\s*/,
+};
+
+/** Une seule date, au jour près, et rien d'autre ; sinon `null`. */
+function singleDayDate(text: string): string | null {
+  const dates = findDatesInText(text);
+  if (dates.length !== 1 || dates[0].precision !== 'DAY') return null;
+  const plain = plainUpper(text);
+  const rest = `${plain.slice(0, dates[0].index)}${plain.slice(dates[0].index + dates[0].length)}`.trim();
+  return rest === '' ? dates[0].iso : null;
+}
+
+/** Une seule devise et rien d'autre ; sinon `null`. */
+function singleCurrency(text: string): string | null {
+  const currencies = currenciesInText(text);
+  return currencies.length === 1 && tokenize(text).every(isCurrencyToken) ? currencies[0] : null;
+}
+
+/** Une seule unité, sans autre mot que des mots neutres ou une devise ; sinon `null`. */
+function singleUnit(text: string): AmountUnit | null {
+  const tokens = tokenize(text);
+  const classes = new Set(tokens.filter((token) => UNIT_CLASS_TOKENS[token] !== undefined).map((token) => UNIT_CLASS_TOKENS[token]));
+  if (classes.size !== 1) return null;
+  return tokens.every((token) => UNIT_CLASS_TOKENS[token] !== undefined || UNIT_NEUTRAL_TOKENS.has(token) || isCurrencyToken(token))
+    ? Array.from(classes)[0]
+    : null;
+}
+
+export interface ExplicitFields {
+  /** Champ « Situation au » (ou « Date de situation ») : une date au jour près. */
+  situationDate: string | null;
+  /** Champ « Devise ». */
+  currency: string | null;
+  /** Champ « Unité » (ou « Unité des montants »). */
+  unit: AmountUnit | null;
+}
+
+/**
+ * Champs EXPLICITES d'un onglet, renseignés par l'équipe : « Situation au »,
+ * « Devise », « Unité ». Preuve stricte : le libellé ouvre la cellule, la
+ * valeur le suit dans la même cellule ou occupe la cellule immédiatement à
+ * droite, elle ne porte rien d'autre, et le champ n'est écrit qu'UNE fois
+ * dans les lignes 1 à `fieldLastRow`. Refus large, sur tout l'onglet : une
+ * autre devise ou une autre unité écrite où que ce soit retire la devise ou
+ * l'unité. Les autres dates de l'onglet (échéances, validités) ne comptent
+ * pas : seule la cellule libellée dit la date de situation. Un champ absent,
+ * répété, mal formé ou contredit rend `null`.
+ */
+export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastRow: number): ExplicitFields {
+  const found: Record<ExplicitFieldKind, Array<string | null>> = { situationDate: [], currency: [], unit: [] };
+  const currencies = new Set<string>();
+  const units = new Set<AmountUnit>();
+  for (let row = 1; row <= bounds.lastRow; row += 1) {
+    for (let column = 1; column <= bounds.lastColumn; column += 1) {
+      const text = cellText(cellAt(sheet, row, column));
+      if (!text) continue;
+      for (const currency of currenciesInText(text)) currencies.add(currency);
+      for (const token of tokenize(text)) if (UNIT_CLASS_TOKENS[token] !== undefined) units.add(UNIT_CLASS_TOKENS[token]);
+      if (row > fieldLastRow) continue;
+      const plain = plainUpper(text);
+      for (const kind of Object.keys(EXPLICIT_FIELD_LABELS) as ExplicitFieldKind[]) {
+        const label = EXPLICIT_FIELD_LABELS[kind].exec(plain);
+        if (!label) continue;
+        const own = plain.slice(label[0].length).trim();
+        const right = cellAt(sheet, row, column + 1);
+        const rightDate = cellIsoDate(right);
+        const value = own !== '' ? own : rightDate ? formatIsoFr(rightDate) : cellText(right);
+        found[kind].push(kind === 'situationDate' ? singleDayDate(value) : kind === 'currency' ? singleCurrency(value) : singleUnit(value));
+      }
+    }
+  }
+  const only = (values: Array<string | null>) => (values.length === 1 ? values[0] : null);
+  const currency = only(found.currency);
+  const unit = only(found.unit) as AmountUnit | null;
+  return {
+    situationDate: only(found.situationDate),
+    currency: currency !== null && currencies.size === 1 ? currency : null,
+    unit: unit !== null && units.size === 1 ? unit : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Montants
 // ---------------------------------------------------------------------------
 

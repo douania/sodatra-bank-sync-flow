@@ -16,21 +16,19 @@ import {
   cellIsoDate,
   cellNumber,
   cellText,
-  currenciesInText,
   daysBetween,
   detectBankFromStrictLabel,
   detectBankFromText,
   findDayFirstDateInText,
   hiddenSheetNames,
-  isCurrencyToken,
   normalizeLabel,
+  readExplicitFields,
   readWorkbook,
   sheetNameToIso,
   sumAmounts,
-  tokenize,
   usefulBounds,
 } from './situationCore';
-import type { InMemoryFile, Sheet, SituationBank } from './situationCore';
+import type { AmountUnit, InMemoryFile, Sheet, SituationBank } from './situationCore';
 
 export type WorkbookReason =
   | 'WORKBOOK_UNREADABLE'
@@ -47,7 +45,7 @@ export const WORKBOOK_REASON_LABELS: Record<WorkbookReason, string> = {
   BANK_NOT_CORROBORATED: 'Banque du classeur non corroborée (nom de fichier et titre de l’onglet)',
   TAB_ABSENT: 'Aucun onglet ne porte la position à la date comptable',
   TAB_AMBIGUOUS: 'Plusieurs onglets portent la position à la date comptable',
-  TAB_LABEL_INCONSISTENT: 'Le nom de l’onglet et la date de son libellé d’ouverture ne concordent pas',
+  TAB_LABEL_INCONSISTENT: 'Le nom de l’onglet est antérieur à la date de son libellé d’ouverture, ou trop éloigné d’elle',
   DUPLICATE_WORKBOOK: 'Plusieurs classeurs déposés pour la même banque',
   TOTALS_NOT_READ: 'Totaux de l’onglet non lus par le lecteur',
   TOTALS_INCONSISTENT: 'Totaux de l’onglet incohérents entre eux',
@@ -111,10 +109,12 @@ export interface WorkbookEncours {
   tabName: string | null;
   balanceDate: string | null;
   /**
-   * Devise ÉTABLIE par l'onglet retenu : énoncée par une cellule de son en-tête et seule devise écrite
-   * dans tout l'onglet. `null` : aucune devise établie (absente, multiple, ou écrite seulement dans une ligne).
+   * Devise ÉTABLIE par l'onglet retenu : champ explicite « Devise » de son en-tête (au plus tard sur la
+   * ligne d'ouverture), seule devise écrite dans tout l'onglet. `null` : absente, répétée ou contredite.
    */
   currency: string | null;
+  /** Unité ÉTABLIE par l'onglet retenu : champ explicite « Unité » de son en-tête, non contredit ; sinon `null`. */
+  unit: AmountUnit | null;
   ignoredFutureTabs: number;
   openingBalance: number | null;
   totalBalanceA: number | null;
@@ -137,7 +137,7 @@ function emptySection(reason: SectionReason | null = 'SECTION_NOT_FOUND'): Workb
 
 function emptyEncours(fileName: string, bank: SituationBank | null, reason: WorkbookReason): WorkbookEncours {
   return {
-    fileName, bank, available: false, reason, tabName: null, balanceDate: null, currency: null, ignoredFutureTabs: 0,
+    fileName, bank, available: false, reason, tabName: null, balanceDate: null, currency: null, unit: null, ignoredFutureTabs: 0,
     openingBalance: null, totalBalanceA: null, closingBookBalance: null, deposits: emptySection(),
     cheques: emptySection(), chequesOutsideTotal: 0,
     facilities: { available: false, title: null, lines: [], excludedUnlabeledRows: 0, unattributedRows: 0 }, impayes: emptySection(),
@@ -176,38 +176,8 @@ function readTitleBank(sheet: Sheet): SituationBank | null {
   return hits.size === 1 ? Array.from(hits)[0] : null;
 }
 
-/** Mots admis autour de la devise dans la cellule d'en-tête qui l'énonce (« Devise : XOF », « Montants en FCFA »). */
-const CURRENCY_STATEMENT_WORDS: ReadonlySet<string> = new Set(['DEVISE', 'CURRENCY', 'MONNAIE', 'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'EN', 'IN']);
-/** Largeur lue pour chercher une devise contradictoire (au-delà des colonnes de montants). */
+/** Largeur lue pour chercher une devise ou une unité contradictoire (au-delà des colonnes de montants). */
 const CURRENCY_SCAN_COLUMNS = 60;
-
-/** Devise ÉNONCÉE par une cellule : une seule devise, sans autre mot que des mots neutres ; sinon `null`. */
-function statedCurrency(text: string): string | null {
-  const currencies = currenciesInText(text);
-  if (currencies.length !== 1) return null;
-  return tokenize(text).every((token) => isCurrencyToken(token) || CURRENCY_STATEMENT_WORDS.has(token)) ? currencies[0] : null;
-}
-
-/**
- * Devise ÉTABLIE par l'onglet. Preuve stricte : une cellule de l'en-tête de l'onglet (au plus tard sur la
- * ligne d'ouverture) énonce la devise et rien d'autre. Refus large : toute autre devise écrite n'importe
- * où dans l'onglet, par son nom ou son symbole, retire la preuve. Un nom propre de l'en-tête (« CFA
- * MOTORS ») ou un libellé de ligne n'établit jamais la devise ; il peut seulement la contredire.
- */
-function readTabCurrency(sheet: Sheet, headerLastRow: number): string | null {
-  const bounds = usefulBounds(sheet, 2_000, CURRENCY_SCAN_COLUMNS);
-  const stated = new Set<string>();
-  const all = new Set<string>();
-  for (let row = 1; row <= bounds.lastRow; row += 1) {
-    for (let column = 1; column <= bounds.lastColumn; column += 1) {
-      const text = cellText(cellAt(sheet, row, column));
-      for (const currency of currenciesInText(text)) all.add(currency);
-      const currency = row <= headerLastRow ? statedCurrency(text) : null;
-      if (currency) stated.add(currency);
-    }
-  }
-  return stated.size === 1 && all.size === 1 ? Array.from(stated)[0] : null;
-}
 
 function readLine(sheet: Sheet, row: number, amount: number): WorkbookLine {
   const second = cellAt(sheet, row, 2);
@@ -417,9 +387,10 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
       continue;
     }
     if (readOpeningLabelDate(workbook.Sheets[sheetName]) !== accountingDate) continue;
-    // L'onglet rend compte de la veille : son nom doit suivre de près la date de son libellé.
+    // L'onglet rend compte de la veille, ou porte lui-même la date de sa position : son nom est daté du
+    // jour du libellé ou le suit de près. Un nom antérieur au libellé reste incohérent.
     const lag = daysBetween(accountingDate, tabDate);
-    if (lag < 1 || lag > WORKBOOK_MAX_TAB_LAG_DAYS) {
+    if (lag < 0 || lag > WORKBOOK_MAX_TAB_LAG_DAYS) {
       inconsistentTabs += 1;
       continue;
     }
@@ -462,6 +433,8 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
   }
   const bounds = usefulBounds(sheet);
   const openingRow = book.openingBalance!.rowIndex;
+  // Devise et unité : champs explicites de l'en-tête (au plus tard sur la ligne d'ouverture), non contredits ailleurs.
+  const explicit = readExplicitFields(sheet, usefulBounds(sheet, 2_000, CURRENCY_SCAN_COLUMNS), openingRow);
   const depositsRow = book.totalDeposits!.rowIndex;
   const totalARow = book.totalBalanceA!.rowIndex;
   const totalBRow = book.totalB!.rowIndex;
@@ -502,7 +475,8 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
     reason: null,
     tabName,
     balanceDate: accountingDate,
-    currency: readTabCurrency(sheet, openingRow),
+    currency: explicit.currency,
+    unit: explicit.unit,
     ignoredFutureTabs,
     openingBalance: opening,
     totalBalanceA: totalA,

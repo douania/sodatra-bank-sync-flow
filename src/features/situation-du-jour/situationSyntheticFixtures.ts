@@ -216,8 +216,10 @@ export interface SyntheticTab {
   /** Date portée par le libellé d'ouverture (position à cette date). */
   labelDate: string;
   titleBank: string;
-  /** Devise écrite dans l'en-tête de l'onglet (absente par défaut, comme dans un classeur qui ne la dit pas). */
+  /** Champ « Devise » de l'en-tête de l'onglet (absent par défaut, comme dans un classeur qui ne la dit pas). */
   currency?: string;
+  /** Champ « Unité » de l'en-tête de l'onglet (absent par défaut). */
+  unit?: string;
   opening: number;
   deposits?: SyntheticDeposit[];
   cheques?: SyntheticCheque[];
@@ -240,7 +242,7 @@ export interface SyntheticTab {
 export function monthlyTabSheet(tab: SyntheticTab): XLSX.WorkSheet {
   const rows: CellInput[][] = [];
   const french = tab.french === true;
-  rows.push(['', '', '', tab.titleBank, '', '', tab.currency ? `Devise ${tab.currency}` : '']);
+  rows.push(['', '', '', tab.titleBank, '', '', tab.currency ? `Devise : ${tab.currency}` : '', tab.unit ? `Unité : ${tab.unit}` : '']);
   rows.push(['Date', ' CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT ', 'TR No /FACT.No', ' AMOUNT ', ' AMOUNT 1']);
   rows.push([`${french ? "SOLDE D'OUVERTURE" : 'OPENING BALANCE'} ${frShort(tab.labelDate)}`, '', '', '', '', '', tab.opening]);
   if (tab.depositSectionTitle !== false) {
@@ -376,6 +378,8 @@ export interface SyntheticFundPositionReference {
   dateText?: string;
   /** Autres mentions écrites sur la ligne d'en-tête (date d'impression, période, seconde devise). */
   texts?: string[];
+  /** Champ « Unité » écrit dans l'onglet (après les autres mentions). */
+  unit?: string;
 }
 
 export function fundPositionTabSheet(rows: SyntheticFundPositionRow[], reference: SyntheticFundPositionReference = {}): XLSX.WorkSheet {
@@ -383,7 +387,7 @@ export function fundPositionTabSheet(rows: SyntheticFundPositionRow[], reference
     '', '', 'Bank \nBalance', 'Fund Applied', 'Net Balance', 'NonValidated Deposit', '', '',
     reference.date ? 'Situation au' : '', reference.date ? { date: reference.date } : (reference.dateText ?? ''),
     reference.currency ? `Devise ${reference.currency}` : '', reference.otherDate ? { date: reference.otherDate } : '',
-    ...(reference.texts ?? []),
+    ...(reference.texts ?? []), reference.unit ? `Unité : ${reference.unit}` : '',
   ]];
   rows.forEach((row, index) => data.push([
     index === 0 ? 'Book balance' : '', row.label, row.bankBalance ?? '', row.fundApplied ?? '', row.netBalance ?? '',

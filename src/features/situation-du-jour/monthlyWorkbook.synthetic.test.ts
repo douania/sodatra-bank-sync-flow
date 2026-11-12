@@ -45,47 +45,72 @@ test('onglets D−1, D et D+1 : seul l’onglet portant la position à D est ret
   assert.equal(result.cheques.declaredTotal, 500);
 });
 
-test('devise du classeur : écrite dans l’en-tête de l’onglet et seule devise écrite, sinon non établie', () => {
+test('devise et unité du classeur : champs explicites de l’en-tête, non contredits, sinon non établis', () => {
   const name = tabName('2026-06-04');
   const deposit = (client: string) => [{ date: D, dueDate: '2026-09-15', client, amount: 700 }];
-  // Aucune devise écrite : elle n'est jamais présumée.
+  /** Onglet dont des cellules de la première ligne sont écrites à la main (E1, F1 sont libres). */
+  const withCells = (cells: Record<string, string>, extra: Partial<SyntheticTab> = {}) => {
+    const sheet = monthlyTabSheet(tab(D, name, extra));
+    for (const [address, value] of Object.entries(cells)) sheet[address] = { t: 's', v: value };
+    return readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet }]) }, D, TODAY);
+  };
+  // Aucun champ renseigné : ni la devise ni l'unité ne sont présumées.
   const silent = read([tab(D, name)]);
   assert.equal(silent.available, true);
   assert.equal(silent.currency, null);
-  // Écrite dans l'en-tête : établie (« FCFA » vaut XOF).
+  assert.equal(silent.unit, null);
+  // Champs renseignés dans l'en-tête : établis (« FCFA » vaut XOF).
   for (const [written, expected] of [['XOF', 'XOF'], ['FCFA', 'XOF'], ['EUR', 'EUR']]) {
     assert.equal(read([tab(D, name, { currency: written })]).currency, expected, written);
   }
-  // Écrite seulement dans une ligne, même seule dans sa cellule et sur la ligne qui suit l'ouverture : une
-  // ligne n'établit pas la devise.
-  for (const client of ['SYNTHETIC CFA CLIENT', 'XOF', 'Devise XOF']) {
+  for (const [written, expected] of [['francs entiers', 'UNITS'], ['milliers', 'THOUSANDS'], ['milliers de francs', 'THOUSANDS'], ['millions de FCFA', 'MILLIONS']]) {
+    assert.equal(read([tab(D, name, { unit: written })]).unit, expected, written);
+  }
+  const complete = read([tab(D, name, { currency: 'XOF', unit: 'francs entiers' })]);
+  assert.equal(complete.currency, 'XOF');
+  assert.equal(complete.unit, 'UNITS');
+  // Libellé et valeur dans deux cellules voisines.
+  assert.equal(withCells({ E1: 'Devise', F1: 'XOF' }).currency, 'XOF');
+  assert.equal(withCells({ E1: 'Unité des montants', F1: 'francs entiers' }).unit, 'UNITS');
+  // Valeur mal formée : le champ n'établit rien.
+  for (const written of ['francs', 'francs entiers environ', 'milliers ou millions']) {
+    assert.equal(read([tab(D, name, { unit: written })]).unit, null, written);
+  }
+  assert.equal(withCells({ F1: 'Devise : XOF provisoire' }).currency, null);
+  assert.equal(withCells({ F1: 'Devise : XOF / EUR' }).currency, null);
+  // Sans le libellé du champ, une mention n'établit rien, même dans l'en-tête.
+  assert.equal(withCells({ F1: 'Client principal : CFA MOTORS' }).available, true);
+  assert.equal(withCells({ F1: 'Client principal : CFA MOTORS' }).currency, null);
+  assert.equal(withCells({ F1: 'Montants en FCFA' }).currency, null);
+  assert.equal(withCells({ F1: 'XOF' }).currency, null);
+  assert.equal(withCells({ F1: 'en francs entiers' }).unit, null);
+  // Champ écrit deux fois : ambigu, même à valeur identique.
+  assert.equal(withCells({ F1: 'Devise : XOF' }, { currency: 'XOF' }).currency, null);
+  assert.equal(withCells({ F1: 'Unité : francs entiers' }, { unit: 'francs entiers' }).unit, null);
+  // Champ écrit seulement dans une ligne, même sur la ligne qui suit l'ouverture : il n'établit rien.
+  for (const client of ['SYNTHETIC CFA CLIENT', 'XOF', 'Devise XOF', 'Devise : XOF', 'Unité : francs entiers']) {
     const lineOnly = read([tab(D, name, { depositSectionTitle: false, deposits: deposit(client) })]);
     assert.equal(lineOnly.available, true, client);
     assert.equal(lineOnly.currency, null, client);
+    assert.equal(lineOnly.unit, null, client);
   }
-  // Un nom propre écrit dans l'en-tête n'énonce pas la devise ; une cellule d'en-tête qui l'énonce, si.
-  const titled = (title: string, extra: Partial<SyntheticTab> = {}) => {
-    const sheet = monthlyTabSheet(tab(D, name, extra));
-    sheet.F1 = { t: 's', v: title };
-    return readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet }]) }, D, TODAY);
-  };
-  assert.equal(titled('Client principal : CFA MOTORS').available, true);
-  assert.equal(titled('Client principal : CFA MOTORS').currency, null);
-  assert.equal(titled('Montants en FCFA').currency, 'XOF');
-  assert.equal(titled('Devise : XOF / EUR').currency, null);
-  // En-tête en XOF, autre devise écrite ailleurs dans l'onglet : contradiction, devise non établie.
+  // Champ renseigné, puis contredit ailleurs dans l'onglet : non établi.
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC EURO CLIENT') })]).currency, null);
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC CLIENT 100 $') })]).currency, null);
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC XAF CLIENT') })]).currency, null);
-  assert.equal(titled('Taux CHF', { currency: 'XOF' }).currency, null);
+  assert.equal(withCells({ F1: 'Taux CHF' }, { currency: 'XOF' }).currency, null);
   const farColumn = monthlyTabSheet(tab(D, name, { currency: 'XOF' }));
   farColumn.AB5 = { t: 's', v: 'USD' };
   farColumn['!ref'] = 'A1:AB40';
   assert.equal(readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet: farColumn }]) }, D, TODAY).currency, null);
-  // La même devise répétée dans une ligne ne contredit rien.
+  assert.equal(read([tab(D, name, { unit: 'francs entiers', deposits: deposit('SYNTHETIC CLIENT (en milliers)') })]).unit, null);
+  // La même devise ou la même unité répétée dans une ligne ne contredit rien.
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC FCFA CLIENT') })]).currency, 'XOF');
-  // Classeur indisponible : aucune devise.
-  assert.equal(read([tab('2026-06-02', tabName('2026-06-03'), { currency: 'XOF' })]).currency, null);
+  assert.equal(read([tab(D, name, { unit: 'francs entiers', deposits: deposit('SYNTHETIC ENTIERS CLIENT') })]).unit, 'UNITS');
+  // Classeur indisponible : ni devise ni unité.
+  const absent = read([tab('2026-06-02', tabName('2026-06-03'), { currency: 'XOF', unit: 'francs entiers' })]);
+  assert.equal(absent.currency, null);
+  assert.equal(absent.unit, null);
 });
 
 test('onglet D absent ou ambigu : encours indisponibles', () => {
@@ -166,9 +191,15 @@ test('facilités : plafond zéro explicite conservé ; sans en-tête, un nombre 
   assert.equal(unproven.facilities.unattributedRows, 3);
 });
 
-test('onglet dont le nom ne suit pas la date de son libellé : écarté', () => {
-  // Libellé à D dans un onglet daté D, ou avant D : la position serait décalée sans alerte.
-  for (const name of [tabName(D), tabName('2026-06-01'), tabName('2026-05-20')]) {
+test('onglet et libellé d’ouverture : même date acceptée, nom antérieur au libellé ou trop éloigné écarté', () => {
+  // Nom et libellé portent tous deux D : l'onglet porte lui-même la date de sa position.
+  const sameDay = read([tab(D, tabName(D), { opening: 77_777 })]);
+  assert.equal(sameDay.available, true);
+  assert.equal(sameDay.tabName, tabName(D));
+  assert.equal(sameDay.balanceDate, D);
+  assert.equal(sameDay.openingBalance, 77_777);
+  // Nom antérieur à la date du libellé (inversion d'un jour ou plus) : la position serait décalée sans alerte.
+  for (const name of [tabName('2026-06-02'), tabName('2026-06-01'), tabName('2026-05-20')]) {
     const result = read([tab(D, name)], 'SYNTHETIC BDK 2026.xlsx', D);
     assert.equal(result.available, false, name);
     assert.equal(result.reason, 'TAB_LABEL_INCONSISTENT', name);
@@ -177,8 +208,13 @@ test('onglet dont le nom ne suit pas la date de son libellé : écarté', () => 
   // Onglet daté très au-delà de la date de son libellé : écarté lui aussi.
   const late = readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: monthlyWorkbookBytes([tab(D, tabName('2026-06-13'))]) }, D, '2026-06-20');
   assert.equal(late.reason, 'TAB_LABEL_INCONSISTENT');
-  // Un onglet cohérent l'emporte sur un onglet incohérent portant la même date.
-  const mixed = read([tab(D, tabName(D), { opening: 77_777 }), tab(D, tabName('2026-06-04'), { opening: 20_000 })]);
+  // Unicité maintenue : un onglet daté D et un onglet daté D+1 portent tous deux la position à D → ambigu.
+  const both = read([tab(D, tabName(D), { opening: 77_777 }), tab(D, tabName('2026-06-04'), { opening: 20_000 })]);
+  assert.equal(both.available, false);
+  assert.equal(both.reason, 'TAB_AMBIGUOUS');
+  assert.equal(both.openingBalance, null);
+  // Un onglet cohérent l'emporte sur un onglet au nom antérieur à son libellé.
+  const mixed = read([tab(D, tabName('2026-06-02'), { opening: 77_777 }), tab(D, tabName('2026-06-04'), { opening: 20_000 })]);
   assert.equal(mixed.available, true);
   assert.equal(mixed.openingBalance, 20_000);
 });

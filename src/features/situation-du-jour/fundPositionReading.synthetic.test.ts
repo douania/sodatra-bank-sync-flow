@@ -9,8 +9,8 @@ import { buildAccountBalances, evaluateStatement } from './statementBalances';
 
 const D = '2026-06-03';
 const TODAY = '2026-06-05';
-/** Référence écrite dans l'onglet : date égale à D et devise. */
-const AT_D: SyntheticFundPositionReference = { date: D, currency: 'XOF' };
+/** Les trois champs explicites de l'onglet : « Situation au » égal à D, « Devise », « Unité ». */
+const AT_D: SyntheticFundPositionReference = { date: D, currency: 'XOF', unit: 'francs entiers' };
 
 const ROWS: SyntheticFundPositionRow[] = [
   { label: 'SGBS', bankBalance: 0, fundApplied: 0, netBalance: 0, nonValidatedDeposit: 0, position: 0 },
@@ -36,12 +36,12 @@ function bdkBalances() {
   }, D, TODAY)]);
 }
 
-/** Classeur mensuel BDK ; `currency` : devise écrite dans l'en-tête de l'onglet, `null` pour n'en écrire aucune. */
-function bdkWorkbook(date = D, tab = tabName('2026-06-04'), currency: string | null = 'XOF') {
+/** Classeur mensuel BDK ; `currency` et `unit` : champs de l'en-tête de l'onglet, `null` pour ne pas les renseigner. */
+function bdkWorkbook(date = D, tab = tabName('2026-06-04'), currency: string | null = 'XOF', unit: string | null = 'francs entiers') {
   return readMonthlyWorkbook({
     name: 'SYNTHETIC BDK 2026.xlsx',
     bytes: monthlyWorkbookBytes([{
-      name: tab, labelDate: date, titleBank: 'BDK', opening: 1050, currency: currency ?? undefined,
+      name: tab, labelDate: date, titleBank: 'BDK', opening: 1050, currency: currency ?? undefined, unit: unit ?? undefined,
       deposits: [{ date, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
       cheques: [{ date, number: 5550001, amount: 480 }],
     }]),
@@ -120,7 +120,7 @@ test('onglet lu : le premier daté après D, jamais masqué, daté après aujour
   // Aucun onglet après D à la date du jour : indisponible.
   assert.equal(reading(tabs, '2026-06-05').reason, 'TAB_ABSENT');
   // Un onglet daté après aujourd'hui n'est jamais lu.
-  const monday: FundTab[] = [{ name: tabName('2026-06-08'), rows: ROWS, reference: { date: '2026-06-05', currency: 'XOF' } }];
+  const monday: FundTab[] = [{ name: tabName('2026-06-08'), rows: ROWS, reference: { ...AT_D, date: '2026-06-05' } }];
   assert.equal(reading(monday, '2026-06-05', '2026-06-08').dateComparable, true);
   assert.equal(reading(monday, '2026-06-05', '2026-06-05').reason, 'TAB_ABSENT');
   // Onglet masqué : ignoré au profit du suivant.
@@ -140,18 +140,18 @@ test('onglet lu : le premier daté après D, jamais masqué, daté après aujour
   assert.equal(repeated.reason, 'HEADER_NOT_FOUND');
 });
 
-test('le nom de l’onglet ne prouve ni la date ni la devise : référence lue, sans écart chiffré', () => {
+test('le nom de l’onglet ne prouve rien : sans les trois champs explicites, référence lue sans écart chiffré', () => {
   const balances = bdkBalances();
   const workbook = bdkWorkbook();
   assert.equal(balances.find((balance) => balance.bank === 'BDK')!.status, 'AVAILABLE');
   assert.equal(workbook.available, true);
   const cases: Array<[string, SyntheticFundPositionReference | undefined, string]> = [
-    // Onglet voisin de D sans date ni devise écrites : forme habituelle d'une Fund Position.
-    ['aucune référence', undefined, 'DATE_NOT_COMPARABLE'],
-    ['date écrite différente de D', { date: '2026-06-02', currency: 'XOF' }, 'DATE_NOT_COMPARABLE'],
-    ['deux dates écrites', { date: D, otherDate: '2026-06-02', currency: 'XOF' }, 'DATE_NOT_COMPARABLE'],
-    ['date à D mais devise absente', { date: D }, 'CURRENCY_NOT_COMPARABLE'],
-    ['date à D mais autre devise', { date: D, currency: 'EUR' }, 'CURRENCY_NOT_COMPARABLE'],
+    // Onglet voisin de D sans aucun champ : forme actuelle d'une Fund Position.
+    ['aucun champ renseigné', undefined, 'DATE_NOT_COMPARABLE'],
+    ['« Situation au » différent de D', { ...AT_D, date: '2026-06-02' }, 'DATE_NOT_COMPARABLE'],
+    ['date à D mais devise absente', { date: D, unit: 'francs entiers' }, 'CURRENCY_NOT_COMPARABLE'],
+    ['date à D mais autre devise', { ...AT_D, currency: 'EUR' }, 'CURRENCY_NOT_COMPARABLE'],
+    ['date et devise mais unité absente', { date: D, currency: 'XOF' }, 'UNIT_NOT_COMPARABLE'],
   ];
   for (const [label, reference, reason] of cases) {
     const fund = reading([{ name: tabName('2026-06-04'), rows: ROWS, reference }]);
@@ -170,50 +170,60 @@ test('le nom de l’onglet ne prouve ni la date ni la devise : référence lue, 
   const none = reading([{ name: tabName('2026-06-04'), rows: ROWS }]);
   assert.equal(none.referenceDate, null);
   assert.equal(none.currency, null);
+  assert.equal(none.unit, null);
   assert.equal(none.dateComparable, false);
 });
 
-test('date de référence : une seule date, écrite sans autre mention, sinon aucune comparaison', () => {
-  const read = (reference: SyntheticFundPositionReference) => reading([{ name: tabName('2026-06-04'), rows: ROWS, reference }]);
-  // Témoins : la date de D écrite seule, sous plusieurs écritures lisibles.
-  for (const dateText of ['03/06/2026', 'Situation au 3 juin 2026', 'As of 2026-06-03', 'Position du 03/06/26']) {
-    const fund = read({ dateText, currency: 'XOF' });
-    assert.equal(fund.referenceDate, D, dateText);
-    assert.equal(fund.dateComparable, true, dateText);
+test('champ « Situation au » : libellé explicite, une date au jour près, écrit une seule fois', () => {
+  const FIELDS = { currency: 'XOF', unit: 'francs entiers' };
+  const read = (reference: SyntheticFundPositionReference) => reading([{ name: tabName('2026-06-04'), rows: ROWS, reference: { ...FIELDS, ...reference } }]);
+  // Témoins : le champ dans deux cellules voisines ou dans une seule, sous plusieurs écritures de date.
+  const witnesses: SyntheticFundPositionReference[] = [
+    { date: D }, { dateText: 'Situation au 3 juin 2026' }, { dateText: 'Situation au : 03/06/2026' },
+    { dateText: 'Date de situation : 2026-06-03' }, { texts: ['Situation au', '03/06/26'] },
+  ];
+  for (const reference of witnesses) {
+    const fund = read(reference);
+    assert.equal(fund.referenceDate, D, JSON.stringify(reference));
+    assert.equal(fund.dateComparable, true, JSON.stringify(reference));
   }
-  const doubtful: Array<[string, SyntheticFundPositionReference]> = [
-    ['période dans une seule cellule', { dateText: 'Du 03/06/2026 au 04/06/2026', currency: 'XOF' }],
-    ['même date écrite deux fois dans une cellule', { dateText: 'Du 03/06/2026 au 03/06/2026', currency: 'XOF' }],
-    ['situation à une autre date et date d’impression à D', { dateText: 'Situation au 2 juin 2026', currency: 'XOF', texts: ['Imprimé le 03/06/2026'] }],
-    ['situation en écriture ISO et date isolée à D', { dateText: 'Situation au 2026-06-02', currency: 'XOF', texts: ['03/06/26'] }],
-    ['seule date du document, mais annotée', { currency: 'XOF', texts: ['Prochaine revue 03/06/2026'] }],
-    ['date de D en cellule et date d’impression identique', { date: D, currency: 'XOF', texts: ['Imprimé le 03/06/2026'] }],
-    ['seule date du document, libellée « Imprimé le » dans la cellule voisine', { currency: 'XOF', texts: ['Imprimé le', '03/06/2026'] }],
-    ['situation sans année, autre date à D', { dateText: 'Situation au 02 juin', currency: 'XOF', texts: ['', '03/06/2026'] }],
-    ['situation en écriture anglaise, autre date à D', { dateText: 'As at June 2, 2026', currency: 'XOF', texts: ['', '03/06/2026'] }],
-    ['« date du jour » n’est pas une date de situation', { dateText: 'Date du jour : 03/06/2026', currency: 'XOF' }],
-    ['mois et année seulement, autre date à D', { dateText: 'Juin 2026', currency: 'XOF', texts: ['', '03/06/2026'] }],
-    ['seconde date au-delà de la colonne P', { date: D, currency: 'XOF', texts: ['', '', '', '', '', '02/06/2026'] }],
+  // Les autres dates de l'onglet (impression, échéances) ne comptent pas : seule la cellule libellée dit la date.
+  const amongOtherDates = reading([{
+    name: tabName('2026-06-04'),
+    reference: { ...AT_D, otherDate: '2026-06-02', texts: ['Imprimé le 04/06/2026', 'Echéance 12/12/2025'] },
+    rows: ROWS.map((row) => (row.label === 'BDK' ? { ...row, note: 'Echéance 05/10/2025' } : row)),
+  }]);
+  assert.equal(amongOtherDates.referenceDate, D);
+  assert.equal(amongOtherDates.dateComparable, true);
+  assert.equal(compareFundPosition(amongOtherDates, D, bdkBalances(), [bdkWorkbook()])
+    .find((entry) => entry.bank === 'BDK' && entry.indicator === 'FUND_APPLIED_VS_WORKBOOK')!.delta, 20);
+  const refused: Array<[string, SyntheticFundPositionReference]> = [
+    ['date écrite sans libellé', { dateText: '03/06/2026' }],
+    ['autre libellé', { dateText: 'Imprimé le 03/06/2026' }],
+    ['« date du jour » n’est pas la date de situation', { dateText: 'Date du jour : 03/06/2026' }],
+    ['libellé non prévu', { dateText: 'As of 2026-06-03' }],
+    ['champ suivi d’une mention', { dateText: 'Situation au 03/06/2026 (provisoire)' }],
+    ['champ portant une période', { dateText: 'Situation au 03/06/2026 - 04/06/2026' }],
+    ['champ au mois près', { dateText: 'Situation au juin 2026' }],
+    ['champ sans année', { dateText: 'Situation au 3 juin' }],
+    ['champ sans valeur', { texts: ['Situation au'] }],
+    ['champ écrit deux fois, même date', { date: D, texts: ['Situation au 03/06/2026'] }],
+    ['deux champs contradictoires', { date: D, texts: ['Situation au 02/06/2026'] }],
   ];
   const balances = bdkBalances();
   const workbook = bdkWorkbook();
-  for (const [label, reference] of doubtful) {
+  for (const [label, reference] of refused) {
     const fund = read(reference);
     assert.equal(fund.available, true, label);
     assert.equal(fund.referenceDate, null, label);
     assert.equal(fund.dateComparable, false, label);
     for (const comparison of compareFundPosition(fund, D, balances, [workbook])) {
       assert.equal(comparison.status, 'NOT_COMPARABLE', label);
+      assert.equal(comparison.reason, 'DATE_NOT_COMPARABLE', label);
       assert.equal(comparison.delta, null, label);
     }
   }
-  // Un mois et une année ne désignent aucun jour, même quand D est le premier du mois.
-  const monthOnly = reading([{ name: tabName('2026-06-02'), rows: ROWS, reference: { dateText: 'Juin 2026', currency: 'XOF' } }], '2026-06-01');
-  assert.equal(monthOnly.available, true);
-  assert.equal(monthOnly.referenceDate, null);
-  assert.equal(monthOnly.dateComparable, false);
-  assert.equal(reading([{ name: tabName('2026-06-02'), rows: ROWS, reference: { dateText: '01/06/2026', currency: 'XOF' } }], '2026-06-01').dateComparable, true);
-  // Une autre date écrite SOUS la ligne d'en-tête, sur la ligne d'une banque : la référence n'est plus unique.
+  // Un second champ écrit SOUS l'en-tête, sur la ligne d'une banque : le champ n'est plus unique.
   const below = reading([{
     name: tabName('2026-06-04'), reference: AT_D,
     rows: ROWS.map((row) => (row.label === 'BDK' ? { ...row, note: 'Situation au 02/06/2026' } : row)),
@@ -222,12 +232,15 @@ test('date de référence : une seule date, écrite sans autre mention, sinon au
   assert.equal(below.dateComparable, false);
 });
 
-test('devise : une seule devise écrite dans tout l’onglet, sinon aucune comparaison', () => {
+test('champ « Devise » : explicite, écrit une fois, seule devise de l’onglet, sinon aucune comparaison', () => {
   const withNote = (note: string) => ROWS.map((row) => (row.label === 'BDK' ? { ...row, note } : row));
   // Témoin : une mention équivalente (FCFA) sur la ligne d'une banque ne change rien.
   const same = reading([{ name: tabName('2026-06-04'), rows: withNote('FCFA'), reference: AT_D }]);
   assert.equal(same.currency, 'XOF');
   const cases: Array<[string, FundTab]> = [
+    ['devise écrite sans le libellé du champ', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['XOF'] } }],
+    ['champ « Devise » écrit deux fois', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['Devise : XOF'] } }],
+    ['champ « Devise » suivi d’une mention', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['Devise : XOF provisoire'] } }],
     ['seconde devise écrite dans l’en-tête', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['USD'] } }],
     ['autre devise écrite sur la ligne d’une banque', { name: tabName('2026-06-04'), rows: withNote('USD'), reference: AT_D }],
     ['autre devise écrite par son symbole', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['Montants en €'] } }],
@@ -249,7 +262,7 @@ test('devise : une seule devise écrite dans tout l’onglet, sinon aucune compa
 test('périmètre : un solde d’une autre devise ou un classeur d’une autre date n’est pas comparé', () => {
   const fund = reading();
   const euro = compareFundPosition(fund, D, [{
-    bank: 'BDK', currency: 'EUR', status: 'AVAILABLE', amount: 1050, balanceDate: D, identityProof: 'OPERATOR', currencyProof: 'CONTENT', reasons: [], sources: [],
+    bank: 'BDK', currency: 'EUR', status: 'AVAILABLE', amount: 1050, balanceDate: D, identityProof: 'OPERATOR', currencyProof: 'CONTENT', reasons: [], sources: [], observed: null,
   }], []);
   const statement = euro.find((entry) => entry.bank === 'BDK' && entry.indicator === 'BANK_BALANCE_VS_STATEMENT')!;
   assert.equal(statement.status, 'NOT_COMPARABLE');
@@ -290,6 +303,63 @@ test('classeur mensuel : sans devise établie et concordante, non comparable et 
     // La comparaison au relevé, dont la devise est établie, reste chiffrée : seul le classeur est écarté.
     assert.equal(comparisons.find((entry) => entry.indicator === 'BANK_BALANCE_VS_STATEMENT')!.status, 'EQUAL', label);
   }
+});
+
+test('champ « Unité » : absente, ambiguë ou différente, elle bloque tout écart chiffré', () => {
+  const balances = bdkBalances();
+  const tab = tabName('2026-06-04');
+  const workbookIndicators = ['BANK_BALANCE_VS_WORKBOOK', 'FUND_APPLIED_VS_WORKBOOK', 'NON_VALIDATED_VS_WORKBOOK'];
+  const pick = (comparisons: ReturnType<typeof compareFundPosition>, indicator: string) => comparisons.find((entry) => entry.bank === 'BDK' && entry.indicator === indicator)!;
+  // Témoin : tout en francs entiers, le champ pouvant être écrit au-delà de la colonne P.
+  const far = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, texts: ['', '', '', '', '', '', ''] } }]);
+  assert.equal(far.unit, 'UNITS');
+  const witness = compareFundPosition(far, D, balances, [bdkWorkbook()]);
+  assert.equal(pick(witness, 'BANK_BALANCE_VS_STATEMENT').status, 'EQUAL');
+  assert.equal(pick(witness, 'FUND_APPLIED_VS_WORKBOOK').delta, 20);
+  // Fund Position : unité absente, mal formée, écrite deux fois ou contredite ailleurs dans l'onglet.
+  const noUnit: Array<[string, SyntheticFundPositionReference]> = [
+    ['unité absente', { date: D, currency: 'XOF' }],
+    ['unité sans le libellé du champ', { date: D, currency: 'XOF', texts: ['en francs entiers'] }],
+    ['unité mal formée', { date: D, currency: 'XOF', unit: 'francs' }],
+    ['champ écrit deux fois', { ...AT_D, texts: ['Unité : francs entiers'] }],
+    ['unité contredite par une autre mention', { ...AT_D, texts: ['(en milliers)'] }],
+  ];
+  for (const [label, reference] of noUnit) {
+    const fund = reading([{ name: tab, rows: ROWS, reference }]);
+    assert.equal(fund.unit, null, label);
+    assert.equal(fund.dateComparable, true, label);
+    // Y compris face à un classeur qui ne renseigne pas non plus son unité : deux absences ne font pas un accord.
+    for (const workbook of [bdkWorkbook(), bdkWorkbook(D, tab, 'XOF', null)]) {
+      const comparisons = compareFundPosition(fund, D, balances, [workbook]);
+      assert.ok(comparisons.length > 0, label);
+      for (const comparison of comparisons) {
+        assert.equal(comparison.status, 'NOT_COMPARABLE', label);
+        assert.equal(comparison.reason, 'UNIT_NOT_COMPARABLE', label);
+        assert.equal(comparison.delta, null, label);
+      }
+    }
+  }
+  // Classeur sans unité, ou dans une autre unité que la Fund Position : ses trois comparaisons sont bloquées.
+  for (const unit of [null, 'milliers']) {
+    const workbook = bdkWorkbook(D, tab, 'XOF', unit);
+    assert.equal(workbook.available, true, String(unit));
+    const comparisons = compareFundPosition(reading(), D, balances, [workbook]);
+    for (const indicator of workbookIndicators) {
+      assert.equal(pick(comparisons, indicator).status, 'NOT_COMPARABLE', `${unit} ${indicator}`);
+      assert.equal(pick(comparisons, indicator).reason, 'UNIT_NOT_COMPARABLE', `${unit} ${indicator}`);
+      assert.equal(pick(comparisons, indicator).delta, null, `${unit} ${indicator}`);
+    }
+    assert.equal(pick(comparisons, 'BANK_BALANCE_VS_STATEMENT').status, 'EQUAL', String(unit));
+  }
+  // Fund Position en milliers : un relevé, en francs entiers, n'est pas comparé ; un classeur en milliers l'est.
+  const thousands = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, unit: 'milliers' } }]);
+  assert.equal(thousands.unit, 'THOUSANDS');
+  const mixed = compareFundPosition(thousands, D, balances, [bdkWorkbook(D, tab, 'XOF', 'milliers')]);
+  assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').status, 'NOT_COMPARABLE');
+  assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').reason, 'UNIT_NOT_COMPARABLE');
+  assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').delta, null);
+  assert.equal(pick(mixed, 'FUND_APPLIED_VS_WORKBOOK').status, 'DIFFERENT');
+  assert.equal(pick(mixed, 'BANK_BALANCE_VS_WORKBOOK').status, 'EQUAL');
 });
 
 test('écarts calculés seulement à date, périmètre et devise comparables', () => {

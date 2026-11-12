@@ -590,6 +590,77 @@ test('un libellé d’opération ne prouve jamais la couverture d’une journée
   assert.ok(trapped.reasons.includes('DATE_NOT_COVERED'));
 });
 
+test('dernier solde observé : daté de sa dernière opération, hors sous-total, jamais pour un relevé écarté', () => {
+  const csv = (name: string, movements: SyntheticMovement[], attestation: StatementInput['attestation'] | null = ATTESTED, extra: { periodStart?: string; periodEnd?: string; opening?: number; accountSuffix?: string } = {}) => evaluate({
+    name,
+    attestation: attestation ?? undefined,
+    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 400, movements, ...extra }),
+  });
+  // Compte sans mouvement depuis le 01/06 : la clôture de D (03/06) n'est pas prouvée, le solde reste daté du 01/06.
+  // (Compte distinct de celui du relevé BDK utilisé plus bas : le même compte sous deux banques serait un conflit.)
+  const quiet = csv('SYNTHETIC ORA ONLINE.csv', [{ date: '2026-06-01', amount: 60 }], ATTESTED, { accountSuffix: '11' });
+  assert.equal(quiet.admissible, false);
+  assert.equal(quiet.amount, null);
+  assert.equal(quiet.balanceDate, null);
+  assert.deepEqual(quiet.reasons, ['DAY_NOT_CLOSED', 'DATE_NOT_COVERED']);
+  assert.deepEqual(quiet.observed, { amount: 460, date: '2026-06-01' });
+  const alone = buildAccountBalances([quiet]);
+  const ora = alone.find((balance) => balance.bank === 'ORA')!;
+  assert.equal(ora.status, 'TO_REVIEW');
+  assert.equal(ora.amount, null);
+  assert.equal(ora.balanceDate, null);
+  assert.deepEqual(ora.observed, { amount: 460, date: '2026-06-01' });
+  // Hors sous-total : seul, il ne fait aucun total ; à côté d'un solde prouvé, il n'y entre pas.
+  assert.equal(consolidateBalances(alone)[0].status, 'UNAVAILABLE');
+  assert.equal(consolidateBalances(alone)[0].amount, null);
+  const withProven = consolidateBalances(buildAccountBalances([quiet, evaluate(bdk())]))[0];
+  assert.equal(withProven.amount, 1050);
+  assert.deepEqual(withProven.includedBanks, ['BDK']);
+  assert.ok(withProven.missingBanks.includes('ORA'));
+  // Dernière opération à D, clôture non prouvée : observé daté de D.
+  const atD = evaluate(atb({ identityAttested: true }, NO_HEADER, ATB_MOVES));
+  assert.deepEqual(atD.reasons, ['DAY_NOT_CLOSED']);
+  assert.deepEqual(atD.observed, { amount: 5180, date: D });
+  // Solde de clôture prouvé : aucun solde observé à côté.
+  assert.equal(evaluate(atb({ identityAttested: true })).observed, null);
+  assert.equal(buildAccountBalances([evaluate(atb({ identityAttested: true }))]).find((balance) => balance.bank === 'ATB')!.observed, null);
+  // Rupture de chaîne : le solde est exclu, observé compris.
+  const broken = evaluate({
+    name: 'SYNTHETIC BIS ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'BIS', opening: 100, movements: [{ date: '2026-06-02', amount: 10 }, { date: D, amount: 20 }], breakChain: true }),
+  });
+  assert.ok(broken.reasons.includes('BALANCE_CHAIN_BROKEN'));
+  assert.equal(broken.observed, null);
+  assert.equal(buildAccountBalances([broken]).find((balance) => balance.bank === 'BIS')!.observed, null);
+  // Identité ou devise non établie : aucun solde observé.
+  assert.equal(evaluate(atb(undefined, NO_HEADER, ATB_MOVES)).observed, null);
+  const bridgeMoves = [{ date: D, amount: 100 }];
+  assert.equal(evaluate(bridge({ identityAttested: true }, bridgeMoves)).observed, null);
+  assert.deepEqual(evaluate(bridge({ identityAttested: true, currencyAttested: 'XOF' }, bridgeMoves)).observed, { amount: 1000, date: D });
+  // Relevé à revoir pour une autre raison (ligne datée après aujourd'hui), ou D antérieure à toute opération : rien.
+  assert.equal(evaluate(atb({ identityAttested: true }, NO_HEADER, [{ date: D, amount: 300 }, { date: '2026-06-20', amount: 5 }]), D, '2026-06-04').observed, null);
+  assert.equal(evaluate(bdk(), '2026-05-20').observed, null);
+  // Deux comptes distincts pour une banque : aucun solde observé pour la banque.
+  const open = [{ date: '2026-06-01', amount: -100 }, { date: D, amount: 150 }];
+  const twoAccounts = buildAccountBalances([
+    csv('SYNTHETIC BDK ONLINE.csv', open, ATTESTED, { opening: 1000 }),
+    csv('AUTRE COMPTE BDK ONLINE.csv', open, ATTESTED, { opening: 1000, accountSuffix: '77' }),
+  ]).find((balance) => balance.bank === 'BDK')!;
+  assert.equal(twoAccounts.status, 'TO_REVIEW');
+  assert.equal(twoAccounts.observed, null);
+  // Deux exports du même compte : le plus récent est retenu.
+  const older = csv('ANCIEN BDK ONLINE.csv', [{ date: '2026-05-20', amount: 5 }], ATTESTED, { periodStart: '2026-05-20', periodEnd: '2026-05-22', opening: 70 });
+  assert.deepEqual(older.observed, { amount: 75, date: '2026-05-20' });
+  const recent = csv('SYNTHETIC BDK ONLINE.csv', open, ATTESTED, { opening: 1000 });
+  assert.deepEqual(buildAccountBalances([older, recent]).find((balance) => balance.bank === 'BDK')!.observed, { amount: 1050, date: D });
+  // … sauf s'ils se contredisent à la même date, ou si l'un des deux est écarté pour une autre raison.
+  const contradicting = csv('AUTRE EXPORT BDK ONLINE.csv', [{ date: '2026-06-01', amount: -100 }, { date: D, amount: 155 }], ATTESTED, { opening: 1000 });
+  assert.equal(buildAccountBalances([recent, contradicting]).find((balance) => balance.bank === 'BDK')!.observed, null);
+  const unattested = csv('COPIE BDK ONLINE.csv', [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 150 }], null, { opening: 1000 });
+  assert.equal(buildAccountBalances([recent, unattested]).find((balance) => balance.bank === 'BDK')!.observed, null);
+});
+
 test('banque sans lecteur ou format inattendu : refus explicite', () => {
   const nsia = evaluate({ name: 'SYNTHETIC NSIA ONLINE.xlsx', bytes: new ArrayBuffer(8) });
   assert.deepEqual(nsia.reasons, ['NO_READER_FOR_BANK']);

@@ -114,7 +114,24 @@ export interface StatementEvaluation {
   accountKey: string | null;
   /** Compte masqué lu dans le contenu, montré à l'opérateur avant son attestation. */
   accountLabel: string | null;
+  /** Dernier solde OBSERVÉ quand la clôture de D n'est pas prouvée ; `null` sinon, ou si le relevé est écarté. */
+  observed: ObservedBalance | null;
 }
+
+/**
+ * Dernier solde observé dans un relevé : solde après sa dernière opération datée au plus tard de D, à la
+ * date RÉELLE de cette opération. Ce n'est pas un solde de clôture prouvé : il n'entre dans aucun total
+ * et n'est jamais comparé. Il n'est rendu que si l'identité, la devise et la chaîne des soldes sont
+ * établies et si rien d'autre que la preuve de clôture ou de couverture ne manque au relevé.
+ */
+export interface ObservedBalance {
+  amount: number;
+  /** Date de la dernière opération qui porte ce solde (≤ D), jamais ramenée à D. */
+  date: string;
+}
+
+/** Seuls motifs qui laissent subsister un solde observé : la clôture ou la couverture de D n'est pas prouvée. */
+const OBSERVABLE_DESPITE: ReadonlySet<BalanceReason> = new Set<BalanceReason>(['DAY_NOT_CLOSED', 'DATE_NOT_COVERED']);
 
 export type BalanceStatus = 'AVAILABLE' | 'TO_REVIEW' | 'UNAVAILABLE';
 
@@ -133,6 +150,8 @@ export interface AccountBalance {
   currencyProof: CurrencyProof | null;
   reasons: BalanceReason[];
   sources: BalanceSource[];
+  /** Dernier solde observé du compte, hors total ; `null` si le solde de clôture est prouvé ou si un relevé est écarté. */
+  observed: ObservedBalance | null;
 }
 
 export type ConsolidationStatus = 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
@@ -312,7 +331,7 @@ function emptyEvaluation(file: InMemoryFile, bank: SituationBank | null): Statem
   return {
     fileName: file.name, bank, admissible: false, amount: null, balanceDate: null, currency: null, identityProof: null,
     currencyProof: null, needsIdentityAttestation: false, needsCurrencyAttestation: false, reasons: [],
-    periodStart: null, periodEnd: null, lineCount: 0, contentDigest: digestBytes(file.bytes), accountKey: null, accountLabel: null,
+    periodStart: null, periodEnd: null, lineCount: 0, contentDigest: digestBytes(file.bytes), accountKey: null, accountLabel: null, observed: null,
   };
 }
 
@@ -474,6 +493,12 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
   if (evaluation.reasons.length > 0 || amount === null || balanceDate === null) {
     evaluation.admissible = false;
     evaluation.amount = null;
+    // Clôture non prouvée, tout le reste établi : le dernier solde observé reste lisible, à sa date réelle.
+    const lastSeen = [...units].reverse().find((unit) => unit.date <= accountingDate) ?? null;
+    if (lastSeen && lastSeen.closing !== null && evaluation.reasons.length > 0
+      && evaluation.reasons.every((reason) => OBSERVABLE_DESPITE.has(reason))) {
+      evaluation.observed = { amount: lastSeen.closing, date: lastSeen.date };
+    }
     return evaluation;
   }
   evaluation.admissible = true;
@@ -505,6 +530,24 @@ function filesSharedAcrossBanks(evaluations: StatementEvaluation[]): Set<string>
 }
 
 /**
+ * Dernier solde observé d'un compte : tous ses relevés doivent en rendre un (aucun n'est écarté pour une
+ * autre raison) et désigner le même compte ; le plus récent est retenu, sauf s'ils se contredisent.
+ */
+function observedForAccount(mine: StatementEvaluation[]): ObservedBalance | null {
+  const oneAccount = mine.length === 1
+    || mine.every((evaluation) => evaluation.contentDigest === mine[0].contentDigest)
+    || mine.every((evaluation) => evaluation.accountKey !== null && evaluation.accountKey === mine[0].accountKey);
+  if (!oneAccount) return null;
+  const seen: ObservedBalance[] = [];
+  for (const evaluation of mine) {
+    if (!evaluation.observed) return null;
+    seen.push(evaluation.observed);
+  }
+  const latest = seen.reduce((best, current) => (current.date > best.date ? current : best));
+  return seen.every((current) => current.date !== latest.date || amountsIdentical(current.amount, latest.amount)) ? latest : null;
+}
+
+/**
  * Un solde par compte attendu ; doublons comptés une fois, conflits exclus et
  * signalés. Un même relevé (mêmes octets, ou même compte) déposé sous deux
  * banques n'est retenu pour aucune des deux.
@@ -515,7 +558,7 @@ export function buildAccountBalances(evaluations: StatementEvaluation[]): Accoun
     const mine = evaluations.filter((evaluation) => evaluation.bank === bank);
     const base: AccountBalance = {
       bank, currency: SITUATION_EXPECTED_CURRENCY, status: 'UNAVAILABLE', amount: null, balanceDate: null,
-      identityProof: null, currencyProof: null, reasons: [], sources: [],
+      identityProof: null, currencyProof: null, reasons: [], sources: [], observed: null,
     };
     if (mine.length === 0) {
       base.reasons = [CSV_BANKS.has(bank) || EXCEL_BANKS.has(bank) ? 'NO_STATEMENT' : 'NO_READER_FOR_BANK'];
@@ -532,6 +575,8 @@ export function buildAccountBalances(evaluations: StatementEvaluation[]): Accoun
       base.status = mine.every((evaluation) => evaluation.reasons.includes('NO_READER_FOR_BANK')) ? 'UNAVAILABLE' : 'TO_REVIEW';
       base.reasons = uniqueReasons(mine);
       base.sources = mine.map((evaluation) => ({ fileName: evaluation.fileName, role: 'excluded' as const }));
+      // Hors total : le sous-total ne lit que `amount`, qui reste `null`.
+      base.observed = observedForAccount(mine);
       return base;
     }
     // Plusieurs relevés pour une banque : ils ne se confondent que s'ils sont le MÊME contenu ou portent la

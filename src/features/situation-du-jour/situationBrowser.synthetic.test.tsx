@@ -187,7 +187,7 @@ function syntheticFiles() {
     }) },
     { name: '040626 SYNTHETIC ATB ONLINE.xls', bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES }) },
     { name: 'SYNTHETIC BDK 2026.xlsx', bytes: monthlyWorkbookBytes([{
-      name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1050, currency: 'XOF',
+      name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1050, currency: 'XOF', unit: 'francs entiers',
       deposits: [{ date: D, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
       cheques: [{ date: D, number: 5550001, amount: 480 }],
     }]) },
@@ -195,7 +195,7 @@ function syntheticFiles() {
       { date: '2026-06-02', instrument: { date: '2026-09-01' }, clientBank: 'SYNTHBANK A', client: 'SYNTHETIC CLIENT A', amount: 700, depositBank: 'BDK' },
       { date: '2026-05-20', instrument: { date: '2026-08-01' }, clientBank: 'SYNTHBANK B', client: 'SYNTHETIC CLIENT B', amount: 5000, depositBank: 'BDK', validity: { date: '2026-05-25' } },
     ]) },
-    { name: 'SYNTHETIC FUND POSITION.xlsx', bytes: fundPositionBytes([{ name: tabName('2026-06-04'), reference: { date: D, currency: 'XOF' }, rows: [
+    { name: 'SYNTHETIC FUND POSITION.xlsx', bytes: fundPositionBytes([{ name: tabName('2026-06-04'), reference: { date: D, currency: 'XOF', unit: 'francs entiers' }, rows: [
       { label: 'BDK', bankBalance: 1050, fundApplied: 500, netBalance: 550, nonValidatedDeposit: 700, position: 1250 },
     ] }]) },
     { name: 'NOTES.xlsx', bytes: monthlyWorkbookBytes([{ name: '040626', labelDate: D, titleBank: 'BDK', opening: 1 }]) },

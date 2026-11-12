@@ -8,7 +8,7 @@ import type { ComparisonReason } from './fundPositionReading';
 import { WORKBOOK_REASON_LABELS } from './monthlyWorkbook';
 import { SITUATION_AMBIGUITY_LABELS, SITUATION_FILE_KIND_LABELS } from './situationCompute';
 import type { SituationResult } from './situationCompute';
-import { SITUATION_BANK_LABELS, SITUATION_EXPECTED_CURRENCY, formatIsoFr, isoToExcelSerial, excelSerialToIso } from './situationCore';
+import { AMOUNT_UNIT_LABELS, SITUATION_BANK_LABELS, SITUATION_EXPECTED_CURRENCY, formatIsoFr, isoToExcelSerial, excelSerialToIso } from './situationCore';
 import { SITUATION_SESSION_ERROR_LABELS, createSituationSession } from './situationSession';
 import { BALANCE_REASON_LABELS } from './statementBalances';
 
@@ -49,11 +49,11 @@ function Balances({ result }: { result: SituationResult }) {
   return (
     <Section
       title={`Soldes à la clôture du ${formatIsoFr(result.accountingDate)}`}
-      hint="Seuls les soldes prouvés entrent dans le total. Un compte à revoir ou indisponible est nommé, jamais additionné."
+      hint="Seuls les soldes de clôture prouvés entrent dans le total. Un compte à revoir ou indisponible est nommé, jamais additionné. Le « dernier solde observé » est le solde lu après la dernière opération du relevé, à la date de cette opération : ce n’est pas un solde de clôture, il n’entre dans aucun total."
     >
       <table className="w-full border-collapse">
         <thead>
-          <tr><th className={CELL}>Banque</th><th className={CELL}>État</th><th className={NUM}>Solde ({SITUATION_EXPECTED_CURRENCY})</th><th className={CELL}>Journée du solde</th><th className={CELL}>Motif</th></tr>
+          <tr><th className={CELL}>Banque</th><th className={CELL}>État</th><th className={NUM}>Solde de clôture prouvé ({SITUATION_EXPECTED_CURRENCY})</th><th className={CELL}>Journée du solde</th><th className={NUM}>Dernier solde observé, hors total</th><th className={CELL}>Observé au</th><th className={CELL}>Motif</th></tr>
         </thead>
         <tbody>
           {result.balances.map((balance) => (
@@ -64,6 +64,8 @@ function Balances({ result }: { result: SituationResult }) {
               </td>
               <td className={NUM}>{balance.status === 'AVAILABLE' ? formatAmount(balance.amount) : '—'}</td>
               <td className={CELL}>{formatIsoFr(balance.balanceDate)}</td>
+              <td className={NUM}>{balance.observed ? formatAmount(balance.observed.amount) : '—'}</td>
+              <td className={CELL}>{balance.observed ? formatIsoFr(balance.observed.date) : '—'}</td>
               <td className={CELL}>
                 {balance.reasons.map((reason) => BALANCE_REASON_LABELS[reason]).join(' ; ') || [balance.identityProof === 'OPERATOR' ? 'Identité attestée par l’opérateur' : '', balance.currencyProof === 'OPERATOR' ? 'Devise attestée par l’opérateur' : ''].filter(Boolean).join(' ; ')}
                 {balance.status === 'AVAILABLE' && balance.sources.some((source) => source.role !== 'retained') ? (
@@ -78,7 +80,7 @@ function Balances({ result }: { result: SituationResult }) {
       </table>
       {result.consolidation.map((total) => (
         <p key={total.currency} className="mt-3 text-sm">
-          <strong>Total {total.currency} : </strong>
+          <strong>Total des soldes de clôture prouvés, {total.currency} : </strong>
           {total.status === 'UNAVAILABLE' ? 'indisponible (aucun solde prouvé)' : formatAmount(total.amount)}{' '}
           {total.status === 'COMPLETE' ? <Badge tone="ok">COMPLET</Badge> : total.status === 'PARTIAL' ? <Badge tone="warn">PARTIEL</Badge> : <Badge tone="off">INDISPONIBLE</Badge>}
           {total.missingBanks.length > 0 ? ` — comptes manquants : ${total.missingBanks.map((bank) => SITUATION_BANK_LABELS[bank]).join(', ')}` : ''}
@@ -108,7 +110,10 @@ function Encours({ result }: { result: SituationResult }) {
                 <>
                   <td className={CELL}>
                     {workbook.tabName}
-                    <div className="text-muted-foreground">{workbook.currency ? `Devise écrite dans l’onglet : ${workbook.currency}` : 'Devise non établie par l’onglet : classeur non comparé à la Fund Position'}</div>
+                    <div className="text-muted-foreground">
+                      {workbook.currency ? `Devise : ${workbook.currency}` : 'Devise non renseignée'} · {workbook.unit ? `Unité : ${AMOUNT_UNIT_LABELS[workbook.unit]}` : 'Unité non renseignée'}
+                      {workbook.currency && workbook.unit ? '' : ' — classeur non comparé à la Fund Position'}
+                    </div>
                     {workbook.ignoredFutureTabs > 0 ? <div className="text-muted-foreground">{workbook.ignoredFutureTabs} onglet(s) daté(s) dans le futur ignoré(s)</div> : null}
                   </td>
                   <td className={NUM}>{formatAmount(workbook.openingBalance)}</td>
@@ -208,13 +213,14 @@ function FundPosition({ result }: { result: SituationResult }) {
     .map((reason) => ({ reason, count: fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE' && comparison.reason === reason).length }))
     .filter((entry) => entry.count > 0);
   return (
-    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date et la devise sont établies des deux côtés.">
+    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date, la devise et l’unité sont renseignées et concordent des deux côtés.">
       <p className="text-sm">
-        Date de référence écrite dans l’onglet : {fundPosition.reading.referenceDate ? formatIsoFr(fundPosition.reading.referenceDate) : 'non établie'} ·
-        Devise écrite dans l’onglet : {fundPosition.reading.currency ?? 'non établie'}
+        Situation au : {fundPosition.reading.referenceDate ? formatIsoFr(fundPosition.reading.referenceDate) : 'non renseignée'} ·
+        Devise : {fundPosition.reading.currency ?? 'non renseignée'} ·
+        Unité : {fundPosition.reading.unit ? AMOUNT_UNIT_LABELS[fundPosition.reading.unit] : 'non renseignée'}
       </p>
-      {!fundPosition.reading.dateComparable || fundPosition.reading.currency !== SITUATION_EXPECTED_CURRENCY ? (
-        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> Le document n’établit pas lui-même une date de référence égale à la date comptable et une devise : la référence est affichée telle que lue, sans écart chiffré.</p>
+      {!fundPosition.reading.dateComparable || fundPosition.reading.currency !== SITUATION_EXPECTED_CURRENCY || fundPosition.reading.unit === null ? (
+        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> L’onglet ne renseigne pas ses trois champs « Situation au » (égal à la date comptable), « Devise » et « Unité » : la référence est affichée telle que lue, sans écart chiffré.</p>
       ) : null}
       <table className="mt-2 w-full border-collapse">
         <thead><tr><th className={CELL}>Banque (référence lue)</th><th className={NUM}>Bank Balance</th><th className={NUM}>Fund Applied</th><th className={NUM}>Net Balance</th><th className={NUM}>NonValidated Deposit</th></tr></thead>
