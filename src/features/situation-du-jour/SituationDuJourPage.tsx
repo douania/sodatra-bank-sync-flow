@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import type { ChangeEvent, ReactNode } from 'react';
 
-import { COLLECTION_CHECK_LABELS, COLLECTION_STATE_LABELS } from './collectionReading';
+import { COLLECTION_CHECK_LABELS, COLLECTION_FILE_REASON_LABELS, COLLECTION_STATE_LABELS } from './collectionReading';
 import type { CollectionState } from './collectionReading';
 import { FUND_POSITION_INDICATOR_LABELS, FUND_POSITION_REASON_LABELS } from './fundPositionReading';
 import { WORKBOOK_REASON_LABELS } from './monthlyWorkbook';
@@ -64,7 +64,7 @@ function Balances({ result }: { result: SituationResult }) {
               <td className={NUM}>{balance.status === 'AVAILABLE' ? formatAmount(balance.amount) : '—'}</td>
               <td className={CELL}>{formatIsoFr(balance.balanceDate)}</td>
               <td className={CELL}>
-                {balance.reasons.map((reason) => BALANCE_REASON_LABELS[reason]).join(' ; ') || (balance.identityProof === 'OPERATOR' ? 'Identité attestée par l’opérateur' : '')}
+                {balance.reasons.map((reason) => BALANCE_REASON_LABELS[reason]).join(' ; ') || [balance.identityProof === 'OPERATOR' ? 'Identité attestée par l’opérateur' : '', balance.currencyProof === 'OPERATOR' ? 'Devise attestée par l’opérateur' : ''].filter(Boolean).join(' ; ')}
                 {balance.status === 'AVAILABLE' && balance.sources.some((source) => source.role !== 'retained') ? (
                   <div className="text-muted-foreground">
                     {balance.sources.filter((source) => source.role === 'duplicate').length} doublon(s), {balance.sources.filter((source) => source.role === 'excluded').length} relevé(s) écarté(s) pour ce compte
@@ -142,7 +142,7 @@ function Collections({ result }: { result: SituationResult }) {
   const collection = result.collection;
   if (!collection) return null;
   if (!collection.reading.available || !collection.summary) {
-    return <Section title="Tombées (Collection Report)"><p className="text-sm">Collection Report illisible : aucune tombée n’est affichée.</p></Section>;
+    return <Section title="Tombées (Collection Report)"><p className="text-sm">Collection Report non retenu ({collection.reading.reason ? COLLECTION_FILE_REASON_LABELS[collection.reading.reason] : 'lecture impossible'}) : aucune tombée n’est affichée.</p></Section>;
   }
   const summary = collection.summary;
   const toVerify = collection.rows.filter((row) => row.state === 'A_VERIFIER');
@@ -152,7 +152,7 @@ function Collections({ result }: { result: SituationResult }) {
         {(Object.keys(summary.countByState) as CollectionState[]).map((state) => `${COLLECTION_STATE_LABELS[state]} : ${summary.countByState[state]}`).join(' · ')}
       </p>
       <p className="mt-2 text-sm">
-        <strong>Entrées attendues : {formatAmount(summary.expectedInflowsTotal)}</strong>
+        <strong>Entrées attendues prouvées : {formatAmount(summary.expectedInflowsTotal)}</strong>
         {summary.expectedInflows.map((entry) => ` · ${SITUATION_BANK_LABELS[entry.bank]} ${formatAmount(entry.amount)} (${entry.count})`).join('')}
       </p>
       <p className="mt-1 text-sm text-muted-foreground">À vérifier, hors total : {formatAmount(summary.toVerifyAmount)} ({toVerify.length} ligne(s))</p>
@@ -297,7 +297,7 @@ export function SituationDuJourPage() {
       </Section>
 
       {statementNeeds.length > 0 ? (
-        <Section title="Attestations de l’opérateur" hint="Ces relevés ne portent pas eux-mêmes l’identité du compte ou la devise. Sans attestation, leur solde reste à revoir et hors total.">
+        <Section title="Attestations de l’opérateur" hint="Un relevé ne désigne sa banque que par le nom du fichier : l’opérateur atteste le compte, fichier par fichier, et la devise quand elle n’est pas écrite. Sans attestation, le solde reste à revoir et hors total.">
           {statementNeeds.map((statement) => {
             const current = state.attestations[statement.fileName] ?? {};
             return (
@@ -306,6 +306,7 @@ export function SituationDuJourPage() {
                 {statement.needsIdentityAttestation ? (
                   <label className="mr-4"><input type="checkbox" className="mr-1" checked={current.identityAttested === true} onChange={(event) => attest(statement.fileName, { ...current, identityAttested: event.target.checked })} />
                     J’atteste que ce fichier est le relevé du compte {statement.bank ? SITUATION_BANK_LABELS[statement.bank] : ''}
+                    {statement.accountLabel ? ` (compte ${statement.accountLabel} lu dans le fichier)` : ''}
                   </label>
                 ) : null}
                 {statement.needsCurrencyAttestation ? (

@@ -183,6 +183,26 @@ test('deux feuilles visibles aux en-têtes compatibles : lecture ambiguë', () =
   assert.deepEqual(reading.rows, []);
 });
 
+test('montant négatif ou numéro de chèque nul : jamais une entrée attendue', () => {
+  const row = (amount: number, instrument: number): SyntheticCollectionRow => ({
+    date: '2026-06-02', instrument, clientBank: 'SYNTHBANK N', client: 'SYNTHETIC CLIENT N', amount, depositBank: 'BICIS',
+  });
+  const reading = readCollectionReport(collectionReportBytes([row(-500, 4447001), row(300, 0)]));
+  // Le classeur porte les mêmes écritures : un montant négatif et un numéro de chèque nul.
+  const workbook = bicisWorkbook([
+    { number: 4447001, client: 'SYNTHETIC CLIENT N', amount: -500 },
+    { number: 0, client: 'SYNTHETIC CLIENT N', amount: 300 },
+  ]);
+  assert.equal(workbook.available, true);
+  assert.equal(workbook.deposits.available, true);
+  const rows = classify(reading.rows, [workbook]);
+  assert.deepEqual(rows.map((entry) => entry.state), ['A_VERIFIER', 'A_VERIFIER']);
+  assert.deepEqual(rows.map((entry) => entry.checkReason), ['AMOUNT_NOT_POSITIVE', 'NO_DEPOSIT_PROOF']);
+  const summary = summarizeCollections(rows, D);
+  assert.equal(summary.expectedInflowsTotal, 0);
+  assert.deepEqual(summary.expectedInflows, []);
+});
+
 test('montant ou date de ligne absents : « À vérifier »', () => {
   const reading = readCollectionReport(collectionReportBytes([
     { date: '2026-06-02', instrument: 4440010, clientBank: 'SYNTHBANK I', client: 'SYNTHETIC CLIENT I', amount: null, depositBank: 'BDK' },

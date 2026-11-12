@@ -28,6 +28,7 @@ function reading(tabs: FundTab[] = [{ name: tabName('2026-06-04'), rows: ROWS, r
 function bdkBalances() {
   return buildAccountBalances([evaluateStatement({
     name: 'SYNTHETIC BDK ONLINE.csv',
+    attestation: { identityAttested: true },
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
       movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
@@ -171,10 +172,63 @@ test('le nom de l’onglet ne prouve ni la date ni la devise : référence lue, 
   assert.equal(none.dateComparable, false);
 });
 
+test('date de référence : une seule date, écrite sans autre mention, sinon aucune comparaison', () => {
+  const read = (reference: SyntheticFundPositionReference) => reading([{ name: tabName('2026-06-04'), rows: ROWS, reference }]);
+  // Témoins : la date de D écrite seule, sous plusieurs écritures lisibles.
+  for (const dateText of ['03/06/2026', 'Situation au 3 juin 2026', 'As of 2026-06-03', 'Position du 03/06/26']) {
+    const fund = read({ dateText, currency: 'XOF' });
+    assert.equal(fund.referenceDate, D, dateText);
+    assert.equal(fund.dateComparable, true, dateText);
+  }
+  const doubtful: Array<[string, SyntheticFundPositionReference]> = [
+    ['période dans une seule cellule', { dateText: 'Du 03/06/2026 au 04/06/2026', currency: 'XOF' }],
+    ['même date écrite deux fois dans une cellule', { dateText: 'Du 03/06/2026 au 03/06/2026', currency: 'XOF' }],
+    ['situation à une autre date et date d’impression à D', { dateText: 'Situation au 2 juin 2026', currency: 'XOF', texts: ['Imprimé le 03/06/2026'] }],
+    ['situation en écriture ISO et date isolée à D', { dateText: 'Situation au 2026-06-02', currency: 'XOF', texts: ['03/06/26'] }],
+    ['seule date du document, mais annotée', { currency: 'XOF', texts: ['Prochaine revue 03/06/2026'] }],
+    ['date de D en cellule et date d’impression identique', { date: D, currency: 'XOF', texts: ['Imprimé le 03/06/2026'] }],
+  ];
+  const balances = bdkBalances();
+  const workbook = bdkWorkbook();
+  for (const [label, reference] of doubtful) {
+    const fund = read(reference);
+    assert.equal(fund.available, true, label);
+    assert.equal(fund.referenceDate, null, label);
+    assert.equal(fund.dateComparable, false, label);
+    for (const comparison of compareFundPosition(fund, D, balances, [workbook])) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE', label);
+      assert.equal(comparison.delta, null, label);
+    }
+  }
+});
+
+test('devise : une seule devise écrite dans tout l’onglet, sinon aucune comparaison', () => {
+  const withNote = (note: string) => ROWS.map((row) => (row.label === 'BDK' ? { ...row, note } : row));
+  // Témoin : une mention équivalente (FCFA) sur la ligne d'une banque ne change rien.
+  const same = reading([{ name: tabName('2026-06-04'), rows: withNote('FCFA'), reference: AT_D }]);
+  assert.equal(same.currency, 'XOF');
+  const cases: Array<[string, FundTab]> = [
+    ['seconde devise écrite dans l’en-tête', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['USD'] } }],
+    ['autre devise écrite sur la ligne d’une banque', { name: tabName('2026-06-04'), rows: withNote('USD'), reference: AT_D }],
+  ];
+  for (const [label, tab] of cases) {
+    const fund = reading([tab]);
+    assert.equal(fund.currency, null, label);
+    assert.equal(fund.dateComparable, true, label);
+    const comparisons = compareFundPosition(fund, D, bdkBalances(), [bdkWorkbook()]);
+    assert.ok(comparisons.length > 0, label);
+    for (const comparison of comparisons) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE', label);
+      assert.equal(comparison.reason, 'CURRENCY_NOT_COMPARABLE', label);
+      assert.equal(comparison.delta, null, label);
+    }
+  }
+});
+
 test('périmètre : un solde d’une autre devise ou un classeur d’une autre date n’est pas comparé', () => {
   const fund = reading();
   const euro = compareFundPosition(fund, D, [{
-    bank: 'BDK', currency: 'EUR', status: 'AVAILABLE', amount: 1050, balanceDate: D, identityProof: 'CONTENT', reasons: [], sources: [],
+    bank: 'BDK', currency: 'EUR', status: 'AVAILABLE', amount: 1050, balanceDate: D, identityProof: 'OPERATOR', currencyProof: 'CONTENT', reasons: [], sources: [],
   }], []);
   const statement = euro.find((entry) => entry.bank === 'BDK' && entry.indicator === 'BANK_BALANCE_VS_STATEMENT')!;
   assert.equal(statement.status, 'NOT_COMPARABLE');

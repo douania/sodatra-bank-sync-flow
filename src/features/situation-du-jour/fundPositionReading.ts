@@ -13,9 +13,10 @@ import {
   SITUATION_EXPECTED_CURRENCY,
   detectBankFromStrictLabel,
   cellIsoDate,
-  findDayFirstDateInText,
+  findDatesInText,
   hiddenSheetNames,
   normalizeLabel,
+  plainUpper,
   readWorkbook,
   tokenize,
   sheetNameToIso,
@@ -126,29 +127,48 @@ function unavailable(reason: FundPositionReason): FundPositionReading {
 
 const CURRENCY_TOKENS: Record<string, string> = { XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', USD: 'USD', GBP: 'GBP' };
 
+/** Mots qui peuvent accompagner la date de référence dans sa cellule sans la rendre douteuse. */
+const REFERENCE_NEUTRAL_WORDS: ReadonlySet<string> = new Set([
+  'DATE', 'AU', 'DU', 'LE', 'EN', 'AS', 'AT', 'OF', 'ON', 'SITUATION', 'POSITION', 'FUND', 'ARRETE', 'ARRETEE', 'DAILY', 'REPORT', 'JOUR',
+  'DEVISE', 'CURRENCY',
+]);
+
 /**
- * Date de référence et devise établies PAR LE DOCUMENT : lues dans les cellules
- * situées jusqu'à la ligne d'en-tête comprise. Une seule date distincte et une
- * seule devise sont exigées ; à défaut, la valeur reste `null` et la Fund
- * Position est affichée comme référence lue, sans écart chiffré.
+ * Date de référence et devise établies PAR LE DOCUMENT. La date est cherchée
+ * dans les cellules situées jusqu'à la ligne d'en-tête comprise, sous toutes
+ * les écritures lisibles ; elle n'est retenue que si elle est la SEULE date de
+ * cette zone et si sa cellule ne dit rien d'autre (une date d'impression, une
+ * période ou une date annotée rendent la référence douteuse). La devise doit
+ * être la seule devise écrite dans tout l'onglet. À défaut, la valeur reste
+ * `null` : la Fund Position est affichée comme référence lue, sans écart chiffré.
  */
-function readDocumentReference(sheet: Sheet, headerRow: number, lastColumn: number): { referenceDate: string | null; currency: string | null } {
+function readDocumentReference(
+  sheet: Sheet, headerRow: number, lastRow: number, lastColumn: number,
+): { referenceDate: string | null; currency: string | null } {
   const dates = new Set<string>();
   const currencies = new Set<string>();
-  for (let row = 1; row <= headerRow; row += 1) {
+  let doubtfulDate = false;
+  for (let row = 1; row <= lastRow; row += 1) {
     for (let column = 1; column <= lastColumn; column += 1) {
       const cell = cellAt(sheet, row, column);
-      const date = cellIsoDate(cell);
+      const inReferenceZone = row <= headerRow;
+      const date = inReferenceZone ? cellIsoDate(cell) : null;
       if (date) dates.add(date);
       const text = cellText(cell);
       if (!text) continue;
-      const written = findDayFirstDateInText(text);
-      if (written) dates.add(written);
       for (const token of tokenize(text)) if (CURRENCY_TOKENS[token]) currencies.add(CURRENCY_TOKENS[token]);
+      if (!inReferenceZone) continue;
+      const written = findDatesInText(text);
+      if (written.length === 0) continue;
+      for (const entry of written) dates.add(entry.iso);
+      let rest = plainUpper(text);
+      for (const entry of [...written].reverse()) rest = `${rest.slice(0, entry.index)} ${rest.slice(entry.index + entry.length)}`;
+      const onlyNeutralWords = tokenize(rest).every((token) => REFERENCE_NEUTRAL_WORDS.has(token) || CURRENCY_TOKENS[token] !== undefined);
+      if (written.length > 1 || !onlyNeutralWords) doubtfulDate = true;
     }
   }
   return {
-    referenceDate: dates.size === 1 ? Array.from(dates)[0] : null,
+    referenceDate: !doubtfulDate && dates.size === 1 ? Array.from(dates)[0] : null,
     currency: currencies.size === 1 ? Array.from(currencies)[0] : null,
   };
 }
@@ -218,7 +238,7 @@ export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, tod
   if (!header) {
     return { ...unavailable('HEADER_NOT_FOUND'), tabName: tab.name, tabDate: tab.date };
   }
-  const reference = readDocumentReference(sheet, header.row, bounds.lastColumn);
+  const reference = readDocumentReference(sheet, header.row, bounds.lastRow, bounds.lastColumn);
   const dateComparable = reference.referenceDate !== null && reference.referenceDate === accountingDate;
   const positionColumn = header.columns.nonValidatedDeposit + 1;
   const issues: FundPositionIssue[] = [];

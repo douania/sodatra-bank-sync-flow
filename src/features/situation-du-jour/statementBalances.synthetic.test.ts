@@ -10,9 +10,13 @@ const D = '2026-06-03';
 const TODAY = '2026-06-08';
 const evaluate = (file: StatementInput, date = D, today = TODAY) => evaluateStatement(file, date, today);
 
-function bdk(name = 'SYNTHETIC BDK ONLINE.csv', closingShift = 0, accountSuffix?: string): StatementInput {
+/** Attestation d'identité de l'opérateur : exigée pour tout relevé, CSV compris. */
+const ATTESTED: StatementInput['attestation'] = { identityAttested: true };
+
+function bdk(name = 'SYNTHETIC BDK ONLINE.csv', closingShift = 0, accountSuffix?: string, attestation: StatementInput['attestation'] | null = ATTESTED): StatementInput {
   return {
     name,
+    attestation: attestation ?? undefined,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, accountSuffix,
       movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 + closingShift }],
@@ -39,14 +43,33 @@ function bridge(attestation: StatementInput['attestation'], movements: Synthetic
   return { name: 'SYNTHETIC BRIDGE ONLINE.xlsx', attestation, bytes: excelStatementBytes({ bank: 'BRIDGE', opening: 900, movements, ...extra }) };
 }
 
-test('clôture à D prouvée, identité et devise corroborées par le contenu (CSV)', () => {
+test('relevé CSV : clôture à D prouvée, devise lue dans le contenu, identité attestée par l’opérateur', () => {
   const evaluation = evaluate(bdk());
   assert.equal(evaluation.admissible, true);
   assert.equal(evaluation.amount, 1050);
   assert.equal(evaluation.balanceDate, D);
-  assert.equal(evaluation.identityProof, 'CONTENT');
+  assert.equal(evaluation.identityProof, 'OPERATOR');
   assert.equal(evaluation.currencyProof, 'CONTENT');
   assert.deepEqual(evaluation.reasons, []);
+  // Le compte lu dans le contenu est montré masqué à l'opérateur, jamais en clair.
+  assert.equal(typeof evaluation.accountLabel, 'string');
+  assert.equal(evaluation.accountLabel!.includes('00000000000'), false);
+  assert.equal(evaluation.accountKey!.includes('01401'), false);
+});
+
+test('le nom du fichier ne prouve pas la banque : sans attestation, un CSV reste à revoir', () => {
+  // Le même contenu, nommé BDK ou ORA : le nom seul désigne la banque, aucun solde n'est prouvé.
+  for (const name of ['SYNTHETIC BDK ONLINE.csv', 'SYNTHETIC ORA ONLINE.csv']) {
+    const unattested = evaluate(bdk(name, 0, undefined, null));
+    assert.equal(unattested.admissible, false, name);
+    assert.equal(unattested.amount, null, name);
+    assert.equal(unattested.identityProof, null, name);
+    assert.equal(unattested.needsIdentityAttestation, true, name);
+    assert.deepEqual(unattested.reasons, ['IDENTITY_NOT_CORROBORATED'], name);
+    const balances = buildAccountBalances([unattested]);
+    assert.equal(balances.every((balance) => balance.status !== 'AVAILABLE' && balance.amount === null), true, name);
+    assert.equal(consolidateBalances(balances)[0].amount, null, name);
+  }
 });
 
 test('relevé Excel : à revoir sans attestation d’identité, admissible une fois attesté', () => {
@@ -138,6 +161,7 @@ test('rupture de solde : exclue où qu’elle soit dans le relevé, au centime p
 test('ligne antidatée, solde déclaré faux, soldes courants absents : relevé écarté', () => {
   const antidated = evaluate({
     name: 'SYNTHETIC BDK ONLINE.csv',
+    attestation: ATTESTED,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-05', opening: 1000,
       movements: [{ date: '2026-06-02', amount: 100 }, { date: '2026-06-03', amount: 50 }, { date: '2026-06-01', amount: -400 }],
@@ -148,6 +172,7 @@ test('ligne antidatée, solde déclaré faux, soldes courants absents : relevé 
 
   const csv = (overrides: { declaredClosingOverride?: number; declaredOpeningOverride?: number }) => evaluate({
     name: 'SYNTHETIC BDK ONLINE.csv',
+    attestation: ATTESTED,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, ...overrides,
       movements: [{ date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
@@ -177,6 +202,86 @@ test('limite quotidienne : période des lignes ou période déclarée de plus de
   assert.deepEqual(byDeclaration.reasons, ['PERIOD_OVER_DAILY_LIMIT']);
 });
 
+test('limite quotidienne : une période de plus de 45 jours exclut le relevé, quelle que soit son écriture', () => {
+  const LONG = 'Du 01/01/2026 au 04/06/2026';
+  const moves = [...ATB_MOVES, { date: '2026-06-04', amount: 1 }];
+  const withHeader = (extra: { headerText?: string; headerCells?: string[]; titleCells?: string[] }) => evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: moves, ...extra }),
+  });
+  // Témoin : sans annonce de période, ce relevé est admissible (journée close par la ligne du 04/06).
+  assert.equal(withHeader({}).admissible, true);
+  const cases: Array<[string, { headerText?: string; headerCells?: string[]; titleCells?: string[] }]> = [
+    ['même annonce dans deux cellules', { headerCells: [LONG, LONG] }],
+    ['annonce répartie sur plusieurs cellules', { headerCells: ['Période', 'Du', '01/01/2026', 'Au', '04/06/2026'] }],
+    ['années sur deux chiffres', { headerText: 'Du 01/01/26 au 04/06/26' }],
+    ['préambule ressemblant à un en-tête d’opérations', { titleCells: ['Date édition', 'Solde initial', 'Solde final'], headerText: LONG }],
+    ['mois en toutes lettres avec « 1er »', { headerText: 'Période du 1er janvier 2026 au 4 juin 2026' }],
+    ['annonce en colonne J', { headerCells: [...new Array(9).fill(''), LONG] }],
+    ['mot « période » et tiret', { headerText: 'Période : 01/01/2026 - 04/06/2026' }],
+    ['deux dates reliées par un tiret, sans autre mot', { headerText: '01/01/2026 - 04/06/2026' }],
+    ['mot « période » suivi de deux dates dans trois cellules', { headerCells: ['Période', '01/01/2026', '04/06/2026'] }],
+    ['formule « du … au … » interrompue par une mention', { headerText: 'Relevé du 01/01/2026 (inclus) au 04/06/2026' }],
+    ['deux annonces contradictoires dont une longue', { headerCells: ['Du 01/06/2026 au 04/06/2026', LONG] }],
+    ['annonce à trois dates', { headerText: 'Période du 01/01/2026 au 04/06/2026, édité le 04/06/2026' }],
+  ];
+  for (const [label, extra] of cases) {
+    const evaluation = withHeader(extra);
+    assert.equal(evaluation.admissible, false, label);
+    assert.equal(evaluation.amount, null, label);
+    assert.deepEqual(evaluation.reasons, ['PERIOD_OVER_DAILY_LIMIT'], label);
+  }
+});
+
+test('période déclarée ambiguë ou mal formée : elle ne prouve aucune clôture', () => {
+  // Dernière ligne à D : seule une période déclarée lisible sans ambiguïté peut prouver la clôture.
+  const withCells = (headerCells: string[]) => evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, headerCells }),
+  });
+  // Témoins : une annonce unique, écrite en entier, sur deux chiffres d'année ou répétée à l'identique.
+  for (const cells of [['Du 01/06/2026 au 04/06/2026'], ['Du 01/06/26 au 04/06/26'], ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026']]) {
+    assert.equal(withCells(cells).admissible, true, cells.join(' | '));
+  }
+  for (const cells of [
+    ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 05/06/2026'],
+    ['Du 04/06/2026 au 01/06/2026'],
+    ['Période du 01/06/2026 au 04/06/2026, édité le 05/06/2026'],
+  ]) {
+    const evaluation = withCells(cells);
+    assert.equal(evaluation.admissible, false, cells.join(' | '));
+    assert.equal(evaluation.amount, null, cells.join(' | '));
+    assert.deepEqual(evaluation.reasons, ['DAY_NOT_CLOSED'], cells.join(' | '));
+  }
+});
+
+test('relevé CSV : la période déclarée doit être ordonnée et englober les lignes', () => {
+  const csv = (periodStart: string, periodEnd: string, movements: SyntheticMovement[]) => evaluate({
+    name: 'SYNTHETIC BDK ONLINE.csv',
+    attestation: ATTESTED,
+    bytes: csvStatementBytes({ periodStart, periodEnd, opening: 1000, movements }),
+  });
+  const moves = [{ date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }];
+  assert.equal(csv('2026-06-01', '2026-06-04', moves).admissible, true);
+  // Lignes étalées sur plus de 45 jours sous une période déclarée de quatre jours.
+  const spread = csv('2026-06-01', '2026-06-04', [{ date: '2026-01-05', amount: 10 }, ...moves]);
+  assert.equal(spread.admissible, false);
+  assert.equal(spread.amount, null);
+  assert.ok(spread.reasons.includes('PERIOD_OVER_DAILY_LIMIT'));
+  // Lignes sur deux jours sous une période déclarée de plus de 45 jours.
+  const longDeclared = csv('2026-01-01', '2026-06-04', moves);
+  assert.equal(longDeclared.admissible, false);
+  assert.deepEqual(longDeclared.reasons, ['PERIOD_OVER_DAILY_LIMIT']);
+  // Une ligne hors de la période déclarée, puis une période inversée.
+  for (const evaluation of [csv('2026-06-03', '2026-06-04', moves), csv('2026-06-04', '2026-06-01', moves)]) {
+    assert.equal(evaluation.admissible, false);
+    assert.equal(evaluation.amount, null);
+    assert.ok(evaluation.reasons.includes('STATEMENT_NEEDS_REVIEW'));
+  }
+});
+
 test('doublon : le même contenu déposé deux fois n’est compté qu’une fois', () => {
   const balances = buildAccountBalances([evaluate(bdk()), evaluate(bdk('COPIE BDK ONLINE.csv'))]);
   const account = balances.find((balance) => balance.bank === 'BDK')!;
@@ -204,6 +309,32 @@ test('deux comptes distincts ou une identité indécidable pour une banque : à 
   assert.equal(atbAccount.status, 'TO_REVIEW');
   assert.deepEqual(atbAccount.reasons, ['SEVERAL_ACCOUNTS_FOR_BANK']);
   assert.equal(consolidateBalances(twoExcel)[0].amount, null);
+
+  // Un seul des deux comptes est admissible (l'autre n'est pas attesté) : son solde ne vaut pas pour la banque.
+  const oneAdmissible = [evaluate(bdk()), evaluate(bdk('AUTRE COMPTE BDK ONLINE.csv', 0, '77', null))];
+  assert.deepEqual(oneAdmissible.map((evaluation) => evaluation.admissible), [true, false]);
+  const lone = buildAccountBalances(oneAdmissible).find((balance) => balance.bank === 'BDK')!;
+  assert.equal(lone.status, 'TO_REVIEW');
+  assert.equal(lone.amount, null);
+  assert.deepEqual(lone.reasons, ['SEVERAL_ACCOUNTS_FOR_BANK']);
+});
+
+test('deux comptes qui ne partagent que leurs derniers chiffres restent deux comptes', () => {
+  const older = (accountPrefix?: string): StatementInput => ({
+    name: 'ANCIEN BDK ONLINE.csv',
+    attestation: ATTESTED,
+    bytes: csvStatementBytes({ periodStart: '2026-05-20', periodEnd: '2026-05-22', opening: 70, accountPrefix, movements: [{ date: '2026-05-20', amount: 5 }] }),
+  });
+  // Témoin : même compte, un relevé plus ancien qui ne couvre pas D est simplement écarté.
+  const sameAccount = buildAccountBalances([evaluate(bdk()), evaluate(older())]).find((balance) => balance.bank === 'BDK')!;
+  assert.equal(sameAccount.status, 'AVAILABLE');
+  assert.equal(sameAccount.amount, 1050);
+  assert.deepEqual(sameAccount.sources.map((source) => source.role), ['retained', 'excluded']);
+  // Autre compte terminé par les mêmes chiffres : le solde du premier ne vaut pas pour la banque.
+  const collision = buildAccountBalances([evaluate(bdk()), evaluate(older('09999'))]).find((balance) => balance.bank === 'BDK')!;
+  assert.equal(collision.status, 'TO_REVIEW');
+  assert.equal(collision.amount, null);
+  assert.deepEqual(collision.reasons, ['SEVERAL_ACCOUNTS_FOR_BANK']);
 });
 
 test('même relevé déposé sous deux banques : aucun des deux n’est compté', () => {
@@ -224,6 +355,7 @@ test('même relevé déposé sous deux banques : aucun des deux n’est compté'
   // Deux comptes distincts sous deux banques : les deux soldes sont comptés.
   const ora: StatementInput = {
     name: 'SYNTHETIC ORA ONLINE.csv',
+    attestation: ATTESTED,
     bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 300, accountSuffix: '11', movements: [{ date: D, amount: 25 }] }),
   };
   assert.equal(consolidateBalances(buildAccountBalances([evaluate(bdk()), evaluate(ora)]))[0].amount, 1050 + 325);
@@ -270,6 +402,7 @@ test('date non couverte : jamais de solde', () => {
 test('jour sans mouvement : report seulement si la couverture est prouvée', () => {
   const csv: StatementInput = {
     name: 'SYNTHETIC ORA ONLINE.csv',
+    attestation: ATTESTED,
     bytes: csvStatementBytes({
       periodStart: '2026-06-01', periodEnd: '2026-06-06', opening: 400,
       movements: [{ date: '2026-06-01', amount: 60 }, { date: '2026-06-05', amount: 10 }],

@@ -16,27 +16,45 @@ import {
   tabName,
 } from './situationSyntheticFixtures';
 
-// La cible vue par la route et le menu est fournie par le test (hook de
-// résolution Node, jamais une option de production) et calculée par la VRAIE
-// garde, importée sans double.
-interface Harness { verdict: unknown }
-const harness: Harness = { verdict: { allowed: false, reason: 'non initialisé' } };
-(globalThis as unknown as { __situationHarness: Harness }).__situationHarness = harness;
+// La route et le menu appellent la VRAIE garde, sans double : `currentSituationRuntimeVerdict`
+// lit elle-même l'origine de la page (`window.location.origin`) et la configuration du bundle.
+// Sous Node, `import.meta.env` n'existe pas : un hook de chargement (jamais une option de
+// production) le remplace, dans le seul module de la garde, par un objet tenu par le test.
+interface RuntimeHarness { env: Record<string, string | undefined> }
+const runtime: RuntimeHarness = { env: {} };
+(globalThis as unknown as { __situationRuntime: RuntimeHarness }).__situationRuntime = runtime;
 
-const targetStub = 'data:text/javascript,' + encodeURIComponent(`
-  export function currentSituationRuntimeVerdict() { return globalThis.__situationHarness.verdict; }
-  export function isSituationRuntimeRefused(v) { return v.allowed === false; }`);
 register('data:text/javascript,' + encodeURIComponent(`
-  export function resolve(specifier, context, nextResolve) {
-    if (specifier === './situationRuntimeTarget' && context.parentURL
-      && ['/SituationRoute.tsx', '/situationMenu.ts'].some((suffix) => context.parentURL.split('?')[0].endsWith(suffix))) {
-      return { shortCircuit: true, url: ${JSON.stringify(targetStub)} };
-    }
-    return nextResolve(specifier, context);
+  export async function load(url, context, nextLoad) {
+    const result = await nextLoad(url, context);
+    if (!url.split('?')[0].endsWith('/situationRuntimeTarget.ts') || result.source == null) return result;
+    const source = typeof result.source === 'string' ? result.source : Buffer.from(result.source).toString('utf8');
+    if (!source.includes('import.meta.env')) throw new Error('garde : lecture de import.meta.env introuvable');
+    return { ...result, source: source.split('import.meta.env').join('globalThis.__situationRuntime.env') };
   }`));
 
+interface RuntimeInput { pageOrigin?: string; supabaseUrl?: string; projectId?: string; localEnabled?: string; stagingEnabled?: string }
+
+/** Place le test dans une page et un bundle donnés ; la garde réelle en tire seule son verdict. */
+function applyRuntime(input: RuntimeInput): void {
+  runtime.env = {
+    VITE_SUPABASE_URL: input.supabaseUrl,
+    VITE_SUPABASE_PROJECT_ID: input.projectId,
+    VITE_SITUATION_DU_JOUR_LOCAL_ENABLED: input.localEnabled,
+    VITE_SITUATION_DU_JOUR_STAGING_ENABLED: input.stagingEnabled,
+  };
+  const globals = globalThis as unknown as { window?: unknown };
+  if (input.pageOrigin === undefined) delete globals.window;
+  else globals.window = { location: { origin: input.pageOrigin } };
+}
+
+function clearRuntime(): void {
+  runtime.env = {};
+  delete (globalThis as unknown as { window?: unknown }).window;
+}
+
 (globalThis as unknown as { React: typeof React }).React = React;
-const { SITUATION_PAGE_ORIGIN_REFUSED, SITUATION_PRODUCTION_REFUSED, validateSituationRuntimeTarget } = await import('./situationRuntimeTarget');
+const { SITUATION_PAGE_ORIGIN_REFUSED, SITUATION_PRODUCTION_REFUSED, currentSituationRuntimeVerdict, validateSituationRuntimeTarget } = await import('./situationRuntimeTarget');
 const { SituationRoute } = await import('./SituationRoute');
 const { isSituationMenuVisible } = await import('./situationMenu');
 const { createSituationSession } = await import('./situationSession');
@@ -121,17 +139,43 @@ test('URL directe refusée et menu masqué en production ou sur cible inconnue o
     // Hôte distant inconnu dont le bundle vise un Supabase local, drapeau actif.
     { pageOrigin: 'https://app.example.com', supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' },
   ]) {
-    harness.verdict = validateSituationRuntimeTarget({ pageOrigin: PAGE, ...target });
+    applyRuntime({ pageOrigin: PAGE, ...target });
     const markup = renderToStaticMarkup(<SituationRoute />);
     assert.match(markup, /Situation du jour non disponible/);
     assert.equal(markup.includes('type="file"'), false, 'aucun dépôt de fichier possible sur une cible refusée');
     assert.equal(isSituationMenuVisible(), false);
   }
-  harness.verdict = validateSituationRuntimeTarget(LOCAL);
+  applyRuntime(LOCAL);
   const allowed = renderToStaticMarkup(<SituationRoute />);
   assert.match(allowed, /Fichiers du jour/);
   assert.equal(allowed.includes('type="file"'), true);
   assert.equal(isSituationMenuVisible(), true);
+  clearRuntime();
+});
+
+test('garde réelle : l’origine de la page est lue dans la page elle-même, jamais supposée', () => {
+  const bundle = { supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' };
+  try {
+    // Même bundle, autorisé sur la boucle locale : seule l'origine réelle de la page change le verdict.
+    applyRuntime({ pageOrigin: PAGE, ...bundle });
+    assert.deepEqual(currentSituationRuntimeVerdict(), { allowed: true, environment: 'local' });
+    for (const pageOrigin of ['https://app.example.com', 'https://cash-sync.example.app', 'http://192.168.1.20:8080', undefined]) {
+      applyRuntime({ pageOrigin, ...bundle });
+      assert.deepEqual(currentSituationRuntimeVerdict(), { allowed: false, reason: SITUATION_PAGE_ORIGIN_REFUSED }, String(pageOrigin));
+      const markup = renderToStaticMarkup(<SituationRoute />);
+      assert.match(markup, /Situation du jour non disponible/);
+      assert.equal(markup.includes('type="file"'), false);
+      assert.equal(isSituationMenuVisible(), false);
+    }
+    // La configuration du bundle est lue elle aussi : drapeau absent, puis project ID de production.
+    applyRuntime({ pageOrigin: PAGE, supabaseUrl: bundle.supabaseUrl });
+    assert.equal(currentSituationRuntimeVerdict().allowed, false);
+    applyRuntime({ pageOrigin: PAGE, ...bundle, projectId: PROD_ID });
+    assert.deepEqual(currentSituationRuntimeVerdict(), { allowed: false, reason: SITUATION_PRODUCTION_REFUSED });
+    assert.equal(isSituationMenuVisible(), false);
+  } finally {
+    clearRuntime();
+  }
 });
 
 function syntheticFiles() {
@@ -191,11 +235,16 @@ test('dépôt, calcul et effacement : tout en mémoire, sans réseau, stockage n
     session.compute();
     const first = session.getState().result!;
     assert.equal(first.accountingDate, D);
-    // BDK prouvé ; ATB à revoir tant que l'identité n'est pas attestée.
-    assert.equal(first.balances.find((balance) => balance.bank === 'BDK')!.status, 'AVAILABLE');
+    // Sans attestation, aucun solde n'est prouvé : la banque n'est désignée que par le nom du fichier.
+    assert.equal(first.balances.find((balance) => balance.bank === 'BDK')!.status, 'TO_REVIEW');
     assert.equal(first.balances.find((balance) => balance.bank === 'ATB')!.status, 'TO_REVIEW');
-    assert.equal(first.consolidation[0].status, 'PARTIAL');
-    assert.equal(first.consolidation[0].amount, 1050);
+    assert.equal(first.consolidation[0].status, 'UNAVAILABLE');
+    assert.equal(first.consolidation[0].amount, null);
+
+    session.setAttestation('040626 SYNTHETIC BDK ONLINE.csv', { identityAttested: true });
+    session.compute();
+    assert.equal(session.getState().result!.consolidation[0].status, 'PARTIAL');
+    assert.equal(session.getState().result!.consolidation[0].amount, 1050);
 
     session.setAttestation('040626 SYNTHETIC ATB ONLINE.xls', { identityAttested: true });
     assert.equal(session.getState().result, null, 'une attestation invalide le résultat affiché');
@@ -216,6 +265,10 @@ test('dépôt, calcul et effacement : tout en mémoire, sans réseau, stockage n
     // Redépôt du même nom : remplacement, jamais un second exemplaire.
     await session.addFiles([files[0]]);
     assert.equal(session.getState().files.length, 6);
+    session.compute();
+    // Le fichier remplacé a perdu son attestation : son solde redevient « à revoir » jusqu'à nouvelle attestation.
+    assert.equal(session.getState().result!.balances.find((balance) => balance.bank === 'BDK')!.amount, null);
+    session.setAttestation('040626 SYNTHETIC BDK ONLINE.csv', { identityAttested: true });
     session.compute();
     assert.equal(session.getState().result!.balances.find((balance) => balance.bank === 'BDK')!.amount, 1050);
 

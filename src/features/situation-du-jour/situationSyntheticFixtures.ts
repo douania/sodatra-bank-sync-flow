@@ -82,6 +82,8 @@ export interface SyntheticCsvOptions {
   withAccount?: boolean;
   /** Dernier groupe du numéro de compte synthétique (distingue deux comptes). */
   accountSuffix?: string;
+  /** Début du numéro de compte (deux comptes peuvent ne différer que par là). */
+  accountPrefix?: string;
   /** Fausse le solde final déclaré (le lecteur doit alors demander une revue). */
   declaredClosingOverride?: number;
   /** Fausse le solde initial déclaré (la chaîne ne se raccorde plus). */
@@ -103,7 +105,7 @@ export function csvStatementBytes(options: SyntheticCsvOptions): ArrayBuffer {
   const text = [
     'EXTRAIT DE COMPTE;;;;;',
     `Periode du;${fr(options.periodStart)};au;${fr(options.periodEnd)};;`,
-    options.withAccount === false ? ';;;;;' : `Numero de compte;01401-00000000000-${options.accountSuffix ?? '00'} XOF;;;;`,
+    options.withAccount === false ? ';;;;;' : `Numero de compte;${options.accountPrefix ?? '01401'}-00000000000-${options.accountSuffix ?? '00'} XOF;;;;`,
     'Code IBAN;SN00SN0000000000000000000000;;;;',
     `;;Solde initial (XOF) : ${options.declaredOpeningOverride ?? options.opening};;;`,
     "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
@@ -122,6 +124,10 @@ export interface SyntheticExcelStatementOptions {
   movements: SyntheticMovement[];
   /** Texte d'en-tête portant la période déclarée (facultatif). */
   headerText?: string;
+  /** Cellules de la ligne de période (remplace `headerText` : période répartie, répétée, décalée). */
+  headerCells?: CellInput[];
+  /** Cellules de la première ligne (remplace le titre : préambule ressemblant à un en-tête). */
+  titleCells?: CellInput[];
   /** Force un solde courant incohérent sur la dernière ligne (rupture de chaîne). */
   breakChain?: boolean;
   /** Ampleur de la rupture (7 par défaut). */
@@ -141,16 +147,18 @@ export function excelStatementBytes(options: SyntheticExcelStatementOptions): Ar
     return { ...movement, balance: broken, label: options.movementLabel ?? `SYNTHETIC MOVEMENT ${index + 1}` };
   });
   const descending = [...chronological].reverse();
+  const titleRow: CellInput[] = options.titleCells ?? ['SYNTHETIC ONLINE EXPORT'];
+  const periodRow: CellInput[] = options.headerCells ?? [options.headerText ?? ''];
   let rows: CellInput[][];
   if (options.bank === 'ATB') {
     rows = [
-      ['SYNTHETIC ONLINE EXPORT'], [options.headerText ?? ''], [], [], [], [],
+      titleRow, periodRow, [], [], [], [],
       ['Référence', "Date de l'opération", 'Date Valeur', 'Montant', 'Solde', 'Devise', 'Libellé'],
       ...descending.map((line, index): CellInput[] => [`SYN-${index}`, isoToExcelSerial(line.date), isoToExcelSerial(line.date), String(line.amount), String(line.balance), 'XOF', line.label]),
     ];
   } else if (options.bank === 'BICIS') {
     rows = [
-      ['SYNTHETIC ONLINE EXPORT'], [options.headerText ?? ''], [], [], [], [], [],
+      titleRow, periodRow, [], [], [], [], [],
       ['Date Opération', 'Date Valeur', 'Référence', 'Montant', 'Libellé', 'Solde', 'Devise'],
       ...descending.map((line, index): CellInput[] => [fr(line.date), fr(line.date), `SYN-${index}`, line.amount, line.label, line.balance, 'XOF']),
     ];
@@ -163,7 +171,7 @@ export function excelStatementBytes(options: SyntheticExcelStatementOptions): Ar
     header[12] = 'Crédit(XOF)';
     header[14] = 'Solde';
     rows = [
-      ['SYNTHETIC ONLINE EXPORT'], [options.headerText ?? ''], [], [], [], [], [], [], [], [],
+      titleRow, periodRow, [], [], [], [], [], [], [], [],
       header,
       ...descending.map((line): CellInput[] => {
         const row: CellInput[] = new Array(15).fill('');
@@ -349,6 +357,8 @@ export interface SyntheticFundPositionRow {
   netBalance?: number;
   nonValidatedDeposit?: number;
   position?: number;
+  /** Mention libre écrite sur la ligne de la banque (colonne H). */
+  note?: string;
 }
 
 export interface SyntheticFundPositionReference {
@@ -358,17 +368,22 @@ export interface SyntheticFundPositionReference {
   otherDate?: string;
   /** Mention de devise écrite dans l'onglet. */
   currency?: string;
+  /** Date de référence écrite en TEXTE (à la place de la cellule date). */
+  dateText?: string;
+  /** Autres mentions écrites sur la ligne d'en-tête (date d'impression, période, seconde devise). */
+  texts?: string[];
 }
 
 export function fundPositionTabSheet(rows: SyntheticFundPositionRow[], reference: SyntheticFundPositionReference = {}): XLSX.WorkSheet {
   const data: CellInput[][] = [[
     '', '', 'Bank \nBalance', 'Fund Applied', 'Net Balance', 'NonValidated Deposit', '', '',
-    reference.date ? 'Situation au' : '', reference.date ? { date: reference.date } : '',
+    reference.date ? 'Situation au' : '', reference.date ? { date: reference.date } : (reference.dateText ?? ''),
     reference.currency ? `Devise ${reference.currency}` : '', reference.otherDate ? { date: reference.otherDate } : '',
+    ...(reference.texts ?? []),
   ]];
   rows.forEach((row, index) => data.push([
     index === 0 ? 'Book balance' : '', row.label, row.bankBalance ?? '', row.fundApplied ?? '', row.netBalance ?? '',
-    row.nonValidatedDeposit ?? '', row.position ?? '',
+    row.nonValidatedDeposit ?? '', row.position ?? '', row.note ?? '',
   ]));
   data.push(['Deposit for the day']);
   data.push(['', 'BIS', '', '', '', '', 111]);

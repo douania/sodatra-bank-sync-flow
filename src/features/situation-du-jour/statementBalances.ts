@@ -15,11 +15,15 @@ import {
   amountsEqual,
   amountsIdentical,
   cellAt,
+  cellIsoDate,
   cellText,
   daysBetween,
   detectBankFromText,
+  findDatesInText,
+  formatIsoFr,
   frDateToIso,
   normalizeLabel,
+  plainUpper,
   readWorkbook,
   sumAmounts,
 } from './situationCore';
@@ -75,7 +79,12 @@ export interface StatementInput extends InMemoryFile {
   attestation?: StatementAttestation;
 }
 
-export type IdentityProof = 'CONTENT' | 'OPERATOR';
+/**
+ * Aucun relevé ne nomme sa banque dans son contenu de façon vérifiable ici :
+ * la banque vient du nom du fichier. L'identité du compte n'est donc jamais
+ * « prouvée par le contenu » ; elle est attestée par l'opérateur, fichier par fichier.
+ */
+export type IdentityProof = 'OPERATOR';
 export type CurrencyProof = 'CONTENT' | 'OPERATOR';
 
 export interface StatementEvaluation {
@@ -96,8 +105,10 @@ export interface StatementEvaluation {
   lineCount: number;
   /** Empreinte du contenu : le même fichier sous deux banques est un conflit, pas deux soldes. */
   contentDigest: string;
-  /** Compte masqué lu dans le contenu (CSV) ; `null` quand le fichier n'en porte pas. */
+  /** Empreinte du compte complet lu dans le contenu (CSV) ; `null` quand le fichier n'en porte pas. */
   accountKey: string | null;
+  /** Compte masqué lu dans le contenu, montré à l'opérateur avant son attestation. */
+  accountLabel: string | null;
 }
 
 export type BalanceStatus = 'AVAILABLE' | 'TO_REVIEW' | 'UNAVAILABLE';
@@ -114,6 +125,7 @@ export interface AccountBalance {
   amount: number | null;
   balanceDate: string | null;
   identityProof: IdentityProof | null;
+  currencyProof: CurrencyProof | null;
   reasons: BalanceReason[];
   sources: BalanceSource[];
 }
@@ -141,76 +153,123 @@ interface DeclaredPeriod {
   end: string;
 }
 
-const FRENCH_MONTHS: Record<string, number> = {
-  JANV: 1, JAN: 1, JANVIER: 1, FEVR: 2, FEV: 2, FEVRIER: 2, MARS: 3, AVR: 4, AVRIL: 4, MAI: 5, JUIN: 6,
-  JUIL: 7, JUILLET: 7, AOUT: 8, SEPT: 9, SEP: 9, SEPTEMBRE: 9, OCT: 10, OCTOBRE: 10, NOV: 11, NOVEMBRE: 11,
-  DEC: 12, DECEMBRE: 12,
-};
+/** Familles de libellés d'un en-tête d'opérations : trois familles DISTINCTES au moins sur la même ligne. */
+const OPERATION_HEADER_FAMILIES: ReadonlyArray<ReadonlyArray<string>> = [
+  ['DATE'], ['SOLDE', 'SOLD'], ['MONTANT', 'DEBIT', 'CREDIT'], ['LIBELLE', 'DESCRIPTION', 'REFERENCE'],
+];
+const HEADER_SCAN_ROWS = 60;
+const HEADER_SCAN_COLUMNS = 40;
 
-const OPERATION_HEADER_TOKENS = ['DATE', 'SOLDE', 'SOLD', 'MONTANT', 'DEBIT', 'CREDIT', 'LIBELLE', 'DESCRIPTION', 'REFERENCE'];
+/** Texte entre deux dates qui les relie en période : « au », « à », « to », tiret. */
+const PERIOD_CONNECTOR = /^(?:AU|A|TO|JUSQU'?\s*AU|-|–|—)$/;
 
-/** Formule de période : « du|de <date> au <date> », rien d'autre entre le mot et les dates. */
-const PERIOD_DATE = '(?:\\d{2}/\\d{2}/\\d{4}|\\d{1,2} [A-Z]{3,9}\\.? \\d{4})';
-const PERIOD_PHRASE = new RegExp(`\\b(?:DU|DE) ${PERIOD_DATE} AU ${PERIOD_DATE}(?![0-9])`);
-
-function isoFromParts(year: number, month: number, day: number): string | null {
-  return frDateToIso(`${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${String(year).padStart(4, '0')}`);
+export interface DeclaredPeriodReading {
+  /** Période retenue : une seule annonce, deux dates ordonnées, sans ambiguïté. `null` sinon. */
+  period: DeclaredPeriod | null;
+  /** Plus grande étendue (en jours) entre les dates d'une même annonce de période ; 0 si aucune annonce. */
+  widestSpanDays: number;
 }
 
-/** Dates lisibles dans un texte d'en-tête : « JJ/MM/AAAA » ou « JJ mois AAAA ». */
-function datesInHeaderText(text: string): string[] {
-  const found: Array<{ index: number; iso: string }> = [];
-  const numeric = /(?<![0-9])(\d{2})\/(\d{2})\/(\d{4})(?![0-9])/g;
-  for (let match = numeric.exec(text); match; match = numeric.exec(text)) {
-    const iso = isoFromParts(Number(match[3]), Number(match[2]), Number(match[1]));
-    if (iso) found.push({ index: match.index, iso });
-  }
-  const plain = text.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
-  const literal = /(?<![0-9])(\d{1,2})\s+([A-Z]{3,9})\.?\s+(\d{4})(?![0-9])/g;
-  for (let match = literal.exec(plain); match; match = literal.exec(plain)) {
-    const month = FRENCH_MONTHS[match[2]];
-    const iso = month ? isoFromParts(Number(match[3]), month, Number(match[1])) : null;
-    if (iso) found.push({ index: match.index, iso });
-  }
-  return found.sort((a, b) => a.index - b.index).map((entry) => entry.iso);
+/**
+ * Dates d'un texte qui ANNONCE une période (mot « période », formule « du … au … »,
+ * ou deux dates reliées par « au » ou un tiret) ; `null` si le texte n'annonce rien.
+ */
+function periodAnnouncement(text: string): string[] | null {
+  const dates = findDatesInText(text);
+  if (dates.length < 2) return null;
+  const plain = plainUpper(text);
+  const linked = dates.slice(1).some((date, index) => {
+    const previous = dates[index];
+    return PERIOD_CONNECTOR.test(plain.slice(previous.index + previous.length, date.index).trim());
+  });
+  const announced = /\bPERIODE?\b/.test(plain) || /\b(?:DU|DE|FROM)\b[^]*\b(?:AU|TO)\b/.test(plain) || linked;
+  return announced ? dates.map((date) => date.iso) : null;
 }
 
 /**
  * Période DÉCLARÉE dans l'en-tête d'un relevé Excel (les lecteurs Daily v2 ne
  * l'exposent pas). Seules les lignes situées AU-DESSUS de la ligne d'en-tête
- * des opérations sont lues ; la cellule doit annoncer une période (« … au … »)
- * et porter exactement deux dates ordonnées ; une seule cellule doit répondre.
- * Un libellé d'opération ne peut donc jamais passer pour une période déclarée.
+ * des opérations sont lues : un libellé d'opération ne passe donc jamais pour
+ * une période déclarée. Chaque cellule est lue seule, puis la ligne entière
+ * (période répartie sur plusieurs cellules). La lecture ferme les deux sens :
+ * - la preuve (`period`) exige une annonce unique, de deux dates ordonnées ;
+ * - la limite quotidienne s'applique à la plus grande étendue annoncée, même
+ *   quand les annonces sont multiples, contradictoires ou mal formées.
  */
-export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredPeriod | null {
+export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredPeriodReading {
+  const none: DeclaredPeriodReading = { period: null, widestSpanDays: 0 };
   let workbook;
   try {
     workbook = readWorkbook(bytes);
   } catch {
-    return null;
+    return none;
   }
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  if (!sheet) return null;
+  if (!sheet) return none;
+  const textAt = (row: number, column: number): string => {
+    const cell = cellAt(sheet, row, column);
+    const date = cellIsoDate(cell);
+    return date ? formatIsoFr(date) : cellText(cell);
+  };
   let operationHeaderRow: number | null = null;
-  for (let row = 1; row <= 20 && operationHeaderRow === null; row += 1) {
-    let hits = 0;
-    for (let column = 1; column <= 16; column += 1) {
-      const label = normalizeLabel(cellText(cellAt(sheet, row, column)));
-      if (label && OPERATION_HEADER_TOKENS.some((token) => label.split(/[^A-Z]+/).includes(token))) hits += 1;
+  for (let row = 1; row <= HEADER_SCAN_ROWS && operationHeaderRow === null; row += 1) {
+    const families = new Set<number>();
+    for (let column = 1; column <= HEADER_SCAN_COLUMNS; column += 1) {
+      const tokens = normalizeLabel(cellText(cellAt(sheet, row, column))).split(/[^A-Z]+/);
+      OPERATION_HEADER_FAMILIES.forEach((family, index) => {
+        if (family.some((token) => tokens.includes(token))) families.add(index);
+      });
     }
-    if (hits >= 3) operationHeaderRow = row;
+    if (families.size >= 3) operationHeaderRow = row;
   }
-  if (operationHeaderRow === null) return null;
-  const candidates: DeclaredPeriod[] = [];
+  if (operationHeaderRow === null) return none;
+  const announcements: string[][] = [];
   for (let row = 1; row < operationHeaderRow; row += 1) {
-    for (let column = 1; column <= 8; column += 1) {
-      const text = cellText(cellAt(sheet, row, column));
-      if (!PERIOD_PHRASE.test(normalizeLabel(text))) continue;
-      const dates = datesInHeaderText(text);
-      if (dates.length === 2 && dates[0] <= dates[1]) candidates.push({ start: dates[0], end: dates[1] });
+    const texts: string[] = [];
+    for (let column = 1; column <= HEADER_SCAN_COLUMNS; column += 1) {
+      const text = textAt(row, column);
+      if (text) texts.push(text);
+    }
+    const perCell = texts.map(periodAnnouncement).filter((dates): dates is string[] => dates !== null);
+    if (perCell.length > 0) {
+      announcements.push(...perCell);
+    } else {
+      const wholeRow = periodAnnouncement(texts.join(' '));
+      if (wholeRow) announcements.push(wholeRow);
     }
   }
-  return candidates.length === 1 ? candidates[0] : null;
+  if (announcements.length === 0) return none;
+  let widestSpanDays = 0;
+  for (const dates of announcements) {
+    const sorted = [...dates].sort();
+    widestSpanDays = Math.max(widestSpanDays, daysBetween(sorted[0], sorted[sorted.length - 1]) + 1);
+  }
+  const wellFormed = announcements.every((dates) => dates.length === 2 && dates[0] <= dates[1]);
+  const distinct = new Set(announcements.map((dates) => dates.join('|')));
+  const period = wellFormed && distinct.size === 1 ? { start: announcements[0][0], end: announcements[0][1] } : null;
+  return { period, widestSpanDays };
+}
+
+/**
+ * Clé de compte tirée du contenu d'un relevé CSV : numéro de compte et IBAN
+ * COMPLETS, réduits à une empreinte tenue en mémoire (jamais affichée). Deux
+ * comptes qui ne partagent que leurs derniers chiffres restent distincts.
+ */
+function csvAccountKey(text: string): string | null {
+  const reduce = (value: string) => value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let account: string | null = null;
+  let iban: string | null = null;
+  for (const line of text.split(/\r?\n/).slice(0, 60)) {
+    const cells = line.split(/[;\t,]/).map((cell) => cell.replace(/^\s*"?|"?\s*$/g, ''));
+    cells.forEach((cell, index) => {
+      const value = reduce(cells[index + 1] ?? '');
+      if (!value) return;
+      if (account === null && reduce(cell) === 'numerodecompte') account = value;
+      if (iban === null && reduce(cell) === 'codeiban') iban = value;
+    });
+  }
+  if (account === null) return null;
+  return `acct-${digestBytes(new TextEncoder().encode(`${account}|${iban ?? ''}`).buffer as ArrayBuffer)}`;
 }
 
 function buildDayUnits(lines: StructuredBankStatementLine[]): DayUnit[] | null {
@@ -267,7 +326,7 @@ function emptyEvaluation(file: InMemoryFile, bank: SituationBank | null): Statem
   return {
     fileName: file.name, bank, admissible: false, amount: null, balanceDate: null, currency: null, identityProof: null,
     currencyProof: null, needsIdentityAttestation: false, needsCurrencyAttestation: false, reasons: [],
-    periodStart: null, periodEnd: null, lineCount: 0, contentDigest: digestBytes(file.bytes), accountKey: null,
+    periodStart: null, periodEnd: null, lineCount: 0, contentDigest: digestBytes(file.bytes), accountKey: null, accountLabel: null,
   };
 }
 
@@ -297,8 +356,8 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
 
   let lines: StructuredBankStatementLine[] = [];
   let parsedCurrency: string | undefined;
-  let contentIdentity = false;
   let declaredPeriod: DeclaredPeriod | null = null;
+  let declaredSpanDays = 0;
   let closedBefore: string | null = null;
   let periodStart: string | null = null;
   let periodEnd: string | null = null;
@@ -313,10 +372,9 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
       if (document.validation.status !== 'valid' || document.errors.length > 0) return refuse(evaluation, 'PARSER_REFUSED');
       lines = document.lines;
       parsedCurrency = document.currency;
-      contentIdentity = Boolean(document.accountNumberMasked) && document.bankHint === bank;
-      evaluation.accountKey = document.accountNumberMasked
-        ? `${document.accountNumberMasked}|${document.ibanMasked ?? ''}`
-        : null;
+      if (document.bankHint !== bank) return refuse(evaluation, 'IDENTITY_NOT_CORROBORATED');
+      evaluation.accountKey = document.accountNumberMasked ? csvAccountKey(text) : null;
+      evaluation.accountLabel = document.accountNumberMasked ?? null;
       periodStart = frDateToIso(document.periodStart);
       periodEnd = frDateToIso(document.periodEnd);
       if (periodStart && periodEnd) declaredPeriod = { start: periodStart, end: periodEnd };
@@ -343,7 +401,9 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
       parsedCurrency = document.currency;
       periodStart = frDateToIso(document.periodStart);
       periodEnd = frDateToIso(document.periodEnd);
-      declaredPeriod = readDeclaredPeriodFromExcelHeader(file.bytes.slice(0));
+      const declared = readDeclaredPeriodFromExcelHeader(file.bytes.slice(0));
+      declaredPeriod = declared.period;
+      declaredSpanDays = declared.widestSpanDays;
     }
   } catch {
     return refuse(evaluation, 'PARSER_REFUSED');
@@ -368,13 +428,9 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
       evaluation.currencyProof = 'OPERATOR';
     }
   }
-  // Identité : numéro de compte présent dans le contenu, sinon attestation de l'opérateur.
-  if (contentIdentity) {
-    evaluation.identityProof = 'CONTENT';
-  } else {
-    evaluation.needsIdentityAttestation = true;
-    if (file.attestation?.identityAttested === true) evaluation.identityProof = 'OPERATOR';
-  }
+  // Identité : la banque n'est désignée que par le nom du fichier ; l'opérateur atteste le compte, fichier par fichier.
+  evaluation.needsIdentityAttestation = true;
+  if (file.attestation?.identityAttested === true) evaluation.identityProof = 'OPERATOR';
 
   const units = buildDayUnits(lines);
   if (!units || units.length === 0) return refuse(evaluation, 'PARSER_REFUSED');
@@ -389,13 +445,17 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
 
   // Une ligne datée après aujourd'hui rend le relevé incohérent : elle ne prouve aucune clôture.
   if (last.date > today) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
-  if (!isCsv && declaredPeriod !== null) {
-    // Une période déclarée valide de plus de 45 jours exclut le relevé, même si ses lignes couvrent moins.
-    if (daysBetween(declaredPeriod.start, declaredPeriod.end) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS) {
-      return refuse(evaluation, 'PERIOD_OVER_DAILY_LIMIT');
-    }
-    // Elle n'est retenue comme preuve que si elle englobe toutes les lignes du relevé.
-    if (declaredPeriod.start > first.date || declaredPeriod.end < last.date) declaredPeriod = null;
+  // Limite quotidienne : elle vaut pour l'étendue des lignes comme pour toute période annoncée dans
+  // l'en-tête, même quand les annonces sont multiples ou mal formées.
+  if (daysBetween(first.date, last.date) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS || declaredSpanDays > STATEMENT_MAX_DAILY_PERIOD_DAYS) {
+    return refuse(evaluation, 'PERIOD_OVER_DAILY_LIMIT');
+  }
+  if (declaredPeriod !== null) {
+    const coversLines = declaredPeriod.start <= declaredPeriod.end && declaredPeriod.start <= first.date && last.date <= declaredPeriod.end;
+    // CSV : une période déclarée inversée ou qui n'englobe pas les lignes rend le relevé incohérent.
+    if (isCsv && !coversLines) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
+    // Excel : elle n'est retenue comme preuve que si elle englobe toutes les lignes du relevé.
+    if (!coversLines) declaredPeriod = null;
   }
 
   // Journée close : la preuve vient du RELEVÉ lui-même, jamais du nom du fichier. Sont admises la date
@@ -473,7 +533,7 @@ export function buildAccountBalances(evaluations: StatementEvaluation[]): Accoun
     const mine = evaluations.filter((evaluation) => evaluation.bank === bank);
     const base: AccountBalance = {
       bank, currency: SITUATION_EXPECTED_CURRENCY, status: 'UNAVAILABLE', amount: null, balanceDate: null,
-      identityProof: null, reasons: [], sources: [],
+      identityProof: null, currencyProof: null, reasons: [], sources: [],
     };
     if (mine.length === 0) {
       base.reasons = [CSV_BANKS.has(bank) || EXCEL_BANKS.has(bank) ? 'NO_STATEMENT' : 'NO_READER_FOR_BANK'];
@@ -518,6 +578,7 @@ export function buildAccountBalances(evaluations: StatementEvaluation[]): Accoun
     base.amount = reference.amount;
     base.balanceDate = reference.balanceDate;
     base.identityProof = reference.identityProof;
+    base.currencyProof = reference.currencyProof;
     base.sources = mine.map((evaluation) => ({
       fileName: evaluation.fileName,
       role: evaluation === reference ? ('retained' as const) : evaluation.admissible ? ('duplicate' as const) : ('excluded' as const),

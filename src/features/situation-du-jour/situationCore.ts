@@ -109,13 +109,6 @@ export function sheetNameToIso(sheetName: string): string | null {
   return toIso(2000 + Number(match[3]), Number(match[2]), Number(match[1]));
 }
 
-/** Premier jeton « JJMMAA » d'un nom de fichier → ISO. */
-export function fileNameDateToIso(fileName: string): string | null {
-  const match = /^(\d{2})(\d{2})(\d{2})(?![0-9])/.exec(fileName.trim());
-  if (!match) return null;
-  return toIso(2000 + Number(match[3]), Number(match[2]), Number(match[1]));
-}
-
 export function excelSerialToIso(serial: number): string | null {
   if (!Number.isFinite(serial) || serial < 1 || serial > 110_000) return null;
   const date = new Date(EXCEL_EPOCH_UTC + Math.floor(serial) * DAY_MS);
@@ -142,6 +135,51 @@ export function findDayFirstDateInText(text: string): string | null {
   if (!match) return null;
   const year = match[3].length === 2 ? 2000 + Number(match[3]) : Number(match[3]);
   return toIso(year, Number(match[2]), Number(match[1]));
+}
+
+const MONTH_NAMES: Record<string, number> = {
+  JANV: 1, JAN: 1, JANVIER: 1, JANUARY: 1, FEVR: 2, FEV: 2, FEVRIER: 2, FEB: 2, FEBRUARY: 2, MARS: 3, MAR: 3, MARCH: 3,
+  AVR: 4, AVRIL: 4, APR: 4, APRIL: 4, MAI: 5, MAY: 5, JUIN: 6, JUN: 6, JUNE: 6, JUIL: 7, JUILLET: 7, JUL: 7, JULY: 7,
+  AOUT: 8, AUG: 8, AUGUST: 8, SEPT: 9, SEP: 9, SEPTEMBRE: 9, SEPTEMBER: 9, OCT: 10, OCTOBRE: 10, OCTOBER: 10,
+  NOV: 11, NOVEMBRE: 11, NOVEMBER: 11, DEC: 12, DECEMBRE: 12, DECEMBER: 12,
+};
+
+export interface DateInText { index: number; length: number; iso: string }
+
+/** Texte sans accents, en majuscules : repère commun des positions rendues par `findDatesInText`. */
+export function plainUpper(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+}
+
+/**
+ * TOUTES les dates lisibles dans un texte libre, dans l'ordre d'écriture :
+ * « AAAA-MM-JJ », « J/M/AA(AA) » (séparateur /, . ou -, jour en premier) et
+ * « J[er] mois AAAA » (mois français ou anglais, abrégé ou non). Lecture
+ * volontairement large : elle sert à refuser une référence ambiguë, jamais à
+ * prouver seule une date.
+ */
+export function findDatesInText(text: string): DateInText[] {
+  const plain = plainUpper(text);
+  const found: DateInText[] = [];
+  const taken = (index: number, length: number) => found.some((entry) => index < entry.index + entry.length && entry.index < index + length);
+  const keep = (index: number, length: number, iso: string | null) => {
+    if (iso && !taken(index, length)) found.push({ index, length, iso });
+  };
+  const isoPattern = /(?<![0-9])(\d{4})-(\d{2})-(\d{2})(?![0-9])/g;
+  for (let match = isoPattern.exec(plain); match; match = isoPattern.exec(plain)) {
+    keep(match.index, match[0].length, toIso(Number(match[1]), Number(match[2]), Number(match[3])));
+  }
+  const numeric = /(?<![0-9])(\d{1,2})([/.-])(\d{1,2})\2(\d{4}|\d{2})(?![0-9])/g;
+  for (let match = numeric.exec(plain); match; match = numeric.exec(plain)) {
+    const year = match[4].length === 2 ? 2000 + Number(match[4]) : Number(match[4]);
+    keep(match.index, match[0].length, toIso(year, Number(match[3]), Number(match[1])));
+  }
+  const literal = /(?<![0-9])(\d{1,2})(?:ER|ST|ND|RD|TH)?\s+([A-Z]{3,9})\.?,?\s+(\d{4})(?![0-9])/g;
+  for (let match = literal.exec(plain); match; match = literal.exec(plain)) {
+    const month = MONTH_NAMES[match[2]];
+    keep(match.index, match[0].length, month ? toIso(Number(match[3]), month, Number(match[1])) : null);
+  }
+  return found.sort((a, b) => a.index - b.index);
 }
 
 // ---------------------------------------------------------------------------

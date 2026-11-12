@@ -33,6 +33,7 @@ export type CollectionCheckReason =
   | 'NO_DEPOSIT_PROOF'
   | 'AMBIGUOUS_DEPOSIT_MATCH'
   | 'AMOUNT_MISSING'
+  | 'AMOUNT_NOT_POSITIVE'
   | 'RECEIPT_DATE_MISSING'
   | 'RECEIPT_AFTER_ACCOUNTING_DATE'
   | 'INSTRUMENT_NOT_IDENTIFIED';
@@ -53,6 +54,7 @@ export const COLLECTION_CHECK_LABELS: Record<CollectionCheckReason, string> = {
   NO_DEPOSIT_PROOF: 'Aucune trace de dépôt dans le classeur de la banque',
   AMBIGUOUS_DEPOSIT_MATCH: 'Plusieurs correspondances possibles avec les dépôts en attente',
   AMOUNT_MISSING: 'Montant absent',
+  AMOUNT_NOT_POSITIVE: 'Montant nul ou négatif',
   RECEIPT_DATE_MISSING: 'Date de la ligne absente',
   RECEIPT_AFTER_ACCOUNTING_DATE: 'Ligne reçue après la date comptable',
   INSTRUMENT_NOT_IDENTIFIED: 'Ni numéro de chèque ni échéance d’effet : dépôt non rapprochable',
@@ -83,6 +85,12 @@ export interface CollectionRow {
 }
 
 export type CollectionFileReason = 'WORKBOOK_UNREADABLE' | 'SHEET_NOT_FOUND' | 'SHEET_AMBIGUOUS';
+
+export const COLLECTION_FILE_REASON_LABELS: Record<CollectionFileReason, string> = {
+  WORKBOOK_UNREADABLE: 'fichier illisible',
+  SHEET_NOT_FOUND: 'aucune feuille visible ne porte les colonnes attendues',
+  SHEET_AMBIGUOUS: 'plusieurs feuilles visibles portent les colonnes attendues',
+};
 
 export interface CollectionReading {
   available: boolean;
@@ -219,7 +227,8 @@ export function readCollectionReport(bytes: ArrayBuffer): CollectionReading {
         receiptDate,
         instrument,
         dueDate,
-        chequeNumber: instrument === 'CHEQUE' ? String(Math.round(instrumentNumber as number)) : null,
+        // Un numéro nul ou négatif n'identifie aucun chèque.
+        chequeNumber: instrument === 'CHEQUE' && Math.round(instrumentNumber as number) > 0 ? String(Math.round(instrumentNumber as number)) : null,
         clientBank: cellText(cellAt(sheet, row, columns.clientBank)),
         client,
         invoice: textOrNumber(sheet, row, columns.invoice),
@@ -285,6 +294,8 @@ export function classifyCollectionRows(
     row.state = 'A_VERIFIER';
     if (!row.depositBank) { row.checkReason = 'DEPOSIT_BANK_UNKNOWN'; continue; }
     if (row.amount === null) { row.checkReason = 'AMOUNT_MISSING'; continue; }
+    // Un montant nul ou négatif n'est ni une tombée ni un crédit : jamais compté, dans aucun sens.
+    if (row.amount <= 0) { row.checkReason = 'AMOUNT_NOT_POSITIVE'; continue; }
     if (!row.receiptDate) { row.checkReason = 'RECEIPT_DATE_MISSING'; continue; }
     // Une ligne reçue après D n'appartient pas à la situation à D : elle n'alimente aucune entrée attendue.
     if (row.receiptDate > accountingDate) { row.checkReason = 'RECEIPT_AFTER_ACCOUNTING_DATE'; continue; }
