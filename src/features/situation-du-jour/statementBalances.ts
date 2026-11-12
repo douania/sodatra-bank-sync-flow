@@ -209,8 +209,9 @@ function strictPeriod(text: string): DeclaredPeriod | null {
  * Période DÉCLARÉE dans l'en-tête d'un relevé Excel (les lecteurs Daily v2 ne
  * l'exposent pas). Deux lectures de sens opposés, chacune fermée :
  * - PREUVE (`period`) : lecture stricte. Seules les lignes au-dessus de la
- *   PREMIÈRE ligne d'en-tête des opérations sont lues, cellule par cellule puis
- *   ligne entière ; il faut une formule stricte, et une seule période distincte.
+ *   PREMIÈRE ligne d'en-tête des opérations sont lues ; la ligne entière doit
+ *   être la formule stricte, il faut une seule période distincte, et l'en-tête
+ *   ne doit porter aucune autre date.
  *   Un libellé d'opération ou une mention datée ne prouve jamais une période.
  * - REFUS (`widestSpanDays`) : lecture large. Toutes les dates lisibles au-dessus
  *   de la DERNIÈRE ligne d'en-tête des opérations comptent, quelle que soit
@@ -245,18 +246,18 @@ export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredP
     // Lecture large : la ligne entière, pour qu'une année écrite plus loin sur la ligne serve aux dates sans année.
     for (const entry of findDatesInText(texts.join(' | '))) writtenDates.push(entry.iso);
     if (row >= proofLimit) continue;
-    const perCell = texts.map(strictPeriod).filter((period): period is DeclaredPeriod => period !== null);
-    if (perCell.length > 0) {
-      periods.push(...perCell);
-    } else {
-      const wholeRow = strictPeriod(texts.join(' '));
-      if (wholeRow) periods.push(wholeRow);
-    }
+    // La ligne ne doit rien porter d'autre que la formule (écrite dans une cellule ou répartie sur plusieurs) :
+    // un libellé voisin (« Validité de la session », « Prochain relevé ») lui retire toute valeur de preuve.
+    const wholeRow = strictPeriod(texts.join(' '));
+    if (wholeRow) periods.push(wholeRow);
   }
   const sorted = [...writtenDates].sort();
   const distinct = new Set(periods.map((period) => `${period.start}|${period.end}`));
+  const period = distinct.size === 1 ? periods[0] : null;
+  // Toute autre date écrite dans l'en-tête (édition, valeur, validité) retire à la période sa valeur de preuve.
+  const onlyDatesOfHeader = period !== null && writtenDates.every((date) => date === period.start || date === period.end);
   return {
-    period: distinct.size === 1 ? periods[0] : null,
+    period: onlyDatesOfHeader ? period : null,
     earliestDate: sorted.length > 0 ? sorted[0] : null,
     latestDate: sorted.length > 0 ? sorted[sorted.length - 1] : null,
   };

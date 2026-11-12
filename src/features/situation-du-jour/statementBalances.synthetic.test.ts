@@ -258,12 +258,13 @@ test('période déclarée ambiguë ou mal formée : elle ne prouve aucune clôtu
   });
   // Témoins : une annonce unique, écrite en entier, sur deux chiffres d'année ou répétée à l'identique.
   for (const cells of [
-    ['Du 01/06/2026 au 04/06/2026'], ['Du 01/06/26 au 04/06/26'], ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026'],
+    ['Du 01/06/2026 au 04/06/2026'], ['Du 01/06/26 au 04/06/26'],
     ['Période', 'Du', '01/06/2026', 'Au', '04/06/2026'], ['Période : du 1er juin au 4 juin 2026'],
   ]) {
     assert.equal(withCells(cells).admissible, true, cells.join(' | '));
   }
   for (const cells of [
+    ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026'],
     ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 05/06/2026'],
     ['Du 04/06/2026 au 01/06/2026'],
     ['Période du 01/06/2026 au 04/06/2026, édité le 05/06/2026'],
@@ -309,6 +310,14 @@ test('une mention datée qui n’est pas une période ne prouve ni clôture ni c
     { headerText: 'Date de valeur 02/06/2026 au 04/06/2026' },
     { headerText: 'Du 02/06/2026, prochain arrêté 04/06/2026' },
     { headerText: 'Du 02/06/2026 au 04/06/2026 sous réserve' },
+    // Le libellé qui dit ce qu'est la plage est dans la même cellule…
+    { headerText: 'Valeur du 02/06/2026 au 04/06/2026' },
+    { headerText: 'Période précédente : du 02/06/2026 au 04/06/2026' },
+    // … ou dans une cellule voisine de la même ligne.
+    { headerCells: ['Validité de la session', 'du 02/06/2026 au 04/06/2026'] },
+    { headerCells: ['Prochain relevé', 'du 02/06/2026 au 04/06/2026'] },
+    { headerCells: ['Autorisation de découvert', 'du 02/06/2026 au 04/06/2026', 'taux 12 %'] },
+    { headerCells: ['du 02/06/2026 au 04/06/2026', '(validité)'] },
   ];
   for (const trap of traps) {
     const label = trap.headerText ?? trap.headerCells!.join(' | ');
@@ -317,6 +326,15 @@ test('une mention datée qui n’est pas une période ne prouve ni clôture ni c
     assert.equal(evaluation.amount, null, label);
     assert.deepEqual(evaluation.reasons, ['DAY_NOT_CLOSED'], label);
   }
+  // Une autre date écrite dans l'en-tête (ici la date d'édition, égale à D) retire à la période sa valeur de preuve.
+  const editedOnD = evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells: ['Edité le 03/06/2026'], headerText: 'Du 02/06/2026 au 04/06/2026' }),
+  });
+  assert.equal(editedOnD.admissible, false);
+  assert.equal(editedOnD.amount, null);
+  assert.deepEqual(editedOnD.reasons, ['DAY_NOT_CLOSED']);
   // Une formule stricte écrite SOUS une première ligne d'en-tête d'opérations ne prouve rien.
   const belowHeader = evaluate({
     name: 'SYNTHETIC ATB ONLINE.xls',
