@@ -36,11 +36,12 @@ function bdkBalances() {
   }, D, TODAY)]);
 }
 
-function bdkWorkbook(date = D, tab = tabName('2026-06-04')) {
+/** Classeur mensuel BDK ; `currency` : devise écrite dans l'en-tête de l'onglet, `null` pour n'en écrire aucune. */
+function bdkWorkbook(date = D, tab = tabName('2026-06-04'), currency: string | null = 'XOF') {
   return readMonthlyWorkbook({
     name: 'SYNTHETIC BDK 2026.xlsx',
     bytes: monthlyWorkbookBytes([{
-      name: tab, labelDate: date, titleBank: 'BDK', opening: 1050,
+      name: tab, labelDate: date, titleBank: 'BDK', opening: 1050, currency: currency ?? undefined,
       deposits: [{ date, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
       cheques: [{ date, number: 5550001, amount: 480 }],
     }]),
@@ -261,6 +262,34 @@ test('périmètre : un solde d’une autre devise ou un classeur d’une autre d
   const stale = compareFundPosition(fund, D, [], [workbook]).find((entry) => entry.bank === 'BDK' && entry.indicator === 'FUND_APPLIED_VS_WORKBOOK')!;
   assert.equal(stale.status, 'NOT_COMPARABLE');
   assert.equal(stale.reason, 'DATE_NOT_COMPARABLE');
+});
+
+test('classeur mensuel : sans devise établie et concordante, non comparable et sans écart chiffré', () => {
+  const fund = reading();
+  const balances = bdkBalances();
+  const workbookIndicators = ['BANK_BALANCE_VS_WORKBOOK', 'FUND_APPLIED_VS_WORKBOOK', 'NON_VALIDATED_VS_WORKBOOK'];
+  // Témoin : le même classeur, en XOF comme la Fund Position, donne un écart chiffré.
+  const witness = compareFundPosition(fund, D, balances, [bdkWorkbook()]);
+  assert.equal(witness.find((entry) => entry.bank === 'BDK' && entry.indicator === 'FUND_APPLIED_VS_WORKBOOK')!.delta, 20);
+  const cases: Array<[string, string | null]> = [
+    ['classeur dans une autre devise', 'EUR'],
+    ['classeur sans devise établie', null],
+  ];
+  for (const [label, currency] of cases) {
+    const workbook = bdkWorkbook(D, tabName('2026-06-04'), currency);
+    assert.equal(workbook.available, true, label);
+    assert.equal(workbook.balanceDate, D, label);
+    assert.equal(workbook.currency, currency, label);
+    const comparisons = compareFundPosition(fund, D, balances, [workbook]).filter((entry) => entry.bank === 'BDK');
+    for (const indicator of workbookIndicators) {
+      const comparison = comparisons.find((entry) => entry.indicator === indicator)!;
+      assert.equal(comparison.status, 'NOT_COMPARABLE', `${label} ${indicator}`);
+      assert.equal(comparison.reason, 'CURRENCY_NOT_COMPARABLE', `${label} ${indicator}`);
+      assert.equal(comparison.delta, null, `${label} ${indicator}`);
+    }
+    // La comparaison au relevé, dont la devise est établie, reste chiffrée : seul le classeur est écarté.
+    assert.equal(comparisons.find((entry) => entry.indicator === 'BANK_BALANCE_VS_STATEMENT')!.status, 'EQUAL', label);
+  }
 });
 
 test('écarts calculés seulement à date, périmètre et devise comparables', () => {

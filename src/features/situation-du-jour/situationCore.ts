@@ -41,6 +41,24 @@ export function tokenize(value: string): string[] {
     .filter((token) => token !== '');
 }
 
+const CURRENCY_TOKENS: Record<string, string> = {
+  XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', EURO: 'EUR', EUROS: 'EUR', USD: 'USD', DOLLAR: 'USD', DOLLARS: 'USD', GBP: 'GBP',
+};
+const CURRENCY_SYMBOLS: Record<string, string> = { '€': 'EUR', $: 'USD', '£': 'GBP' };
+
+/** Vrai si le jeton (sans accents, en majuscules) désigne une devise. */
+export function isCurrencyToken(token: string): boolean {
+  return CURRENCY_TOKENS[token] !== undefined;
+}
+
+/** Devises ÉCRITES dans un texte, par leur nom (mot entier) ou leur symbole ; codes ISO, sans doublon. */
+export function currenciesInText(text: string): string[] {
+  const found = new Set<string>();
+  for (const token of tokenize(text)) if (CURRENCY_TOKENS[token]) found.add(CURRENCY_TOKENS[token]);
+  for (const symbol of Object.keys(CURRENCY_SYMBOLS)) if (text.includes(symbol)) found.add(CURRENCY_SYMBOLS[symbol]);
+  return Array.from(found);
+}
+
 /** Banque désignée par un texte : exactement une banque, sinon `null` (absente ou ambiguë). */
 export function detectBankFromText(value: string): SituationBank | null {
   const tokens = new Set(tokenize(value));

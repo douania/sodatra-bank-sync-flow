@@ -45,6 +45,30 @@ test('onglets D−1, D et D+1 : seul l’onglet portant la position à D est ret
   assert.equal(result.cheques.declaredTotal, 500);
 });
 
+test('devise du classeur : écrite dans l’en-tête de l’onglet et seule devise écrite, sinon non établie', () => {
+  const name = tabName('2026-06-04');
+  const deposit = (client: string) => [{ date: D, dueDate: '2026-09-15', client, amount: 700 }];
+  // Aucune devise écrite : elle n'est jamais présumée.
+  const silent = read([tab(D, name)]);
+  assert.equal(silent.available, true);
+  assert.equal(silent.currency, null);
+  // Écrite dans l'en-tête : établie (« FCFA » vaut XOF).
+  for (const [written, expected] of [['XOF', 'XOF'], ['FCFA', 'XOF'], ['EUR', 'EUR']]) {
+    assert.equal(read([tab(D, name, { currency: written })]).currency, expected, written);
+  }
+  // Écrite seulement dans une ligne (nom de client) : un libellé de ligne n'établit pas la devise.
+  const lineOnly = read([tab(D, name, { deposits: deposit('SYNTHETIC CFA CLIENT') })]);
+  assert.equal(lineOnly.available, true);
+  assert.equal(lineOnly.currency, null);
+  // En-tête en XOF, autre devise écrite dans une ligne : contradiction, devise non établie.
+  assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC EURO CLIENT') })]).currency, null);
+  assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC CLIENT 100 $') })]).currency, null);
+  // La même devise répétée dans une ligne ne contredit rien.
+  assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC FCFA CLIENT') })]).currency, 'XOF');
+  // Classeur indisponible : aucune devise.
+  assert.equal(read([tab('2026-06-02', tabName('2026-06-03'), { currency: 'XOF' })]).currency, null);
+});
+
 test('onglet D absent ou ambigu : encours indisponibles', () => {
   const absent = read([tab('2026-06-02', tabName('2026-06-03')), tab('2026-06-04', tabName('2026-06-05'))]);
   assert.equal(absent.available, false);

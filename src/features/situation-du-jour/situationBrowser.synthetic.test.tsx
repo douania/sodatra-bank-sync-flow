@@ -66,7 +66,8 @@ const STAGING_URL = 'https://gbbsqcscryygqlmqncyv.supabase.co';
 const STAGING_ID = 'gbbsqcscryygqlmqncyv';
 const PAGE = 'http://localhost:8080';
 const LOCAL = { pageOrigin: PAGE, supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' };
-const ATB_HEADER = 'De 01 juin 2026 au 04 juin 2026';
+/** Relevé ATB clos à D par une journée ultérieure raccordée à la chaîne (seule preuve de clôture d'un relevé Excel). */
+const ATB_MOVES = [{ date: '2026-06-02', amount: 300 }, { date: '2026-06-03', amount: -120 }, { date: '2026-06-04', amount: 1 }];
 const D = '2026-06-03';
 const TODAY = '2026-06-05';
 
@@ -184,9 +185,9 @@ function syntheticFiles() {
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
       movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }],
     }) },
-    { name: '040626 SYNTHETIC ATB ONLINE.xls', bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, headerText: ATB_HEADER, movements: [{ date: '2026-06-02', amount: 300 }, { date: D, amount: -120 }] }) },
+    { name: '040626 SYNTHETIC ATB ONLINE.xls', bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES }) },
     { name: 'SYNTHETIC BDK 2026.xlsx', bytes: monthlyWorkbookBytes([{
-      name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1050,
+      name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1050, currency: 'XOF',
       deposits: [{ date: D, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
       cheques: [{ date: D, number: 5550001, amount: 480 }],
     }]) },
@@ -356,7 +357,7 @@ test('deux Collection Reports ou deux Fund Positions : section non calculée et 
 test('une attestation tombe quand le fichier attesté est remplacé', async () => {
   const name = '040626 SYNTHETIC ATB ONLINE.xls';
   const make = (opening: number) => {
-    const bytes = excelStatementBytes({ bank: 'ATB', opening, headerText: ATB_HEADER, movements: [{ date: '2026-06-02', amount: 300 }, { date: D, amount: -120 }] });
+    const bytes = excelStatementBytes({ bank: 'ATB', opening, movements: ATB_MOVES });
     return { name, size: bytes.byteLength, arrayBuffer: async () => bytes };
   };
   const session = createSituationSession({ today: () => TODAY, initialAccountingDate: D });

@@ -4,6 +4,9 @@
 // du relevé est continue de bout en bout, que l'identité du compte et la
 // devise sont corroborées et que la journée est close. Tout autre cas est
 // affiché « à revoir » ou « indisponible », jamais additionné.
+// Une plage de dates écrite dans un relevé (« du … au … ») ne prouve jamais
+// la clôture ni la couverture d'une journée : elle peut être la borne
+// demandée à l'export, ou une tout autre mention datée.
 import { parseStructuredBankStatementCsv } from '@/services/structuredBankStatementCsvParser';
 import type { StructuredBankStatementLine } from '@/services/structuredBankStatementCsvParser';
 import { parseStructuredBankStatementExcel } from '@/services/structuredBankStatementExcelParser';
@@ -62,7 +65,7 @@ export const BALANCE_REASON_LABELS: Record<BalanceReason, string> = {
   IDENTITY_NOT_CORROBORATED: 'Identité du compte non corroborée',
   CURRENCY_NOT_CORROBORATED: 'Devise non corroborée',
   DATE_NOT_COVERED: 'Date comptable non couverte par le relevé',
-  DAY_NOT_CLOSED: 'Journée non close à la date du relevé',
+  DAY_NOT_CLOSED: 'Clôture de la journée non prouvée par le relevé (ni opération d’un jour suivant, ni solde final daté après cette journée)',
   BALANCE_CHAIN_BROKEN: 'Rupture dans la chaîne des soldes du relevé',
   CONFLICTING_STATEMENTS: 'Relevés contradictoires pour le même compte',
   SEVERAL_ACCOUNTS_FOR_BANK: 'Plusieurs relevés pour cette banque sans identité de compte commune',
@@ -163,9 +166,7 @@ const OPERATION_HEADER_FAMILIES: Record<'DATE' | 'BALANCE' | 'AMOUNT' | 'LABEL',
 const HEADER_SCAN_ROWS = 60;
 const HEADER_SCAN_COLUMNS = 40;
 
-export interface DeclaredPeriodReading {
-  /** Période PROUVÉE : une seule formule stricte « du <date> au <date> » au-dessus de l'en-tête des opérations. */
-  period: DeclaredPeriod | null;
+export interface HeaderDateSpan {
   /** Première et dernière dates écrites dans l'en-tête, toutes écritures confondues (`null` si aucune). */
   earliestDate: string | null;
   latestDate: string | null;
@@ -189,37 +190,18 @@ function isOperationHeaderRow(sheet: Sheet, row: number): boolean {
 }
 
 /**
- * Formule de période et RIEN d'autre : « [Période :] du|de <date> au <date> »,
- * deux dates au jour près, ordonnées. Tout autre texte portant deux dates
- * (date de valeur, échéance, validité, référence) n'est pas une période.
+ * Dates ÉCRITES dans l'en-tête d'un relevé Excel (les lecteurs Daily v2 ne
+ * les exposent pas), lues pour REFUSER seulement : toutes les dates lisibles
+ * au-dessus de la DERNIÈRE ligne d'en-tête des opérations comptent, quelle
+ * que soit leur écriture, et le relevé est exclu dès que ces dates et celles
+ * de ses lignes s'étendent sur plus de 45 jours.
+ * Aucune de ces dates ne PROUVE quoi que ce soit : une plage « du … au … » ne
+ * dit pas si elle est la période du relevé, la borne demandée à l'export ou
+ * une autre mention datée (validité, échéance), y compris quand son libellé
+ * est écrit sur la ligne voisine.
  */
-function strictPeriod(text: string): DeclaredPeriod | null {
-  const dates = findDatesInText(text);
-  if (dates.length !== 2 || dates.some((date) => date.precision !== 'DAY')) return null;
-  const plain = plainUpper(text);
-  const clean = (value: string) => value.replace(/\s+/g, ' ').trim();
-  const before = clean(plain.slice(0, dates[0].index));
-  const between = clean(plain.slice(dates[0].index + dates[0].length, dates[1].index));
-  const after = clean(plain.slice(dates[1].index + dates[1].length));
-  if (!/^(?:PERIODE ?:? ?)?(?:DU|DE)$/.test(before) || between !== 'AU' || after !== '') return null;
-  return dates[0].iso <= dates[1].iso ? { start: dates[0].iso, end: dates[1].iso } : null;
-}
-
-/**
- * Période DÉCLARÉE dans l'en-tête d'un relevé Excel (les lecteurs Daily v2 ne
- * l'exposent pas). Deux lectures de sens opposés, chacune fermée :
- * - PREUVE (`period`) : lecture stricte. Seules les lignes au-dessus de la
- *   PREMIÈRE ligne d'en-tête des opérations sont lues ; la ligne entière doit
- *   être la formule stricte, il faut une seule période distincte, et l'en-tête
- *   ne doit porter aucune autre date.
- *   Un libellé d'opération ou une mention datée ne prouve jamais une période.
- * - REFUS (`widestSpanDays`) : lecture large. Toutes les dates lisibles au-dessus
- *   de la DERNIÈRE ligne d'en-tête des opérations comptent, quelle que soit
- *   leur écriture : le relevé est exclu dès que ces dates et celles de ses
- *   lignes s'étendent sur plus de 45 jours.
- */
-export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredPeriodReading {
-  const none: DeclaredPeriodReading = { period: null, earliestDate: null, latestDate: null };
+export function readExcelHeaderDateSpan(bytes: ArrayBuffer): HeaderDateSpan {
+  const none: HeaderDateSpan = { earliestDate: null, latestDate: null };
   let workbook;
   try {
     workbook = readWorkbook(bytes);
@@ -231,9 +213,7 @@ export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredP
   const headerRows: number[] = [];
   for (let row = 1; row <= HEADER_SCAN_ROWS; row += 1) if (isOperationHeaderRow(sheet, row)) headerRows.push(row);
   if (headerRows.length === 0) return none;
-  const proofLimit = headerRows[0];
   const refusalLimit = headerRows[headerRows.length - 1];
-  const periods: DeclaredPeriod[] = [];
   const writtenDates: string[] = [];
   for (let row = 1; row < refusalLimit; row += 1) {
     const texts: string[] = [];
@@ -243,21 +223,11 @@ export function readDeclaredPeriodFromExcelHeader(bytes: ArrayBuffer): DeclaredP
       const text = date ? formatIsoFr(date) : cellText(cell);
       if (text) texts.push(text);
     }
-    // Lecture large : la ligne entière, pour qu'une année écrite plus loin sur la ligne serve aux dates sans année.
+    // La ligne entière, pour qu'une année écrite plus loin sur la ligne serve aux dates sans année.
     for (const entry of findDatesInText(texts.join(' | '))) writtenDates.push(entry.iso);
-    if (row >= proofLimit) continue;
-    // La ligne ne doit rien porter d'autre que la formule (écrite dans une cellule ou répartie sur plusieurs) :
-    // un libellé voisin (« Validité de la session », « Prochain relevé ») lui retire toute valeur de preuve.
-    const wholeRow = strictPeriod(texts.join(' '));
-    if (wholeRow) periods.push(wholeRow);
   }
   const sorted = [...writtenDates].sort();
-  const distinct = new Set(periods.map((period) => `${period.start}|${period.end}`));
-  const period = distinct.size === 1 ? periods[0] : null;
-  // Toute autre date écrite dans l'en-tête (édition, valeur, validité) retire à la période sa valeur de preuve.
-  const onlyDatesOfHeader = period !== null && writtenDates.every((date) => date === period.start || date === period.end);
   return {
-    period: onlyDatesOfHeader ? period : null,
     earliestDate: sorted.length > 0 ? sorted[0] : null,
     latestDate: sorted.length > 0 ? sorted[sorted.length - 1] : null,
   };
@@ -370,9 +340,11 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
 
   let lines: StructuredBankStatementLine[] = [];
   let parsedCurrency: string | undefined;
+  /** Période annoncée par un relevé CSV (contrôle de cohérence seulement ; jamais lue dans un relevé Excel). */
   let declaredPeriod: DeclaredPeriod | null = null;
   let headerEarliest: string | null = null;
   let headerLatest: string | null = null;
+  /** Date du solde final que le relevé CSV déclare lui-même (« Solde au <date> »), raccordé à la chaîne par le lecteur. */
   let closedBefore: string | null = null;
   let periodStart: string | null = null;
   let periodEnd: string | null = null;
@@ -416,10 +388,9 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
       parsedCurrency = document.currency;
       periodStart = frDateToIso(document.periodStart);
       periodEnd = frDateToIso(document.periodEnd);
-      const declared = readDeclaredPeriodFromExcelHeader(file.bytes.slice(0));
-      declaredPeriod = declared.period;
-      headerEarliest = declared.earliestDate;
-      headerLatest = declared.latestDate;
+      const header = readExcelHeaderDateSpan(file.bytes.slice(0));
+      headerEarliest = header.earliestDate;
+      headerLatest = header.latestDate;
     }
   } catch {
     return refuse(evaluation, 'PARSER_REFUSED');
@@ -468,21 +439,23 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
   if (daysBetween(spanStart, spanEnd) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS) {
     return refuse(evaluation, 'PERIOD_OVER_DAILY_LIMIT');
   }
+  // Période annoncée par un relevé CSV : inversée, ou qui n'englobe pas les lignes, elle rend le relevé
+  // incohérent. Elle ne prouve rien par elle-même.
   if (declaredPeriod !== null) {
     const coversLines = declaredPeriod.start <= declaredPeriod.end && declaredPeriod.start <= first.date && last.date <= declaredPeriod.end;
-    // CSV : une période déclarée inversée ou qui n'englobe pas les lignes rend le relevé incohérent.
-    if (isCsv && !coversLines) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
-    // Excel : elle n'est retenue comme preuve que si elle englobe toutes les lignes du relevé.
-    if (!coversLines) declaredPeriod = null;
+    if (!coversLines) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
   }
 
-  // Journée close : la preuve vient du RELEVÉ lui-même, jamais du nom du fichier. Sont admises la date
-  // de relevé du CSV, la fin de la période déclarée d'un relevé Excel, ou une journée ultérieure raccordée
-  // à la chaîne. La journée en cours n'est jamais close et une date future ne prouve rien.
-  if (!closedBefore && !isCsv && declaredPeriod !== null) closedBefore = declaredPeriod.end;
+  // Journée close : la preuve vient du RELEVÉ lui-même, jamais du nom du fichier ni d'une plage de dates
+  // écrite dans son en-tête. Deux preuves seulement :
+  //  1. une journée ultérieure raccordée à la chaîne des soldes (tous formats) ;
+  //  2. CSV : le solde final que le relevé déclare lui-même « au <date> », raccordé à la chaîne par le
+  //     lecteur, à une date postérieure à D.
+  // La journée en cours n'est jamais close et une date future ne prouve rien.
   if (closedBefore && closedBefore > today) closedBefore = null;
   const next = units.find((unit) => unit.date > accountingDate) ?? null;
-  const dayClosed = accountingDate < today && ((closedBefore !== null && accountingDate < closedBefore) || next !== null);
+  const closedByStatedBalance = closedBefore !== null && accountingDate < closedBefore;
+  const dayClosed = accountingDate < today && (closedByStatedBalance || next !== null);
   if (!dayClosed) refuse(evaluation, 'DAY_NOT_CLOSED');
 
   const unitAtDate = units.find((unit) => unit.date === accountingDate) ?? null;
@@ -493,11 +466,13 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
     amount = unitAtDate.closing;
     balanceDate = unitAtDate.date;
   } else {
-    // Jour sans mouvement : report de la clôture précédente seulement si la couverture de D est prouvée.
-    const coveredByDeclaration = declaredPeriod !== null
-      && declaredPeriod.start <= accountingDate && accountingDate <= declaredPeriod.end;
+    // Jour sans mouvement : report de la clôture précédente seulement si la couverture de D est prouvée par
+    // les mêmes preuves que la clôture : une journée ultérieure raccordée à la chaîne, ou le solde final
+    // daté d'un CSV dont la période annoncée, si elle existe, englobe D.
+    const coveredByStatedBalance = closedByStatedBalance
+      && (declaredPeriod === null || (declaredPeriod.start <= accountingDate && accountingDate <= declaredPeriod.end));
     const coveredByBracketing = previous !== null && next !== null;
-    if (!previous || (!coveredByDeclaration && !coveredByBracketing)) {
+    if (!previous || (!coveredByStatedBalance && !coveredByBracketing)) {
       refuse(evaluation, 'DATE_NOT_COVERED');
     } else {
       amount = previous.closing;

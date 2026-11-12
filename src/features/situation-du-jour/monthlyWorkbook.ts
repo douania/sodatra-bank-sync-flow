@@ -16,6 +16,7 @@ import {
   cellIsoDate,
   cellNumber,
   cellText,
+  currenciesInText,
   daysBetween,
   detectBankFromStrictLabel,
   detectBankFromText,
@@ -27,7 +28,7 @@ import {
   sumAmounts,
   usefulBounds,
 } from './situationCore';
-import type { InMemoryFile, Sheet, SituationBank } from './situationCore';
+import type { InMemoryFile, Sheet, SheetBounds, SituationBank } from './situationCore';
 
 export type WorkbookReason =
   | 'WORKBOOK_UNREADABLE'
@@ -107,6 +108,11 @@ export interface WorkbookEncours {
   reason: WorkbookReason | null;
   tabName: string | null;
   balanceDate: string | null;
+  /**
+   * Devise ÉTABLIE par l'onglet retenu : écrite dans son en-tête et seule devise écrite dans tout
+   * l'onglet. `null` : aucune devise établie (absente, multiple, ou écrite seulement dans une ligne).
+   */
+  currency: string | null;
   ignoredFutureTabs: number;
   openingBalance: number | null;
   totalBalanceA: number | null;
@@ -129,7 +135,7 @@ function emptySection(reason: SectionReason | null = 'SECTION_NOT_FOUND'): Workb
 
 function emptyEncours(fileName: string, bank: SituationBank | null, reason: WorkbookReason): WorkbookEncours {
   return {
-    fileName, bank, available: false, reason, tabName: null, balanceDate: null, ignoredFutureTabs: 0,
+    fileName, bank, available: false, reason, tabName: null, balanceDate: null, currency: null, ignoredFutureTabs: 0,
     openingBalance: null, totalBalanceA: null, closingBookBalance: null, deposits: emptySection(),
     cheques: emptySection(), chequesOutsideTotal: 0,
     facilities: { available: false, title: null, lines: [], excludedUnlabeledRows: 0, unattributedRows: 0 }, impayes: emptySection(),
@@ -166,6 +172,26 @@ function readTitleBank(sheet: Sheet): SituationBank | null {
     }
   }
   return hits.size === 1 ? Array.from(hits)[0] : null;
+}
+
+/**
+ * Devise ÉTABLIE par l'onglet. Preuve stricte : la devise est écrite dans l'en-tête de l'onglet (au plus
+ * tard sur la ligne d'ouverture). Refus large : toute autre devise écrite n'importe où dans l'onglet, par
+ * son nom ou son symbole, retire la preuve. Un libellé de ligne (client, description) n'établit jamais la
+ * devise ; il peut seulement la contredire.
+ */
+function readTabCurrency(sheet: Sheet, headerLastRow: number, bounds: SheetBounds): string | null {
+  const header = new Set<string>();
+  const all = new Set<string>();
+  for (let row = 1; row <= bounds.lastRow; row += 1) {
+    for (let column = 1; column <= bounds.lastColumn; column += 1) {
+      for (const currency of currenciesInText(cellText(cellAt(sheet, row, column)))) {
+        all.add(currency);
+        if (row <= headerLastRow) header.add(currency);
+      }
+    }
+  }
+  return header.size === 1 && all.size === 1 ? Array.from(header)[0] : null;
 }
 
 function readLine(sheet: Sheet, row: number, amount: number): WorkbookLine {
@@ -461,6 +487,7 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
     reason: null,
     tabName,
     balanceDate: accountingDate,
+    currency: readTabCurrency(sheet, openingRow, bounds),
     ignoredFutureTabs,
     openingBalance: opening,
     totalBalanceA: totalA,

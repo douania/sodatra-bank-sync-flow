@@ -107,6 +107,7 @@ function Encours({ result }: { result: SituationResult }) {
                 <>
                   <td className={CELL}>
                     {workbook.tabName}
+                    <div className="text-muted-foreground">{workbook.currency ? `Devise écrite dans l’onglet : ${workbook.currency}` : 'Devise non établie par l’onglet : classeur non comparé à la Fund Position'}</div>
                     {workbook.ignoredFutureTabs > 0 ? <div className="text-muted-foreground">{workbook.ignoredFutureTabs} onglet(s) daté(s) dans le futur ignoré(s)</div> : null}
                   </td>
                   <td className={NUM}>{formatAmount(workbook.openingBalance)}</td>
@@ -203,7 +204,7 @@ function FundPosition({ result }: { result: SituationResult }) {
   const equal = fundPosition.comparisons.filter((comparison) => comparison.status === 'EQUAL').length;
   const notComparable = fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE').length;
   return (
-    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée.">
+    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date et la devise sont établies des deux côtés.">
       <p className="text-sm">
         Date de référence écrite dans l’onglet : {fundPosition.reading.referenceDate ? formatIsoFr(fundPosition.reading.referenceDate) : 'non établie'} ·
         Devise écrite dans l’onglet : {fundPosition.reading.currency ?? 'non établie'}

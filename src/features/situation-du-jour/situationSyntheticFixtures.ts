@@ -90,6 +90,8 @@ export interface SyntheticCsvOptions {
   declaredClosingOverride?: number;
   /** Fausse le solde initial déclaré (la chaîne ne se raccorde plus). */
   declaredOpeningOverride?: number;
+  /** Date du solde final déclaré en pied de relevé (par défaut la fin de la période annoncée). */
+  closingDate?: string;
 }
 
 /** Relevé CSV de la famille BDK / ORABANK (point-virgule, Windows-1252, ASCII seulement ici). */
@@ -113,7 +115,7 @@ export function csvStatementBytes(options: SyntheticCsvOptions): ArrayBuffer {
     "Date;Valeur;Libelle de l'operation;Debit(XOF);Credit(XOF);Solde(XOF)",
     ...lines,
     `;;Total;${debits};${credits};`,
-    `;;Solde (XOF) au ${fr(options.periodEnd)} : ${options.declaredClosingOverride ?? balance};;;`,
+    `;;Solde (XOF) au ${fr(options.closingDate ?? options.periodEnd)} : ${options.declaredClosingOverride ?? balance};;;`,
   ].join('\r\n');
   const bytes = new Uint8Array(text.length);
   for (let index = 0; index < text.length; index += 1) bytes[index] = text.charCodeAt(index) & 0xff;
@@ -124,11 +126,11 @@ export interface SyntheticExcelStatementOptions {
   bank: 'ATB' | 'BICIS' | 'BIS' | 'BRIDGE';
   opening: number;
   movements: SyntheticMovement[];
-  /** Texte d'en-tête portant la période déclarée (facultatif). */
+  /** Texte écrit sur la deuxième ligne de l'en-tête (plage de dates, mention datée ; facultatif). */
   headerText?: string;
-  /** Cellules de la ligne de période (remplace `headerText` : période répartie, répétée, décalée). */
+  /** Cellules de la deuxième ligne (remplace `headerText` : plage répartie, répétée, décalée). */
   headerCells?: CellInput[];
-  /** Cellules de la première ligne (remplace le titre : préambule ressemblant à un en-tête). */
+  /** Cellules de la première ligne (remplace le titre : libellé, préambule ressemblant à un en-tête). */
   titleCells?: CellInput[];
   /** Force un solde courant incohérent sur la dernière ligne (rupture de chaîne). */
   breakChain?: boolean;
@@ -216,6 +218,8 @@ export interface SyntheticTab {
   /** Date portée par le libellé d'ouverture (position à cette date). */
   labelDate: string;
   titleBank: string;
+  /** Devise écrite dans l'en-tête de l'onglet (absente par défaut, comme dans un classeur qui ne la dit pas). */
+  currency?: string;
   opening: number;
   deposits?: SyntheticDeposit[];
   cheques?: SyntheticCheque[];
@@ -238,7 +242,7 @@ export interface SyntheticTab {
 export function monthlyTabSheet(tab: SyntheticTab): XLSX.WorkSheet {
   const rows: CellInput[][] = [];
   const french = tab.french === true;
-  rows.push(['', '', '', tab.titleBank]);
+  rows.push(['', '', '', tab.titleBank, '', '', tab.currency ? `Devise ${tab.currency}` : '']);
   rows.push(['Date', ' CH.NO', 'DESCRIPTION', 'VENDOR PROVIDER', 'CLIENT ', 'TR No /FACT.No', ' AMOUNT ', ' AMOUNT 1']);
   rows.push([`${french ? "SOLDE D'OUVERTURE" : 'OPENING BALANCE'} ${frShort(tab.labelDate)}`, '', '', '', '', '', tab.opening]);
   if (tab.depositSectionTitle !== false) {

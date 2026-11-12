@@ -25,14 +25,16 @@ function bdk(name = 'SYNTHETIC BDK ONLINE.csv', closingShift = 0, accountSuffix?
 }
 
 const ATB_MOVES: SyntheticMovement[] = [{ date: '2026-06-02', amount: 300 }, { date: '2026-06-03', amount: -120 }];
-/** En-tête portant une période déclarée qui se termine après D : preuve de clôture issue du relevé. */
+/** Les mêmes opérations suivies d'une journée ultérieure raccordée à la chaîne : seule preuve de clôture d'un relevé Excel. */
+const ATB_CLOSED: SyntheticMovement[] = [...ATB_MOVES, { date: '2026-06-04', amount: 1 }];
+/** Plage de dates écrite dans l'en-tête, se terminant après D : elle ne prouve ni clôture ni couverture. */
 const ATB_HEADER = 'De 01 juin 2026 au 04 juin 2026';
 const NO_HEADER = '';
 
 function atb(
   attestation?: StatementInput['attestation'],
-  headerText: string | undefined = ATB_HEADER,
-  movements = ATB_MOVES,
+  headerText: string | undefined = NO_HEADER,
+  movements = ATB_CLOSED,
   name = 'SYNTHETIC ATB ONLINE.xls',
   opening = 5000,
 ): StatementInput {
@@ -98,27 +100,52 @@ test('BRIDGE : la devise absente du fichier exige une attestation distincte', ()
   assert.equal(both.currencyProof, 'OPERATOR');
 });
 
-test('clôture : la preuve vient du relevé, jamais du nom du fichier', () => {
-  // Dernière ligne à D, aucune période déclarée : renommer le fichier à D+1 ne prouve rien.
+test('clôture : la preuve vient du relevé, jamais du nom du fichier ni d’une plage de dates', () => {
+  // Dernière ligne à D : renommer le fichier à D+1 ne prouve rien.
   for (const name of ['SYNTHETIC ATB ONLINE.xls', '040626 SYNTHETIC ATB ONLINE.xls', '050626 SYNTHETIC ATB ONLINE.xls']) {
     const renamed = evaluate(atb({ identityAttested: true }, NO_HEADER, ATB_MOVES, name));
     assert.equal(renamed.admissible, false, name);
     assert.equal(renamed.amount, null, name);
     assert.deepEqual(renamed.reasons, ['DAY_NOT_CLOSED'], name);
   }
-  // Preuve issue du relevé : période déclarée se terminant après D…
-  assert.equal(evaluate(atb({ identityAttested: true })).admissible, true);
-  // … ou journée ultérieure raccordée à la chaîne.
-  const laterDay = evaluate(atb({ identityAttested: true }, NO_HEADER, [...ATB_MOVES, { date: '2026-06-04', amount: 1 }]));
+  // Témoin positif : une journée ultérieure raccordée à la chaîne clôt D.
+  const laterDay = evaluate(atb({ identityAttested: true }));
   assert.equal(laterDay.admissible, true);
   assert.equal(laterDay.amount, 5180);
-  // Période déclarée se terminant à D : la journée n'est pas close.
-  const endsAtD = evaluate(atb({ identityAttested: true }, 'De 01 juin 2026 au 03 juin 2026'));
-  assert.deepEqual(endsAtD.reasons, ['DAY_NOT_CLOSED']);
-  // Période déclarée se terminant après aujourd'hui : une date future ne prouve aucune clôture.
-  const futureEnd = evaluate(atb({ identityAttested: true }, 'De 01 juin 2026 au 30 juin 2026'), D, '2026-06-04');
-  assert.equal(futureEnd.admissible, false);
-  assert.deepEqual(futureEnd.reasons, ['DAY_NOT_CLOSED']);
+  assert.equal(laterDay.balanceDate, D);
+  // Export fait avant la clôture de D : le relevé imprime la borne demandée (« … au 04/06 »), ses lignes
+  // s'arrêtent à D. La plage, même écrite seule et sans ambiguïté, ne clôt pas la journée.
+  const requestedBound = evaluate(atb({ identityAttested: true }, ATB_HEADER, ATB_MOVES));
+  assert.equal(requestedBound.admissible, false);
+  assert.equal(requestedBound.amount, null);
+  assert.deepEqual(requestedBound.reasons, ['DAY_NOT_CLOSED']);
+  // Libellé sur une ligne, plage sur la ligne suivante : la plage n'est pas la période du relevé.
+  const labelledAbove = evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells: ['Découvert autorisé valable'], headerText: 'Du 02/06/2026 au 04/06/2026' }),
+  });
+  assert.equal(labelledAbove.admissible, false);
+  assert.equal(labelledAbove.amount, null);
+  assert.deepEqual(labelledAbove.reasons, ['DAY_NOT_CLOSED']);
+  // Le compte reste « à revoir », hors sous-total, sans aucun chiffre.
+  for (const evaluation of [requestedBound, labelledAbove]) {
+    const balances = buildAccountBalances([evaluation]);
+    const account = balances.find((balance) => balance.bank === 'ATB')!;
+    assert.equal(account.status, 'TO_REVIEW');
+    assert.equal(account.amount, null);
+    assert.deepEqual(account.reasons, ['DAY_NOT_CLOSED']);
+    assert.equal(consolidateBalances(balances)[0].amount, null);
+  }
+  // Les mêmes en-têtes ne retirent rien à la preuve par la journée ultérieure.
+  assert.equal(evaluate(atb({ identityAttested: true }, ATB_HEADER)).amount, 5180);
+  const labelledAboveClosed = evaluate({
+    name: 'SYNTHETIC ATB ONLINE.xls',
+    attestation: ATTESTED,
+    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_CLOSED, titleCells: ['Découvert autorisé valable'], headerText: 'Du 02/06/2026 au 04/06/2026' }),
+  });
+  assert.equal(labelledAboveClosed.admissible, true);
+  assert.equal(labelledAboveClosed.amount, 5180);
 });
 
 test('journée non close : jour du relevé, jour en cours, ligne datée après aujourd’hui', () => {
@@ -126,7 +153,7 @@ test('journée non close : jour du relevé, jour en cours, ligne datée après a
   assert.equal(sameDay.admissible, false);
   assert.ok(sameDay.reasons.includes('DAY_NOT_CLOSED'));
   // D = aujourd'hui : la journée en cours n'est jamais close.
-  const todayIsD = evaluate(atb({ identityAttested: true }), D, D);
+  const todayIsD = evaluate(atb({ identityAttested: true }, NO_HEADER, ATB_MOVES), D, D);
   assert.equal(todayIsD.admissible, false);
   assert.deepEqual(todayIsD.reasons, ['DAY_NOT_CLOSED']);
   // Une ligne datée après aujourd'hui rend le relevé incohérent et ne prouve aucune clôture.
@@ -134,6 +161,18 @@ test('journée non close : jour du relevé, jour en cours, ligne datée après a
   assert.equal(lineAfterToday.admissible, false);
   assert.equal(lineAfterToday.amount, null);
   assert.deepEqual(lineAfterToday.reasons, ['STATEMENT_NEEDS_REVIEW']);
+  // CSV dont le solde final est daté après aujourd'hui : une date future ne prouve aucune clôture.
+  const futureStatedBalance = evaluate({
+    name: 'SYNTHETIC BDK ONLINE.csv',
+    attestation: ATTESTED,
+    bytes: csvStatementBytes({
+      periodStart: '2026-06-01', periodEnd: '2026-06-10', opening: 1000,
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }],
+    }),
+  }, '2026-06-02', '2026-06-05');
+  assert.equal(futureStatedBalance.admissible, false);
+  assert.equal(futureStatedBalance.amount, null);
+  assert.deepEqual(futureStatedBalance.reasons, ['DAY_NOT_CLOSED']);
 });
 
 test('rupture de solde : exclue où qu’elle soit dans le relevé, au centime près', () => {
@@ -249,54 +288,29 @@ test('limite quotidienne : une période de plus de 45 jours exclut le relevé, q
   }
 });
 
-test('période déclarée ambiguë ou mal formée : elle ne prouve aucune clôture', () => {
-  // Dernière ligne à D : seule une période déclarée lisible sans ambiguïté peut prouver la clôture.
-  const withCells = (headerCells: string[]) => evaluate({
-    name: 'SYNTHETIC ATB ONLINE.xls',
-    attestation: ATTESTED,
-    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, headerCells }),
-  });
-  // Témoins : une annonce unique, écrite en entier, sur deux chiffres d'année ou répétée à l'identique.
-  for (const cells of [
-    ['Du 01/06/2026 au 04/06/2026'], ['Du 01/06/26 au 04/06/26'],
-    ['Période', 'Du', '01/06/2026', 'Au', '04/06/2026'], ['Période : du 1er juin au 4 juin 2026'],
-  ]) {
-    assert.equal(withCells(cells).admissible, true, cells.join(' | '));
-  }
-  for (const cells of [
-    ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026'],
-    ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 05/06/2026'],
-    ['Du 04/06/2026 au 01/06/2026'],
-    ['Période du 01/06/2026 au 04/06/2026, édité le 05/06/2026'],
-  ]) {
-    const evaluation = withCells(cells);
-    assert.equal(evaluation.admissible, false, cells.join(' | '));
-    assert.equal(evaluation.amount, null, cells.join(' | '));
-    assert.deepEqual(evaluation.reasons, ['DAY_NOT_CLOSED'], cells.join(' | '));
-  }
-});
-
-test('une mention datée qui n’est pas une période ne prouve ni clôture ni couverture', () => {
-  // Dernière ligne à D : seule une formule de période stricte, écrite dans le relevé, peut clore la journée.
-  const withHeader = (extra: { headerText?: string; headerCells?: string[] }, movements = ATB_MOVES, date = D) => evaluate({
+test('aucune plage ni mention datée de l’en-tête ne prouve la clôture ou la couverture', () => {
+  type Header = { headerText?: string; headerCells?: string[]; titleCells?: string[] };
+  const withHeader = (extra: Header, movements = ATB_MOVES, date = D) => evaluate({
     name: 'SYNTHETIC ATB ONLINE.xls',
     attestation: ATTESTED,
     bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements, ...extra }),
   }, date);
-  // Témoin : la formule stricte prouve la clôture.
-  assert.equal(withHeader({ headerText: 'Du 02/06/2026 au 04/06/2026' }).admissible, true);
-  // Témoins : un préambule sans montant, ou tenu dans une seule cellule, n'est pas l'en-tête des opérations ;
-  // la formule stricte écrite dessous reste donc lue comme preuve.
-  for (const titleCells of [['Référence relevé', 'Date édition', 'Solde initial'], ['Date, montant et solde de référence']]) {
-    const preamble = evaluate({
-      name: 'SYNTHETIC ATB ONLINE.xls',
-      attestation: ATTESTED,
-      bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells, headerText: 'Du 02/06/2026 au 04/06/2026' }),
-    });
-    assert.equal(preamble.admissible, true, titleCells.join(' | '));
-    assert.equal(preamble.amount, 5180, titleCells.join(' | '));
-  }
-  const traps: Array<{ headerText?: string; headerCells?: string[] }> = [
+  const headers: Header[] = [
+    // Plages écrites sans ambiguïté, sous toutes les écritures : elles ne prouvent pas davantage.
+    { headerText: 'Du 02/06/2026 au 04/06/2026' },
+    { headerText: 'Du 01/06/26 au 04/06/26' },
+    { headerCells: ['Période', 'Du', '01/06/2026', 'Au', '04/06/2026'] },
+    { headerText: 'Période : du 1er juin au 4 juin 2026' },
+    { headerText: 'Période : Du 01/06/2026 au 04/06/2026' },
+    { titleCells: ['Référence relevé', 'Date édition', 'Solde initial'], headerText: 'Du 02/06/2026 au 04/06/2026' },
+    { titleCells: ['Date, montant et solde de référence'], headerText: 'Du 02/06/2026 au 04/06/2026' },
+    // Plages répétées, contradictoires, inversées ou suivies d'une autre date.
+    { headerCells: ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 04/06/2026'] },
+    { headerCells: ['Du 01/06/2026 au 04/06/2026', 'Du 01/06/2026 au 05/06/2026'] },
+    { headerText: 'Du 04/06/2026 au 01/06/2026' },
+    { headerText: 'Période du 01/06/2026 au 04/06/2026, édité le 05/06/2026' },
+    { titleCells: ['Edité le 03/06/2026'], headerText: 'Du 02/06/2026 au 04/06/2026' },
+    // Mentions datées qui ne sont pas une période.
     { headerText: 'Relevé de compte au 03/06/2026, prochain arrêté 04/06/2026' },
     { headerText: 'Extrait de compte - solde au 03/06/2026 - date de valeur 04/06/2026' },
     { headerText: 'Date opération - date valeur : 03/06/2026 - 04/06/2026' },
@@ -310,50 +324,41 @@ test('une mention datée qui n’est pas une période ne prouve ni clôture ni c
     { headerText: 'Date de valeur 02/06/2026 au 04/06/2026' },
     { headerText: 'Du 02/06/2026, prochain arrêté 04/06/2026' },
     { headerText: 'Du 02/06/2026 au 04/06/2026 sous réserve' },
-    // Le libellé qui dit ce qu'est la plage est dans la même cellule…
     { headerText: 'Valeur du 02/06/2026 au 04/06/2026' },
     { headerText: 'Période précédente : du 02/06/2026 au 04/06/2026' },
-    // … ou dans une cellule voisine de la même ligne.
     { headerCells: ['Validité de la session', 'du 02/06/2026 au 04/06/2026'] },
     { headerCells: ['Prochain relevé', 'du 02/06/2026 au 04/06/2026'] },
     { headerCells: ['Autorisation de découvert', 'du 02/06/2026 au 04/06/2026', 'taux 12 %'] },
     { headerCells: ['du 02/06/2026 au 04/06/2026', '(validité)'] },
+    // Libellé sur la ligne du dessus, plage sur la ligne suivante.
+    { titleCells: ['Découvert autorisé valable'], headerText: 'Du 02/06/2026 au 04/06/2026' },
+    { titleCells: ['Prochaine période de relevé'], headerText: 'Du 02/06/2026 au 04/06/2026' },
+    // Plage écrite sous une première ligne ressemblant à un en-tête d'opérations.
+    { titleCells: ['Date', 'Montant', 'Solde'], headerText: 'Du 02/06/2026 au 04/06/2026' },
   ];
-  for (const trap of traps) {
-    const label = trap.headerText ?? trap.headerCells!.join(' | ');
-    const evaluation = withHeader(trap);
-    assert.equal(evaluation.admissible, false, label);
-    assert.equal(evaluation.amount, null, label);
-    assert.deepEqual(evaluation.reasons, ['DAY_NOT_CLOSED'], label);
+  for (const header of headers) {
+    const label = JSON.stringify(header);
+    // Dernière ligne à D : aucune de ces mentions ne clôt la journée.
+    const open = withHeader(header);
+    assert.equal(open.admissible, false, label);
+    assert.equal(open.amount, null, label);
+    assert.deepEqual(open.reasons, ['DAY_NOT_CLOSED'], label);
+    // Jour sans mouvement : aucune ne prouve non plus que D est couverte.
+    const carried = withHeader(header, [{ date: '2026-06-02', amount: 300 }]);
+    assert.equal(carried.admissible, false, label);
+    assert.equal(carried.amount, null, label);
+    assert.deepEqual(carried.reasons, ['DAY_NOT_CLOSED', 'DATE_NOT_COVERED'], label);
+    // Témoin positif : la journée ultérieure raccordée à la chaîne prouve la clôture, avec le même en-tête.
+    const closed = withHeader(header, ATB_CLOSED);
+    assert.equal(closed.admissible, true, label);
+    assert.equal(closed.amount, 5180, label);
   }
-  // Une autre date écrite dans l'en-tête (ici la date d'édition, égale à D) retire à la période sa valeur de preuve.
-  const editedOnD = evaluate({
-    name: 'SYNTHETIC ATB ONLINE.xls',
-    attestation: ATTESTED,
-    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells: ['Edité le 03/06/2026'], headerText: 'Du 02/06/2026 au 04/06/2026' }),
-  });
-  assert.equal(editedOnD.admissible, false);
-  assert.equal(editedOnD.amount, null);
-  assert.deepEqual(editedOnD.reasons, ['DAY_NOT_CLOSED']);
-  // Une formule stricte écrite SOUS une première ligne d'en-tête d'opérations ne prouve rien.
-  const belowHeader = evaluate({
-    name: 'SYNTHETIC ATB ONLINE.xls',
-    attestation: ATTESTED,
-    bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: ATB_MOVES, titleCells: ['Date', 'Montant', 'Solde'], headerText: 'Du 02/06/2026 au 04/06/2026' }),
-  });
-  assert.equal(belowHeader.admissible, false);
-  assert.equal(belowHeader.amount, null);
-  assert.ok(belowHeader.reasons.includes('DAY_NOT_CLOSED'));
-  // Jour sans mouvement : la même mention ne prouve pas davantage la couverture de D.
-  const carried = withHeader({ headerText: 'Compte de dépôt ouvert le 01/06/2026 ; prochaine échéance au 04/06/2026' }, [{ date: '2026-06-01', amount: 300 }]);
-  assert.equal(carried.admissible, false);
-  assert.equal(carried.amount, null);
-  assert.ok(carried.reasons.includes('DATE_NOT_COVERED'));
-  // Une période écrite au mois près ne désigne aucun jour : elle ne prouve pas la clôture du 31/05.
-  const monthly = withHeader({ headerText: 'De mai 2026 au juin 2026' }, [{ date: '2026-05-30', amount: 300 }, { date: '2026-05-31', amount: -120 }], '2026-05-31');
-  assert.equal(monthly.admissible, false);
-  assert.deepEqual(monthly.reasons, ['DAY_NOT_CLOSED']);
-  assert.equal(withHeader({ headerText: 'Du 30/05/2026 au 01/06/2026' }, [{ date: '2026-05-30', amount: 300 }, { date: '2026-05-31', amount: -120 }], '2026-05-31').admissible, true);
+  // Une plage écrite au mois près ne désigne aucun jour ; la fin de mois n'est close que par une ligne ultérieure.
+  const monthEnd = [{ date: '2026-05-30', amount: 300 }, { date: '2026-05-31', amount: -120 }];
+  for (const headerText of ['De mai 2026 au juin 2026', 'Du 30/05/2026 au 01/06/2026']) {
+    assert.deepEqual(withHeader({ headerText }, monthEnd, '2026-05-31').reasons, ['DAY_NOT_CLOSED'], headerText);
+    assert.equal(withHeader({ headerText }, [...monthEnd, { date: '2026-06-01', amount: 1 }], '2026-05-31').amount, 5180, headerText);
+  }
 });
 
 test('relevé CSV : la période déclarée doit être ordonnée et englober les lignes', () => {
@@ -402,7 +407,7 @@ test('deux comptes distincts ou une identité indécidable pour une banque : à 
   // Deux relevés Excel attestés au contenu différent : aucune identité commune ne les relie.
   const twoExcel = buildAccountBalances([
     evaluate(atb({ identityAttested: true })),
-    evaluate(atb({ identityAttested: true }, ATB_HEADER, ATB_MOVES, 'SECOND ATB ONLINE.xls', 9000)),
+    evaluate(atb({ identityAttested: true }, NO_HEADER, ATB_CLOSED, 'SECOND ATB ONLINE.xls', 9000)),
   ]);
   const atbAccount = twoExcel.find((balance) => balance.bank === 'ATB')!;
   assert.equal(atbAccount.status, 'TO_REVIEW');
@@ -526,34 +531,44 @@ test('jour sans mouvement : report seulement si la couverture est prouvée', () 
   assert.equal(carried.amount, 460);
   assert.equal(carried.balanceDate, '2026-06-01');
 
-  // Excel sans période déclarée ni ligne postérieure : D n'est pas couverte.
-  const single = [{ date: '2026-06-01', amount: 300 }];
-  const uncovered = evaluate(atb({ identityAttested: true }, NO_HEADER, single));
-  assert.equal(uncovered.admissible, false);
-  assert.ok(uncovered.reasons.includes('DATE_NOT_COVERED'));
-  // La même forme avec une période déclarée dans l'en-tête : D est couverte et close.
-  const declared = evaluate(atb({ identityAttested: true }, ATB_HEADER, single));
-  assert.equal(declared.admissible, true);
-  assert.equal(declared.amount, 5300);
-  assert.equal(declared.balanceDate, '2026-06-01');
-});
+  // CSV sans ligne postérieure à D : le solde final que le relevé déclare « au 04/06 », raccordé à la chaîne,
+  // couvre et clôt D.
+  const statedCsv = (extra: { periodEnd?: string; closingDate?: string }) => evaluate({
+    name: 'SYNTHETIC ORA ONLINE.csv',
+    attestation: ATTESTED,
+    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 400, movements: [{ date: '2026-06-01', amount: 60 }], ...extra }),
+  });
+  const stated = statedCsv({});
+  assert.equal(stated.admissible, true);
+  assert.equal(stated.amount, 460);
+  assert.equal(stated.balanceDate, '2026-06-01');
+  // Le même relevé dont le solde final est daté de D : la période annoncée, seule, ne prouve ni la clôture ni la couverture.
+  const statedAtD = statedCsv({ closingDate: D });
+  assert.equal(statedAtD.admissible, false);
+  assert.equal(statedAtD.amount, null);
+  assert.deepEqual(statedAtD.reasons, ['DAY_NOT_CLOSED', 'DATE_NOT_COVERED']);
+  // Solde final daté après D sous une période annoncée qui s'arrête avant D : document contradictoire, D n'est pas couverte.
+  const contradictory = statedCsv({ periodEnd: '2026-06-02', closingDate: '2026-06-04' });
+  assert.equal(contradictory.admissible, false);
+  assert.equal(contradictory.amount, null);
+  assert.ok(contradictory.reasons.includes('DATE_NOT_COVERED'));
 
-test('période déclarée d’un relevé Excel : formule exacte et englobant les lignes', () => {
+  // Excel : sans ligne postérieure à D, le report n'est pas prouvé, avec ou sans plage de dates dans l'en-tête.
   const single = [{ date: '2026-06-01', amount: 300 }];
-  const withHeader = (headerText: string) => evaluate(atb({ identityAttested: true }, headerText, single));
-  // Témoins : les deux formules de période reconnues.
-  assert.equal(withHeader('Période : Du 01/06/2026 au 04/06/2026').admissible, true);
-  assert.equal(withHeader(ATB_HEADER).admissible, true);
-  // Deux dates sans formule de période, ou une période qui n'englobe pas les lignes : aucune preuve.
-  for (const header of ['Compte ouvert le 01/06/2026, situation au 04/06/2026', 'Du 02/06/2026 au 04/06/2026']) {
-    const evaluation = withHeader(header);
-    assert.equal(evaluation.admissible, false, header);
-    assert.equal(evaluation.amount, null, header);
-    assert.ok(evaluation.reasons.includes('DATE_NOT_COVERED'), header);
+  for (const header of [NO_HEADER, ATB_HEADER, 'Période : Du 01/06/2026 au 04/06/2026']) {
+    const uncovered = evaluate(atb({ identityAttested: true }, header, single));
+    assert.equal(uncovered.admissible, false, header);
+    assert.equal(uncovered.amount, null, header);
+    assert.deepEqual(uncovered.reasons, ['DAY_NOT_CLOSED', 'DATE_NOT_COVERED'], header);
   }
+  // Témoin positif : une ligne postérieure raccordée à la chaîne encadre D, la clôture précédente est reportée.
+  const bracketed = evaluate(atb({ identityAttested: true }, NO_HEADER, [...single, { date: '2026-06-04', amount: 1 }]));
+  assert.equal(bracketed.admissible, true);
+  assert.equal(bracketed.amount, 5300);
+  assert.equal(bracketed.balanceDate, '2026-06-01');
 });
 
-test('un libellé d’opération ne passe jamais pour une période déclarée', () => {
+test('un libellé d’opération ne prouve jamais la couverture d’une journée', () => {
   const trap = 'SYNTHETIC DU 01/06/2026 AU 30/06/2026';
   for (const label of [undefined, trap]) {
     const evaluation = evaluate(bridge({ identityAttested: true, currencyAttested: 'XOF' }, [{ date: '2026-06-01', amount: 100 }], { movementLabel: label }));

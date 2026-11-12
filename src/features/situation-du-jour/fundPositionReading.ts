@@ -13,8 +13,10 @@ import {
   SITUATION_EXPECTED_CURRENCY,
   detectBankFromStrictLabel,
   cellIsoDate,
+  currenciesInText,
   findDatesInText,
   hiddenSheetNames,
+  isCurrencyToken,
   isMonthName,
   normalizeLabel,
   plainUpper,
@@ -126,11 +128,6 @@ function unavailable(reason: FundPositionReason): FundPositionReading {
   };
 }
 
-const CURRENCY_TOKENS: Record<string, string> = {
-  XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', EURO: 'EUR', EUROS: 'EUR', USD: 'USD', DOLLAR: 'USD', DOLLARS: 'USD', GBP: 'GBP',
-};
-const CURRENCY_SYMBOLS: Record<string, string> = { '€': 'EUR', $: 'USD', '£': 'GBP' };
-
 /** Mots qui peuvent accompagner la date de référence sans la rendre douteuse. */
 const REFERENCE_NEUTRAL_WORDS: ReadonlySet<string> = new Set([
   'DATE', 'AU', 'DU', 'LE', 'EN', 'AS', 'AT', 'OF', 'ON', 'SITUATION', 'POSITION', 'FUND', 'ARRETE', 'ARRETEE', 'DAILY', 'REPORT',
@@ -141,7 +138,7 @@ const REFERENCE_SCAN_ROWS = 200;
 const REFERENCE_SCAN_COLUMNS = 60;
 
 function onlyNeutralWords(text: string): boolean {
-  return tokenize(text).every((token) => REFERENCE_NEUTRAL_WORDS.has(token) || CURRENCY_TOKENS[token] !== undefined);
+  return tokenize(text).every((token) => REFERENCE_NEUTRAL_WORDS.has(token) || isCurrencyToken(token));
 }
 
 /**
@@ -164,10 +161,7 @@ function readDocumentReference(sheet: Sheet): { referenceDate: string | null; cu
       const cell = cellAt(sheet, row, column);
       const cellDate = cellIsoDate(cell);
       const text = cellText(cell);
-      if (text) {
-        for (const token of tokenize(text)) if (CURRENCY_TOKENS[token]) currencies.add(CURRENCY_TOKENS[token]);
-        for (const symbol of Object.keys(CURRENCY_SYMBOLS)) if (text.includes(symbol)) currencies.add(CURRENCY_SYMBOLS[symbol]);
-      }
+      for (const currency of currenciesInText(text)) currencies.add(currency);
       const written = cellDate ? [] : findDatesInText(text);
       let rest = plainUpper(text);
       for (const entry of [...written].reverse()) rest = `${rest.slice(0, entry.index)} ${rest.slice(entry.index + entry.length)}`;
@@ -322,7 +316,9 @@ function compare(
 
 /**
  * Écarts entre la Fund Position déclarée et les sources vérifiées, calculés
- * seulement à date, périmètre (même banque) et devise comparables.
+ * seulement à date, périmètre (même banque) et devise comparables. La devise
+ * doit être ÉTABLIE et concordante pour les DEUX termes de chaque comparaison :
+ * la Fund Position d'un côté, le relevé ou le classeur mensuel de l'autre.
  */
 export function compareFundPosition(
   reading: FundPositionReading,
@@ -343,8 +339,10 @@ export function compareFundPosition(
       ?? (statementUsable && balance!.currency !== reading.currency ? 'CURRENCY_NOT_COMPARABLE' : null);
     comparisons.push(compare(row.bank, 'BANK_BALANCE_VS_STATEMENT', row.declared.bankBalance.value,
       statementUsable ? balance!.amount : null, statementBlocking));
+    // Classeur mensuel : même date de position, et devise établie par son onglet, égale à celle de la Fund Position.
     const workbookBlocking: ComparisonReason | null = documentBlocking
-      ?? (workbook !== null && workbook.balanceDate !== accountingDate ? 'DATE_NOT_COMPARABLE' : null);
+      ?? (workbook !== null && workbook.balanceDate !== accountingDate ? 'DATE_NOT_COMPARABLE' : null)
+      ?? (workbook !== null && workbook.currency !== reading.currency ? 'CURRENCY_NOT_COMPARABLE' : null);
     comparisons.push(compare(row.bank, 'BANK_BALANCE_VS_WORKBOOK', row.declared.bankBalance.value,
       workbook ? workbook.openingBalance : null, workbookBlocking));
     comparisons.push(compare(row.bank, 'FUND_APPLIED_VS_WORKBOOK', row.declared.fundApplied.value,
