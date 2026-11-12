@@ -33,7 +33,9 @@ export type CollectionCheckReason =
   | 'NO_DEPOSIT_PROOF'
   | 'AMBIGUOUS_DEPOSIT_MATCH'
   | 'AMOUNT_MISSING'
-  | 'RECEIPT_DATE_MISSING';
+  | 'RECEIPT_DATE_MISSING'
+  | 'RECEIPT_AFTER_ACCOUNTING_DATE'
+  | 'INSTRUMENT_NOT_IDENTIFIED';
 
 export const COLLECTION_STATE_LABELS: Record<CollectionState, string> = {
   CREDITE_DECLARE: 'Crédité déclaré',
@@ -52,6 +54,8 @@ export const COLLECTION_CHECK_LABELS: Record<CollectionCheckReason, string> = {
   AMBIGUOUS_DEPOSIT_MATCH: 'Plusieurs correspondances possibles avec les dépôts en attente',
   AMOUNT_MISSING: 'Montant absent',
   RECEIPT_DATE_MISSING: 'Date de la ligne absente',
+  RECEIPT_AFTER_ACCOUNTING_DATE: 'Ligne reçue après la date comptable',
+  INSTRUMENT_NOT_IDENTIFIED: 'Ni numéro de chèque ni échéance d’effet : dépôt non rapprochable',
 };
 
 export interface CollectionRow {
@@ -78,7 +82,7 @@ export interface CollectionRow {
   checkReason: CollectionCheckReason | null;
 }
 
-export type CollectionFileReason = 'WORKBOOK_UNREADABLE' | 'SHEET_NOT_FOUND';
+export type CollectionFileReason = 'WORKBOOK_UNREADABLE' | 'SHEET_NOT_FOUND' | 'SHEET_AMBIGUOUS';
 
 export interface CollectionReading {
   available: boolean;
@@ -184,8 +188,14 @@ export function readCollectionReport(bytes: ArrayBuffer): CollectionReading {
     return { available: false, reason: 'WORKBOOK_UNREADABLE', sheetName: null, rows: [] };
   }
   const hidden = hiddenSheetNames(workbook);
-  for (const sheetName of workbook.SheetNames) {
-    if (hidden.has(sheetName)) continue;
+  // Deux feuilles visibles aux en-têtes compatibles : impossible de savoir laquelle fait foi.
+  const compatible = workbook.SheetNames.filter((sheetName) => {
+    if (hidden.has(sheetName)) return false;
+    const sheet = workbook.Sheets[sheetName];
+    return mapColumns(sheet, usefulBounds(sheet, 20_000, 40).lastColumn) !== null;
+  });
+  if (compatible.length > 1) return { available: false, reason: 'SHEET_AMBIGUOUS', sheetName: null, rows: [] };
+  for (const sheetName of compatible) {
     const sheet = workbook.Sheets[sheetName];
     const bounds = usefulBounds(sheet, 20_000, 40);
     const columns = mapColumns(sheet, bounds.lastColumn);
@@ -238,11 +248,13 @@ function clientKey(value: string): string {
 function depositMatchesRow(deposit: WorkbookLine, row: CollectionRow): boolean {
   if (row.amount === null || !amountsEqual(deposit.amount, row.amount)) return false;
   if (!deposit.client || !row.client || clientKey(deposit.client) !== clientKey(row.client)) return false;
+  // Effet : échéance concordante exigée. Chèque : numéro concordant exigé des deux côtés.
   if (row.instrument === 'EFFET') return deposit.dueDate !== null && deposit.dueDate === row.dueDate;
-  if (deposit.dueDate !== null) return false;
-  // Deux numéros de chèque connus et différents ne désignent pas le même dépôt.
-  if (row.chequeNumber && deposit.number && /^\d+$/.test(deposit.number) && deposit.number !== row.chequeNumber) return false;
-  return true;
+  if (row.instrument === 'CHEQUE') {
+    return deposit.dueDate === null && row.chequeNumber !== null && deposit.number !== null && deposit.number === row.chequeNumber;
+  }
+  // Tout autre instrument (virement, espèces, inconnu) n'est jamais rapproché d'un dépôt.
+  return false;
 }
 
 /**
@@ -274,6 +286,8 @@ export function classifyCollectionRows(
     if (!row.depositBank) { row.checkReason = 'DEPOSIT_BANK_UNKNOWN'; continue; }
     if (row.amount === null) { row.checkReason = 'AMOUNT_MISSING'; continue; }
     if (!row.receiptDate) { row.checkReason = 'RECEIPT_DATE_MISSING'; continue; }
+    // Une ligne reçue après D n'appartient pas à la situation à D : elle n'alimente aucune entrée attendue.
+    if (row.receiptDate > accountingDate) { row.checkReason = 'RECEIPT_AFTER_ACCOUNTING_DATE'; continue; }
     if (row.validityIsText) { row.checkReason = 'VALIDITY_NOT_A_DATE'; continue; }
     if (row.validityDate) {
       if (row.validityDate < row.receiptDate) { row.checkReason = 'VALIDITY_BEFORE_RECEIPT'; continue; }
@@ -284,6 +298,7 @@ export function classifyCollectionRows(
         continue;
       }
     }
+    if (row.instrument !== 'EFFET' && row.instrument !== 'CHEQUE') { row.checkReason = 'INSTRUMENT_NOT_IDENTIFIED'; continue; }
     const deposits = depositsByBank.get(row.depositBank);
     if (!deposits) { row.checkReason = 'NO_WORKBOOK_FOR_BANK'; continue; }
     const candidates = deposits.filter((deposit) => depositMatchesRow(deposit, row));

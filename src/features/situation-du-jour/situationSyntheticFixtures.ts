@@ -221,6 +221,8 @@ export interface SyntheticTab {
   impayesTotalOverride?: number | null;
   /** Onglet masqué dans le classeur. */
   hidden?: boolean;
+  /** Second montant porté par la ligne « TOTAL (B) », dans la colonne des anciens chèques. */
+  totalBSecondColumn?: number;
 }
 
 export function monthlyTabSheet(tab: SyntheticTab): XLSX.WorkSheet {
@@ -250,7 +252,9 @@ export function monthlyTabSheet(tab: SyntheticTab): XLSX.WorkSheet {
     rows.push(row);
   });
   const totalB = cheques.filter((cheque) => !cheque.outsideTotalColumn).reduce((total, cheque) => total + cheque.amount, 0);
-  rows.push(['', '', '', 'TOTAL (B)', '', '', totalB]);
+  const totalBRow: CellInput[] = ['', '', '', 'TOTAL (B)', '', '', totalB];
+  if (tab.totalBSecondColumn !== undefined) totalBRow[french ? 8 : 7] = tab.totalBSecondColumn;
+  rows.push(totalBRow);
   rows.push(['', '', french ? 'SOLDE DE CLÔTURE selon le livre : C=(A-B)' : 'CLOSING BALANCE as per Book : C=(A-B)', '', '', '', tab.declaredClosingOverride ?? (totalA - totalB)]);
   rows.push([]);
   if (tab.facilities) {
@@ -321,7 +325,7 @@ function collectionSheet(rows: SyntheticCollectionRow[]): XLSX.WorkSheet {
 
 export function collectionReportBytes(
   rows: SyntheticCollectionRow[],
-  options: { hiddenPivotFirst?: boolean; hiddenDecoyRows?: SyntheticCollectionRow[] } = {},
+  options: { hiddenPivotFirst?: boolean; hiddenDecoyRows?: SyntheticCollectionRow[]; visibleSecondSheetRows?: SyntheticCollectionRow[] } = {},
 ): ArrayBuffer {
   const sheets: Array<{ name: string; sheet: XLSX.WorkSheet; hidden?: boolean }> = [];
   if (options.hiddenPivotFirst) {
@@ -330,6 +334,7 @@ export function collectionReportBytes(
   // Leurre : une feuille MASQUÉE aux bons en-têtes, placée avant la vraie feuille.
   if (options.hiddenDecoyRows) sheets.push({ name: 'Feuil0', sheet: collectionSheet(options.hiddenDecoyRows), hidden: true });
   sheets.push({ name: 'Feuil1', sheet: collectionSheet(rows) });
+  if (options.visibleSecondSheetRows) sheets.push({ name: 'Feuil4', sheet: collectionSheet(options.visibleSecondSheetRows) });
   return workbookBytes(sheets);
 }
 
@@ -346,8 +351,21 @@ export interface SyntheticFundPositionRow {
   position?: number;
 }
 
-export function fundPositionTabSheet(rows: SyntheticFundPositionRow[]): XLSX.WorkSheet {
-  const data: CellInput[][] = [['', '', 'Bank \nBalance', 'Fund Applied', 'Net Balance', 'NonValidated Deposit', '']];
+export interface SyntheticFundPositionReference {
+  /** Date de référence écrite dans l'onglet (cellule date). */
+  date?: string;
+  /** Seconde date écrite dans l'onglet (rend la référence ambiguë). */
+  otherDate?: string;
+  /** Mention de devise écrite dans l'onglet. */
+  currency?: string;
+}
+
+export function fundPositionTabSheet(rows: SyntheticFundPositionRow[], reference: SyntheticFundPositionReference = {}): XLSX.WorkSheet {
+  const data: CellInput[][] = [[
+    '', '', 'Bank \nBalance', 'Fund Applied', 'Net Balance', 'NonValidated Deposit', '', '',
+    reference.date ? 'Situation au' : '', reference.date ? { date: reference.date } : '',
+    reference.currency ? `Devise ${reference.currency}` : '', reference.otherDate ? { date: reference.otherDate } : '',
+  ]];
   rows.forEach((row, index) => data.push([
     index === 0 ? 'Book balance' : '', row.label, row.bankBalance ?? '', row.fundApplied ?? '', row.netBalance ?? '',
     row.nonValidatedDeposit ?? '', row.position ?? '',
@@ -359,6 +377,8 @@ export function fundPositionTabSheet(rows: SyntheticFundPositionRow[]): XLSX.Wor
   return sheetFromRows(data);
 }
 
-export function fundPositionBytes(tabs: Array<{ name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean }>): ArrayBuffer {
-  return workbookBytes(tabs.map((tab) => ({ name: tab.name, sheet: fundPositionTabSheet(tab.rows), hidden: tab.hidden })));
+export function fundPositionBytes(
+  tabs: Array<{ name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean; reference?: SyntheticFundPositionReference }>,
+): ArrayBuffer {
+  return workbookBytes(tabs.map((tab) => ({ name: tab.name, sheet: fundPositionTabSheet(tab.rows, tab.reference), hidden: tab.hidden })));
 }

@@ -12,10 +12,12 @@ import {
   cellText,
   SITUATION_EXPECTED_CURRENCY,
   detectBankFromStrictLabel,
+  cellIsoDate,
+  findDayFirstDateInText,
   hiddenSheetNames,
   normalizeLabel,
-  onlyWeekendBetween,
   readWorkbook,
+  tokenize,
   sheetNameToIso,
   usefulBounds,
 } from './situationCore';
@@ -76,10 +78,11 @@ export interface FundPositionReading {
   reason: FundPositionReason | null;
   tabName: string | null;
   tabDate: string | null;
-  /**
-   * Vrai seulement si l'onglet suit D au jour ouvré près (aucun jour de semaine
-   * entre les deux) : sinon un onglet manque et aucun écart n'est calculé.
-   */
+  /** Date de référence ÉCRITE dans l'onglet (jamais déduite du nom de l'onglet) ; `null` si absente ou multiple. */
+  referenceDate: string | null;
+  /** Devise ÉCRITE dans l'onglet ; `null` si absente ou si plusieurs devises y figurent. */
+  currency: string | null;
+  /** Vrai seulement si le document établit lui-même une date de référence égale à D. */
   dateComparable: boolean;
   rows: FundPositionBankRow[];
   issues: FundPositionIssue[];
@@ -116,7 +119,38 @@ const HEADERS = {
 const BLOCK_END = /DEPOSIT FOR THE DAY|PAYMENT FOR THE DAY|TOTAL FUND AVAILABLE/;
 
 function unavailable(reason: FundPositionReason): FundPositionReading {
-  return { available: false, reason, tabName: null, tabDate: null, dateComparable: false, rows: [], issues: [] };
+  return {
+    available: false, reason, tabName: null, tabDate: null, referenceDate: null, currency: null, dateComparable: false, rows: [], issues: [],
+  };
+}
+
+const CURRENCY_TOKENS: Record<string, string> = { XOF: 'XOF', FCFA: 'XOF', CFA: 'XOF', EUR: 'EUR', USD: 'USD', GBP: 'GBP' };
+
+/**
+ * Date de référence et devise établies PAR LE DOCUMENT : lues dans les cellules
+ * situées jusqu'à la ligne d'en-tête comprise. Une seule date distincte et une
+ * seule devise sont exigées ; à défaut, la valeur reste `null` et la Fund
+ * Position est affichée comme référence lue, sans écart chiffré.
+ */
+function readDocumentReference(sheet: Sheet, headerRow: number, lastColumn: number): { referenceDate: string | null; currency: string | null } {
+  const dates = new Set<string>();
+  const currencies = new Set<string>();
+  for (let row = 1; row <= headerRow; row += 1) {
+    for (let column = 1; column <= lastColumn; column += 1) {
+      const cell = cellAt(sheet, row, column);
+      const date = cellIsoDate(cell);
+      if (date) dates.add(date);
+      const text = cellText(cell);
+      if (!text) continue;
+      const written = findDayFirstDateInText(text);
+      if (written) dates.add(written);
+      for (const token of tokenize(text)) if (CURRENCY_TOKENS[token]) currencies.add(CURRENCY_TOKENS[token]);
+    }
+  }
+  return {
+    referenceDate: dates.size === 1 ? Array.from(dates)[0] : null,
+    currency: currencies.size === 1 ? Array.from(currencies)[0] : null,
+  };
 }
 
 function findHeader(sheet: Sheet, lastColumn: number): { row: number; columns: Record<keyof typeof HEADERS, number> } | null {
@@ -156,8 +190,9 @@ function readCell(sheet: Sheet, row: number, column: number, bank: SituationBank
 
 /**
  * Lit le premier onglet daté strictement après la date comptable D (au plus
- * tard `today`). Il n'est COMPARABLE à D que s'il la suit au jour ouvré près ;
- * sinon la lecture reste disponible mais aucun écart n'est calculé.
+ * tard `today`) comme RÉFÉRENCE. Le nom de l'onglet ne prouve ni la date de la
+ * situation ni la devise : la comparaison n'est ouverte que si l'onglet écrit
+ * lui-même une date de référence égale à D et une devise.
  */
 export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, today: string): FundPositionReading {
   let workbook;
@@ -176,14 +211,15 @@ export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, tod
   if (!tab) return unavailable('TAB_ABSENT');
   // Deux onglets ramenés à la même date : impossible de savoir lequel fait foi.
   if (tabs.filter((candidate) => candidate.date === tab.date).length > 1) return unavailable('TAB_AMBIGUOUS');
-  const dateComparable = onlyWeekendBetween(accountingDate, tab.date as string);
 
   const sheet = workbook.Sheets[tab.name];
   const bounds = usefulBounds(sheet, 200, 16);
   const header = findHeader(sheet, bounds.lastColumn);
   if (!header) {
-    return { available: false, reason: 'HEADER_NOT_FOUND', tabName: tab.name, tabDate: tab.date, dateComparable, rows: [], issues: [] };
+    return { ...unavailable('HEADER_NOT_FOUND'), tabName: tab.name, tabDate: tab.date };
   }
+  const reference = readDocumentReference(sheet, header.row, bounds.lastColumn);
+  const dateComparable = reference.referenceDate !== null && reference.referenceDate === accountingDate;
   const positionColumn = header.columns.nonValidatedDeposit + 1;
   const issues: FundPositionIssue[] = [];
   const seen = new Map<SituationBank, number[]>();
@@ -229,7 +265,10 @@ export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, tod
     }
     rows.push({ bank, rowNumber: row, declared, recalculated: { netBalance: net, position } });
   }
-  return { available: true, reason: null, tabName: tab.name, tabDate: tab.date, dateComparable, rows, issues };
+  return {
+    available: true, reason: null, tabName: tab.name, tabDate: tab.date, referenceDate: reference.referenceDate,
+    currency: reference.currency, dateComparable, rows, issues,
+  };
 }
 
 function compare(
@@ -262,13 +301,15 @@ export function compareFundPosition(
     const balance = balances.find((candidate) => candidate.bank === row.bank) ?? null;
     const workbook = workbooks.find((candidate) => candidate.bank === row.bank && candidate.available) ?? null;
     const statementUsable = balance !== null && balance.status === 'AVAILABLE';
-    // La Fund Position est tenue en XOF : un solde d'une autre devise n'est jamais comparé.
-    const statementBlocking: ComparisonReason | null = !reading.dateComparable ? 'DATE_NOT_COMPARABLE'
-      : statementUsable && balance!.currency !== SITUATION_EXPECTED_CURRENCY ? 'CURRENCY_NOT_COMPARABLE' : null;
+    // Date puis devise : établies par le document, et la devise doit être celle du solde comparé.
+    const documentBlocking: ComparisonReason | null = !reading.dateComparable ? 'DATE_NOT_COMPARABLE'
+      : reading.currency !== SITUATION_EXPECTED_CURRENCY ? 'CURRENCY_NOT_COMPARABLE' : null;
+    const statementBlocking: ComparisonReason | null = documentBlocking
+      ?? (statementUsable && balance!.currency !== reading.currency ? 'CURRENCY_NOT_COMPARABLE' : null);
     comparisons.push(compare(row.bank, 'BANK_BALANCE_VS_STATEMENT', row.declared.bankBalance.value,
       statementUsable ? balance!.amount : null, statementBlocking));
-    const workbookBlocking: ComparisonReason | null = !reading.dateComparable || (workbook !== null && workbook.balanceDate !== accountingDate)
-      ? 'DATE_NOT_COMPARABLE' : null;
+    const workbookBlocking: ComparisonReason | null = documentBlocking
+      ?? (workbook !== null && workbook.balanceDate !== accountingDate ? 'DATE_NOT_COMPARABLE' : null);
     comparisons.push(compare(row.bank, 'BANK_BALANCE_VS_WORKBOOK', row.declared.bankBalance.value,
       workbook ? workbook.openingBalance : null, workbookBlocking));
     comparisons.push(compare(row.bank, 'FUND_APPLIED_VS_WORKBOOK', row.declared.fundApplied.value,

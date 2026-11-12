@@ -4,11 +4,13 @@ import test from 'node:test';
 import { compareFundPosition, readFundPosition } from './fundPositionReading';
 import { readMonthlyWorkbook } from './monthlyWorkbook';
 import { csvStatementBytes, fundPositionBytes, monthlyWorkbookBytes, sheetFromRows, tabName, workbookBytes } from './situationSyntheticFixtures';
-import type { SyntheticFundPositionRow } from './situationSyntheticFixtures';
+import type { SyntheticFundPositionReference, SyntheticFundPositionRow } from './situationSyntheticFixtures';
 import { buildAccountBalances, evaluateStatement } from './statementBalances';
 
 const D = '2026-06-03';
 const TODAY = '2026-06-05';
+/** Référence écrite dans l'onglet : date égale à D et devise. */
+const AT_D: SyntheticFundPositionReference = { date: D, currency: 'XOF' };
 
 const ROWS: SyntheticFundPositionRow[] = [
   { label: 'SGBS', bankBalance: 0, fundApplied: 0, netBalance: 0, nonValidatedDeposit: 0, position: 0 },
@@ -17,10 +19,31 @@ const ROWS: SyntheticFundPositionRow[] = [
   { label: 'BICIS', bankBalance: 'n/a', fundApplied: 5 },
 ];
 
-type FundTab = { name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean };
+type FundTab = { name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean; reference?: SyntheticFundPositionReference };
 
-function reading(tabs: FundTab[] = [{ name: tabName('2026-06-04'), rows: ROWS }], date = D, today = TODAY) {
+function reading(tabs: FundTab[] = [{ name: tabName('2026-06-04'), rows: ROWS, reference: AT_D }], date = D, today = TODAY) {
   return readFundPosition(fundPositionBytes(tabs), date, today);
+}
+
+function bdkBalances() {
+  return buildAccountBalances([evaluateStatement({
+    name: 'SYNTHETIC BDK ONLINE.csv',
+    bytes: csvStatementBytes({
+      periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
+    }),
+  }, D, TODAY)]);
+}
+
+function bdkWorkbook(date = D, tab = tabName('2026-06-04')) {
+  return readMonthlyWorkbook({
+    name: 'SYNTHETIC BDK 2026.xlsx',
+    bytes: monthlyWorkbookBytes([{
+      name: tab, labelDate: date, titleBank: 'BDK', opening: 1050,
+      deposits: [{ date, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
+      cheques: [{ date, number: 5550001, amount: 480 }],
+    }]),
+  }, date, TODAY);
 }
 
 test('lecture cellule par cellule : valeurs déclarées et recalculées distinctes', () => {
@@ -56,7 +79,7 @@ test('zéro explicite distinct d’une cellule absente ou non numérique', () =>
 });
 
 test('les signalements ne recopient jamais le contenu d’une ligne source', () => {
-  const result = reading([{ name: tabName('2026-06-04'), rows: [...ROWS, { label: 'SYNTHETIC UNKNOWN LABEL', bankBalance: 12345 }] }]);
+  const result = reading([{ name: tabName('2026-06-04'), rows: [...ROWS, { label: 'SYNTHETIC UNKNOWN LABEL', bankBalance: 12345 }], reference: AT_D }]);
   assert.ok(result.issues.some((issue) => issue.code === 'BANK_LABEL_UNKNOWN' && issue.address === 'B6'));
   for (const issue of result.issues) {
     assert.deepEqual(Object.keys(issue).sort(), ['address', 'bank', 'code']);
@@ -68,52 +91,45 @@ test('les signalements ne recopient jamais le contenu d’une ligne source', () 
 });
 
 test('libellé de banque strict : « BDK USD » et « TOTAL BDK » ne sont pas la ligne BDK', () => {
-  const result = reading([{ name: tabName('2026-06-04'), rows: [
+  const result = reading([{ name: tabName('2026-06-04'), reference: AT_D, rows: [
     { label: 'BDK USD', bankBalance: 12, fundApplied: 0, netBalance: 12, nonValidatedDeposit: 0, position: 12 },
     { label: 'TOTAL BDK', bankBalance: 55555, fundApplied: 0, netBalance: 55555, nonValidatedDeposit: 0, position: 55555 },
   ] }]);
   assert.equal(result.available, true);
   assert.deepEqual(result.rows, []);
   assert.deepEqual(result.issues.map((issue) => [issue.code, issue.address]), [['BANK_LABEL_UNKNOWN', 'B2']]);
-  assert.deepEqual(compareFundPosition(result, D, [], []), []);
-});
-
-test('deux onglets ramenés à la même date : lecture indisponible', () => {
-  const result = reading([{ name: `${tabName('2026-06-04')} `, rows: ROWS }, { name: tabName('2026-06-04'), rows: ROWS }]);
-  assert.equal(result.available, false);
-  assert.equal(result.reason, 'TAB_AMBIGUOUS');
-  assert.deepEqual(result.rows, []);
+  assert.deepEqual(compareFundPosition(result, D, bdkBalances(), []), []);
 });
 
 test('ligne de banque en double : ambiguë, donc non lue', () => {
-  const result = reading([{ name: tabName('2026-06-04'), rows: [{ label: 'BDK', bankBalance: 1 }, { label: 'BDK', bankBalance: 2 }] }]);
+  const result = reading([{ name: tabName('2026-06-04'), reference: AT_D, rows: [{ label: 'BDK', bankBalance: 1 }, { label: 'BDK', bankBalance: 2 }] }]);
   assert.equal(result.rows.some((row) => row.bank === 'BDK'), false);
   assert.ok(result.issues.some((issue) => issue.code === 'BANK_ROW_AMBIGUOUS' && issue.bank === 'BDK'));
 });
 
-test('onglet retenu : le premier daté après D, jamais masqué ni daté après aujourd’hui', () => {
-  const tabs = [
-    { name: '040629', rows: ROWS },
-    { name: tabName('2026-06-05'), rows: ROWS },
-    { name: tabName('2026-06-04'), rows: ROWS },
-    { name: tabName('2026-06-03'), rows: ROWS },
+test('onglet lu : le premier daté après D, jamais masqué, daté après aujourd’hui ou en double', () => {
+  const tabs: FundTab[] = [
+    { name: '040629', rows: ROWS, reference: AT_D },
+    { name: tabName('2026-06-05'), rows: ROWS, reference: AT_D },
+    { name: tabName('2026-06-04'), rows: ROWS, reference: AT_D },
+    { name: tabName('2026-06-03'), rows: ROWS, reference: AT_D },
   ];
-  const direct = reading(tabs);
-  assert.equal(direct.tabName, tabName('2026-06-04'));
-  assert.equal(direct.dateComparable, true);
+  assert.equal(reading(tabs).tabName, tabName('2026-06-04'));
   // Aucun onglet après D à la date du jour : indisponible.
-  assert.equal(reading(tabs, '2026-06-05').available, false);
   assert.equal(reading(tabs, '2026-06-05').reason, 'TAB_ABSENT');
-  // D = vendredi, onglet du lundi : comparable s'il est déjà permis de le lire, absent sinon.
-  const monday = [{ name: tabName('2026-06-08'), rows: ROWS }];
+  // Un onglet daté après aujourd'hui n'est jamais lu.
+  const monday: FundTab[] = [{ name: tabName('2026-06-08'), rows: ROWS, reference: { date: '2026-06-05', currency: 'XOF' } }];
   assert.equal(reading(monday, '2026-06-05', '2026-06-08').dateComparable, true);
   assert.equal(reading(monday, '2026-06-05', '2026-06-05').reason, 'TAB_ABSENT');
   // Onglet masqué : ignoré au profit du suivant.
-  const hiddenFirst = reading([{ name: tabName('2026-06-04'), rows: ROWS, hidden: true }, { name: tabName('2026-06-05'), rows: ROWS }]);
+  const hiddenFirst = reading([{ name: tabName('2026-06-04'), rows: ROWS, hidden: true, reference: AT_D }, { name: tabName('2026-06-05'), rows: ROWS, reference: AT_D }]);
   assert.equal(hiddenFirst.tabName, tabName('2026-06-05'));
+  // Deux onglets ramenés à la même date : lecture indisponible.
+  const twins = reading([{ name: `${tabName('2026-06-04')} `, rows: ROWS, reference: AT_D }, { name: tabName('2026-06-04'), rows: ROWS, reference: AT_D }]);
+  assert.equal(twins.available, false);
+  assert.equal(twins.reason, 'TAB_AMBIGUOUS');
   // En-tête introuvable, ou répété donc ambigu.
   const noHeader = readFundPosition(monthlyWorkbookBytes([{ name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1 }]), D, TODAY);
-  assert.equal(noHeader.available, false);
   assert.equal(noHeader.reason, 'HEADER_NOT_FOUND');
   const repeated = readFundPosition(workbookBytes([{ name: tabName('2026-06-04'), sheet: sheetFromRows([
     ['', '', 'Bank Balance', 'Fund Applied', 'Net Balance', 'NonValidated Deposit', 'Bank Balance'],
@@ -122,28 +138,40 @@ test('onglet retenu : le premier daté après D, jamais masqué ni daté après 
   assert.equal(repeated.reason, 'HEADER_NOT_FOUND');
 });
 
-test('onglet manquant entre D et l’onglet lu : dates non comparables, aucun écart chiffré', () => {
-  // D = mercredi 03/06 ; l'onglet du jeudi manque, seul celui du vendredi existe.
-  const skipped = reading([{ name: tabName('2026-06-05'), rows: ROWS }]);
-  assert.equal(skipped.available, true);
-  assert.equal(skipped.dateComparable, false);
-  const balances = buildAccountBalances([evaluateStatement({
-    name: '040626 SYNTHETIC BDK ONLINE.csv',
-    bytes: csvStatementBytes({ periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000, movements: [{ date: D, amount: 50 }] }),
-  }, D, TODAY)]);
+test('le nom de l’onglet ne prouve ni la date ni la devise : référence lue, sans écart chiffré', () => {
+  const balances = bdkBalances();
+  const workbook = bdkWorkbook();
   assert.equal(balances.find((balance) => balance.bank === 'BDK')!.status, 'AVAILABLE');
-  const comparisons = compareFundPosition(skipped, D, balances, []);
-  assert.ok(comparisons.length > 0);
-  for (const comparison of comparisons) {
-    assert.equal(comparison.status, 'NOT_COMPARABLE');
-    assert.equal(comparison.reason, 'DATE_NOT_COMPARABLE');
-    assert.equal(comparison.delta, null);
+  assert.equal(workbook.available, true);
+  const cases: Array<[string, SyntheticFundPositionReference | undefined, string]> = [
+    // Onglet voisin de D sans date ni devise écrites : forme habituelle d'une Fund Position.
+    ['aucune référence', undefined, 'DATE_NOT_COMPARABLE'],
+    ['date écrite différente de D', { date: '2026-06-02', currency: 'XOF' }, 'DATE_NOT_COMPARABLE'],
+    ['deux dates écrites', { date: D, otherDate: '2026-06-02', currency: 'XOF' }, 'DATE_NOT_COMPARABLE'],
+    ['date à D mais devise absente', { date: D }, 'CURRENCY_NOT_COMPARABLE'],
+    ['date à D mais autre devise', { date: D, currency: 'EUR' }, 'CURRENCY_NOT_COMPARABLE'],
+  ];
+  for (const [label, reference, reason] of cases) {
+    const fund = reading([{ name: tabName('2026-06-04'), rows: ROWS, reference }]);
+    assert.equal(fund.available, true, label);
+    // La référence lue reste affichable…
+    assert.equal(fund.rows.find((row) => row.bank === 'BDK')!.declared.bankBalance.value, 1050, label);
+    // … mais aucun écart n'est chiffré.
+    const comparisons = compareFundPosition(fund, D, balances, [workbook]);
+    assert.ok(comparisons.length > 0, label);
+    for (const comparison of comparisons) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE', label);
+      assert.equal(comparison.reason, reason, label);
+      assert.equal(comparison.delta, null, label);
+    }
   }
-  // Onglet très éloigné : même conclusion.
-  assert.equal(reading([{ name: tabName('2026-06-04'), rows: ROWS }], '2026-05-10').dateComparable, false);
+  const none = reading([{ name: tabName('2026-06-04'), rows: ROWS }]);
+  assert.equal(none.referenceDate, null);
+  assert.equal(none.currency, null);
+  assert.equal(none.dateComparable, false);
 });
 
-test('périmètre et devise : un solde d’une autre devise ou un classeur d’une autre date n’est pas comparé', () => {
+test('périmètre : un solde d’une autre devise ou un classeur d’une autre date n’est pas comparé', () => {
   const fund = reading();
   const euro = compareFundPosition(fund, D, [{
     bank: 'BDK', currency: 'EUR', status: 'AVAILABLE', amount: 1050, balanceDate: D, identityProof: 'CONTENT', reasons: [], sources: [],
@@ -154,10 +182,7 @@ test('périmètre et devise : un solde d’une autre devise ou un classeur d’u
   assert.equal(statement.delta, null);
 
   const otherDay = '2026-06-02';
-  const workbook = readMonthlyWorkbook({
-    name: 'SYNTHETIC BDK 2026.xlsx',
-    bytes: monthlyWorkbookBytes([{ name: tabName('2026-06-03'), labelDate: otherDay, titleBank: 'BDK', opening: 1050, cheques: [{ date: otherDay, number: 5550001, amount: 500 }] }]),
-  }, otherDay, TODAY);
+  const workbook = bdkWorkbook(otherDay, tabName('2026-06-03'));
   assert.equal(workbook.available, true);
   const stale = compareFundPosition(fund, D, [], [workbook]).find((entry) => entry.bank === 'BDK' && entry.indicator === 'FUND_APPLIED_VS_WORKBOOK')!;
   assert.equal(stale.status, 'NOT_COMPARABLE');
@@ -165,22 +190,11 @@ test('périmètre et devise : un solde d’une autre devise ou un classeur d’u
 });
 
 test('écarts calculés seulement à date, périmètre et devise comparables', () => {
-  const balances = buildAccountBalances([evaluateStatement({
-    name: '040626 SYNTHETIC BDK ONLINE.csv',
-    bytes: csvStatementBytes({
-      periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
-      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
-    }),
-  }, D, TODAY)]);
-  const workbook = readMonthlyWorkbook({
-    name: 'SYNTHETIC BDK 2026.xlsx',
-    bytes: monthlyWorkbookBytes([{
-      name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1050,
-      deposits: [{ date: D, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
-      cheques: [{ date: D, number: 5550001, amount: 480 }],
-    }]),
-  }, D, TODAY);
-  const comparisons = compareFundPosition(reading(), D, balances, [workbook]);
+  const fund = reading();
+  assert.equal(fund.referenceDate, D);
+  assert.equal(fund.currency, 'XOF');
+  assert.equal(fund.dateComparable, true);
+  const comparisons = compareFundPosition(fund, D, bdkBalances(), [bdkWorkbook()]);
   const pick = (bank: string, indicator: string) => comparisons.find((entry) => entry.bank === bank && entry.indicator === indicator)!;
 
   assert.equal(pick('BDK', 'BANK_BALANCE_VS_STATEMENT').status, 'EQUAL');
@@ -199,5 +213,5 @@ test('écarts calculés seulement à date, périmètre et devise comparables', (
   // BICIS : valeur déclarée absente.
   assert.equal(pick('BICIS', 'BANK_BALANCE_VS_STATEMENT').reason, 'DECLARED_ABSENT');
   // Fund Position indisponible : aucune comparaison.
-  assert.deepEqual(compareFundPosition(reading(undefined, '2026-06-05'), '2026-06-05', balances, [workbook]), []);
+  assert.deepEqual(compareFundPosition(reading(undefined, '2026-06-05'), '2026-06-05', bdkBalances(), [bdkWorkbook()]), []);
 });

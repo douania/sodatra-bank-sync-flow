@@ -18,7 +18,6 @@ import {
   cellText,
   daysBetween,
   detectBankFromText,
-  fileNameDateToIso,
   frDateToIso,
   normalizeLabel,
   readWorkbook,
@@ -46,6 +45,7 @@ export type BalanceReason =
   | 'DAY_NOT_CLOSED'
   | 'BALANCE_CHAIN_BROKEN'
   | 'CONFLICTING_STATEMENTS'
+  | 'SEVERAL_ACCOUNTS_FOR_BANK'
   | 'SAME_STATEMENT_UNDER_SEVERAL_BANKS';
 
 export const BALANCE_REASON_LABELS: Record<BalanceReason, string> = {
@@ -61,6 +61,7 @@ export const BALANCE_REASON_LABELS: Record<BalanceReason, string> = {
   DAY_NOT_CLOSED: 'Journée non close à la date du relevé',
   BALANCE_CHAIN_BROKEN: 'Rupture dans la chaîne des soldes du relevé',
   CONFLICTING_STATEMENTS: 'Relevés contradictoires pour le même compte',
+  SEVERAL_ACCOUNTS_FOR_BANK: 'Plusieurs relevés pour cette banque sans identité de compte commune',
   SAME_STATEMENT_UNDER_SEVERAL_BANKS: 'Même relevé déposé sous plusieurs banques',
 };
 
@@ -388,17 +389,22 @@ export function evaluateStatement(file: StatementInput, accountingDate: string, 
 
   // Une ligne datée après aujourd'hui rend le relevé incohérent : elle ne prouve aucune clôture.
   if (last.date > today) refuse(evaluation, 'STATEMENT_NEEDS_REVIEW');
-  // La période déclarée d'un relevé Excel n'est retenue que si elle englobe les lignes et reste quotidienne.
-  if (!isCsv && declaredPeriod !== null && (declaredPeriod.start > first.date || declaredPeriod.end < last.date
-    || daysBetween(declaredPeriod.start, declaredPeriod.end) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS)) {
-    declaredPeriod = null;
+  if (!isCsv && declaredPeriod !== null) {
+    // Une période déclarée valide de plus de 45 jours exclut le relevé, même si ses lignes couvrent moins.
+    if (daysBetween(declaredPeriod.start, declaredPeriod.end) + 1 > STATEMENT_MAX_DAILY_PERIOD_DAYS) {
+      return refuse(evaluation, 'PERIOD_OVER_DAILY_LIMIT');
+    }
+    // Elle n'est retenue comme preuve que si elle englobe toutes les lignes du relevé.
+    if (declaredPeriod.start > first.date || declaredPeriod.end < last.date) declaredPeriod = null;
   }
 
-  // Journée close : la journée en cours ne l'est jamais ; une date de relevé future ne prouve rien.
-  if (!closedBefore) closedBefore = fileNameDateToIso(file.name);
+  // Journée close : la preuve vient du RELEVÉ lui-même, jamais du nom du fichier. Sont admises la date
+  // de relevé du CSV, la fin de la période déclarée d'un relevé Excel, ou une journée ultérieure raccordée
+  // à la chaîne. La journée en cours n'est jamais close et une date future ne prouve rien.
+  if (!closedBefore && !isCsv && declaredPeriod !== null) closedBefore = declaredPeriod.end;
   if (closedBefore && closedBefore > today) closedBefore = null;
   const next = units.find((unit) => unit.date > accountingDate) ?? null;
-  const dayClosed = accountingDate < today && (closedBefore ? accountingDate < closedBefore : next !== null);
+  const dayClosed = accountingDate < today && ((closedBefore !== null && accountingDate < closedBefore) || next !== null);
   if (!dayClosed) refuse(evaluation, 'DAY_NOT_CLOSED');
 
   const unitAtDate = units.find((unit) => unit.date === accountingDate) ?? null;
@@ -484,6 +490,16 @@ export function buildAccountBalances(evaluations: StatementEvaluation[]): Accoun
       base.status = mine.every((evaluation) => evaluation.reasons.includes('NO_READER_FOR_BANK')) ? 'UNAVAILABLE' : 'TO_REVIEW';
       base.reasons = uniqueReasons(mine);
       base.sources = mine.map((evaluation) => ({ fileName: evaluation.fileName, role: 'excluded' as const }));
+      return base;
+    }
+    // Plusieurs relevés pour une banque : ils ne se confondent que s'ils sont le MÊME contenu ou portent la
+    // même identité de compte corroborée. Deux comptes distincts, ou une identité indécidable, restent à revoir.
+    const sameContent = mine.every((evaluation) => evaluation.contentDigest === mine[0].contentDigest);
+    const sameAccount = mine.every((evaluation) => evaluation.accountKey !== null && evaluation.accountKey === mine[0].accountKey);
+    if (mine.length > 1 && !sameContent && !sameAccount) {
+      base.status = 'TO_REVIEW';
+      base.reasons = ['SEVERAL_ACCOUNTS_FOR_BANK'];
+      base.sources = mine.map((evaluation) => ({ fileName: evaluation.fileName, role: 'conflict' as const }));
       return base;
     }
     const reference = admissible[0];

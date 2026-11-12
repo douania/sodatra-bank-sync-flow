@@ -1,10 +1,16 @@
 // Cible d'exécution de l'écran « Situation du jour » (mode local, calcul en
-// mémoire, aucune persistance). La production est TOUJOURS refusée, avant le
-// montage de l'écran et quel que soit le drapeau. Le staging approuvé exige
-// l'origine exacte, le project ID exact et un drapeau explicite (fermé par
-// défaut) ; le local exige la boucle locale et son propre drapeau.
+// mémoire, aucune persistance). Deux éléments sont vérifiés CONJOINTEMENT :
+// l'origine réelle de la page et la cible Supabase configurée dans le bundle.
+// - La page doit être servie sur la boucle locale : tout autre hôte (production,
+//   staging hébergé dont l'origine applicative reste à établir, hôte inconnu)
+//   est refusé avant le montage de l'écran, quels que soient les drapeaux.
+// - La cible de production est TOUJOURS refusée.
+// - Sur la boucle locale, la cible peut être un Supabase local (drapeau local)
+//   ou le staging approuvé (origine et project ID exacts, drapeau staging).
 
 export interface SituationRuntimeInput {
+  /** Origine réelle de la page (`window.location.origin`). */
+  pageOrigin?: string;
   localEnabled?: string;
   stagingEnabled?: string;
   supabaseUrl?: string;
@@ -12,7 +18,7 @@ export interface SituationRuntimeInput {
 }
 
 export type SituationRuntimeVerdict =
-  | { allowed: true; environment: 'local' | 'staging' }
+  | { allowed: true; environment: 'local' | 'local-with-staging-backend' }
   | { allowed: false; reason: string };
 
 // Type guard explicite (projet non strict, docs/BASELINES.md §3).
@@ -30,6 +36,11 @@ const PRODUCTION_HOST = `${SITUATION_PRODUCTION_PROJECT_REF}.supabase.co`;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 export const SITUATION_PRODUCTION_REFUSED = 'L’écran « Situation du jour » n’est pas ouvert en production.';
+export const SITUATION_PAGE_ORIGIN_REFUSED = 'L’écran « Situation du jour » n’est ouvert que sur un poste local.';
+
+function normalizedHost(url: URL): string {
+  return url.hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
+}
 
 /** Origine HTTPS nue : ni identifiants, ni port, ni chemin, ni paramètres. */
 function isExactOrigin(url: URL, origin: string): boolean {
@@ -37,22 +48,40 @@ function isExactOrigin(url: URL, origin: string): boolean {
     && url.pathname === '/' && url.search === '' && url.hash === '' && url.origin === origin;
 }
 
+/** Page servie sur la boucle locale, en http ou https, sans identifiants. */
+function isLoopbackPage(pageOrigin: string | undefined): boolean {
+  let url: URL;
+  try {
+    url = new URL(pageOrigin ?? '');
+  } catch {
+    return false;
+  }
+  return (url.protocol === 'http:' || url.protocol === 'https:') && url.username === '' && url.password === ''
+    && LOCAL_HOSTS.has(normalizedHost(url));
+}
+
 export function validateSituationRuntimeTarget(input: SituationRuntimeInput): SituationRuntimeVerdict {
-  // Le project ID de production suffit à refuser, avant toute analyse d'URL.
+  // Le project ID de production suffit à refuser, avant toute autre analyse.
   if (input.projectId === SITUATION_PRODUCTION_PROJECT_REF) {
     return { allowed: false, reason: SITUATION_PRODUCTION_REFUSED };
   }
-  let url: URL;
+  let url: URL | null = null;
   try {
     url = new URL(input.supabaseUrl ?? '');
   } catch {
-    return { allowed: false, reason: 'La cible de l’écran « Situation du jour » est invalide.' };
+    url = null;
   }
-  const hostname = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
-  if (hostname === PRODUCTION_HOST) {
+  if (url !== null && normalizedHost(url) === PRODUCTION_HOST) {
     return { allowed: false, reason: SITUATION_PRODUCTION_REFUSED };
   }
-  if (LOCAL_HOSTS.has(hostname)) {
+  // Origine réelle de la page : boucle locale exigée (hôte de production ou inconnu refusé).
+  if (!isLoopbackPage(input.pageOrigin)) {
+    return { allowed: false, reason: SITUATION_PAGE_ORIGIN_REFUSED };
+  }
+  if (url === null) {
+    return { allowed: false, reason: 'La cible de l’écran « Situation du jour » est invalide.' };
+  }
+  if (LOCAL_HOSTS.has(normalizedHost(url))) {
     if (input.localEnabled !== 'true') {
       return { allowed: false, reason: 'L’écran « Situation du jour » local n’est pas activé.' };
     }
@@ -70,11 +99,12 @@ export function validateSituationRuntimeTarget(input: SituationRuntimeInput): Si
   if (input.stagingEnabled !== 'true') {
     return { allowed: false, reason: 'L’écran « Situation du jour » n’est pas activé sur le staging.' };
   }
-  return { allowed: true, environment: 'staging' };
+  return { allowed: true, environment: 'local-with-staging-backend' };
 }
 
 export function currentSituationRuntimeVerdict(): SituationRuntimeVerdict {
   return validateSituationRuntimeTarget({
+    pageOrigin: typeof window !== 'undefined' && window.location ? window.location.origin : undefined,
     localEnabled: import.meta.env.VITE_SITUATION_DU_JOUR_LOCAL_ENABLED,
     stagingEnabled: import.meta.env.VITE_SITUATION_DU_JOUR_STAGING_ENABLED,
     supabaseUrl: import.meta.env.VITE_SUPABASE_URL,

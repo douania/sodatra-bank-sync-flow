@@ -113,9 +113,10 @@ export function computeSituation(input: SituationInput): SituationResult {
   const consolidation = consolidateBalances(balances);
   const ambiguities: SituationAmbiguity[] = [];
   const readWorkbooks = byKind('MONTHLY_WORKBOOK').map((file) => readMonthlyWorkbook(file, input.accountingDate, input.today));
-  // Deux classeurs lisibles pour la même banque : aucun n'est retenu, et aucun chiffre n'en est affiché.
-  const duplicated = (workbook: WorkbookEncours) => workbook.available
-    && readWorkbooks.filter((other) => other.available && other.bank === workbook.bank).length > 1;
+  // Deux classeurs désignant la même banque, même si un seul est exploitable : aucun n'est retenu,
+  // et aucun chiffre n'en est affiché.
+  const duplicated = (workbook: WorkbookEncours) => workbook.bank !== null
+    && readWorkbooks.filter((other) => other.bank === workbook.bank).length > 1;
   if (readWorkbooks.some(duplicated)) ambiguities.push('SEVERAL_WORKBOOKS_FOR_A_BANK');
   const workbooks = readWorkbooks.map((workbook) => (duplicated(workbook)
     ? { ...readMonthlyWorkbook({ name: workbook.fileName, bytes: new ArrayBuffer(0) }, input.accountingDate, input.today),

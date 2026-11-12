@@ -204,9 +204,25 @@ function FundPosition({ result }: { result: SituationResult }) {
   const notComparable = fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE').length;
   return (
     <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée.">
-      {!fundPosition.reading.dateComparable ? (
-        <p className="text-sm"><Badge tone="warn">Dates non comparables</Badge> L’onglet ne suit pas la date comptable au jour ouvré près : aucun écart n’est calculé.</p>
+      <p className="text-sm">
+        Date de référence écrite dans l’onglet : {fundPosition.reading.referenceDate ? formatIsoFr(fundPosition.reading.referenceDate) : 'non établie'} ·
+        Devise écrite dans l’onglet : {fundPosition.reading.currency ?? 'non établie'}
+      </p>
+      {!fundPosition.reading.dateComparable || fundPosition.reading.currency !== SITUATION_EXPECTED_CURRENCY ? (
+        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> Le document n’établit pas lui-même une date de référence égale à la date comptable et une devise : la référence est affichée telle que lue, sans écart chiffré.</p>
       ) : null}
+      <table className="mt-2 w-full border-collapse">
+        <thead><tr><th className={CELL}>Banque (référence lue)</th><th className={NUM}>Bank Balance</th><th className={NUM}>Fund Applied</th><th className={NUM}>Net Balance</th><th className={NUM}>NonValidated Deposit</th></tr></thead>
+        <tbody>
+          {fundPosition.reading.rows.map((row) => (
+            <tr key={row.bank}>
+              <td className={CELL}>{SITUATION_BANK_LABELS[row.bank]}</td>
+              <td className={NUM}>{formatAmount(row.declared.bankBalance.value)}</td><td className={NUM}>{formatAmount(row.declared.fundApplied.value)}</td>
+              <td className={NUM}>{formatAmount(row.declared.netBalance.value)}</td><td className={NUM}>{formatAmount(row.declared.nonValidatedDeposit.value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       <p className="text-sm">Concordances : {equal} · Écarts : {differing.length} · Non comparables : {notComparable} · Cellules signalées : {fundPosition.reading.issues.length}</p>
       {differing.length > 0 ? (
         <table className="mt-2 w-full border-collapse">

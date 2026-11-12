@@ -203,6 +203,36 @@ test('ORABANK : Total B rattaché à la colonne prouvée, anciens chèques hors 
   assert.equal(result.facilities.unattributedRows, 0);
 });
 
+test('Total B : colonne prouvée parmi deux candidates, ou égalité ambiguë', () => {
+  const orabank = (cheques: SyntheticTab['cheques'], totalBSecondColumn: number) => read([tab(D, tabName('2026-06-04'), {
+    titleBank: 'ORABANK', french: true, cheques, totalBSecondColumn,
+  })], 'SYNTHETIC ORABANK 2026.xlsx');
+
+  // Deux montants sur la ligne du total : seule la colonne qui vérifie A − B = C et dont les lignes somment le total est retenue.
+  const proven = orabank([
+    { date: '2019-03-01', number: 1110001, amount: 77, outsideTotalColumn: true },
+    { date: '2019-04-01', number: 1110002, amount: 88, outsideTotalColumn: true },
+    { date: D, number: 1110003, amount: 4000 },
+  ], 165);
+  assert.equal(proven.available, true);
+  assert.equal(proven.cheques.available, true);
+  assert.equal(proven.cheques.declaredTotal, 4000);
+  assert.deepEqual(proven.cheques.lines.map((line) => line.amount), [4000]);
+  assert.equal(proven.chequesOutsideTotal, 2);
+  assert.equal(proven.closingBookBalance, 10_000 + 700 - 4000);
+
+  // Égalité : les deux colonnes portent le même total et leurs lignes le prouvent toutes deux.
+  const ambiguous = orabank([
+    { date: '2019-03-01', number: 1110001, amount: 500, outsideTotalColumn: true },
+    { date: D, number: 1110003, amount: 500 },
+  ], 500);
+  assert.equal(ambiguous.available, true);
+  assert.equal(ambiguous.cheques.available, false);
+  assert.equal(ambiguous.cheques.reason, 'TOTAL_COLUMN_AMBIGUOUS');
+  assert.deepEqual(ambiguous.cheques.lines, []);
+  assert.equal(ambiguous.closingBookBalance, 10_000 + 700 - 500);
+});
+
 test('NSIA : reconnue sur preuves concordantes ; discordance refusée', () => {
   const recognized = read([tab(D, tabName('2026-06-04'), { titleBank: 'NSIA BANK' })], 'SYNTHETIC NSIA BANK.xlsx');
   assert.equal(recognized.available, true);

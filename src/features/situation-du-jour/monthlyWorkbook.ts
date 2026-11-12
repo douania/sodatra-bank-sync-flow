@@ -50,7 +50,11 @@ export const WORKBOOK_REASON_LABELS: Record<WorkbookReason, string> = {
   TOTALS_INCONSISTENT: 'Totaux de l’onglet incohérents entre eux',
 };
 
-export type SectionReason = 'LINES_DO_NOT_PROVE_TOTAL' | 'SECTION_NOT_FOUND' | 'TOTAL_MISMATCH' | 'TOTAL_NOT_DECLARED';
+export type SectionReason = 'LINES_DO_NOT_PROVE_TOTAL' | 'SECTION_NOT_FOUND' | 'TOTAL_MISMATCH' | 'TOTAL_NOT_DECLARED'
+  | 'TOTAL_COLUMN_AMBIGUOUS';
+
+/** Première colonne des montants dans un onglet de rapprochement (A à F portent dates, numéros et libellés). */
+const FIRST_AMOUNT_COLUMN = 7;
 
 /** Écart maximal entre la date d'un onglet et la date de la position qu'il porte. */
 export const WORKBOOK_MAX_TAB_LAG_DAYS = 7;
@@ -198,8 +202,8 @@ function readProvenLines(
       lines.push(readLine(sheet, row, proven));
       continue;
     }
-    for (let column = provenColumn + 1; column <= lastColumn; column += 1) {
-      if (cellNumber(cellAt(sheet, row, column)) !== null) {
+    for (let column = FIRST_AMOUNT_COLUMN; column <= lastColumn; column += 1) {
+      if (column !== provenColumn && cellNumber(cellAt(sheet, row, column)) !== null) {
         outsideTotal += 1;
         break;
       }
@@ -415,10 +419,6 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
   if (!book || opening === null || totalDeposits === null || totalA === null || totalB === null || closing === null) {
     return fail('TOTALS_NOT_READ');
   }
-  if (!amountsEqual(opening + totalDeposits, totalA) || !amountsEqual(totalA - totalB, closing)) {
-    return fail('TOTALS_INCONSISTENT');
-  }
-
   const bounds = usefulBounds(sheet);
   const openingRow = book.openingBalance!.rowIndex;
   const depositsRow = book.totalDeposits!.rowIndex;
@@ -426,8 +426,33 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
   const totalBRow = book.totalB!.rowIndex;
   const closingRow = book.closingBalanceC!.rowIndex;
 
+  // Total B : la ligne peut porter plusieurs montants (chèques courants, anciens chèques). La colonne
+  // n'est PROUVÉE que si elle vérifie A − B = C ET si ses lignes somment le total ; elle doit être unique.
+  const candidates: Array<{ column: number; value: number }> = [];
+  for (let column = FIRST_AMOUNT_COLUMN; column <= bounds.lastColumn; column += 1) {
+    const value = cellNumber(cellAt(sheet, totalBRow, column));
+    if (value !== null) candidates.push({ column, value });
+  }
+  const consistent = candidates.filter((candidate) => amountsEqual(totalA - candidate.value, closing));
+  if (!amountsEqual(opening + totalDeposits, totalA) || consistent.length === 0) {
+    return fail('TOTALS_INCONSISTENT');
+  }
+  const proven = consistent
+    .map((candidate) => readProvenLines(sheet, totalARow, totalBRow, candidate.column, bounds.lastColumn, candidate.value))
+    .filter((reading) => reading.section.available);
+
   const deposits = readProvenLines(sheet, openingRow, depositsRow, book.totalDeposits!.columnIndex, bounds.lastColumn, totalDeposits);
-  const cheques = readProvenLines(sheet, totalARow, totalBRow, book.totalB!.columnIndex, bounds.lastColumn, totalB);
+  const cheques = proven.length === 1
+    ? proven[0]
+    : {
+      section: {
+        available: false,
+        reason: (proven.length > 1 ? 'TOTAL_COLUMN_AMBIGUOUS' : 'LINES_DO_NOT_PROVE_TOTAL') as SectionReason,
+        declaredTotal: consistent.length === 1 ? consistent[0].value : null,
+        lines: [],
+      },
+      outsideTotal: 0,
+    };
 
   return {
     fileName: file.name,

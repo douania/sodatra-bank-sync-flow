@@ -36,7 +36,7 @@ register('data:text/javascript,' + encodeURIComponent(`
   }`));
 
 (globalThis as unknown as { React: typeof React }).React = React;
-const { SITUATION_PRODUCTION_REFUSED, validateSituationRuntimeTarget } = await import('./situationRuntimeTarget');
+const { SITUATION_PAGE_ORIGIN_REFUSED, SITUATION_PRODUCTION_REFUSED, validateSituationRuntimeTarget } = await import('./situationRuntimeTarget');
 const { SituationRoute } = await import('./SituationRoute');
 const { isSituationMenuVisible } = await import('./situationMenu');
 const { createSituationSession } = await import('./situationSession');
@@ -46,7 +46,9 @@ const PROD_URL = 'https://leakcdbbawzysfqyqsnr.supabase.co';
 const PROD_ID = 'leakcdbbawzysfqyqsnr';
 const STAGING_URL = 'https://gbbsqcscryygqlmqncyv.supabase.co';
 const STAGING_ID = 'gbbsqcscryygqlmqncyv';
-const LOCAL = { supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' };
+const PAGE = 'http://localhost:8080';
+const LOCAL = { pageOrigin: PAGE, supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' };
+const ATB_HEADER = 'De 01 juin 2026 au 04 juin 2026';
 const D = '2026-06-03';
 const TODAY = '2026-06-05';
 
@@ -63,13 +65,36 @@ test('production toujours refusée, quels que soient les drapeaux', () => {
     { supabaseUrl: 'not a url', projectId: PROD_ID, localEnabled: 'true' },
   ];
   for (const input of variants) {
-    assert.deepEqual(validateSituationRuntimeTarget(input), { allowed: false, reason: SITUATION_PRODUCTION_REFUSED }, JSON.stringify(input));
+    // Refus identique que la page soit servie en local, sur un hôte distant ou sans origine connue.
+    for (const pageOrigin of [PAGE, 'https://app.example.com', undefined]) {
+      assert.deepEqual(validateSituationRuntimeTarget({ pageOrigin, ...input }), { allowed: false, reason: SITUATION_PRODUCTION_REFUSED }, JSON.stringify(input));
+    }
+  }
+});
+
+test('origine réelle de la page : boucle locale exigée, hôte distant ou inconnu refusé', () => {
+  const localTarget = { supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' };
+  const stagingTarget = { supabaseUrl: STAGING_URL, projectId: STAGING_ID, stagingEnabled: 'true' };
+  // Une page servie ailleurs que sur la boucle locale est refusée, même si le bundle vise un Supabase local.
+  for (const pageOrigin of [
+    undefined, '', 'not an origin', 'https://app.example.com', 'https://staging.example.com', 'http://192.168.1.20:8080',
+    'https://localhost.example.com', 'file:///C:/index.html', 'http://user:secret@localhost:8080',
+  ]) {
+    for (const target of [localTarget, stagingTarget]) {
+      assert.deepEqual(validateSituationRuntimeTarget({ pageOrigin, ...target }), { allowed: false, reason: SITUATION_PAGE_ORIGIN_REFUSED }, String(pageOrigin));
+    }
+  }
+  // Boucle locale, toutes écritures admises.
+  for (const pageOrigin of ['http://localhost:8080', 'http://127.0.0.1:5173', 'https://localhost', 'http://[::1]:8080']) {
+    assert.deepEqual(validateSituationRuntimeTarget({ pageOrigin, ...localTarget }), { allowed: true, environment: 'local' }, pageOrigin);
   }
 });
 
 test('cible inconnue ou contradictoire refusée ; local et staging sur activation explicite', () => {
   assert.deepEqual(validateSituationRuntimeTarget(LOCAL), { allowed: true, environment: 'local' });
-  assert.deepEqual(validateSituationRuntimeTarget({ supabaseUrl: STAGING_URL, projectId: STAGING_ID, stagingEnabled: 'true' }), { allowed: true, environment: 'staging' });
+  // Poste local dont la session applicative s'appuie sur le staging approuvé : drapeau staging exigé.
+  assert.deepEqual(validateSituationRuntimeTarget({ pageOrigin: PAGE, supabaseUrl: STAGING_URL, projectId: STAGING_ID, stagingEnabled: 'true' }),
+    { allowed: true, environment: 'local-with-staging-backend' });
   for (const input of [
     {},
     { supabaseUrl: 'not a url', localEnabled: 'true', stagingEnabled: 'true' },
@@ -84,7 +109,7 @@ test('cible inconnue ou contradictoire refusée ; local et staging sur activatio
     { supabaseUrl: 'https://example.supabase.co', projectId: STAGING_ID, stagingEnabled: 'true' },
     { supabaseUrl: 'https://example.com', localEnabled: 'true', stagingEnabled: 'true' },
   ]) {
-    assert.equal(validateSituationRuntimeTarget(input).allowed, false, JSON.stringify(input));
+    assert.equal(validateSituationRuntimeTarget({ pageOrigin: PAGE, ...input }).allowed, false, JSON.stringify(input));
   }
 });
 
@@ -93,8 +118,10 @@ test('URL directe refusée et menu masqué en production ou sur cible inconnue o
     { supabaseUrl: PROD_URL, projectId: PROD_ID, localEnabled: 'true', stagingEnabled: 'true' },
     { supabaseUrl: 'https://example.com', stagingEnabled: 'true' },
     { supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true', projectId: STAGING_ID },
+    // Hôte distant inconnu dont le bundle vise un Supabase local, drapeau actif.
+    { pageOrigin: 'https://app.example.com', supabaseUrl: 'http://127.0.0.1:54321', localEnabled: 'true' },
   ]) {
-    harness.verdict = validateSituationRuntimeTarget(target);
+    harness.verdict = validateSituationRuntimeTarget({ pageOrigin: PAGE, ...target });
     const markup = renderToStaticMarkup(<SituationRoute />);
     assert.match(markup, /Situation du jour non disponible/);
     assert.equal(markup.includes('type="file"'), false, 'aucun dépôt de fichier possible sur une cible refusée');
@@ -113,7 +140,7 @@ function syntheticFiles() {
       periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
       movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }],
     }) },
-    { name: '040626 SYNTHETIC ATB ONLINE.xls', bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, movements: [{ date: '2026-06-02', amount: 300 }, { date: D, amount: -120 }] }) },
+    { name: '040626 SYNTHETIC ATB ONLINE.xls', bytes: excelStatementBytes({ bank: 'ATB', opening: 5000, headerText: ATB_HEADER, movements: [{ date: '2026-06-02', amount: 300 }, { date: D, amount: -120 }] }) },
     { name: 'SYNTHETIC BDK 2026.xlsx', bytes: monthlyWorkbookBytes([{
       name: tabName('2026-06-04'), labelDate: D, titleBank: 'BDK', opening: 1050,
       deposits: [{ date: D, dueDate: '2026-09-01', client: 'SYNTHETIC CLIENT A', amount: 700 }],
@@ -123,7 +150,7 @@ function syntheticFiles() {
       { date: '2026-06-02', instrument: { date: '2026-09-01' }, clientBank: 'SYNTHBANK A', client: 'SYNTHETIC CLIENT A', amount: 700, depositBank: 'BDK' },
       { date: '2026-05-20', instrument: { date: '2026-08-01' }, clientBank: 'SYNTHBANK B', client: 'SYNTHETIC CLIENT B', amount: 5000, depositBank: 'BDK', validity: { date: '2026-05-25' } },
     ]) },
-    { name: 'SYNTHETIC FUND POSITION.xlsx', bytes: fundPositionBytes([{ name: tabName('2026-06-04'), rows: [
+    { name: 'SYNTHETIC FUND POSITION.xlsx', bytes: fundPositionBytes([{ name: tabName('2026-06-04'), reference: { date: D, currency: 'XOF' }, rows: [
       { label: 'BDK', bankBalance: 1050, fundApplied: 500, netBalance: 550, nonValidatedDeposit: 700, position: 1250 },
     ] }]) },
     { name: 'NOTES.xlsx', bytes: monthlyWorkbookBytes([{ name: '040626', labelDate: D, titleBank: 'BDK', opening: 1 }]) },
@@ -248,6 +275,11 @@ test('deux classeurs pour la même banque : aucun n’alimente les rapprochement
   assert.deepEqual(result.ambiguities, ['SEVERAL_WORKBOOKS_FOR_A_BANK']);
   assert.equal(result.collection!.rows[0].state, 'A_VERIFIER');
   assert.equal(result.collection!.rows[0].checkReason, 'NO_WORKBOOK_FOR_BANK');
+  // Même quand un seul des deux est exploitable, aucun n'est retenu.
+  const broken = { name: 'COPIE BDK 2026.xlsx', bytes: new Uint8Array([1, 2, 3, 4]).buffer };
+  const mixed = computeSituation({ files: [workbook('SYNTHETIC BDK 2026.xlsx'), broken, collection], accountingDate: D, today: TODAY });
+  assert.equal(mixed.workbooks.every((entry) => entry.available === false && entry.reason === 'DUPLICATE_WORKBOOK'), true);
+  assert.equal(mixed.collection!.rows[0].state, 'A_VERIFIER');
   // Témoin : un seul classeur, le dépôt est reconnu.
   const single = computeSituation({ files: [workbook('SYNTHETIC BDK 2026.xlsx'), collection], accountingDate: D, today: TODAY });
   assert.deepEqual(single.ambiguities, []);
@@ -271,7 +303,7 @@ test('deux Collection Reports ou deux Fund Positions : section non calculée et 
 test('une attestation tombe quand le fichier attesté est remplacé', async () => {
   const name = '040626 SYNTHETIC ATB ONLINE.xls';
   const make = (opening: number) => {
-    const bytes = excelStatementBytes({ bank: 'ATB', opening, movements: [{ date: '2026-06-02', amount: 300 }, { date: D, amount: -120 }] });
+    const bytes = excelStatementBytes({ bank: 'ATB', opening, headerText: ATB_HEADER, movements: [{ date: '2026-06-02', amount: 300 }, { date: D, amount: -120 }] });
     return { name, size: bytes.byteLength, arrayBuffer: async () => bytes };
   };
   const session = createSituationSession({ today: () => TODAY, initialAccountingDate: D });

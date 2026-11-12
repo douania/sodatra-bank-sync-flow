@@ -166,16 +166,6 @@ export function hiddenSheetNames(workbook: XLSX.WorkBook): Set<string> {
   return hidden;
 }
 
-/** Vrai si tous les jours strictement compris entre deux dates sont un samedi ou un dimanche. */
-export function onlyWeekendBetween(fromIso: string, toIsoDate: string): boolean {
-  const start = isoToExcelSerial(fromIso);
-  const end = isoToExcelSerial(toIsoDate);
-  for (let serial = start + 1; serial < end; serial += 1) {
-    const weekday = new Date(EXCEL_EPOCH_UTC + serial * DAY_MS).getUTCDay();
-    if (weekday !== 0 && weekday !== 6) return false;
-  }
-  return end > start;
-}
 
 export function cellAt(sheet: Sheet, row: number, column: number): XLSX.CellObject | undefined {
   return sheet[XLSX.utils.encode_cell({ r: row - 1, c: column - 1 })] as XLSX.CellObject | undefined;

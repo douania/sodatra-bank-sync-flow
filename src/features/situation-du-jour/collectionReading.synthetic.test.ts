@@ -31,7 +31,7 @@ const ROWS: SyntheticCollectionRow[] = [
   // 5 : date de validité antérieure à la ligne.
   { date: '2026-06-02', instrument: 4440002, clientBank: 'SYNTHBANK C', client: 'SYNTHETIC CLIENT C', amount: 60, depositBank: 'BDK', validity: { date: '2026-05-01' } },
   // 6 : texte dans la date de validité.
-  { date: '2026-06-02', instrument: 'VIREMENT', clientBank: 'SYNTHBANK D', client: 'SYNTHETIC CLIENT D', amount: 40, depositBank: 'BDK', validity: 'A REMPLACER' },
+  { date: '2026-06-02', instrument: 4440004, clientBank: 'SYNTHBANK D', client: 'SYNTHETIC CLIENT D', amount: 40, depositBank: 'BDK', validity: 'A REMPLACER' },
   // 7 : sans date de validité ni trace de dépôt.
   { date: '2026-06-02', instrument: { date: '2026-11-01' }, clientBank: 'SYNTHBANK E', client: 'SYNTHETIC CLIENT E', amount: 333, depositBank: 'BICIS' },
   // 8 : chèque crédité.
@@ -57,7 +57,7 @@ test('lecture isolée : échéance, banque du client et banque de dépôt conser
   assert.equal(cheque.instrument, 'CHEQUE');
   assert.equal(cheque.chequeNumber, '4440001');
   assert.equal(cheque.dueDate, null);
-  assert.equal(reading.rows[4].instrument, 'AUTRE');
+  assert.equal(reading.rows[4].instrument, 'CHEQUE');
 });
 
 test('les quatre états, fondés sur une preuve', () => {
@@ -144,6 +144,43 @@ test('chèque : deux numéros connus et différents ne sont pas rapprochés', ()
   assert.equal(other[0].checkReason, 'NO_DEPOSIT_PROOF');
   const same = classify(reading.rows, [bicisWorkbook([{ number: 4449999, client: 'SYNTHETIC CLIENT H', amount: 500 }])]);
   assert.equal(same[0].state, 'DEPOSE_EN_ATTENTE');
+});
+
+test('rapprochement strict : numéro pour le chèque, échéance pour l’effet, jamais pour un autre instrument', () => {
+  const cheque = (instrument: SyntheticCollectionRow['instrument']): SyntheticCollectionRow => ({
+    date: '2026-06-02', instrument, clientBank: 'SYNTHBANK H', client: 'SYNTHETIC CLIENT H', amount: 500, depositBank: 'BICIS',
+  });
+  const reading = readCollectionReport(collectionReportBytes([cheque(4449999), cheque('VIREMENT'), cheque('')]));
+  // Le dépôt du classeur ne porte pas de numéro : même client et même nominal ne suffisent pas.
+  const noNumber = classify(reading.rows, [bicisWorkbook([{ client: 'SYNTHETIC CLIENT H', amount: 500 }])]);
+  assert.deepEqual(noNumber.map((row) => row.state), ['A_VERIFIER', 'A_VERIFIER', 'A_VERIFIER']);
+  assert.deepEqual(noNumber.map((row) => row.checkReason), ['NO_DEPOSIT_PROOF', 'INSTRUMENT_NOT_IDENTIFIED', 'INSTRUMENT_NOT_IDENTIFIED']);
+  assert.equal(summarizeCollections(noNumber, D).expectedInflowsTotal, 0);
+  // Même avec un numéro au classeur, un virement ou un instrument inconnu n'est jamais rapproché.
+  const withNumber = classify(reading.rows, [bicisWorkbook([{ number: 4449999, client: 'SYNTHETIC CLIENT H', amount: 500 }])]);
+  assert.deepEqual(withNumber.map((row) => row.state), ['DEPOSE_EN_ATTENTE', 'A_VERIFIER', 'A_VERIFIER']);
+});
+
+test('ligne reçue après D : hors de la situation à D, jamais une entrée attendue', () => {
+  const reading = readCollectionReport(collectionReportBytes([
+    { date: '2026-06-04', instrument: { date: '2026-10-01' }, clientBank: 'SYNTHBANK B', client: 'SYNTHETIC CLIENT B', amount: 700, depositBank: 'BICIS' },
+    { date: D, instrument: { date: '2026-10-05' }, clientBank: 'SYNTHBANK B', client: 'SYNTHETIC CLIENT B', amount: 300, depositBank: 'BICIS' },
+  ]));
+  const rows = classify(reading.rows, [bicisWorkbook([
+    { dueDate: '2026-10-01', client: 'SYNTHETIC CLIENT B', amount: 700 },
+    { dueDate: '2026-10-05', client: 'SYNTHETIC CLIENT B', amount: 300 },
+  ])]);
+  assert.deepEqual(rows.map((row) => row.state), ['A_VERIFIER', 'DEPOSE_EN_ATTENTE']);
+  assert.equal(rows[0].checkReason, 'RECEIPT_AFTER_ACCOUNTING_DATE');
+  assert.equal(summarizeCollections(rows, D).expectedInflowsTotal, 300);
+});
+
+test('deux feuilles visibles aux en-têtes compatibles : lecture ambiguë', () => {
+  const row: SyntheticCollectionRow = { date: '2026-06-02', instrument: 4440001, clientBank: 'SYNTHBANK A', client: 'SYNTHETIC CLIENT A', amount: 10, depositBank: 'BDK' };
+  const reading = readCollectionReport(collectionReportBytes([row], { visibleSecondSheetRows: [{ ...row, amount: 20 }] }));
+  assert.equal(reading.available, false);
+  assert.equal(reading.reason, 'SHEET_AMBIGUOUS');
+  assert.deepEqual(reading.rows, []);
 });
 
 test('montant ou date de ligne absents : « À vérifier »', () => {
