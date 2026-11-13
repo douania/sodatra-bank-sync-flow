@@ -476,6 +476,11 @@ const AMOUNT_HEADER_SCALE_TOKENS: Record<string, AmountUnit> = {
 };
 /** Dans un en-tête de montants, trois zéros qui ne terminent pas un montant écrit : « Balance 000 », « Amounts in 000 », « Amount (FCFA 000) ». */
 const AMOUNT_HEADER_BARE_THOUSANDS = /(?<![0-9][\s.,']?)0{3}(?![0-9])/;
+/**
+ * Pluriels génériques : « Montants », « Amounts », « Soldes »… annoncent une note sur tous les montants du
+ * document, où qu'elle soit écrite ; un libellé d'opération porte son mot au singulier (« Solde », « Deposit »).
+ */
+const AMOUNT_NOTE_WORDS: ReadonlySet<string> = new Set(['MONTANTS', 'AMOUNTS', 'FIGURES', 'CHIFFRES', 'SOLDES', 'BALANCES', 'VALEURS', 'VALUES', 'SOMMES']);
 /** Une puissance de mille écrite en chiffres, hors d'un nombre plus long : 1000, 1 000, 1,000, 10.000, 1'000'000. */
 const POWER_OF_THOUSAND = /(?<![0-9][\s.,']?)10{0,2}((?:[\s.,']?000){1,3})(?![0-9]|[\s.,'][0-9])/g;
 const POWER_OF_THOUSAND_UNITS: AmountUnit[] = ['THOUSANDS', 'MILLIONS', 'BILLIONS'];
@@ -490,9 +495,10 @@ const SCALE_INTRODUCED = /(?:(?<![A-Z0-9])(?:IN|EN|PAR|PER|BY|X)\s*|(?<![0-9])[�
  * Puissances de mille qui valent indication d'échelle dans une cellule d'intitulé de montants.
  * Dans les lignes d'en-tête, toutes — « Montants in 1,000 », « Amounts in XOF 1,000 », « Montants : 1000
  * FCFA », « Balance (1,000) » — SAUF un montant écrit juste après le mot d'intitulé : « Solde 1 000 FCFA »,
- * « Solde de 1 000 000 ». Sous l'en-tête, où les lignes portent des libellés d'opérations (« DEPOSIT BDK
- * 1 000 000 »), seulement celles qu'une préposition ou un opérateur introduit. Partout, celles au pluriel
- * (« 1,000s »).
+ * « Solde de 1 000 000 ». Il en va de même, sous l'en-tête, d'une note au pluriel générique (« Note: all
+ * amounts are in XOF 1,000 »). Pour les autres lignes sous l'en-tête, qui portent des libellés d'opérations
+ * (« DEPOSIT BDK 1 000 000 »), seulement celles qu'une préposition ou un opérateur introduit. Partout,
+ * celles au pluriel (« 1,000s »).
  */
 function powersOfThousandInAmountHeader(plain: string, headerRow: boolean): AmountUnit[] {
   const units: AmountUnit[] = [];
@@ -526,7 +532,8 @@ export function unitsInText(text: string, headerRow = true): AmountUnit[] {
     if (tokens.some((token) => ZERO_WORDS.has(token)) && tokens.some((token) => OMITTED_WORDS.has(token))) found.add('THOUSANDS');
   }
   if (tokens.some((token) => AMOUNT_HEADER_WORDS.has(token) || AMOUNT_TOTAL_WORDS.has(token))) {
-    for (const unit of powersOfThousandInAmountHeader(plain, headerRow)) found.add(unit);
+    const everyPower = headerRow || tokens.some((token) => AMOUNT_NOTE_WORDS.has(token));
+    for (const unit of powersOfThousandInAmountHeader(plain, everyPower)) found.add(unit);
     if (UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');
   }
   if (OPENED_BY_A_UNIT_WORD.test(plain) && UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');

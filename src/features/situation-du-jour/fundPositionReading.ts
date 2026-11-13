@@ -185,6 +185,8 @@ const NON_POSITION_DATE_WORDS: ReadonlySet<string> = new Set([
 const VALUE_DATE_WORDS: ReadonlySet<string> = new Set(['VALEUR', 'VALUE']);
 /** Participes qui datent l'impression du document, quel que soit ce qui est imprimé : « Etat imprimé le », « Fund Position printed on ». */
 const PRINTED_ON_WORDS: ReadonlySet<string> = new Set(['IMPRIME', 'IMPRIMEE', 'PRINTED', 'EDITE', 'EDITEE']);
+/** Mots qui datent l'impression ou l'édition du document. */
+const PRINT_DATE_WORDS: ReadonlySet<string> = new Set(['IMPRIME', 'IMPRIMEE', 'IMPRESSION', 'PRINTED', 'PRINT', 'EDITE', 'EDITEE', 'EDITION']);
 /** Ce qui sépare deux propositions dans une cellule : tiret entouré d'espaces, point-virgule, barre. */
 const CLAUSE_BREAK = /\s[-–—]\s|[;|]/;
 /** Ce qui tient la place d'une date qu'on n'a pas écrite : « N/A », « TBD », « ? », « à préciser », « xx/xx/xxxx ». */
@@ -243,6 +245,12 @@ function saysNotAPositionDate(label: string): boolean {
   return !VALUE_DATE_WORDS.has(governing) || tokens.includes('DATE');
 }
 
+/** Vrai si le libellé date l'impression ou l'édition du document. */
+function saysPrintDate(label: string): boolean {
+  const words = tokenize(label).filter((token) => !DATE_LINK_WORDS.has(token));
+  return words.length > 0 && PRINT_DATE_WORDS.has(words[words.length - 1]);
+}
+
 /** Les dates écrites dans un texte, lisibles ou non, à leur place et dans l'ordre d'écriture. */
 function writtenDates(text: string): Array<{ index: number; length: number; iso: string | null; precision: 'DAY' | 'MONTH' }> {
   return [
@@ -258,8 +266,14 @@ function writtenDates(text: string): Array<{ index: number; length: number; iso:
  * dernière date. Un mot placé ailleurs ne libelle pas la date : dans « Soldes au 02/06/2026 – imprimé le
  * 04/06/2026 », seule la seconde est une date d'impression.
  */
-function datesWrittenInZone(sheet: Sheet, lastRow: number, lastColumn: number): ZoneDate[] {
+function datesWrittenInZone(sheet: Sheet, lastRow: number, lastColumn: number, positionDate: string): ZoneDate[] {
   const dates: ZoneDate[] = [];
+  // Un document imprimé avant la date de position ne peut pas la porter : une date d'impression lisible et
+  // antérieure n'exempte rien, quel que soit son libellé.
+  const printedBefore = (iso: string | null, precision: 'DAY' | 'MONTH') => iso !== null
+    && (precision === 'MONTH' ? iso.slice(0, 7) < positionDate.slice(0, 7) : iso < positionDate);
+  const exempt = (label: string, iso: string | null, precision: 'DAY' | 'MONTH') => saysNotAPositionDate(label)
+    && !(saysPrintDate(label) && printedBefore(iso, precision));
   for (let row = 1; row <= lastRow; row += 1) {
     for (let column = 1; column <= lastColumn; column += 1) {
       const address = cellAddress(row, column);
@@ -270,13 +284,13 @@ function datesWrittenInZone(sheet: Sheet, lastRow: number, lastColumn: number): 
       if (!cellDate && written.length === 0) continue;
       const left = column > 1 ? cellText(cellAt(sheet, row, column - 1)) : '';
       const leftLabel = plainUpper(left).slice(writtenDates(left).reduce((end, entry) => Math.max(end, entry.index + entry.length), 0));
-      if (cellDate) dates.push({ address, iso: cellDate, precision: 'DAY', exempt: saysNotAPositionDate(leftLabel) });
+      if (cellDate) dates.push({ address, iso: cellDate, precision: 'DAY', exempt: exempt(leftLabel, cellDate, 'DAY') });
       const plain = plainUpper(text);
       written.forEach((entry, position) => {
         const previousEnd = position === 0 ? 0 : written[position - 1].index + written[position - 1].length;
         const own = plain.slice(previousEnd, entry.index);
         const label = position === 0 && !hasLabelWord(own) ? `${leftLabel} ${own}` : own;
-        dates.push({ address, iso: entry.iso, precision: entry.precision, exempt: saysNotAPositionDate(label) });
+        dates.push({ address, iso: entry.iso, precision: entry.precision, exempt: exempt(label, entry.iso, entry.precision) });
       });
     }
   }
@@ -443,7 +457,7 @@ export function readFundPosition(
   // Toute autre date écrite dans cette zone, qui n'est pas la date de position retenue, la contredit : la
   // comparaison est bloquée et aucune confirmation n'est proposée — y compris quand cette date est celle du
   // nom de l'onglet. Seule une date que SON libellé dit être autre chose (échéance, impression, date de
-  // valeur, validité, taux) est ignorée. Une date au mois près s'accorde avec ce mois ; une date illisible ne
+  // valeur, validité, taux) est ignorée — et jamais une date d'impression antérieure à la date de position. Une date au mois près s'accorde avec ce mois ; une date illisible ne
   // s'accorde avec rien. Il en va de même d'un libellé de date de position qu'aucune date lisible ne suit.
   // Sous le bloc des banques, seul compte un libellé de date de position qui ouvre sa cellule et porte une autre date que D.
   const stated = fields.situationDate.state === 'VALID' ? fields.situationDate.value : null;
@@ -452,7 +466,7 @@ export function readFundPosition(
     date.precision === 'MONTH' ? expected.slice(0, 7) === date.iso.slice(0, 7) : expected === date.iso
   );
   const dateConflictCells = [
-    ...datesWrittenInZone(sheet, positionZoneLastRow, fieldBounds.lastColumn)
+    ...datesWrittenInZone(sheet, positionZoneLastRow, fieldBounds.lastColumn, expected)
       .filter((date) => !date.exempt && !agrees(date)).map((date) => date.address),
     ...unreadablePositionDatesInZone(sheet, positionZoneLastRow, fieldBounds.lastColumn),
     ...contraryPositionDatesBelowZone(sheet, positionZoneLastRow + 1, fieldBounds.lastRow, fieldBounds.lastColumn, agrees),
