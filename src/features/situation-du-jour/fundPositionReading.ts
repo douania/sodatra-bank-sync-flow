@@ -5,7 +5,6 @@
 // adresse de cellule, sans jamais recopier le contenu d'une ligne source.
 import {
   SITUATION_BANKS,
-  SITUATION_EXPECTED_CURRENCY,
   SODATRA_CONVENTION,
   amountsEqual,
   cellAddress,
@@ -124,8 +123,8 @@ export const FUND_POSITION_COMPARISON_REASON_LABELS: Record<ComparisonReason, st
   SOURCE_UNAVAILABLE: 'source vérifiée indisponible',
   DECLARED_ABSENT: 'valeur déclarée absente',
   DATE_NOT_COMPARABLE: 'date non établie ou différente',
-  CURRENCY_NOT_COMPARABLE: 'devise non établie ou différente',
-  UNIT_NOT_COMPARABLE: 'unité non établie ou différente',
+  CURRENCY_NOT_COMPARABLE: 'devise non établie, ou autre que XOF',
+  UNIT_NOT_COMPARABLE: 'unité non établie, ou autre que francs entiers',
 };
 
 export interface FundPositionComparison {
@@ -205,8 +204,9 @@ function readCell(sheet: Sheet, row: number, column: number, bank: SituationBank
  * Lit le premier onglet visible daté strictement après la date comptable D
  * (au plus tard `today`) comme RÉFÉRENCE. Le nom de l'onglet ne prouve pas la
  * date de la situation. Elle est établie :
- * - par le champ explicite « Situation au », s'il est valide (il doit alors
- *   être égal à D pour ouvrir la comparaison) ;
+ * - par le champ explicite de date de position (« Situation au », « Position
+ *   arrêtée au », « As at »…), s'il est valide (il doit alors être égal à D
+ *   pour ouvrir la comparaison ; contraire à D, il la bloque) ;
  * - sinon, quand ce champ est ABSENT et que l'onglet lu est daté exactement
  *   du lendemain calendaire de D, par la confirmation de l'opérateur pour ce
  *   fichier, cet onglet et cette date.
@@ -323,12 +323,11 @@ function compare(
 
 /**
  * Écarts entre la Fund Position déclarée et les sources vérifiées, calculés
- * seulement à date, périmètre (même banque), devise et unité comparables. La
- * devise et l'unité doivent être ÉTABLIES et concordantes pour les DEUX termes
- * de chaque comparaison : la Fund Position d'un côté, le relevé ou le classeur
- * mensuel de l'autre. Un relevé bancaire est en unités de sa devise : il n'est
- * comparé qu'à une Fund Position en francs entiers. Aucune conversion d'unité
- * n'est faite.
+ * seulement à date, périmètre (même banque), devise et unité comparables.
+ * Chaque source d'une comparaison — la Fund Position, le relevé, le classeur
+ * mensuel — doit être ÉTABLIE en XOF et en francs entiers. Une autre devise ou
+ * une autre unité, même déclarée à l'identique des deux côtés, donne « non
+ * comparable » : aucune conversion d'unité n'est faite.
  */
 export function compareFundPosition(
   reading: FundPositionReading,
@@ -342,22 +341,22 @@ export function compareFundPosition(
     const balance = balances.find((candidate) => candidate.bank === row.bank) ?? null;
     const workbook = workbooks.find((candidate) => candidate.bank === row.bank && candidate.available) ?? null;
     const statementUsable = balance !== null && balance.status === 'AVAILABLE';
-    // Date, devise puis unité : établies par les champs explicites du document.
+    // Chaque source d'une comparaison doit être en XOF et en francs entiers : aucune conversion n'est faite, et
+    // deux documents qui déclarent la même autre unité (deux fois « milliers ») ne sont pas comparés non plus.
+    // La Fund Position d'abord : date établie égale à D, devise XOF, unité francs entiers.
     const documentBlocking: ComparisonReason | null = !reading.dateComparable ? 'DATE_NOT_COMPARABLE'
-      : reading.currency !== SITUATION_EXPECTED_CURRENCY ? 'CURRENCY_NOT_COMPARABLE'
-        : reading.unit === null ? 'UNIT_NOT_COMPARABLE' : null;
-    // Relevé : même devise, et Fund Position en francs entiers comme le relevé.
+      : reading.currency !== SODATRA_CONVENTION.currency ? 'CURRENCY_NOT_COMPARABLE'
+        : reading.unit !== SODATRA_CONVENTION.unit ? 'UNIT_NOT_COMPARABLE' : null;
+    // Relevé : en francs entiers par nature ; sa devise doit être XOF.
     const statementBlocking: ComparisonReason | null = documentBlocking
-      ?? (statementUsable && balance!.currency !== reading.currency ? 'CURRENCY_NOT_COMPARABLE' : null)
-      ?? (reading.unit !== 'UNITS' ? 'UNIT_NOT_COMPARABLE' : null);
+      ?? (statementUsable && balance!.currency !== SODATRA_CONVENTION.currency ? 'CURRENCY_NOT_COMPARABLE' : null);
     comparisons.push(compare(row.bank, 'BANK_BALANCE_VS_STATEMENT', row.declared.bankBalance.value,
       statementUsable ? balance!.amount : null, statementBlocking));
-    // Classeur mensuel : même date de position, puis devise et unité établies par son onglet et égales à celles
-    // de la Fund Position.
+    // Classeur mensuel : même date de position, devise XOF et unité francs entiers établies pour son onglet.
     const workbookBlocking: ComparisonReason | null = documentBlocking
       ?? (workbook !== null && workbook.balanceDate !== accountingDate ? 'DATE_NOT_COMPARABLE' : null)
-      ?? (workbook !== null && workbook.currency !== reading.currency ? 'CURRENCY_NOT_COMPARABLE' : null)
-      ?? (workbook !== null && workbook.unit !== reading.unit ? 'UNIT_NOT_COMPARABLE' : null);
+      ?? (workbook !== null && workbook.currency !== SODATRA_CONVENTION.currency ? 'CURRENCY_NOT_COMPARABLE' : null)
+      ?? (workbook !== null && workbook.unit !== SODATRA_CONVENTION.unit ? 'UNIT_NOT_COMPARABLE' : null);
     comparisons.push(compare(row.bank, 'BANK_BALANCE_VS_WORKBOOK', row.declared.bankBalance.value,
       workbook ? workbook.openingBalance : null, workbookBlocking));
     comparisons.push(compare(row.bank, 'FUND_APPLIED_VS_WORKBOOK', row.declared.fundApplied.value,

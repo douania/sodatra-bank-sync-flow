@@ -151,6 +151,7 @@ test('le nom de l’onglet ne prouve pas la date : sans champ valide ni confirma
     ['aucun champ, aucune confirmation', undefined, 'DATE_NOT_COMPARABLE'],
     ['« Situation au » différent de D', { ...AT_D, date: '2026-06-02' }, 'DATE_NOT_COMPARABLE'],
     ['champ « Devise » dans une autre devise', { ...AT_D, currency: 'EUR' }, 'CURRENCY_NOT_COMPARABLE'],
+    ['champ « Unité » en milliers', { ...AT_D, unit: 'milliers' }, 'UNIT_NOT_COMPARABLE'],
   ];
   for (const [label, reference, reason] of cases) {
     const fund = reading([{ name: tabName('2026-06-04'), rows: ROWS, reference }]);
@@ -237,18 +238,42 @@ test('date de la Fund Position : confirmation de l’opérateur, seulement pour 
   const contrary = read([{ name: tab, rows: ROWS, reference: { date: '2026-06-02' } }], confirm);
   assert.deepEqual([contrary.dateField, contrary.referenceDate, contrary.dateProof, contrary.dateComparable], ['VALID', '2026-06-02', 'FILE', false]);
   assert.equal(contrary.needsDateAttestation, false);
+  // Date de position contraire écrite sous un autre libellé de l'en-tête : même effet, la case n'est pas proposée.
+  for (const dateText of ['Position arrêtée au 02/06/2026', 'Situation du 02/06/2026', 'As at 02/06/2026', 'Fund Position as of 02/06/2026', 'Arrêté au 02/06/2026', 'Position au 2 juin 2026']) {
+    const other = read([{ name: tab, rows: ROWS, reference: { dateText } }], confirm);
+    assert.deepEqual([other.dateField, other.referenceDate, other.dateProof, other.dateComparable], ['VALID', '2026-06-02', 'FILE', false], dateText);
+    assert.equal(other.needsDateAttestation, false, dateText);
+    for (const comparison of compareFundPosition(other, D, bdkBalances(), [bdkWorkbook()])) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE', dateText);
+      assert.equal(comparison.reason, 'DATE_NOT_COMPARABLE', dateText);
+      assert.equal(comparison.delta, null, dateText);
+    }
+  }
+  // Témoins : une date d'échéance, d'impression ou de validité n'est pas la date de position ; la confirmation
+  // reste proposée et suffit.
+  for (const dateText of ['Echéance 02/06/2026', 'Imprimé le 02/06/2026', 'Valable jusqu’au 02/06/2026', 'Prochaine revue au 02/06/2026', 'Situation du compte']) {
+    const ignored = read([{ name: tab, rows: ROWS, reference: { dateText } }], confirm);
+    assert.equal(ignored.dateField, 'ABSENT', dateText);
+    assert.equal(ignored.needsDateAttestation, true, dateText);
+    assert.deepEqual([ignored.referenceDate, ignored.dateProof, ignored.dateComparable], [D, 'OPERATOR', true], dateText);
+  }
   // Champ valide égal à D : il suffit, même sur un onglet daté plus tard, sans aucune confirmation.
   const explicit = read([{ name: dayAfterNext, rows: ROWS, reference: { date: D } }]);
   assert.deepEqual([explicit.referenceDate, explicit.dateProof, explicit.dateComparable], [D, 'FILE', true]);
 });
 
-test('champ « Situation au » : libellé explicite, une date au jour près, écrit une seule fois', () => {
+test('date de position écrite : libellé explicite, une date au jour près, écrit une seule fois', () => {
   const FIELDS = { currency: 'XOF', unit: 'francs entiers' };
   const read = (reference: SyntheticFundPositionReference) => reading([{ name: tabName('2026-06-04'), rows: ROWS, reference: { ...FIELDS, ...reference } }]);
   // Témoins : le champ dans deux cellules voisines ou dans une seule, sous plusieurs écritures de date.
   const witnesses: SyntheticFundPositionReference[] = [
     { date: D }, { dateText: 'Situation au 3 juin 2026' }, { dateText: 'Situation au : 03/06/2026' },
     { dateText: 'Date de situation : 2026-06-03' }, { texts: ['Situation au', '03/06/26'] },
+    // Autres libellés qui désignent la date de position.
+    { dateText: 'Position arrêtée au 03/06/2026' }, { dateText: 'Situation arrêtée au 3 juin 2026' }, { dateText: 'Position au 03/06/2026' },
+    { dateText: 'Situation du 03/06/26' }, { dateText: 'Arrêté au 03/06/2026' }, { dateText: 'Date de la position : 03/06/2026' },
+    { dateText: 'As at 3 June 2026' }, { dateText: 'As of 2026-06-03' }, { dateText: 'Fund Position as at 03/06/2026' },
+    { texts: ['Position arrêtée au', '03/06/2026'] },
   ];
   for (const reference of witnesses) {
     const fund = read(reference);
@@ -270,7 +295,9 @@ test('champ « Situation au » : libellé explicite, une date au jour près, éc
     ['autre libellé', { dateText: 'Imprimé le 03/06/2026' }],
     ['libellé qui n’ouvre pas la cellule', { dateText: 'Voir Situation au 03/06/2026' }],
     ['« date du jour » n’est pas la date de situation', { dateText: 'Date du jour : 03/06/2026' }],
-    ['libellé non prévu', { dateText: 'As of 2026-06-03' }],
+    ['libellé qui n’est pas une date de position', { dateText: 'Valable jusqu’au 03/06/2026' }],
+    ['« Situation du » sans date', { dateText: 'Situation du compte 03/06/2026' }],
+    ['deux libellés de date de position', { date: D, texts: ['Position arrêtée au 03/06/2026'] }],
     ['champ suivi d’une mention', { dateText: 'Situation au 03/06/2026 (provisoire)' }],
     ['champ portant une période', { dateText: 'Situation au 03/06/2026 - 04/06/2026' }],
     ['champ au mois près', { dateText: 'Situation au juin 2026' }],
@@ -463,6 +490,9 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'Montants en milliers', 'K FCFA', 'KFCFA', 'kXOF', 'K F CFA', 'KCFA', 'KF', 'K F', 'K FRS', 'Montants (K)', 'en K',
     '(000)', '(000 FCFA)', '000 FCFA', '(en 000)', "'000", "000's", 'x1000', 'x 1 000', '×1000', '/1000', 'en mille', 'mille FCFA',
     'M FCFA', 'MFCFA', 'Mio', 'en millions', 'MXOF', 'Mds FCFA', 'milliards', 'Thousands',
+    // Variantes dans un en-tête de montants.
+    'Montants K-FCFA', 'Montants en M', 'Montants K', 'Montants M', 'Montants MF', 'Bank Balance (M)', 'Solde en MM', 'Balance K€',
+    'K-FCFA', 'K/FCFA', 'kilo francs', '(M)', 'en M', 'en MM', '(,000)', '10^3', 'x10^3', '*1000', '1000s', 'MM FCFA', 'M-FCFA', 'Md FCFA', 'Mrd', 'mln',
   ];
   for (const scale of scales) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [scale] } }]);
@@ -473,23 +503,30 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     }
   }
   // Témoins : un montant écrit avec ses milliers, ou un mot voisin, n'est pas une indication d'échelle.
-  for (const harmless of ['Plafond 1 000 FCFA', 'Total 25 000 XOF', 'Référence 000123', 'KFW', 'Skf', 'MILLENIUM', 'Taux x 1,05']) {
+  for (const harmless of ['Plafond 1 000 FCFA', 'Total 25 000 XOF', 'Solde 1 000 FCFA', 'Montant 10 000 000 FCFA', 'Référence 000123', 'KFW', 'Skf', 'MILLENIUM', 'Taux x 1,05', 'M. DIOP', 'K. FALL', 'Lot K', 'KM 5', 'Agence M']) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [harmless] } }]);
     assert.deepEqual([fund.unit, fund.unitProvenance], ['UNITS', 'CONVENTION'], harmless);
   }
-  // Fund Position en milliers (champ valide) : un relevé, en francs entiers, n'est pas comparé ; un classeur en
-  // milliers l'est, sans conversion ; un classeur en francs entiers par convention ne l'est pas.
+  // Chaque source doit être en francs entiers. Une Fund Position en milliers (champ valide) n'est comparée à
+  // rien, pas même à un classeur qui déclare lui aussi des milliers : aucune conversion, aucun écart chiffré.
   const thousands = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, unit: 'milliers' } }]);
   assert.deepEqual([thousands.unit, thousands.unitProvenance], ['THOUSANDS', 'FILE']);
-  const mixed = compareFundPosition(thousands, D, balances, [bdkWorkbook(D, tab, 'XOF', 'milliers')]);
-  assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').status, 'NOT_COMPARABLE');
-  assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').reason, 'UNIT_NOT_COMPARABLE');
-  assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').delta, null);
-  assert.equal(pick(mixed, 'FUND_APPLIED_VS_WORKBOOK').status, 'DIFFERENT');
-  assert.equal(pick(mixed, 'BANK_BALANCE_VS_WORKBOOK').status, 'EQUAL');
-  const conventionalWorkbook = compareFundPosition(thousands, D, balances, [bdkWorkbook(D, tab, null, null)]);
-  assert.equal(pick(conventionalWorkbook, 'FUND_APPLIED_VS_WORKBOOK').reason, 'UNIT_NOT_COMPARABLE');
-  assert.equal(pick(conventionalWorkbook, 'FUND_APPLIED_VS_WORKBOOK').delta, null);
+  for (const workbook of [bdkWorkbook(D, tab, 'XOF', 'milliers'), bdkWorkbook(D, tab, null, null), bdkWorkbook()]) {
+    const comparisons = compareFundPosition(thousands, D, balances, [workbook]);
+    assert.ok(comparisons.length > 0);
+    for (const comparison of comparisons) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE');
+      assert.equal(comparison.reason, 'UNIT_NOT_COMPARABLE');
+      assert.equal(comparison.delta, null);
+    }
+  }
+  // Même règle pour la devise : deux documents qui déclarent tous deux des euros ne sont pas comparés.
+  const euros = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, currency: 'EUR' } }]);
+  for (const comparison of compareFundPosition(euros, D, balances, [bdkWorkbook(D, tab, 'EUR', 'francs entiers')])) {
+    assert.equal(comparison.status, 'NOT_COMPARABLE');
+    assert.equal(comparison.reason, 'CURRENCY_NOT_COMPARABLE');
+    assert.equal(comparison.delta, null);
+  }
 });
 
 test('écarts calculés seulement à date, périmètre et devise comparables', () => {

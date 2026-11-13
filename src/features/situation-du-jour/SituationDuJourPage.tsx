@@ -114,7 +114,7 @@ function Encours({ result }: { result: SituationResult }) {
                       {workbook.currency && workbook.currencyProvenance ? `Devise : ${workbook.currency} (${FIELD_PROVENANCE_LABELS[workbook.currencyProvenance]})` : 'Devise non établie (mention contraire, ambiguë ou invalide)'}
                       {' · '}
                       {workbook.unit && workbook.unitProvenance ? `Unité : ${AMOUNT_UNIT_LABELS[workbook.unit]} (${FIELD_PROVENANCE_LABELS[workbook.unitProvenance]})` : 'Unité non établie (mention contraire, ambiguë ou invalide)'}
-                      {workbook.currency && workbook.unit ? '' : ' — classeur non comparé à la Fund Position'}
+                      {workbook.currency === SITUATION_EXPECTED_CURRENCY && workbook.unit === 'UNITS' ? '' : ' — classeur non comparé à la Fund Position'}
                     </div>
                     {workbook.ignoredFutureTabs > 0 ? <div className="text-muted-foreground">{workbook.ignoredFutureTabs} onglet(s) daté(s) dans le futur ignoré(s)</div> : null}
                   </td>
@@ -215,7 +215,7 @@ function FundPosition({ result }: { result: SituationResult }) {
     .map((reason) => ({ reason, count: fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE' && comparison.reason === reason).length }))
     .filter((entry) => entry.count > 0);
   return (
-    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date, la devise et l’unité sont établies et concordent des deux côtés.">
+    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date est établie et si chaque document est en XOF et en francs entiers.">
       <p className="text-sm">
         Situation au : {fundPosition.reading.referenceDate
           ? `${formatIsoFr(fundPosition.reading.referenceDate)} (${fundPosition.reading.dateProof === 'OPERATOR' ? `confirmée par l’opérateur pour l’onglet du ${formatIsoFr(fundPosition.reading.tabDate)}` : 'lue dans le fichier'})`
@@ -224,8 +224,8 @@ function FundPosition({ result }: { result: SituationResult }) {
         Devise : {fundPosition.reading.currency && fundPosition.reading.currencyProvenance ? `${fundPosition.reading.currency} (${FIELD_PROVENANCE_LABELS[fundPosition.reading.currencyProvenance]})` : 'non établie (mention contraire, ambiguë ou invalide)'} ·
         Unité : {fundPosition.reading.unit && fundPosition.reading.unitProvenance ? `${AMOUNT_UNIT_LABELS[fundPosition.reading.unit]} (${FIELD_PROVENANCE_LABELS[fundPosition.reading.unitProvenance]})` : 'non établie (mention contraire, ambiguë ou invalide)'}
       </p>
-      {!fundPosition.reading.dateComparable || fundPosition.reading.currency !== SITUATION_EXPECTED_CURRENCY || fundPosition.reading.unit === null ? (
-        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> La date de situation, la devise ou l’unité n’est pas établie pour cet onglet : la référence est affichée telle que lue, sans écart chiffré.</p>
+      {!fundPosition.reading.dateComparable || fundPosition.reading.currency !== SITUATION_EXPECTED_CURRENCY || fundPosition.reading.unit !== 'UNITS' ? (
+        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> Pour cet onglet, la date de situation n’est pas établie à la date comptable, ou la devise et l’unité ne sont pas établies en {SITUATION_EXPECTED_CURRENCY} et en francs entiers : la référence est affichée telle que lue, sans écart chiffré.</p>
       ) : null}
       <table className="mt-2 w-full border-collapse">
         <thead><tr><th className={CELL}>Banque (référence lue)</th><th className={NUM}>Bank Balance</th><th className={NUM}>Fund Applied</th><th className={NUM}>Net Balance</th><th className={NUM}>NonValidated Deposit</th></tr></thead>

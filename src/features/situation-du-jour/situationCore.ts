@@ -341,16 +341,22 @@ export const AMOUNT_UNIT_LABELS: Record<AmountUnit, string> = {
 const UNIT_CLASS_TOKENS: Record<string, AmountUnit> = {
   ENTIER: 'UNITS', ENTIERS: 'UNITS',
   MILLIER: 'THOUSANDS', MILLIERS: 'THOUSANDS', MILLE: 'THOUSANDS', THOUSAND: 'THOUSANDS', THOUSANDS: 'THOUSANDS',
-  MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS', MFCFA: 'MILLIONS', MCFA: 'MILLIONS', MIO: 'MILLIONS',
-  MILLIARD: 'BILLIONS', MILLIARDS: 'BILLIONS', MDS: 'BILLIONS', BILLION: 'BILLIONS', BILLIONS: 'BILLIONS',
+  MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS', MFCFA: 'MILLIONS', MCFA: 'MILLIONS', MIO: 'MILLIONS', MLN: 'MILLIONS',
+  MILLIARD: 'BILLIONS', MILLIARDS: 'BILLIONS', MDS: 'BILLIONS', MRD: 'BILLIONS', MRDS: 'BILLIONS', BILLION: 'BILLIONS', BILLIONS: 'BILLIONS',
 };
 /** Mots admis autour de l'unité dans la valeur du champ (« francs entiers », « milliers de francs »). */
 const UNIT_NEUTRAL_TOKENS: ReadonlySet<string> = new Set(['FRANC', 'FRANCS', 'EN', 'DE']);
 
 type ExplicitFieldKind = 'situationDate' | 'currency' | 'unit';
-/** Libellé du champ, en tête de cellule, sur le texte sans accents et en majuscules. */
+/**
+ * Libellé du champ, en tête de cellule, sur le texte sans accents et en majuscules. La date de position
+ * se dit de plusieurs façons : « Situation au », « Date de situation », « Position arrêtée au »,
+ * « Position au », « Arrêté au », « As at », « As of », « Situation du <date> ». Toutes désignent le même
+ * champ : une date de position écrite sous l'un de ces libellés fait foi, qu'elle confirme D ou la
+ * contredise. Les autres dates de l'onglet (échéance, impression, validité) ne sont pas ce champ.
+ */
 const EXPLICIT_FIELD_LABELS: Record<ExplicitFieldKind, RegExp> = {
-  situationDate: /^\s*(?:SITUATION\s+AU|DATE\s+DE\s+SITUATION)(?![A-Z0-9])\s*:?\s*/,
+  situationDate: /^\s*(?:(?:FUND|DAILY|CASH)\s+)*(?:(?:SITUATION|POSITION)(?:\s+ARRETEE?)?\s+(?:AU|AS\s+(?:AT|OF))|(?:SITUATION|POSITION)(?:\s+ARRETEE?)?\s+DU(?=\s*:?\s*[0-9])|DATE\s+DE\s+(?:LA\s+)?(?:SITUATION|POSITION)|ARRETEE?\s+AU|AS\s+(?:AT|OF))(?![A-Z0-9])\s*:?\s*/,
   currency: /^\s*DEVISE(?![A-Z0-9])\s*:?\s*/,
   unit: /^\s*UNITE(?:\s+DES\s+MONTANTS)?(?![A-Z0-9])\s*:?\s*/,
 };
@@ -382,26 +388,42 @@ function singleUnit(text: string): AmountUnit | null {
 
 /**
  * Indications d'échelle écrites hors de tout mot d'unité, sur le texte sans accents et en majuscules :
- * « K FCFA », « K F », « (K) », « en K », « (000) », « (en 000) », « 000 FCFA », « '000 », « x1000 »,
- * « /1000 », « M FCFA ». Lecture volontairement large : elle ne sert qu'à REFUSER. Un montant écrit en
- * toutes lettres avec ses milliers (« 1 000 FCFA ») n'est pas une indication d'échelle.
+ * « K FCFA », « K-FCFA », « K€ », « KF », « (K) », « en K », « kilo francs », « (000) », « (,000) »,
+ * « (en 000) », « 000 FCFA », « '000 », « 1000s », « x1000 », « *1000 », « /1000 », « 10^3 », « M FCFA »,
+ * « MM FCFA », « (M) », « en M », « Md FCFA ». Lecture volontairement large : elle ne sert qu'à REFUSER.
+ * Un montant écrit avec ses milliers (« 1 000 FCFA ») n'est pas une indication d'échelle.
  */
 const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
-  [/(?<![A-Z0-9])K\s?(?:F\s?CFA|FCFA|CFA|XOF|FRS|F)(?![A-Z0-9])/, 'THOUSANDS'],
-  [/\(\s*K\s*\)|(?<![A-Z0-9])EN\s+K(?![A-Z0-9])/, 'THOUSANDS'],
-  [/\(\s*(?:EN\s+)?'?0{3}(?![0-9])[^)]{0,12}\)/, 'THOUSANDS'],
+  [/(?<![A-Z0-9])K[\s\-_./]?(?:F\s?CFA|FCFA|CFA|XOF|FRS|F|EUROS?|EUR|€)(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*K\s*\)|(?<![A-Z0-9])EN\s+K(?![A-Z0-9])|(?<![A-Z0-9])KILO[\s-]?FRANCS?(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*(?:EN\s+)?[',]?0{3}(?![0-9])[^)]{0,12}\)/, 'THOUSANDS'],
   [/(?<![0-9][\s.,']?)'?0{3}(?:'?S)?(?![0-9])\s*(?:F\s?CFA|FCFA|CFA|XOF|FRS)(?![A-Z0-9])/, 'THOUSANDS'],
-  [/(?<![0-9A-Z])'0{3}(?![0-9])|(?<![0-9][\s.,']?)0{3}'S(?![A-Z0-9])/, 'THOUSANDS'],
-  [/(?:[×/]|(?<![A-Z0-9])X)\s?1[\s.]?000(?![0-9])/, 'THOUSANDS'],
-  [/(?<![A-Z0-9])M\s?(?:F\s?CFA|FCFA|CFA|XOF)(?![A-Z0-9])/, 'MILLIONS'],
+  [/(?<![0-9A-Z])'0{3}(?![0-9])|(?<![0-9][\s.,']?)0{3}'S(?![A-Z0-9])|(?<![0-9][\s.,']?)1\s?000'?S(?![A-Z0-9])/, 'THOUSANDS'],
+  [/(?:[×*/]|(?<![A-Z0-9])X)\s?(?:1[\s.]?000|10\s?\^\s?3)(?![0-9])|(?<![0-9A-Z])10\s?\^\s?3(?![0-9])/, 'THOUSANDS'],
+  [/(?<![A-Z0-9])M{1,2}[\s\-_./]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'MILLIONS'],
+  [/\(\s*M{1,2}\s*\)|(?<![A-Z0-9])EN\s+M{1,2}(?![A-Z0-9])/, 'MILLIONS'],
+  [/(?<![A-Z0-9])(?:MDS?|MRDS?)[\s\-_./]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'BILLIONS'],
 ];
+
+/** Mots qui font d'une cellule un en-tête de montants. */
+const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
+  'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'BALANCE', 'SOLDE', 'SOLDES', 'DEBIT', 'CREDIT', 'DEPOSIT', 'DEPOSITS', 'APPLIED',
+]);
+/** Dans un en-tête de montants, une lettre d'échelle isolée suffit : « Montants K », « Balance M », « Solde MF ». */
+const AMOUNT_HEADER_SCALE_TOKENS: Record<string, AmountUnit> = {
+  K: 'THOUSANDS', KE: 'THOUSANDS', M: 'MILLIONS', MM: 'MILLIONS', MF: 'MILLIONS', MD: 'BILLIONS',
+};
 
 /** Unités ÉCRITES dans un texte : mots d'unité (« milliers », « francs entiers ») et indications d'échelle. */
 export function unitsInText(text: string): AmountUnit[] {
   const found = new Set<AmountUnit>();
-  for (const token of tokenize(text)) if (UNIT_CLASS_TOKENS[token] !== undefined) found.add(UNIT_CLASS_TOKENS[token]);
+  const tokens = tokenize(text);
+  for (const token of tokens) if (UNIT_CLASS_TOKENS[token] !== undefined) found.add(UNIT_CLASS_TOKENS[token]);
   const plain = plainUpper(text);
   for (const [pattern, unit] of SCALE_PATTERNS) if (pattern.test(plain)) found.add(unit);
+  if (tokens.some((token) => AMOUNT_HEADER_WORDS.has(token))) {
+    for (const token of tokens) if (AMOUNT_HEADER_SCALE_TOKENS[token] !== undefined) found.add(AMOUNT_HEADER_SCALE_TOKENS[token]);
+  }
   return Array.from(found);
 }
 
@@ -432,7 +454,7 @@ export interface ExplicitFields {
 }
 
 /**
- * Champs EXPLICITES d'un onglet : « Situation au », « Devise », « Unité ».
+ * Champs EXPLICITES d'un onglet : date de position (« Situation au », « Position arrêtée au »…), « Devise », « Unité ».
  * Lecture stricte : le libellé ouvre la cellule, la valeur le suit dans la
  * même cellule ou occupe la cellule immédiatement à droite, elle ne porte
  * rien d'autre, et le champ n'est écrit qu'UNE fois dans les lignes 1 à
