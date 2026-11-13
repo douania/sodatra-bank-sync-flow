@@ -7,8 +7,8 @@ import { FUND_POSITION_COMPARISON_REASON_LABELS, FUND_POSITION_INDICATOR_LABELS,
 import type { ComparisonReason } from './fundPositionReading';
 import { WORKBOOK_REASON_LABELS } from './monthlyWorkbook';
 import { SITUATION_AMBIGUITY_LABELS, SITUATION_FILE_KIND_LABELS } from './situationCompute';
-import type { SituationResult } from './situationCompute';
-import { AMOUNT_UNIT_LABELS, SITUATION_BANK_LABELS, SITUATION_EXPECTED_CURRENCY, formatIsoFr, isoToExcelSerial, excelSerialToIso } from './situationCore';
+import type { SituationAttestation, SituationResult } from './situationCompute';
+import { AMOUNT_UNIT_LABELS, FIELD_PROVENANCE_LABELS, SITUATION_BANK_LABELS, SITUATION_EXPECTED_CURRENCY, formatIsoFr, isoToExcelSerial, excelSerialToIso } from './situationCore';
 import { SITUATION_SESSION_ERROR_LABELS, createSituationSession } from './situationSession';
 import { BALANCE_REASON_LABELS } from './statementBalances';
 
@@ -111,7 +111,9 @@ function Encours({ result }: { result: SituationResult }) {
                   <td className={CELL}>
                     {workbook.tabName}
                     <div className="text-muted-foreground">
-                      {workbook.currency ? `Devise : ${workbook.currency}` : 'Devise non renseignée'} · {workbook.unit ? `Unité : ${AMOUNT_UNIT_LABELS[workbook.unit]}` : 'Unité non renseignée'}
+                      {workbook.currency && workbook.currencyProvenance ? `Devise : ${workbook.currency} (${FIELD_PROVENANCE_LABELS[workbook.currencyProvenance]})` : 'Devise non établie (mention contraire, ambiguë ou invalide)'}
+                      {' · '}
+                      {workbook.unit && workbook.unitProvenance ? `Unité : ${AMOUNT_UNIT_LABELS[workbook.unit]} (${FIELD_PROVENANCE_LABELS[workbook.unitProvenance]})` : 'Unité non établie (mention contraire, ambiguë ou invalide)'}
                       {workbook.currency && workbook.unit ? '' : ' — classeur non comparé à la Fund Position'}
                     </div>
                     {workbook.ignoredFutureTabs > 0 ? <div className="text-muted-foreground">{workbook.ignoredFutureTabs} onglet(s) daté(s) dans le futur ignoré(s)</div> : null}
@@ -213,14 +215,17 @@ function FundPosition({ result }: { result: SituationResult }) {
     .map((reason) => ({ reason, count: fundPosition.comparisons.filter((comparison) => comparison.status === 'NOT_COMPARABLE' && comparison.reason === reason).length }))
     .filter((entry) => entry.count > 0);
   return (
-    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date, la devise et l’unité sont renseignées et concordent des deux côtés.">
+    <Section title={`Comparaison avec la Fund Position (onglet ${fundPosition.reading.tabName})`} hint="La Fund Position Excel est une référence comparative : l’écart est déclaré moins source vérifiée. Un écart n’est chiffré que si la date, la devise et l’unité sont établies et concordent des deux côtés.">
       <p className="text-sm">
-        Situation au : {fundPosition.reading.referenceDate ? formatIsoFr(fundPosition.reading.referenceDate) : 'non renseignée'} ·
-        Devise : {fundPosition.reading.currency ?? 'non renseignée'} ·
-        Unité : {fundPosition.reading.unit ? AMOUNT_UNIT_LABELS[fundPosition.reading.unit] : 'non renseignée'}
+        Situation au : {fundPosition.reading.referenceDate
+          ? `${formatIsoFr(fundPosition.reading.referenceDate)} (${fundPosition.reading.dateProof === 'OPERATOR' ? `confirmée par l’opérateur pour l’onglet du ${formatIsoFr(fundPosition.reading.tabDate)}` : 'lue dans le fichier'})`
+          : fundPosition.reading.dateField === 'INVALID' ? 'champ invalide ou écrit plusieurs fois'
+            : fundPosition.reading.needsDateAttestation ? 'à confirmer par l’opérateur' : 'non établie'} ·
+        Devise : {fundPosition.reading.currency && fundPosition.reading.currencyProvenance ? `${fundPosition.reading.currency} (${FIELD_PROVENANCE_LABELS[fundPosition.reading.currencyProvenance]})` : 'non établie (mention contraire, ambiguë ou invalide)'} ·
+        Unité : {fundPosition.reading.unit && fundPosition.reading.unitProvenance ? `${AMOUNT_UNIT_LABELS[fundPosition.reading.unit]} (${FIELD_PROVENANCE_LABELS[fundPosition.reading.unitProvenance]})` : 'non établie (mention contraire, ambiguë ou invalide)'}
       </p>
       {!fundPosition.reading.dateComparable || fundPosition.reading.currency !== SITUATION_EXPECTED_CURRENCY || fundPosition.reading.unit === null ? (
-        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> L’onglet ne renseigne pas ses trois champs « Situation au » (égal à la date comptable), « Devise » et « Unité » : la référence est affichée telle que lue, sans écart chiffré.</p>
+        <p className="text-sm"><Badge tone="warn">Non comparable</Badge> La date de situation, la devise ou l’unité n’est pas établie pour cet onglet : la référence est affichée telle que lue, sans écart chiffré.</p>
       ) : null}
       <table className="mt-2 w-full border-collapse">
         <thead><tr><th className={CELL}>Banque (référence lue)</th><th className={NUM}>Bank Balance</th><th className={NUM}>Fund Applied</th><th className={NUM}>Net Balance</th><th className={NUM}>NonValidated Deposit</th></tr></thead>
@@ -269,11 +274,15 @@ export function SituationDuJourPage() {
     event.target.value = '';
     if (list.length > 0) void session.addFiles(list);
   };
-  const attest = (fileName: string, attestation: { identityAttested?: boolean; currencyAttested?: string }) => {
+  const attest = (fileName: string, attestation: SituationAttestation) => {
     session.setAttestation(fileName, attestation);
     session.compute();
   };
   const statementNeeds = state.result?.statements.filter((statement) => statement.needsIdentityAttestation || statement.needsCurrencyAttestation) ?? [];
+  // Confirmation de date de la Fund Position : proposée seulement quand la lecture la demande, pour ce fichier.
+  const fundFile = state.result?.files.find((entry) => entry.kind === 'FUND_POSITION') ?? null;
+  const fundReading = state.result?.fundPosition?.reading ?? null;
+  const fundTab = fundFile && fundReading && fundReading.needsDateAttestation ? fundReading.tabName : null;
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4">
@@ -310,7 +319,7 @@ export function SituationDuJourPage() {
         ) : <p className="mt-2 text-sm text-muted-foreground">Aucun fichier déposé.</p>}
       </Section>
 
-      {statementNeeds.length > 0 ? (
+      {statementNeeds.length > 0 || fundTab !== null ? (
         <Section title="Attestations de l’opérateur" hint="Un relevé ne désigne sa banque que par le nom du fichier : l’opérateur atteste le compte, fichier par fichier, et la devise quand elle n’est pas écrite. Sans attestation, le solde reste à revoir et hors total.">
           {statementNeeds.map((statement) => {
             const current = state.attestations[statement.fileName] ?? {};
@@ -331,6 +340,15 @@ export function SituationDuJourPage() {
               </div>
             );
           })}
+          {fundFile && fundReading && fundTab !== null && state.result ? (
+            <div className="mb-2 text-sm">
+              <div className="font-medium">{fundFile.name}</div>
+              <label><input type="checkbox" className="mr-1" checked={fundReading.dateProof === 'OPERATOR'} onChange={(event) => attest(fundFile.name, { ...(state.attestations[fundFile.name] ?? {}), fundPositionDate: event.target.checked ? { tabName: fundTab, accountingDate: state.result!.accountingDate } : undefined })} />
+                Je confirme que l’onglet du {formatIsoFr(fundReading.tabDate)} présente la situation au {formatIsoFr(state.result.accountingDate)}
+              </label>
+              <div className="text-xs text-muted-foreground">Cette confirmation vaut pour ce fichier, cet onglet et cette date comptable ; elle ne prouve aucune clôture bancaire.</div>
+            </div>
+          ) : null}
           <p className="text-xs text-muted-foreground">Le calcul est relancé à chaque attestation.</p>
         </Section>
       ) : null}

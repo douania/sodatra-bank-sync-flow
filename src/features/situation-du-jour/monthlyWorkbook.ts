@@ -20,6 +20,8 @@ import {
   detectBankFromStrictLabel,
   detectBankFromText,
   findDayFirstDateInText,
+  SODATRA_CONVENTION,
+  establishWithConvention,
   hiddenSheetNames,
   normalizeLabel,
   readExplicitFields,
@@ -28,7 +30,7 @@ import {
   sumAmounts,
   usefulBounds,
 } from './situationCore';
-import type { AmountUnit, InMemoryFile, Sheet, SituationBank } from './situationCore';
+import type { AmountUnit, FieldProvenance, InMemoryFile, Sheet, SituationBank } from './situationCore';
 
 export type WorkbookReason =
   | 'WORKBOOK_UNREADABLE'
@@ -109,12 +111,15 @@ export interface WorkbookEncours {
   tabName: string | null;
   balanceDate: string | null;
   /**
-   * Devise ÉTABLIE par l'onglet retenu : champ explicite « Devise » de son en-tête (au plus tard sur la
-   * ligne d'ouverture), seule devise écrite dans tout l'onglet. `null` : absente, répétée ou contredite.
+   * Devise ÉTABLIE pour l'onglet retenu : champ explicite « Devise » de son en-tête (au plus tard sur la
+   * ligne d'ouverture), ou convention SODATRA quand ce champ est absent et que rien ne la contredit dans
+   * l'onglet. `null` : champ répété, mal formé ou contredit, ou mention contraire écrite dans l'onglet.
    */
   currency: string | null;
-  /** Unité ÉTABLIE par l'onglet retenu : champ explicite « Unité » de son en-tête, non contredit ; sinon `null`. */
+  currencyProvenance: FieldProvenance | null;
+  /** Unité ÉTABLIE pour l'onglet retenu, selon la même règle (champ « Unité », sinon convention SODATRA). */
   unit: AmountUnit | null;
+  unitProvenance: FieldProvenance | null;
   ignoredFutureTabs: number;
   openingBalance: number | null;
   totalBalanceA: number | null;
@@ -137,7 +142,8 @@ function emptySection(reason: SectionReason | null = 'SECTION_NOT_FOUND'): Workb
 
 function emptyEncours(fileName: string, bank: SituationBank | null, reason: WorkbookReason): WorkbookEncours {
   return {
-    fileName, bank, available: false, reason, tabName: null, balanceDate: null, currency: null, unit: null, ignoredFutureTabs: 0,
+    fileName, bank, available: false, reason, tabName: null, balanceDate: null, currency: null, currencyProvenance: null, unit: null,
+    unitProvenance: null, ignoredFutureTabs: 0,
     openingBalance: null, totalBalanceA: null, closingBookBalance: null, deposits: emptySection(),
     cheques: emptySection(), chequesOutsideTotal: 0,
     facilities: { available: false, title: null, lines: [], excludedUnlabeledRows: 0, unattributedRows: 0 }, impayes: emptySection(),
@@ -433,8 +439,11 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
   }
   const bounds = usefulBounds(sheet);
   const openingRow = book.openingBalance!.rowIndex;
-  // Devise et unité : champs explicites de l'en-tête (au plus tard sur la ligne d'ouverture), non contredits ailleurs.
+  // Devise et unité : champs explicites de l'en-tête (au plus tard sur la ligne d'ouverture) ; s'ils sont
+  // absents, convention SODATRA, sauf mention contraire écrite n'importe où dans l'onglet.
   const explicit = readExplicitFields(sheet, usefulBounds(sheet, 2_000, CURRENCY_SCAN_COLUMNS), openingRow);
+  const currency = establishWithConvention(explicit.currency, explicit.writtenCurrencies, SODATRA_CONVENTION.currency);
+  const unit = establishWithConvention(explicit.unit, explicit.writtenUnits, SODATRA_CONVENTION.unit);
   const depositsRow = book.totalDeposits!.rowIndex;
   const totalARow = book.totalBalanceA!.rowIndex;
   const totalBRow = book.totalB!.rowIndex;
@@ -475,8 +484,10 @@ export function readMonthlyWorkbook(file: InMemoryFile, accountingDate: string, 
     reason: null,
     tabName,
     balanceDate: accountingDate,
-    currency: explicit.currency,
-    unit: explicit.unit,
+    currency: currency.value,
+    currencyProvenance: currency.provenance,
+    unit: unit.value,
+    unitProvenance: unit.provenance,
     ignoredFutureTabs,
     openingBalance: opening,
     totalBalanceA: totalA,

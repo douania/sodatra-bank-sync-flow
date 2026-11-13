@@ -3,10 +3,9 @@
 // mémoire. Rien n'est écrit dans un stockage du navigateur ni envoyé sur le
 // réseau. `clear()` remet à zéro les octets des fichiers avant de les lâcher.
 import { computeSituation, SituationInputError } from './situationCompute';
-import type { SituationResult } from './situationCompute';
+import type { SituationAttestation, SituationResult } from './situationCompute';
 import { isIsoDate } from './situationCore';
 import type { InMemoryFile } from './situationCore';
-import type { StatementAttestation } from './statementBalances';
 
 export const SITUATION_MAX_FILES = 40;
 export const SITUATION_MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -37,7 +36,7 @@ export const SITUATION_SESSION_ERROR_LABELS: Record<SituationSessionError, strin
 export interface SituationSessionState {
   files: InMemoryFile[];
   accountingDate: string;
-  attestations: Record<string, StatementAttestation>;
+  attestations: Record<string, SituationAttestation>;
   result: SituationResult | null;
   error: SituationSessionError | null;
 }
@@ -48,7 +47,7 @@ export interface SituationSession {
   addFiles(files: SituationFileLike[]): Promise<void>;
   removeFile(name: string): void;
   setAccountingDate(iso: string): void;
-  setAttestation(fileName: string, attestation: StatementAttestation): void;
+  setAttestation(fileName: string, attestation: SituationAttestation): void;
   compute(): void;
   clear(): void;
 }
@@ -124,7 +123,15 @@ export function createSituationSession(options: { today: () => string; initialAc
       update({ files: state.files.filter((file) => file.name !== name), attestations, result: null, error: null });
     },
     setAccountingDate(iso) {
-      update({ accountingDate: iso, result: null, error: null });
+      // La confirmation de date d'une Fund Position vaut pour UNE date comptable : elle tombe dès que la date
+      // change, et ne revient pas si l'on revient à l'ancienne date. Les attestations des relevés demeurent.
+      const attestations: Record<string, SituationAttestation> = {};
+      for (const [name, attestation] of Object.entries(state.attestations)) {
+        const kept: SituationAttestation = { ...attestation };
+        delete kept.fundPositionDate;
+        attestations[name] = kept;
+      }
+      update({ accountingDate: iso, attestations, result: null, error: null });
     },
     setAttestation(fileName, attestation) {
       update({ attestations: { ...state.attestations, [fileName]: attestation }, result: null, error: null });

@@ -354,6 +354,56 @@ test('deux Collection Reports ou deux Fund Positions : section non calculée et 
   assert.deepEqual(result.ambiguities, ['SEVERAL_COLLECTION_REPORTS', 'SEVERAL_FUND_POSITIONS']);
 });
 
+test('confirmation de date de la Fund Position : en mémoire, pour ce fichier, cet onglet et cette date', async () => {
+  const fundName = 'SYNTHETIC FUND POSITION.xlsx';
+  const statementName = '040626 SYNTHETIC BDK ONLINE.csv';
+  const tab = tabName('2026-06-04');
+  const fund = (bankBalance: number) => {
+    // Onglet du lendemain, sans champ « Situation au » : la date ne peut venir que d'une confirmation.
+    const bytes = fundPositionBytes([{ name: tab, rows: [{ label: 'BDK', bankBalance, fundApplied: 500, netBalance: bankBalance - 500, nonValidatedDeposit: 700, position: bankBalance + 200 }] }]);
+    return { name: fundName, size: bytes.byteLength, arrayBuffer: async () => bytes };
+  };
+  const statementBytes = csvStatementBytes({
+    periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
+    movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: D, amount: -50 }, { date: '2026-06-04', amount: 5 }],
+  });
+  const session = createSituationSession({ today: () => TODAY, initialAccountingDate: D });
+  await session.addFiles([fund(1050), { name: statementName, size: statementBytes.byteLength, arrayBuffer: async () => statementBytes }]);
+  const reading = () => { session.compute(); return session.getState().result!.fundPosition!.reading; };
+  const confirm = () => session.setAttestation(fundName, { fundPositionDate: { tabName: tab, accountingDate: D } });
+  assert.equal(reading().needsDateAttestation, true);
+  assert.equal(reading().dateComparable, false);
+  // Une attestation d'identité, donnée à ce fichier ou à un relevé, ne confirme aucune date de Fund Position.
+  session.setAttestation(fundName, { identityAttested: true });
+  session.setAttestation(statementName, { identityAttested: true, fundPositionDate: { tabName: tab, accountingDate: D } });
+  assert.equal(reading().dateComparable, false);
+  // Confirmée pour ce fichier : le résultat affiché est invalidé, puis la date est établie.
+  confirm();
+  assert.equal(session.getState().result, null);
+  assert.deepEqual([reading().dateComparable, reading().dateProof, reading().referenceDate], [true, 'OPERATOR', D]);
+  // La confirmation ne prouve aucune clôture bancaire : elle ne touche pas aux soldes.
+  assert.equal(session.getState().result!.balances.find((balance) => balance.bank === 'BDK')!.amount, 1050);
+  // Changement de date comptable : la confirmation tombe, l'attestation d'identité du relevé demeure ; revenir à
+  // l'ancienne date ne la rétablit pas.
+  session.setAccountingDate('2026-06-02');
+  assert.equal(session.getState().attestations[fundName].fundPositionDate, undefined);
+  assert.equal(session.getState().attestations[statementName].identityAttested, true);
+  session.setAccountingDate(D);
+  assert.deepEqual([reading().dateComparable, reading().dateProof, reading().needsDateAttestation], [false, null, true]);
+  // Fichier remplacé sous le même nom : la confirmation tombe avec l'ancien contenu.
+  confirm();
+  assert.equal(reading().dateComparable, true);
+  await session.addFiles([fund(2000)]);
+  assert.equal(session.getState().attestations[fundName], undefined);
+  assert.equal(reading().dateComparable, false);
+  // Session effacée : plus aucune attestation.
+  confirm();
+  assert.equal(reading().dateComparable, true);
+  session.clear();
+  assert.deepEqual(session.getState().attestations, {});
+  assert.equal(session.getState().files.length, 0);
+});
+
 test('une attestation tombe quand le fichier attesté est remplacé', async () => {
   const name = '040626 SYNTHETIC ATB ONLINE.xls';
   const make = (opening: number) => {

@@ -45,7 +45,7 @@ test('onglets D−1, D et D+1 : seul l’onglet portant la position à D est ret
   assert.equal(result.cheques.declaredTotal, 500);
 });
 
-test('devise et unité du classeur : champs explicites de l’en-tête, non contredits, sinon non établis', () => {
+test('devise et unité du classeur : champ explicite ou convention SODATRA, jamais malgré une mention contraire', () => {
   const name = tabName('2026-06-04');
   const deposit = (client: string) => [{ date: D, dueDate: '2026-09-15', client, amount: 700 }];
   /** Onglet dont des cellules de la première ligne sont écrites à la main (E1, F1 sont libres). */
@@ -54,50 +54,56 @@ test('devise et unité du classeur : champs explicites de l’en-tête, non cont
     for (const [address, value] of Object.entries(cells)) sheet[address] = { t: 's', v: value };
     return readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet }]) }, D, TODAY);
   };
-  // Aucun champ renseigné : ni la devise ni l'unité ne sont présumées.
+  const lineOnly = (client: string) => read([tab(D, name, { depositSectionTitle: false, deposits: deposit(client) })]);
+  // Aucun champ, rien de contraire : convention SODATRA, et sa provenance est dite.
   const silent = read([tab(D, name)]);
   assert.equal(silent.available, true);
-  assert.equal(silent.currency, null);
-  assert.equal(silent.unit, null);
-  // Champs renseignés dans l'en-tête : établis (« FCFA » vaut XOF).
+  assert.deepEqual([silent.currency, silent.currencyProvenance], ['XOF', 'CONVENTION']);
+  assert.deepEqual([silent.unit, silent.unitProvenance], ['UNITS', 'CONVENTION']);
+  // Champs écrits dans l'en-tête : lus dans le fichier (« FCFA » vaut XOF).
   for (const [written, expected] of [['XOF', 'XOF'], ['FCFA', 'XOF'], ['EUR', 'EUR']]) {
-    assert.equal(read([tab(D, name, { currency: written })]).currency, expected, written);
+    const workbook = read([tab(D, name, { currency: written })]);
+    assert.deepEqual([workbook.currency, workbook.currencyProvenance], [expected, 'FILE'], written);
   }
   for (const [written, expected] of [['francs entiers', 'UNITS'], ['milliers', 'THOUSANDS'], ['milliers de francs', 'THOUSANDS'], ['millions de FCFA', 'MILLIONS']]) {
-    assert.equal(read([tab(D, name, { unit: written })]).unit, expected, written);
+    const workbook = read([tab(D, name, { unit: written })]);
+    assert.deepEqual([workbook.unit, workbook.unitProvenance], [expected, 'FILE'], written);
   }
-  const complete = read([tab(D, name, { currency: 'XOF', unit: 'francs entiers' })]);
-  assert.equal(complete.currency, 'XOF');
-  assert.equal(complete.unit, 'UNITS');
   // Libellé et valeur dans deux cellules voisines.
-  assert.equal(withCells({ E1: 'Devise', F1: 'XOF' }).currency, 'XOF');
-  assert.equal(withCells({ E1: 'Unité des montants', F1: 'francs entiers' }).unit, 'UNITS');
-  // Valeur mal formée : le champ n'établit rien.
+  assert.deepEqual([withCells({ E1: 'Devise', F1: 'XOF' }).currency, withCells({ E1: 'Devise', F1: 'XOF' }).currencyProvenance], ['XOF', 'FILE']);
+  assert.deepEqual([withCells({ E1: 'Unité des montants', F1: 'francs entiers' }).unit, withCells({ E1: 'Unité des montants', F1: 'francs entiers' }).unitProvenance], ['UNITS', 'FILE']);
+  // Champ invalide (mal formé, écrit deux fois) : rien n'est établi, la convention ne s'applique pas.
   for (const written of ['francs', 'francs entiers environ', 'milliers ou millions']) {
-    assert.equal(read([tab(D, name, { unit: written })]).unit, null, written);
+    const workbook = read([tab(D, name, { unit: written })]);
+    assert.deepEqual([workbook.unit, workbook.unitProvenance], [null, null], written);
   }
-  assert.equal(withCells({ F1: 'Devise : XOF provisoire' }).currency, null);
-  assert.equal(withCells({ F1: 'Devise : XOF / EUR' }).currency, null);
-  // Sans le libellé du champ, une mention n'établit rien, même dans l'en-tête.
-  assert.equal(withCells({ F1: 'Client principal : CFA MOTORS' }).available, true);
-  assert.equal(withCells({ F1: 'Client principal : CFA MOTORS' }).currency, null);
-  assert.equal(withCells({ F1: 'Montants en FCFA' }).currency, null);
-  assert.equal(withCells({ F1: 'XOF' }).currency, null);
-  assert.equal(withCells({ F1: 'en francs entiers' }).unit, null);
-  // Le libellé du champ doit ouvrir la cellule.
-  assert.equal(withCells({ F1: 'Montants - Devise : XOF' }).currency, null);
-  assert.equal(withCells({ F1: 'Note - Unité : francs entiers' }).unit, null);
-  // Champ écrit deux fois : ambigu, même à valeur identique.
+  for (const cells of [{ F1: 'Devise : XOF provisoire' }, { F1: 'Devise : XOF / EUR' }]) {
+    assert.deepEqual([withCells(cells).currency, withCells(cells).currencyProvenance], [null, null], cells.F1);
+  }
   assert.equal(withCells({ F1: 'Devise : XOF' }, { currency: 'XOF' }).currency, null);
   assert.equal(withCells({ F1: 'Unité : francs entiers' }, { unit: 'francs entiers' }).unit, null);
-  // Champ écrit seulement dans une ligne, même sur la ligne qui suit l'ouverture : il n'établit rien.
-  for (const client of ['SYNTHETIC CFA CLIENT', 'XOF', 'Devise XOF', 'Devise : XOF', 'Unité : francs entiers']) {
-    const lineOnly = read([tab(D, name, { depositSectionTitle: false, deposits: deposit(client) })]);
-    assert.equal(lineOnly.available, true, client);
-    assert.equal(lineOnly.currency, null, client);
-    assert.equal(lineOnly.unit, null, client);
+  // Mention écrite sans le libellé du champ : concordante, la convention s'applique ; contraire, rien n'est établi.
+  for (const title of ['Client principal : CFA MOTORS', 'Montants en FCFA', 'XOF', 'Montants - Devise : XOF']) {
+    assert.deepEqual([withCells({ F1: title }).currency, withCells({ F1: title }).currencyProvenance], ['XOF', 'CONVENTION'], title);
   }
-  // Champ renseigné, puis contredit ailleurs dans l'onglet : non établi.
+  assert.deepEqual([withCells({ F1: 'en francs entiers' }).unit, withCells({ F1: 'en francs entiers' }).unitProvenance], ['UNITS', 'CONVENTION']);
+  for (const title of ['Montants en EUR', 'Montants - Devise : EUR', 'Taux CHF', '100 $']) {
+    assert.equal(withCells({ F1: title }).currency, null, title);
+  }
+  // Indication d'échelle dans un en-tête de montants : l'unité n'est pas établie.
+  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF']) {
+    assert.deepEqual([withCells({ F1: title }).unit, withCells({ F1: title }).unitProvenance], [null, null], title);
+  }
+  // Un champ n'est lu que dans l'en-tête. Dans une ligne, même sur la ligne qui suit l'ouverture, ce n'est qu'une
+  // mention : concordante, elle laisse la convention ; contraire, elle retire tout.
+  assert.deepEqual([lineOnly('Devise : XOF').currency, lineOnly('Devise : XOF').currencyProvenance], ['XOF', 'CONVENTION']);
+  assert.deepEqual([lineOnly('Unité : francs entiers').unit, lineOnly('Unité : francs entiers').unitProvenance], ['UNITS', 'CONVENTION']);
+  for (const client of ['Devise : EUR', 'Devise EUR', 'SYNTHETIC EURO CLIENT']) {
+    assert.equal(lineOnly(client).available, true, client);
+    assert.equal(lineOnly(client).currency, null, client);
+  }
+  assert.equal(lineOnly('Unité : milliers').unit, null);
+  // Champ valide, puis contredit ailleurs dans l'onglet : non établi.
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC EURO CLIENT') })]).currency, null);
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC CLIENT 100 $') })]).currency, null);
   assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC XAF CLIENT') })]).currency, null);
@@ -108,12 +114,11 @@ test('devise et unité du classeur : champs explicites de l’en-tête, non cont
   assert.equal(readMonthlyWorkbook({ name: 'SYNTHETIC BDK 2026.xlsx', bytes: workbookBytes([{ name, sheet: farColumn }]) }, D, TODAY).currency, null);
   assert.equal(read([tab(D, name, { unit: 'francs entiers', deposits: deposit('SYNTHETIC CLIENT (en milliers)') })]).unit, null);
   // La même devise ou la même unité répétée dans une ligne ne contredit rien.
-  assert.equal(read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC FCFA CLIENT') })]).currency, 'XOF');
+  assert.deepEqual([read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC FCFA CLIENT') })]).currency, read([tab(D, name, { currency: 'XOF', deposits: deposit('SYNTHETIC FCFA CLIENT') })]).currencyProvenance], ['XOF', 'FILE']);
   assert.equal(read([tab(D, name, { unit: 'francs entiers', deposits: deposit('SYNTHETIC ENTIERS CLIENT') })]).unit, 'UNITS');
-  // Classeur indisponible : ni devise ni unité.
+  // Classeur indisponible : ni devise ni unité, même par convention.
   const absent = read([tab('2026-06-02', tabName('2026-06-03'), { currency: 'XOF', unit: 'francs entiers' })]);
-  assert.equal(absent.currency, null);
-  assert.equal(absent.unit, null);
+  assert.deepEqual([absent.currency, absent.currencyProvenance, absent.unit, absent.unitProvenance], [null, null, null, null]);
 });
 
 test('onglet D absent ou ambigu : encours indisponibles', () => {

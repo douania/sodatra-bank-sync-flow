@@ -8,7 +8,7 @@ import {
 } from './collectionReading';
 import type { CollectionReading, CollectionRow, CollectionSummary } from './collectionReading';
 import { compareFundPosition, readFundPosition } from './fundPositionReading';
-import type { FundPositionComparison, FundPositionReading } from './fundPositionReading';
+import type { FundPositionComparison, FundPositionDateAttestation, FundPositionReading } from './fundPositionReading';
 import { readMonthlyWorkbook } from './monthlyWorkbook';
 import type { WorkbookEncours } from './monthlyWorkbook';
 import { detectBankFromText, isIsoDate, tokenize } from './situationCore';
@@ -46,6 +46,14 @@ export function classifySituationFile(name: string): ClassifiedFile {
   return { name, kind: 'UNRECOGNIZED', bank };
 }
 
+/**
+ * Attestations de l'opérateur pour UN fichier, tenues en mémoire : identité et devise d'un relevé, ou
+ * date de situation d'une Fund Position. Chacune ne vaut que pour le fichier qui la porte.
+ */
+export interface SituationAttestation extends StatementAttestation {
+  fundPositionDate?: FundPositionDateAttestation;
+}
+
 export interface SituationInput {
   files: InMemoryFile[];
   /** Date comptable D (ISO) : date des soldes. */
@@ -53,7 +61,7 @@ export interface SituationInput {
   /** Jour du calcul (ISO) : borne les onglets datés dans le futur. */
   today: string;
   /** Attestations de l'opérateur par nom de fichier, pour la seule session. */
-  attestations?: Record<string, StatementAttestation>;
+  attestations?: Record<string, SituationAttestation>;
 }
 
 export interface SituationCollection {
@@ -137,7 +145,12 @@ export function computeSituation(input: SituationInput): SituationResult {
   let fundPosition: SituationFundPosition | null = null;
   if (fundPositionFiles.length > 1) ambiguities.push('SEVERAL_FUND_POSITIONS');
   if (fundPositionFiles.length === 1) {
-    const reading = readFundPosition(fundPositionFiles[0].bytes, input.accountingDate, input.today);
+    const reading = readFundPosition(
+      fundPositionFiles[0].bytes,
+      input.accountingDate,
+      input.today,
+      input.attestations?.[fundPositionFiles[0].name]?.fundPositionDate,
+    );
     fundPosition = { reading, comparisons: compareFundPosition(reading, input.accountingDate, balances, usableWorkbooks) };
   }
 

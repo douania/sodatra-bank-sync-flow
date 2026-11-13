@@ -5,6 +5,7 @@ import { compareFundPosition, readFundPosition } from './fundPositionReading';
 import { readMonthlyWorkbook } from './monthlyWorkbook';
 import { csvStatementBytes, fundPositionBytes, monthlyWorkbookBytes, sheetFromRows, tabName, workbookBytes } from './situationSyntheticFixtures';
 import type { SyntheticFundPositionReference, SyntheticFundPositionRow } from './situationSyntheticFixtures';
+import type { FundPositionDateAttestation } from './fundPositionReading';
 import { buildAccountBalances, evaluateStatement } from './statementBalances';
 
 const D = '2026-06-03';
@@ -36,7 +37,7 @@ function bdkBalances() {
   }, D, TODAY)]);
 }
 
-/** Classeur mensuel BDK ; `currency` et `unit` : champs de l'en-tête de l'onglet, `null` pour ne pas les renseigner. */
+/** Classeur mensuel BDK ; `currency` et `unit` : champs de l'en-tête de l'onglet, `null` pour ne pas les écrire (convention SODATRA). */
 function bdkWorkbook(date = D, tab = tabName('2026-06-04'), currency: string | null = 'XOF', unit: string | null = 'francs entiers') {
   return readMonthlyWorkbook({
     name: 'SYNTHETIC BDK 2026.xlsx',
@@ -140,18 +141,16 @@ test('onglet lu : le premier daté après D, jamais masqué, daté après aujour
   assert.equal(repeated.reason, 'HEADER_NOT_FOUND');
 });
 
-test('le nom de l’onglet ne prouve rien : sans les trois champs explicites, référence lue sans écart chiffré', () => {
+test('le nom de l’onglet ne prouve pas la date : sans champ valide ni confirmation, référence lue sans écart chiffré', () => {
   const balances = bdkBalances();
   const workbook = bdkWorkbook();
   assert.equal(balances.find((balance) => balance.bank === 'BDK')!.status, 'AVAILABLE');
   assert.equal(workbook.available, true);
   const cases: Array<[string, SyntheticFundPositionReference | undefined, string]> = [
-    // Onglet voisin de D sans aucun champ : forme actuelle d'une Fund Position.
-    ['aucun champ renseigné', undefined, 'DATE_NOT_COMPARABLE'],
+    // Onglet du lendemain sans aucun champ : forme actuelle d'une Fund Position, avant toute confirmation.
+    ['aucun champ, aucune confirmation', undefined, 'DATE_NOT_COMPARABLE'],
     ['« Situation au » différent de D', { ...AT_D, date: '2026-06-02' }, 'DATE_NOT_COMPARABLE'],
-    ['date à D mais devise absente', { date: D, unit: 'francs entiers' }, 'CURRENCY_NOT_COMPARABLE'],
-    ['date à D mais autre devise', { ...AT_D, currency: 'EUR' }, 'CURRENCY_NOT_COMPARABLE'],
-    ['date et devise mais unité absente', { date: D, currency: 'XOF' }, 'UNIT_NOT_COMPARABLE'],
+    ['champ « Devise » dans une autre devise', { ...AT_D, currency: 'EUR' }, 'CURRENCY_NOT_COMPARABLE'],
   ];
   for (const [label, reference, reason] of cases) {
     const fund = reading([{ name: tabName('2026-06-04'), rows: ROWS, reference }]);
@@ -167,11 +166,80 @@ test('le nom de l’onglet ne prouve rien : sans les trois champs explicites, r�
       assert.equal(comparison.delta, null, label);
     }
   }
+  // Sans aucun champ : la date n'est pas établie ; devise et unité viennent de la convention SODATRA, et c'est dit.
   const none = reading([{ name: tabName('2026-06-04'), rows: ROWS }]);
   assert.equal(none.referenceDate, null);
-  assert.equal(none.currency, null);
-  assert.equal(none.unit, null);
+  assert.equal(none.dateProof, null);
+  assert.equal(none.dateField, 'ABSENT');
   assert.equal(none.dateComparable, false);
+  assert.deepEqual([none.currency, none.currencyProvenance], ['XOF', 'CONVENTION']);
+  assert.deepEqual([none.unit, none.unitProvenance], ['UNITS', 'CONVENTION']);
+  // Champs écrits : lus dans le fichier.
+  const written = reading();
+  assert.deepEqual([written.referenceDate, written.dateProof, written.dateField], [D, 'FILE', 'VALID']);
+  assert.deepEqual([written.currency, written.currencyProvenance], ['XOF', 'FILE']);
+  assert.deepEqual([written.unit, written.unitProvenance], ['UNITS', 'FILE']);
+});
+
+test('date de la Fund Position : confirmation de l’opérateur, seulement pour l’onglet du lendemain et un champ absent', () => {
+  const tab = tabName('2026-06-04');
+  const confirm: FundPositionDateAttestation = { tabName: tab, accountingDate: D };
+  const read = (tabs: FundTab[], attestation?: FundPositionDateAttestation) => readFundPosition(fundPositionBytes(tabs), D, TODAY, attestation);
+  // Onglet du lendemain, champ absent : la confirmation est proposée ; sans elle, rien n'est comparé.
+  const plain: FundTab[] = [{ name: tab, rows: ROWS }];
+  const asked = read(plain);
+  assert.equal(asked.needsDateAttestation, true);
+  assert.equal(asked.referenceDate, null);
+  assert.equal(asked.dateComparable, false);
+  // Confirmée pour ce fichier, cet onglet et cette date : la date est établie, et sa provenance est dite.
+  const confirmed = read(plain, confirm);
+  assert.deepEqual([confirmed.referenceDate, confirmed.dateProof, confirmed.dateComparable], [D, 'OPERATOR', true]);
+  const comparisons = compareFundPosition(confirmed, D, bdkBalances(), [bdkWorkbook(D, tab, null, null)]);
+  const pick = (indicator: string) => comparisons.find((entry) => entry.bank === 'BDK' && entry.indicator === indicator)!;
+  assert.equal(pick('BANK_BALANCE_VS_STATEMENT').status, 'EQUAL');
+  assert.equal(pick('FUND_APPLIED_VS_WORKBOOK').delta, 20);
+  // Confirmation donnée pour un autre onglet ou pour une autre date comptable : sans effet.
+  for (const other of [{ tabName: tabName('2026-06-05'), accountingDate: D }, { tabName: tab, accountingDate: '2026-06-02' }]) {
+    const ignored = read(plain, other);
+    assert.deepEqual([ignored.referenceDate, ignored.dateProof, ignored.dateComparable], [null, null, false], JSON.stringify(other));
+  }
+  // Premier onglet après D daté du surlendemain : aucune confirmation proposée, et une confirmation donnée ne débloque rien.
+  const dayAfterNext = tabName('2026-06-05');
+  for (const attestation of [undefined, { tabName: dayAfterNext, accountingDate: D }]) {
+    const later = read([{ name: dayAfterNext, rows: ROWS }], attestation);
+    assert.equal(later.available, true);
+    assert.equal(later.tabName, dayAfterNext);
+    assert.equal(later.needsDateAttestation, false);
+    assert.equal(later.dateComparable, false);
+  }
+  // Onglet du lendemain masqué : l'onglet visible suivant est lu, sans confirmation possible.
+  const hiddenNext = read([{ name: tab, rows: ROWS, hidden: true }, { name: dayAfterNext, rows: ROWS }], confirm);
+  assert.equal(hiddenNext.tabName, dayAfterNext);
+  assert.equal(hiddenNext.needsDateAttestation, false);
+  assert.equal(hiddenNext.dateComparable, false);
+  // Deux onglets ramenés au lendemain : ambigu, lecture indisponible, confirmation sans objet.
+  const twins = read([{ name: `${tab} `, rows: ROWS }, { name: tab, rows: ROWS }], confirm);
+  assert.equal(twins.available, false);
+  assert.equal(twins.reason, 'TAB_AMBIGUOUS');
+  assert.equal(twins.needsDateAttestation, false);
+  // Champ « Situation au » invalide (écrit deux fois, mal formé, sans valeur) : la confirmation n'est pas
+  // proposée et ne débloque rien.
+  const invalid: SyntheticFundPositionReference[] = [
+    { date: D, texts: ['Situation au 03/06/2026'] }, { dateText: 'Situation au 03/06/2026 (provisoire)' }, { texts: ['Situation au'] },
+  ];
+  for (const reference of invalid) {
+    const blocked = read([{ name: tab, rows: ROWS, reference }], confirm);
+    assert.equal(blocked.dateField, 'INVALID', JSON.stringify(reference));
+    assert.equal(blocked.needsDateAttestation, false, JSON.stringify(reference));
+    assert.deepEqual([blocked.referenceDate, blocked.dateProof, blocked.dateComparable], [null, null, false], JSON.stringify(reference));
+  }
+  // Champ valide mais contraire à D : il bloque la comparaison, la confirmation ne le remplace pas.
+  const contrary = read([{ name: tab, rows: ROWS, reference: { date: '2026-06-02' } }], confirm);
+  assert.deepEqual([contrary.dateField, contrary.referenceDate, contrary.dateProof, contrary.dateComparable], ['VALID', '2026-06-02', 'FILE', false]);
+  assert.equal(contrary.needsDateAttestation, false);
+  // Champ valide égal à D : il suffit, même sur un onglet daté plus tard, sans aucune confirmation.
+  const explicit = read([{ name: dayAfterNext, rows: ROWS, reference: { date: D } }]);
+  assert.deepEqual([explicit.referenceDate, explicit.dateProof, explicit.dateComparable], [D, 'FILE', true]);
 });
 
 test('champ « Situation au » : libellé explicite, une date au jour près, écrit une seule fois', () => {
@@ -233,23 +301,36 @@ test('champ « Situation au » : libellé explicite, une date au jour près, éc
   assert.equal(below.dateComparable, false);
 });
 
-test('champ « Devise » : explicite, écrit une fois, seule devise de l’onglet, sinon aucune comparaison', () => {
+test('devise : champ explicite ou convention SODATRA ; mention contraire, ambiguë ou invalide, aucune comparaison', () => {
+  const tab = tabName('2026-06-04');
   const withNote = (note: string) => ROWS.map((row) => (row.label === 'BDK' ? { ...row, note } : row));
-  // Témoin : une mention équivalente (FCFA) sur la ligne d'une banque ne change rien.
-  const same = reading([{ name: tabName('2026-06-04'), rows: withNote('FCFA'), reference: AT_D }]);
-  assert.equal(same.currency, 'XOF');
-  const cases: Array<[string, FundTab]> = [
-    ['devise écrite sans le libellé du champ', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['XOF'] } }],
-    ['libellé « Devise » qui n’ouvre pas la cellule', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['Montants - Devise : XOF'] } }],
-    ['champ « Devise » écrit deux fois', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['Devise : XOF'] } }],
-    ['champ « Devise » suivi d’une mention', { name: tabName('2026-06-04'), rows: ROWS, reference: { date: D, unit: 'francs entiers', texts: ['Devise : XOF provisoire'] } }],
-    ['seconde devise écrite dans l’en-tête', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['USD'] } }],
-    ['autre devise écrite sur la ligne d’une banque', { name: tabName('2026-06-04'), rows: withNote('USD'), reference: AT_D }],
-    ['autre devise écrite par son symbole', { name: tabName('2026-06-04'), rows: ROWS, reference: { ...AT_D, texts: ['Montants en €'] } }],
+  // Champ absent et rien de contraire : convention SODATRA, y compris quand la même devise est écrite sans libellé.
+  const conventional: FundTab[] = [
+    { name: tab, rows: ROWS, reference: { date: D } },
+    { name: tab, rows: withNote('FCFA'), reference: { date: D } },
+    { name: tab, rows: ROWS, reference: { date: D, texts: ['XOF'] } },
+    { name: tab, rows: ROWS, reference: { date: D, texts: ['Montants - Devise : XOF'] } },
   ];
-  for (const [label, tab] of cases) {
-    const fund = reading([tab]);
-    assert.equal(fund.currency, null, label);
+  for (const fundTab of conventional) {
+    const fund = reading([fundTab]);
+    assert.deepEqual([fund.currency, fund.currencyProvenance], ['XOF', 'CONVENTION'], JSON.stringify(fundTab.reference));
+  }
+  // Champ valide : lu dans le fichier ; la même devise répétée ailleurs ne le contredit pas.
+  const same = reading([{ name: tab, rows: withNote('FCFA'), reference: AT_D }]);
+  assert.deepEqual([same.currency, same.currencyProvenance], ['XOF', 'FILE']);
+  const cases: Array<[string, FundTab]> = [
+    ['champ écrit deux fois', { name: tab, rows: ROWS, reference: { ...AT_D, texts: ['Devise : XOF'] } }],
+    ['champ suivi d’une mention', { name: tab, rows: ROWS, reference: { date: D, texts: ['Devise : XOF provisoire'] } }],
+    ['champ contredit par une autre devise dans l’en-tête', { name: tab, rows: ROWS, reference: { ...AT_D, texts: ['USD'] } }],
+    ['champ contredit sur la ligne d’une banque', { name: tab, rows: withNote('USD'), reference: AT_D }],
+    ['champ contredit par un symbole', { name: tab, rows: ROWS, reference: { ...AT_D, texts: ['Montants en €'] } }],
+    ['champ absent, autre devise écrite dans l’en-tête', { name: tab, rows: ROWS, reference: { date: D, texts: ['USD'] } }],
+    ['champ absent, autre devise sur la ligne d’une banque', { name: tab, rows: withNote('Contre-valeur EUR'), reference: { date: D } }],
+    ['libellé « Devise » qui n’ouvre pas la cellule, autre devise', { name: tab, rows: ROWS, reference: { date: D, texts: ['Montants - Devise : EUR'] } }],
+  ];
+  for (const [label, fundTab] of cases) {
+    const fund = reading([fundTab]);
+    assert.deepEqual([fund.currency, fund.currencyProvenance], [null, null], label);
     assert.equal(fund.dateComparable, true, label);
     const comparisons = compareFundPosition(fund, D, bdkBalances(), [bdkWorkbook()]);
     assert.ok(comparisons.length > 0, label);
@@ -279,60 +360,95 @@ test('périmètre : un solde d’une autre devise ou un classeur d’une autre d
   assert.equal(stale.reason, 'DATE_NOT_COMPARABLE');
 });
 
-test('classeur mensuel : sans devise établie et concordante, non comparable et sans écart chiffré', () => {
+test('solde seulement observé : jamais comparé à la Fund Position', () => {
+  // Relevé sans opération postérieure à D : clôture non prouvée, dernier solde observé daté de D.
+  const observedOnly = buildAccountBalances([evaluateStatement({
+    name: 'SYNTHETIC BDK ONLINE.csv',
+    attestation: { identityAttested: true },
+    bytes: csvStatementBytes({
+      periodStart: '2026-06-01', periodEnd: '2026-06-04', opening: 1000,
+      movements: [{ date: '2026-06-01', amount: -100 }, { date: '2026-06-02', amount: 200 }, { date: '2026-06-03', amount: -50 }],
+    }),
+  }, D, TODAY)]);
+  const bdk = observedOnly.find((balance) => balance.bank === 'BDK')!;
+  assert.equal(bdk.status, 'TO_REVIEW');
+  assert.equal(bdk.amount, null);
+  assert.deepEqual(bdk.observed, { amount: 1050, date: D });
+  // La Fund Position déclare exactement ce montant : la comparaison reste fermée, sans source ni écart.
+  const statement = compareFundPosition(reading(), D, observedOnly, [bdkWorkbook()])
+    .find((entry) => entry.bank === 'BDK' && entry.indicator === 'BANK_BALANCE_VS_STATEMENT')!;
+  assert.equal(statement.status, 'NOT_COMPARABLE');
+  assert.equal(statement.reason, 'SOURCE_UNAVAILABLE');
+  assert.equal(statement.source, null);
+  assert.equal(statement.delta, null);
+});
+
+test('classeur mensuel : devise ou unité contraire ou invalide, non comparable ; champ absent, convention SODATRA', () => {
   const fund = reading();
   const balances = bdkBalances();
+  const tab = tabName('2026-06-04');
   const workbookIndicators = ['BANK_BALANCE_VS_WORKBOOK', 'FUND_APPLIED_VS_WORKBOOK', 'NON_VALIDATED_VS_WORKBOOK'];
-  // Témoin : le même classeur, en XOF comme la Fund Position, donne un écart chiffré.
-  const witness = compareFundPosition(fund, D, balances, [bdkWorkbook()]);
-  assert.equal(witness.find((entry) => entry.bank === 'BDK' && entry.indicator === 'FUND_APPLIED_VS_WORKBOOK')!.delta, 20);
-  const cases: Array<[string, string | null]> = [
-    ['classeur dans une autre devise', 'EUR'],
-    ['classeur sans devise établie', null],
+  // Témoins : champs écrits dans le classeur, puis classeur sans aucun champ (convention SODATRA) : écart chiffré.
+  for (const [currency, unit, provenance] of [['XOF', 'francs entiers', 'FILE'], [null, null, 'CONVENTION']] as const) {
+    const workbook = bdkWorkbook(D, tab, currency, unit);
+    assert.deepEqual([workbook.currency, workbook.currencyProvenance, workbook.unit, workbook.unitProvenance], ['XOF', provenance, 'UNITS', provenance]);
+    const witness = compareFundPosition(fund, D, balances, [workbook]);
+    assert.equal(witness.find((entry) => entry.bank === 'BDK' && entry.indicator === 'FUND_APPLIED_VS_WORKBOOK')!.delta, 20);
+  }
+  const blocked: Array<[string, string | null, string | null, string]> = [
+    ['classeur dans une autre devise', 'EUR', 'francs entiers', 'CURRENCY_NOT_COMPARABLE'],
+    ['classeur au champ « Devise » invalide', 'XOF / EUR', 'francs entiers', 'CURRENCY_NOT_COMPARABLE'],
+    ['classeur en milliers', 'XOF', 'milliers', 'UNIT_NOT_COMPARABLE'],
+    ['classeur au champ « Unité » invalide', 'XOF', 'francs', 'UNIT_NOT_COMPARABLE'],
   ];
-  for (const [label, currency] of cases) {
-    const workbook = bdkWorkbook(D, tabName('2026-06-04'), currency);
+  for (const [label, currency, unit, reason] of blocked) {
+    const workbook = bdkWorkbook(D, tab, currency, unit);
     assert.equal(workbook.available, true, label);
     assert.equal(workbook.balanceDate, D, label);
-    assert.equal(workbook.currency, currency, label);
     const comparisons = compareFundPosition(fund, D, balances, [workbook]).filter((entry) => entry.bank === 'BDK');
     for (const indicator of workbookIndicators) {
       const comparison = comparisons.find((entry) => entry.indicator === indicator)!;
       assert.equal(comparison.status, 'NOT_COMPARABLE', `${label} ${indicator}`);
-      assert.equal(comparison.reason, 'CURRENCY_NOT_COMPARABLE', `${label} ${indicator}`);
+      assert.equal(comparison.reason, reason, `${label} ${indicator}`);
       assert.equal(comparison.delta, null, `${label} ${indicator}`);
     }
-    // La comparaison au relevé, dont la devise est établie, reste chiffrée : seul le classeur est écarté.
+    // La comparaison au relevé reste chiffrée : seul le classeur est écarté.
     assert.equal(comparisons.find((entry) => entry.indicator === 'BANK_BALANCE_VS_STATEMENT')!.status, 'EQUAL', label);
   }
 });
 
-test('champ « Unité » : absente, ambiguë ou différente, elle bloque tout écart chiffré', () => {
+test('unité : champ explicite ou convention SODATRA ; indication d’échelle ou mention contraire, aucun écart chiffré', () => {
   const balances = bdkBalances();
   const tab = tabName('2026-06-04');
-  const workbookIndicators = ['BANK_BALANCE_VS_WORKBOOK', 'FUND_APPLIED_VS_WORKBOOK', 'NON_VALIDATED_VS_WORKBOOK'];
   const pick = (comparisons: ReturnType<typeof compareFundPosition>, indicator: string) => comparisons.find((entry) => entry.bank === 'BDK' && entry.indicator === indicator)!;
-  // Témoin : tout en francs entiers, le champ pouvant être écrit au-delà de la colonne P.
+  // Champ absent et rien de contraire : convention SODATRA, y compris quand « francs entiers » est écrit sans libellé.
+  for (const reference of [{ date: D, currency: 'XOF' }, { date: D, currency: 'XOF', texts: ['en francs entiers'] }]) {
+    const byConvention = reading([{ name: tab, rows: ROWS, reference }]);
+    assert.deepEqual([byConvention.unit, byConvention.unitProvenance], ['UNITS', 'CONVENTION'], JSON.stringify(reference));
+    const comparisons = compareFundPosition(byConvention, D, balances, [bdkWorkbook(D, tab, 'XOF', null)]);
+    assert.equal(pick(comparisons, 'BANK_BALANCE_VS_STATEMENT').status, 'EQUAL');
+    assert.equal(pick(comparisons, 'FUND_APPLIED_VS_WORKBOOK').delta, 20);
+  }
+  // Champ valide, lu dans le fichier, même écrit au-delà de la colonne P.
   const far = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, texts: ['', '', '', '', '', '', ''] } }]);
-  assert.equal(far.unit, 'UNITS');
-  const witness = compareFundPosition(far, D, balances, [bdkWorkbook()]);
-  assert.equal(pick(witness, 'BANK_BALANCE_VS_STATEMENT').status, 'EQUAL');
-  assert.equal(pick(witness, 'FUND_APPLIED_VS_WORKBOOK').delta, 20);
-  // Fund Position : unité absente, mal formée, écrite deux fois ou contredite ailleurs dans l'onglet.
+  assert.deepEqual([far.unit, far.unitProvenance], ['UNITS', 'FILE']);
+  // Champ invalide ou contredit, ou indication d'échelle écrite dans l'onglet : aucune unité, aucune convention.
   const noUnit: Array<[string, SyntheticFundPositionReference]> = [
-    ['unité absente', { date: D, currency: 'XOF' }],
-    ['unité sans le libellé du champ', { date: D, currency: 'XOF', texts: ['en francs entiers'] }],
-    ['unité mal formée', { date: D, currency: 'XOF', unit: 'francs' }],
-    ['libellé « Unité » qui n’ouvre pas la cellule', { date: D, currency: 'XOF', texts: ['Note - Unité : francs entiers'] }],
+    ['champ mal formé', { date: D, currency: 'XOF', unit: 'francs' }],
     ['champ écrit deux fois', { ...AT_D, texts: ['Unité : francs entiers'] }],
-    ['unité contredite par une autre mention', { ...AT_D, texts: ['(en milliers)'] }],
+    ['champ contredit par une autre mention', { ...AT_D, texts: ['(en milliers)'] }],
+    ['champ absent, « en milliers » écrit dans l’onglet', { date: D, currency: 'XOF', texts: ['Montants en milliers'] }],
+    ['champ absent, « K FCFA » dans un en-tête de montants', { date: D, texts: ['Montants K FCFA'] }],
+    ['champ absent, « (000) » dans un en-tête de montants', { date: D, currency: 'XOF', texts: ['Montants (000)'] }],
+    ['libellé « Unité » qui n’ouvre pas la cellule, autre unité', { date: D, currency: 'XOF', texts: ['Note - Unité : milliers'] }],
   ];
   for (const [label, reference] of noUnit) {
     const fund = reading([{ name: tab, rows: ROWS, reference }]);
-    assert.equal(fund.unit, null, label);
+    assert.deepEqual([fund.unit, fund.unitProvenance], [null, null], label);
+    assert.equal(fund.currency, 'XOF', label);
     assert.equal(fund.dateComparable, true, label);
-    // Y compris face à un classeur qui ne renseigne pas non plus son unité : deux absences ne font pas un accord.
-    for (const workbook of [bdkWorkbook(), bdkWorkbook(D, tab, 'XOF', null)]) {
+    // Y compris face à un classeur dont l'unité n'est pas établie non plus : deux absences ne font pas un accord.
+    for (const workbook of [bdkWorkbook(), bdkWorkbook(D, tab, 'XOF', 'francs')]) {
       const comparisons = compareFundPosition(fund, D, balances, [workbook]);
       assert.ok(comparisons.length > 0, label);
       for (const comparison of comparisons) {
@@ -342,27 +458,19 @@ test('champ « Unité » : absente, ambiguë ou différente, elle bloque tout é
       }
     }
   }
-  // Classeur sans unité, ou dans une autre unité que la Fund Position : ses trois comparaisons sont bloquées.
-  for (const unit of [null, 'milliers']) {
-    const workbook = bdkWorkbook(D, tab, 'XOF', unit);
-    assert.equal(workbook.available, true, String(unit));
-    const comparisons = compareFundPosition(reading(), D, balances, [workbook]);
-    for (const indicator of workbookIndicators) {
-      assert.equal(pick(comparisons, indicator).status, 'NOT_COMPARABLE', `${unit} ${indicator}`);
-      assert.equal(pick(comparisons, indicator).reason, 'UNIT_NOT_COMPARABLE', `${unit} ${indicator}`);
-      assert.equal(pick(comparisons, indicator).delta, null, `${unit} ${indicator}`);
-    }
-    assert.equal(pick(comparisons, 'BANK_BALANCE_VS_STATEMENT').status, 'EQUAL', String(unit));
-  }
-  // Fund Position en milliers : un relevé, en francs entiers, n'est pas comparé ; un classeur en milliers l'est.
+  // Fund Position en milliers (champ valide) : un relevé, en francs entiers, n'est pas comparé ; un classeur en
+  // milliers l'est, sans conversion ; un classeur en francs entiers par convention ne l'est pas.
   const thousands = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, unit: 'milliers' } }]);
-  assert.equal(thousands.unit, 'THOUSANDS');
+  assert.deepEqual([thousands.unit, thousands.unitProvenance], ['THOUSANDS', 'FILE']);
   const mixed = compareFundPosition(thousands, D, balances, [bdkWorkbook(D, tab, 'XOF', 'milliers')]);
   assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').status, 'NOT_COMPARABLE');
   assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').reason, 'UNIT_NOT_COMPARABLE');
   assert.equal(pick(mixed, 'BANK_BALANCE_VS_STATEMENT').delta, null);
   assert.equal(pick(mixed, 'FUND_APPLIED_VS_WORKBOOK').status, 'DIFFERENT');
   assert.equal(pick(mixed, 'BANK_BALANCE_VS_WORKBOOK').status, 'EQUAL');
+  const conventionalWorkbook = compareFundPosition(thousands, D, balances, [bdkWorkbook(D, tab, null, null)]);
+  assert.equal(pick(conventionalWorkbook, 'FUND_APPLIED_VS_WORKBOOK').reason, 'UNIT_NOT_COMPARABLE');
+  assert.equal(pick(conventionalWorkbook, 'FUND_APPLIED_VS_WORKBOOK').delta, null);
 });
 
 test('écarts calculés seulement à date, périmètre et devise comparables', () => {

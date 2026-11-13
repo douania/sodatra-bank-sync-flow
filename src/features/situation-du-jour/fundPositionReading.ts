@@ -6,12 +6,15 @@
 import {
   SITUATION_BANKS,
   SITUATION_EXPECTED_CURRENCY,
+  SODATRA_CONVENTION,
   amountsEqual,
   cellAddress,
   cellAt,
   cellNumber,
   cellText,
+  daysBetween,
   detectBankFromStrictLabel,
+  establishWithConvention,
   hiddenSheetNames,
   normalizeLabel,
   readExplicitFields,
@@ -19,7 +22,7 @@ import {
   sheetNameToIso,
   usefulBounds,
 } from './situationCore';
-import type { AmountUnit, Sheet, SituationBank } from './situationCore';
+import type { AmountUnit, FieldProvenance, FieldState, Sheet, SituationBank } from './situationCore';
 import type { AccountBalance } from './statementBalances';
 import type { WorkbookEncours } from './monthlyWorkbook';
 
@@ -76,16 +79,41 @@ export interface FundPositionReading {
   reason: FundPositionReason | null;
   tabName: string | null;
   tabDate: string | null;
-  /** Champ explicite « Situation au » de l'onglet (jamais le nom de l'onglet) ; `null` si absent, répété ou mal formé. */
+  /**
+   * Date de situation ÉTABLIE : le champ explicite « Situation au » quand il est valide ; sinon, quand ce
+   * champ est absent, la date comptable CONFIRMÉE par l'opérateur pour l'onglet daté du lendemain. Jamais
+   * déduite du seul nom de l'onglet. `null` tant que rien ne l'établit.
+   */
   referenceDate: string | null;
-  /** Champ explicite « Devise » de l'onglet ; `null` si absent, répété ou contredit par une autre devise écrite. */
+  /** D'où vient la date établie : le fichier, ou la confirmation de l'opérateur. */
+  dateProof: 'FILE' | 'OPERATOR' | null;
+  /** État du champ « Situation au » dans l'onglet (absent, valide, invalide). */
+  dateField: FieldState;
+  /**
+   * Vrai quand la confirmation de l'opérateur peut être demandée : champ « Situation au » ABSENT et onglet
+   * lu daté exactement du lendemain calendaire de la date comptable.
+   */
+  needsDateAttestation: boolean;
+  /** Devise ÉTABLIE : champ explicite « Devise », ou convention SODATRA si le champ est absent et non contredit. */
   currency: string | null;
-  /** Champ explicite « Unité » de l'onglet ; `null` si absent, répété ou contredit par une autre unité écrite. */
+  currencyProvenance: FieldProvenance | null;
+  /** Unité ÉTABLIE : champ explicite « Unité », ou convention SODATRA si le champ est absent et non contredit. */
   unit: AmountUnit | null;
-  /** Vrai seulement si le document établit lui-même une date de référence égale à D. */
+  unitProvenance: FieldProvenance | null;
+  /** Vrai seulement si la date de situation établie est égale à D. */
   dateComparable: boolean;
   rows: FundPositionBankRow[];
   issues: FundPositionIssue[];
+}
+
+/**
+ * Confirmation de l'opérateur, tenue en mémoire pour UN fichier : l'onglet nommé présente la situation à
+ * cette date comptable. Elle ne vaut ni pour un autre onglet ni pour une autre date, et ne porte que sur
+ * la date de la Fund Position.
+ */
+export interface FundPositionDateAttestation {
+  tabName: string;
+  accountingDate: string;
 }
 
 export type ComparisonStatus = 'EQUAL' | 'DIFFERENT' | 'NOT_COMPARABLE';
@@ -129,7 +157,8 @@ const BLOCK_END = /DEPOSIT FOR THE DAY|PAYMENT FOR THE DAY|TOTAL FUND AVAILABLE/
 
 function unavailable(reason: FundPositionReason): FundPositionReading {
   return {
-    available: false, reason, tabName: null, tabDate: null, referenceDate: null, currency: null, unit: null, dateComparable: false,
+    available: false, reason, tabName: null, tabDate: null, referenceDate: null, dateProof: null, dateField: 'ABSENT',
+    needsDateAttestation: false, currency: null, currencyProvenance: null, unit: null, unitProvenance: null, dateComparable: false,
     rows: [], issues: [],
   };
 }
@@ -173,13 +202,24 @@ function readCell(sheet: Sheet, row: number, column: number, bank: SituationBank
 }
 
 /**
- * Lit le premier onglet daté strictement après la date comptable D (au plus
- * tard `today`) comme RÉFÉRENCE. Le nom de l'onglet ne prouve ni la date de la
- * situation, ni la devise, ni l'unité : la comparaison n'est ouverte que si
- * l'onglet renseigne ses trois champs explicites — « Situation au » égal à D,
- * « Devise » et « Unité » —, cherchés dans tout l'onglet.
+ * Lit le premier onglet visible daté strictement après la date comptable D
+ * (au plus tard `today`) comme RÉFÉRENCE. Le nom de l'onglet ne prouve pas la
+ * date de la situation. Elle est établie :
+ * - par le champ explicite « Situation au », s'il est valide (il doit alors
+ *   être égal à D pour ouvrir la comparaison) ;
+ * - sinon, quand ce champ est ABSENT et que l'onglet lu est daté exactement
+ *   du lendemain calendaire de D, par la confirmation de l'opérateur pour ce
+ *   fichier, cet onglet et cette date.
+ * Un champ invalide ou contraire bloque la comparaison : aucune confirmation
+ * n'est alors proposée. Devise et unité : champ explicite, sinon convention
+ * SODATRA quand rien ne la contredit dans l'onglet.
  */
-export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, today: string): FundPositionReading {
+export function readFundPosition(
+  bytes: ArrayBuffer,
+  accountingDate: string,
+  today: string,
+  attestation?: FundPositionDateAttestation,
+): FundPositionReading {
   let workbook;
   try {
     workbook = readWorkbook(bytes.slice(0));
@@ -204,8 +244,17 @@ export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, tod
     return { ...unavailable('HEADER_NOT_FOUND'), tabName: tab.name, tabDate: tab.date };
   }
   const fieldBounds = usefulBounds(sheet, REFERENCE_SCAN_ROWS, REFERENCE_SCAN_COLUMNS);
-  const reference = readExplicitFields(sheet, fieldBounds, fieldBounds.lastRow);
-  const dateComparable = reference.situationDate !== null && reference.situationDate === accountingDate;
+  const fields = readExplicitFields(sheet, fieldBounds, fieldBounds.lastRow);
+  const currency = establishWithConvention(fields.currency, fields.writtenCurrencies, SODATRA_CONVENTION.currency);
+  const unit = establishWithConvention(fields.unit, fields.writtenUnits, SODATRA_CONVENTION.unit);
+  // Date de situation : le champ explicite s'il est valide ; s'il est ABSENT, la confirmation de l'opérateur,
+  // proposée pour le seul onglet daté du lendemain calendaire de D. Un champ invalide ne se confirme pas.
+  const needsDateAttestation = fields.situationDate.state === 'ABSENT' && daysBetween(accountingDate, tab.date as string) === 1;
+  const confirmed = needsDateAttestation && attestation !== undefined
+    && attestation.tabName === tab.name && attestation.accountingDate === accountingDate;
+  const referenceDate = fields.situationDate.state === 'VALID' ? fields.situationDate.value : confirmed ? accountingDate : null;
+  const dateProof = fields.situationDate.state === 'VALID' ? ('FILE' as const) : confirmed ? ('OPERATOR' as const) : null;
+  const dateComparable = referenceDate !== null && referenceDate === accountingDate;
   const positionColumn = header.columns.nonValidatedDeposit + 1;
   const issues: FundPositionIssue[] = [];
   const seen = new Map<SituationBank, number[]>();
@@ -252,8 +301,9 @@ export function readFundPosition(bytes: ArrayBuffer, accountingDate: string, tod
     rows.push({ bank, rowNumber: row, declared, recalculated: { netBalance: net, position } });
   }
   return {
-    available: true, reason: null, tabName: tab.name, tabDate: tab.date, referenceDate: reference.situationDate,
-    currency: reference.currency, unit: reference.unit, dateComparable, rows, issues,
+    available: true, reason: null, tabName: tab.name, tabDate: tab.date, referenceDate, dateProof,
+    dateField: fields.situationDate.state, needsDateAttestation, currency: currency.value, currencyProvenance: currency.provenance,
+    unit: unit.value, unitProvenance: unit.provenance, dateComparable, rows, issues,
   };
 }
 

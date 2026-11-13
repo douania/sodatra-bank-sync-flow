@@ -377,25 +377,56 @@ function singleUnit(text: string): AmountUnit | null {
     : null;
 }
 
-export interface ExplicitFields {
-  /** Champ « Situation au » (ou « Date de situation ») : une date au jour près. */
-  situationDate: string | null;
-  /** Champ « Devise ». */
-  currency: string | null;
-  /** Champ « Unité » (ou « Unité des montants »). */
-  unit: AmountUnit | null;
+/** Indications d'échelle écrites hors de tout mot d'unité : « K FCFA », « (000) ». */
+const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
+  [/(?<![A-Z0-9])K\s?(?:F\s?CFA|FCFA|CFA|XOF)(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*0{3}\s*\)/, 'THOUSANDS'],
+];
+
+/** Unités ÉCRITES dans un texte : mots d'unité (« milliers », « francs entiers ») et indications d'échelle. */
+export function unitsInText(text: string): AmountUnit[] {
+  const found = new Set<AmountUnit>();
+  for (const token of tokenize(text)) if (UNIT_CLASS_TOKENS[token] !== undefined) found.add(UNIT_CLASS_TOKENS[token]);
+  const plain = plainUpper(text);
+  for (const [pattern, unit] of SCALE_PATTERNS) if (pattern.test(plain)) found.add(unit);
+  return Array.from(found);
 }
 
 /**
- * Champs EXPLICITES d'un onglet, renseignés par l'équipe : « Situation au »,
- * « Devise », « Unité ». Preuve stricte : le libellé ouvre la cellule, la
- * valeur le suit dans la même cellule ou occupe la cellule immédiatement à
- * droite, elle ne porte rien d'autre, et le champ n'est écrit qu'UNE fois
- * dans les lignes 1 à `fieldLastRow`. Refus large, sur tout l'onglet : une
- * autre devise ou une autre unité écrite où que ce soit retire la devise ou
- * l'unité. Les autres dates de l'onglet (échéances, validités) ne comptent
- * pas : seule la cellule libellée dit la date de situation. Un champ absent,
- * répété, mal formé ou contredit rend `null`.
+ * État d'un champ explicite dans un onglet. `ABSENT` : le libellé n'y est pas écrit. `VALID` : écrit une
+ * fois, bien formé, non contredit. `INVALID` : écrit plusieurs fois, ou valeur mal formée. `CONTRADICTED` :
+ * bien formé, mais une autre devise ou une autre unité est écrite ailleurs dans l'onglet.
+ */
+export type FieldState = 'ABSENT' | 'VALID' | 'INVALID' | 'CONTRADICTED';
+
+export interface ExplicitField<T> {
+  state: FieldState;
+  /** Valeur du champ, seulement quand il est `VALID`. */
+  value: T | null;
+}
+
+export interface ExplicitFields {
+  /** Champ « Situation au » (ou « Date de situation ») : une date au jour près. */
+  situationDate: ExplicitField<string>;
+  /** Champ « Devise ». */
+  currency: ExplicitField<string>;
+  /** Champ « Unité » (ou « Unité des montants »). */
+  unit: ExplicitField<AmountUnit>;
+  /** Devises écrites n'importe où dans l'onglet, champ compris. */
+  writtenCurrencies: string[];
+  /** Unités et indications d'échelle écrites n'importe où dans l'onglet, champ compris. */
+  writtenUnits: AmountUnit[];
+}
+
+/**
+ * Champs EXPLICITES d'un onglet : « Situation au », « Devise », « Unité ».
+ * Lecture stricte : le libellé ouvre la cellule, la valeur le suit dans la
+ * même cellule ou occupe la cellule immédiatement à droite, elle ne porte
+ * rien d'autre, et le champ n'est écrit qu'UNE fois dans les lignes 1 à
+ * `fieldLastRow`. Les états sont distingués : un champ ABSENT n'est pas un
+ * champ INVALIDE (répété, mal formé) ni un champ CONTREDIT (une autre devise
+ * ou une autre unité écrite n'importe où dans l'onglet). Les autres dates de
+ * l'onglet ne comptent pas : seule la cellule libellée dit la date de situation.
  */
 export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastRow: number): ExplicitFields {
   const found: Record<ExplicitFieldKind, Array<string | null>> = { situationDate: [], currency: [], unit: [] };
@@ -406,7 +437,7 @@ export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastR
       const text = cellText(cellAt(sheet, row, column));
       if (!text) continue;
       for (const currency of currenciesInText(text)) currencies.add(currency);
-      for (const token of tokenize(text)) if (UNIT_CLASS_TOKENS[token] !== undefined) units.add(UNIT_CLASS_TOKENS[token]);
+      for (const unit of unitsInText(text)) units.add(unit);
       if (row > fieldLastRow) continue;
       const plain = plainUpper(text);
       for (const kind of Object.keys(EXPLICIT_FIELD_LABELS) as ExplicitFieldKind[]) {
@@ -420,14 +451,49 @@ export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastR
       }
     }
   }
-  const only = (values: Array<string | null>) => (values.length === 1 ? values[0] : null);
-  const currency = only(found.currency);
-  const unit = only(found.unit) as AmountUnit | null;
-  return {
-    situationDate: only(found.situationDate),
-    currency: currency !== null && currencies.size === 1 ? currency : null,
-    unit: unit !== null && units.size === 1 ? unit : null,
+  const field = <T extends string>(values: Array<string | null>, written: Set<string> | null): ExplicitField<T> => {
+    if (values.length === 0) return { state: 'ABSENT', value: null };
+    if (values.length !== 1 || values[0] === null) return { state: 'INVALID', value: null };
+    // Une autre devise ou une autre unité écrite n'importe où dans l'onglet contredit le champ.
+    if (written !== null && Array.from(written).some((mention) => mention !== values[0])) return { state: 'CONTRADICTED', value: null };
+    return { state: 'VALID', value: values[0] as T };
   };
+  return {
+    situationDate: field<string>(found.situationDate, null),
+    currency: field<string>(found.currency, currencies),
+    unit: field<AmountUnit>(found.unit, units),
+    writtenCurrencies: Array.from(currencies),
+    writtenUnits: Array.from(units),
+  };
+}
+
+/** D'où vient une devise ou une unité établie : lue dans le fichier, ou convention SODATRA appliquée faute de champ. */
+export type FieldProvenance = 'FILE' | 'CONVENTION';
+
+export const FIELD_PROVENANCE_LABELS: Record<FieldProvenance, string> = {
+  FILE: 'lu dans le fichier',
+  CONVENTION: 'convention SODATRA',
+};
+
+/** Convention SODATRA pour les formats reconnus de la Fund Position et des classeurs mensuels. */
+export const SODATRA_CONVENTION: { currency: string; unit: AmountUnit } = { currency: SITUATION_EXPECTED_CURRENCY, unit: 'UNITS' };
+
+export interface EstablishedValue<T> {
+  value: T | null;
+  provenance: FieldProvenance | null;
+}
+
+/**
+ * Devise ou unité ÉTABLIE pour un onglet. Champ valide : sa valeur, lue dans
+ * le fichier. Champ ABSENT : la valeur de convention, à condition que rien
+ * d'écrit dans l'onglet ne la contredise (autre devise, « en milliers »,
+ * « K FCFA », « (000) »). Champ invalide ou contredit, ou mention contraire :
+ * rien n'est établi, et la convention ne s'applique pas.
+ */
+export function establishWithConvention<T extends string>(field: ExplicitField<T>, written: T[], convention: T): EstablishedValue<T> {
+  if (field.state === 'VALID') return { value: field.value, provenance: 'FILE' };
+  if (field.state === 'ABSENT' && written.every((mention) => mention === convention)) return { value: convention, provenance: 'CONVENTION' };
+  return { value: null, provenance: null };
 }
 
 // ---------------------------------------------------------------------------
