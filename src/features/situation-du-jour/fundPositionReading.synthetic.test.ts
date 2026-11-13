@@ -458,6 +458,25 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
       }
     }
   }
+  // Variantes d'écriture de l'échelle, champ absent : toutes retirent la convention « francs entiers ».
+  const scales = [
+    'Montants en milliers', 'K FCFA', 'KFCFA', 'kXOF', 'K F CFA', 'KCFA', 'KF', 'K F', 'K FRS', 'Montants (K)', 'en K',
+    '(000)', '(000 FCFA)', '000 FCFA', '(en 000)', "'000", "000's", 'x1000', 'x 1 000', '×1000', '/1000', 'en mille', 'mille FCFA',
+    'M FCFA', 'MFCFA', 'Mio', 'en millions', 'MXOF', 'Mds FCFA', 'milliards', 'Thousands',
+  ];
+  for (const scale of scales) {
+    const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [scale] } }]);
+    assert.deepEqual([fund.unit, fund.unitProvenance], [null, null], scale);
+    for (const comparison of compareFundPosition(fund, D, balances, [bdkWorkbook()])) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE', scale);
+      assert.equal(comparison.delta, null, scale);
+    }
+  }
+  // Témoins : un montant écrit avec ses milliers, ou un mot voisin, n'est pas une indication d'échelle.
+  for (const harmless of ['Plafond 1 000 FCFA', 'Total 25 000 XOF', 'Référence 000123', 'KFW', 'Skf', 'MILLENIUM', 'Taux x 1,05']) {
+    const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [harmless] } }]);
+    assert.deepEqual([fund.unit, fund.unitProvenance], ['UNITS', 'CONVENTION'], harmless);
+  }
   // Fund Position en milliers (champ valide) : un relevé, en francs entiers, n'est pas comparé ; un classeur en
   // milliers l'est, sans conversion ; un classeur en francs entiers par convention ne l'est pas.
   const thousands = reading([{ name: tab, rows: ROWS, reference: { ...AT_D, unit: 'milliers' } }]);

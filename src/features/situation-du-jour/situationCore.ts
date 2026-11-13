@@ -329,17 +329,20 @@ export function usefulBounds(sheet: Sheet, maxRows = 2_000, maxColumns = 26): Sh
 // ---------------------------------------------------------------------------
 
 /** Unité dans laquelle un document exprime ses montants. */
-export type AmountUnit = 'UNITS' | 'THOUSANDS' | 'MILLIONS';
+export type AmountUnit = 'UNITS' | 'THOUSANDS' | 'MILLIONS' | 'BILLIONS';
 
 export const AMOUNT_UNIT_LABELS: Record<AmountUnit, string> = {
   UNITS: 'francs entiers',
   THOUSANDS: 'milliers',
   MILLIONS: 'millions',
+  BILLIONS: 'milliards',
 };
 
 const UNIT_CLASS_TOKENS: Record<string, AmountUnit> = {
-  ENTIER: 'UNITS', ENTIERS: 'UNITS', MILLIER: 'THOUSANDS', MILLIERS: 'THOUSANDS', THOUSAND: 'THOUSANDS', THOUSANDS: 'THOUSANDS',
-  KXOF: 'THOUSANDS', KFCFA: 'THOUSANDS', MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS',
+  ENTIER: 'UNITS', ENTIERS: 'UNITS',
+  MILLIER: 'THOUSANDS', MILLIERS: 'THOUSANDS', MILLE: 'THOUSANDS', THOUSAND: 'THOUSANDS', THOUSANDS: 'THOUSANDS',
+  MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS', MFCFA: 'MILLIONS', MCFA: 'MILLIONS', MIO: 'MILLIONS',
+  MILLIARD: 'BILLIONS', MILLIARDS: 'BILLIONS', MDS: 'BILLIONS', BILLION: 'BILLIONS', BILLIONS: 'BILLIONS',
 };
 /** Mots admis autour de l'unité dans la valeur du champ (« francs entiers », « milliers de francs »). */
 const UNIT_NEUTRAL_TOKENS: ReadonlySet<string> = new Set(['FRANC', 'FRANCS', 'EN', 'DE']);
@@ -377,10 +380,20 @@ function singleUnit(text: string): AmountUnit | null {
     : null;
 }
 
-/** Indications d'échelle écrites hors de tout mot d'unité : « K FCFA », « (000) ». */
+/**
+ * Indications d'échelle écrites hors de tout mot d'unité, sur le texte sans accents et en majuscules :
+ * « K FCFA », « K F », « (K) », « en K », « (000) », « (en 000) », « 000 FCFA », « '000 », « x1000 »,
+ * « /1000 », « M FCFA ». Lecture volontairement large : elle ne sert qu'à REFUSER. Un montant écrit en
+ * toutes lettres avec ses milliers (« 1 000 FCFA ») n'est pas une indication d'échelle.
+ */
 const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
-  [/(?<![A-Z0-9])K\s?(?:F\s?CFA|FCFA|CFA|XOF)(?![A-Z0-9])/, 'THOUSANDS'],
-  [/\(\s*0{3}\s*\)/, 'THOUSANDS'],
+  [/(?<![A-Z0-9])K\s?(?:F\s?CFA|FCFA|CFA|XOF|FRS|F)(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*K\s*\)|(?<![A-Z0-9])EN\s+K(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*(?:EN\s+)?'?0{3}(?![0-9])[^)]{0,12}\)/, 'THOUSANDS'],
+  [/(?<![0-9][\s.,']?)'?0{3}(?:'?S)?(?![0-9])\s*(?:F\s?CFA|FCFA|CFA|XOF|FRS)(?![A-Z0-9])/, 'THOUSANDS'],
+  [/(?<![0-9A-Z])'0{3}(?![0-9])|(?<![0-9][\s.,']?)0{3}'S(?![A-Z0-9])/, 'THOUSANDS'],
+  [/(?:[×/]|(?<![A-Z0-9])X)\s?1[\s.]?000(?![0-9])/, 'THOUSANDS'],
+  [/(?<![A-Z0-9])M\s?(?:F\s?CFA|FCFA|CFA|XOF)(?![A-Z0-9])/, 'MILLIONS'],
 ];
 
 /** Unités ÉCRITES dans un texte : mots d'unité (« milliers », « francs entiers ») et indications d'échelle. */

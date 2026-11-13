@@ -91,7 +91,7 @@ test('devise et unité du classeur : champ explicite ou convention SODATRA, jama
     assert.equal(withCells({ F1: title }).currency, null, title);
   }
   // Indication d'échelle dans un en-tête de montants : l'unité n'est pas établie.
-  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF']) {
+  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF', 'AMOUNT KF', 'AMOUNT (K)', 'AMOUNT x1000', 'AMOUNT M FCFA']) {
     assert.deepEqual([withCells({ F1: title }).unit, withCells({ F1: title }).unitProvenance], [null, null], title);
   }
   // Un champ n'est lu que dans l'en-tête. Dans une ligne, même sur la ligne qui suit l'ouverture, ce n'est qu'une
