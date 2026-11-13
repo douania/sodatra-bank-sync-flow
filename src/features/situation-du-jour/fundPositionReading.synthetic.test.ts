@@ -403,6 +403,9 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     'Edition des soldes au 02/06/2026', 'Valeur des soldes au 02/06/2026', 'Echéance 30/06/2026 - situation 02/06/2026',
     'Imprimé le 04/06/2026 - 02/06/2026', 'Soldes au 2 juin – imprimé le 4 juin', 'Imprimé à Dakar le 02/06/2026', '02/06/2026 (date d’impression)',
     'Valable du 01/06/2026 au 02/06/2026',
+    // Un libellé qui parle de soldes ou de position n'exempte jamais sa date, même si un mot d'impression ou de valeur la précède.
+    'Soldes en valeur au 02/06/2026', 'Position en date de valeur du 02/06/2026', 'Situation valeur 02/06/2026', 'Soldes (édition) 02/06/2026',
+    'Soldes après édition du 02/06/2026', 'Valeur 02/06/2026', 'Echéance 30/06/2026 - valeur 02/06/2026', 'Etat imprimé 02/06/2026',
   ]) {
     assertBlocked([{ name: tab, rows: ROWS, reference: { dateText } }], dateText, 'J1');
   }
@@ -413,30 +416,49 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
   assertBlocked([{ name: tab, rows: ROWS, reference: { texts: ['Imprimé', 'Soldes au 02/06/2026'] } }], 'mot de gauche, libellé propre', 'N1');
   assertBlocked([{ name: tab, rows: ROWS, reference: { texts: ['Imprimé', 'le 04/06/2026 - 02/06/2026'] } }], 'mot de gauche, seconde date sans libellé', 'N1');
   assertBlocked([{ name: tab, rows: ROWS, reference: { texts: ['Imprimé le 01/06/2026', { date: '2026-06-02' }] } }], 'cellule date après une date imprimée', 'N1');
+  assertBlocked([{ name: tab, rows: ROWS, reference: { texts: ['Soldes (imprimé)', { date: '2026-06-02' }] } }], 'gauche : soldes et impression', 'N1');
+  assertBlocked([{ name: tab, rows: ROWS, reference: { texts: ['Valeur', { date: '2026-06-02' }] } }], 'gauche : valeur seule', 'N1');
+  assertBlocked([{ name: tab, rows: withNote('Solde en valeur au 02/06/2026') }], 'ligne de banque : solde en valeur', 'H3');
   // Une date d'impression seule reste admise, y compris celle du nom de l'onglet et sous toutes ses écritures.
   for (const texts of [
     ['Imprimé le 04/06/2026'], ['Date d’impression : 04/06/2026'], ['Printed on Thursday 4 June 2026'], ['Edité le jeudi 04/06/2026 à 18h05'],
     ['Print date: 2026-06-04'], ['Imprimé le 04.06'], ['Imprimé le 04 06 2026'], ['Imprimé', 'le 04/06/2026'], ['Imprimé le', '04/06/2026'],
-    ['Imprimé le 04/06/2026 – édité le 05/06/2026'], ['Imprimé pour le 04/06/2026'], ['Echéance 30/06/2026 - valeur 02/06/2026'], ['Taux 12.05'], ['Ratio 2.06'],
+    ['Imprimé le 04/06/2026 – édité le 05/06/2026'], ['Imprimé pour le 04/06/2026'],
+    ['Soldes au 03/06/2026 – imprimé le 04/06/2026'], ['Soldes au 03/06/2026 – imprimé le', { date: '2026-06-04' }], ['Echéance 30/06/2026 - date de valeur 02/06/2026'], ['Value date', { date: '2026-06-02' }], ['Taux 12.05'], ['Ratio 2.06'],
+    // Textes ordinaires qui ne sont pas des dates.
+    ['Commission 12.05 %'], ['Compte 01-02'], ['Agence 01-12 Plateau'], ['Tél 33 12 05 2026'], ['Réf. 12-05'],
   ] as CellInput[][]) {
     assertStillAsked([{ name: tab, rows: ROWS, reference: { texts } }], JSON.stringify(texts));
   }
-  // Écritures de date que l'écran ne sait pas lire : elles ne s'accordent avec rien, même écrites à D.
-  for (const dateText of ['Soldes au 02.06', 'Soldes au 02-06', 'Soldes au 02 06 2026', 'Soldes au 03.06', 'Soldes au 03 06 2026']) {
+  // Un libellé de date de position que ne suit aucune date lisible bloque : valeur illisible, ou écriture de
+  // date que l'écran ne sait pas lire, même écrite à D.
+  for (const dateText of [
+    'Soldes au 02.06', 'Soldes au 02-06', 'Soldes au 02 06 2026', 'Soldes au 03.06', 'Soldes au 03 06 2026',
+    'Soldes au N/A', 'Solde au : à préciser', 'Soldes arrêtés au N/A', 'Balances as at N/A', 'Bank balances as of TBD', 'Etat de trésorerie au N/A',
+    'Date des soldes : N/A', 'Soldes au 2/6', 'Soldes au 2.6', 'Soldes au 2-6', 'Soldes au 02/6', 'Soldes au 020626', 'Soldes au 02062026',
+    'Soldes au 2 6 2026', 'Soldes au 2 VI 2026', 'Soldes au mardi 2', 'Soldes au 3/6', 'Soldes au', 'Soldes au voir 03/06/2026',
+  ]) {
     assertBlocked([{ name: tab, rows: ROWS, reference: { dateText } }], dateText, 'J1');
+  }
+  assertBlocked([{ name: tab, rows: ROWS, reference: { texts: ['Soldes au', 'N/A'] } }], 'libellé puis cellule illisible', 'M1');
+  assertBlocked([{ name: tab, rows: ROWS, reference: { ...AT_D, texts: ['Soldes au N/A'] } }], 'champ valide, soldes illisibles à côté', 'M1');
+  assertBlocked([{ name: tab, rows: withNote('Solde au N/A') }], 'ligne de banque : solde illisible', 'H3');
+  // Témoins : le même libellé suivi de D, dans la cellule ou dans celle de droite ; un intitulé.
+  for (const texts of [
+    ['Soldes au', { date: '2026-06-03' }], ['Soldes au', '03/06/2026'], ['Soldes au mercredi 03/06/2026'], ['Soldes arrêtés au : 3 juin 2026'],
+    ['Bank balances as at June 3, 2026'], ['Date des soldes : 03/06/2026'], ['Soldes au niveau des banques'], ['Balance générale'], ['Net Balance (XOF)'], ['Position bancaire'],
+  ] as CellInput[][]) {
+    assertStillAsked([{ name: tab, rows: ROWS, reference: { texts } }], JSON.stringify(texts));
   }
   // Champ de position illisible sous l'en-tête : il bloque aussi.
   assertBlocked([{ name: tab, rows: withNote('Position arrêtée au N/A') }], 'ligne de banque : champ illisible', 'H3');
   assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', 'Situation au N/A']] }], 'bas d’onglet : champ illisible', 'B10');
-  // Sous le bloc des banques : une date que son libellé dit être une date de position bloque, quelle que soit sa forme.
-  for (const footer of ['Soldes au 02/06/2026', 'Bank balance as at 02/06/2026', 'Etat de trésorerie au 2 juin 2026', 'Solde au 04/06/2026', 'Cash position 02/06', 'Trésorerie : mai 2026', 'Balance for 02/06/2026', 'Solde pour le 2 juin 2026']) {
-    assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
-  }
-  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Soldes au', { date: '2026-06-02' }]] }], 'bas d’onglet : soldes et cellule date', 'B10');
-  // Témoins sous le bloc : la même date de position à D, et des dates que rien ne dit être une date de position.
+  // Témoins sous le bloc des banques, où vivent les facilités et leurs dates : seul un libellé du champ de date
+  // de position y compte. Le solde d'une facilité à une date, une échéance, une date sans libellé n'y bloquent pas.
   for (const footer of [
     ['', 'Soldes au 03/06/2026'], ['', 'Solde juin 2026'], ['', 'Renouvelée le 02/06/2026'], ['Facility', { date: '2026-06-02' }],
     ['', 'Echéance 02/06/2026'], ['', { date: '2026-06-02' }], ['', '02/06/2026'], ['', 'Vu le 04/06/2026'],
+    ['', 'Facilité : solde au 30/06/2026'], ['', 'Outstanding balance as at 30/06/2026'], ['', 'Maturity as at 15/09/2026'], ['', 'Solde au N/A'],
   ] as CellInput[][]) {
     assertStillAsked([{ name: tab, rows: ROWS, footerRows: [footer] }], `bas d'onglet : ${JSON.stringify(footer)}`);
   }
@@ -450,7 +472,7 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
   for (const footer of ['Position arrêtée au 02/06/2026', 'Situation au 2 juin', 'As at 02/06/2026', 'Fund Position as of 1 June 2026']) {
     assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
   }
-  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Situation au', { date: '2026-06-02' }]] }], 'bas d’onglet : libellé et cellule date', ['B10', 'A10']);
+  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Situation au', { date: '2026-06-02' }]] }], 'bas d’onglet : libellé et cellule date', 'A10');
   assertStillAsked([{ name: tab, rows: ROWS, footerRows: [['', 'Position arrêtée au 03/06/2026']] }], 'bas d’onglet : libellé à D');
   // Témoins sous le bloc des banques : échéances des facilités (cellules date sans libellé) et notes datées.
   assertStillAsked([{
@@ -641,10 +663,14 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'en centaines', 'Hundreds', 'K.FCFA', '(in 000)', 'Solde Mn XOF', 'Solde (K) FCFA', 'Balance M XOF', 'Montants en M.', 'Deposits K', 'Fund Applied M FCFA',
     // Puissance de mille introduite par une préposition, un opérateur ou une parenthèse, dans un en-tête de montants.
     'Montants in 1,000', 'Amounts in 1000', 'Soldes en 1 000 FCFA', 'Balance (1,000)', 'Montants x 1,000', 'Montants ×1 000 000', 'Montants in 1,000,000',
-    'Amounts in 1000s', "Balance in 1'000", 'Montants par 1000', 'Amounts per 1,000', 'Montants/1.000', 'Bank Balance in 1 000 000 000', 'Total in 10,000',
+    'Amounts in 1000s', "Balance in 1'000", 'Montants par 1000', 'Amounts per 1,000', 'Montants/1.000', 'Bank Balance in 1 000 000 000', 'Montants in 10,000',
     'Chiffres en 1 000', 'Figures in 1,000 FCFA', 'Valeurs en 100 000', 'Sommes (1000 FCFA)', 'Totaux x 1.000', 'Montants in 1,000 FCFA',
     // Autres abréviations de fin d'intitulé.
-    'Montants 1,000s', "Amounts 1 000 000's", 'Balance 1000S', 'Montants en milles', 'Montants (mill.)', 'Balance T', 'Amount (thsd)', 'Balance thous.', 'Montants E3', 'Montants x1k', 'Solde 1k', 'Amounts 1E6', 'Balance E9', 'Total K',
+    'Montants 1,000s', "Amounts 1 000 000's", 'Balance 1000S', 'Montants en milles', 'Montants (mill.)', 'Balance (tsd)', 'Balance in ths', 'Balance (thou)', 'Amount (thsd)', 'Balance thous.', 'Montants E3', 'Montants x1k', 'Solde 1k', 'Amounts 1E6', 'Balance E9',
+    // Tout ce qui sépare le mot d'intitulé de la puissance de mille en fait une échelle : devise, mot d'unité, signe.
+    'Amounts in XOF 1,000', 'Montants en unités de 1000', 'Montants (unité : 1000 F)', 'Amounts 1:1000', 'Montants en FCFA 1 000', 'Amounts (XOF 1,000)',
+    'Amounts in units of 1,000', 'Montants : 1000 FCFA', 'Montants in 10^6', 'Balance 10^9', 'Unit: 1,000', 'Unités de 1 000', 'Montants (3 zéros omis)',
+    'Amounts (three zeroes omitted)', 'Solde FCFA 1 000', 'Deposit (1 000 000)',
   ];
   for (const scale of scales) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [scale] } }]);
@@ -661,7 +687,8 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'Solde au 1 000 000 XOF', 'Deposit 2000', 'Amount 100 000', 'Solde compte 000123', 'Balance 1.000.000 FCFA', 'Credit M 12',
     // Un montant que rien n'introduit, ou qui n'est pas une puissance de mille, n'est pas une échelle.
     'Solde 1,000', 'Montant 1 000', 'Total 1 000 000 FCFA', 'Balance 10,000', 'Amount 1000', 'Montant en 1 000 500', 'Solde in 1,000,500 FCFA',
-    'Montants en 2 000', 'Solde (2000)', 'Total in XOF', 'Solde en FCFA', 'Credit T. FALL', 'Solde T1', 'Plafond en 1 000 FCFA', 'Plafond 1,000s', 'Total 2,000s', 'Total E3 SARL', 'Montant x 1,05']) {
+    'Montants en 2 000', 'Solde (2000)', 'Total in XOF', 'Solde en FCFA', 'Credit T. FALL', 'Solde T1', 'Plafond en 1 000 FCFA', 'Plafond 1,000s', 'Total 2,000s', 'Total E3 SARL', 'Montant x 1,05',
+    'Solde de 1 000 FCFA', 'Solde du 1 000 000', 'Total T', 'Total M', 'Total par 1000', 'Credit T', 'Unités vendues 1000', 'Solde 3 zones', 'Montant 10 puissance 2']) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [harmless] } }]);
     assert.deepEqual([fund.unit, fund.unitProvenance], ['UNITS', 'CONVENTION'], harmless);
   }

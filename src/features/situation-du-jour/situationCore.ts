@@ -179,8 +179,8 @@ export function plainUpper(text: string): string {
 
 /**
  * Dates écrites que l'écran ne sait PAS lire, avec leur place dans le texte (repère de `plainUpper`) : sans
- * année (« 2 juin », « June 2 », « 02/06 », « 02.06 », « 02-06 ») ou séparées par des espaces
- * (« 02 06 2026 »). Une telle date ne peut être ni lue ni comparée. Sert seulement à REFUSER.
+ * année (« 2 juin », « June 2 », « 02/06 »). Une telle date ne peut être ni lue ni comparée. Sert seulement
+ * à REFUSER.
  */
 export function findUnreadableDates(text: string): Array<{ index: number; length: number }> {
   const plain = plainUpper(text);
@@ -199,15 +199,6 @@ export function findUnreadableDates(text: string): Array<{ index: number; length
   }
   const numeric = /(?<![0-9/.-])(\d{1,2})\/(\d{2})(?![0-9/.-])/g;
   for (let match = numeric.exec(plain); match; match = numeric.exec(plain)) {
-    if (isDay(match[1]) && isMonth(match[2]) && free(match.index)) found.push({ index: match.index, length: match[0].length });
-  }
-  // « 02.06 », « 02-06 » : deux chiffres de chaque côté, pour ne pas prendre un nombre décimal pour une date.
-  const dotted = /(?<![0-9/.,-])(\d{2})[.-](\d{2})(?![0-9/.,-])/g;
-  for (let match = dotted.exec(plain); match; match = dotted.exec(plain)) {
-    if (isDay(match[1]) && isMonth(match[2]) && free(match.index)) found.push({ index: match.index, length: match[0].length });
-  }
-  const spaced = /(?<![0-9])(\d{2}) (\d{2}) (\d{4})(?![0-9])/g;
-  for (let match = spaced.exec(plain); match; match = spaced.exec(plain)) {
     if (isDay(match[1]) && isMonth(match[2]) && free(match.index)) found.push({ index: match.index, length: match[0].length });
   }
   return found.sort((a, b) => a.index - b.index);
@@ -405,7 +396,7 @@ const POSITION_LABEL_OPENING_A_HEADING = /(?:SITUATION|POSITION)\s+AU\s*$/;
  * « Situation au jour le jour ». Tout autre texte qui suit un libellé de date de position est une valeur
  * illisible (« N/A », « à préciser ») : le champ est alors INVALIDE, jamais absent.
  */
-const HEADING_AFTER_POSITION_LABEL = /^(?:NIVEAU|SEIN|JOUR|TITRE)(?![A-Z0-9])/;
+export const HEADING_AFTER_POSITION_LABEL =/^(?:NIVEAU|SEIN|JOUR|TITRE)(?![A-Z0-9])/;
 
 /** Une seule date, au jour près, et rien d'autre ; sinon `null`. */
 function singleDayDate(text: string): string | null {
@@ -450,12 +441,16 @@ const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
   [/(?<![A-Z0-9])M{1,2}[\s\-_/]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'MILLIONS'],
   [/\(\s*M{1,2}\s*\)|(?<![A-Z0-9])EN\s+M{1,2}(?![A-Z0-9]|\.\s?[A-Z])/, 'MILLIONS'],
   [/(?<![A-Z0-9])(?:MDS?|MRDS?)[\s\-_/]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'BILLIONS'],
+  [/(?<![0-9A-Z])10\s?\^\s?6(?![0-9])/, 'MILLIONS'],
+  [/(?<![0-9A-Z])10\s?\^\s?9(?![0-9])/, 'BILLIONS'],
+  // « Unité : 1000 F », « unités de 1000 », « units of 1,000 », hors du champ « Unité » lui-même.
+  [/(?<![A-Z])UNITE?S?\s*(?::|=|DE\s|OF\s)\s*10{0,2}(?:[\s.,']?000){1,3}(?![0-9]|[\s.,'][0-9])/, 'THOUSANDS'],
 ];
 
 /** Mots qui font d'une cellule un en-tête de montants. */
 const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
   'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'BALANCE', 'BALANCES', 'SOLDE', 'SOLDES', 'DEBIT', 'CREDIT', 'DEPOSIT', 'DEPOSITS', 'APPLIED',
-  'CHIFFRES', 'FIGURES', 'VALEURS', 'VALUES', 'SOMMES', 'TOTAL', 'TOTAUX', 'TOTALS',
+  'CHIFFRES', 'FIGURES', 'VALEURS', 'VALUES', 'SOMMES',
 ]);
 /**
  * Dans un en-tête de montants, une abréviation d'échelle suffit quand elle TERMINE l'intitulé (seule une
@@ -463,7 +458,7 @@ const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
  * Kilo FCFA ». Une initiale au milieu d'un libellé (« CREDIT M DIOP », « Solde M-1 ») n'en est pas une.
  */
 const AMOUNT_HEADER_SCALE_TOKENS: Record<string, AmountUnit> = {
-  K: 'THOUSANDS', KE: 'THOUSANDS', KILO: 'THOUSANDS', TH: 'THOUSANDS', T: 'THOUSANDS', THSD: 'THOUSANDS', THOUS: 'THOUSANDS',
+  K: 'THOUSANDS', KE: 'THOUSANDS', KILO: 'THOUSANDS', TH: 'THOUSANDS', THSD: 'THOUSANDS', THOUS: 'THOUSANDS', TSD: 'THOUSANDS', THS: 'THOUSANDS', THOU: 'THOUSANDS',
   E3: 'THOUSANDS', '1E3': 'THOUSANDS', '1K': 'THOUSANDS', X1K: 'THOUSANDS',
   M: 'MILLIONS', MM: 'MILLIONS', MF: 'MILLIONS', MN: 'MILLIONS', MIL: 'MILLIONS', MILL: 'MILLIONS',
   E6: 'MILLIONS', '1E6': 'MILLIONS', '1M': 'MILLIONS', X1M: 'MILLIONS',
@@ -471,15 +466,29 @@ const AMOUNT_HEADER_SCALE_TOKENS: Record<string, AmountUnit> = {
 };
 /** Dans un en-tête de montants, trois zéros qui ne terminent pas un montant écrit : « Balance 000 », « Amounts in 000 », « Amount (FCFA 000) ». */
 const AMOUNT_HEADER_BARE_THOUSANDS = /(?<![0-9][\s.,']?)0{3}(?![0-9])/;
-/**
- * Dans un en-tête de montants, une puissance de mille introduite par une préposition, un opérateur ou une
- * parenthèse : « Montants in 1,000 », « Soldes en 1 000 FCFA », « Amounts x 1,000,000 », « Balance (1000) ».
- * Un montant écrit sans rien qui l'introduise (« Solde 1 000 FCFA ») n'est pas une indication d'échelle.
- */
-const AMOUNT_HEADER_POWER_OF_THOUSAND = /(?:(?<![A-Z0-9])(?:IN|EN|PAR|PER|BY|X)\s*|(?<![0-9])[×*/]\s*|\(\s*)10{0,2}((?:[\s.,']?000){1,3})(?:'?S)?(?![0-9]|[\s.,'][0-9])/;
-/** La même puissance de mille mise au pluriel, sans rien qui l'introduise : « Montants 1,000s », « Amounts 1 000 000's ». */
-const AMOUNT_HEADER_PLURAL_POWER_OF_THOUSAND = /(?<![0-9][\s.,']?)10{0,2}((?:[\s.,']?000){1,3})'?S(?![A-Z0-9])/;
+/** Une puissance de mille écrite en chiffres, hors d'un nombre plus long : 1000, 1 000, 1,000, 10.000, 1'000'000. */
+const POWER_OF_THOUSAND = /(?<![0-9][\s.,']?)10{0,2}((?:[\s.,']?000){1,3})(?![0-9]|[\s.,'][0-9])/g;
 const POWER_OF_THOUSAND_UNITS: AmountUnit[] = ['THOUSANDS', 'MILLIONS', 'BILLIONS'];
+/** Ce qui précède un montant écrit comme tel : le mot d'intitulé, puis au plus un mot de liaison (« Solde 1 000 », « Solde de 1 000 »). */
+const AMOUNT_WRITTEN_AFTER_ITS_HEADER = new RegExp(`(?<![A-Z])(?:${Array.from(AMOUNT_HEADER_WORDS).join('|')})\\s+(?:(?:AU|DE|DU|A)\\s+)?$`);
+
+/**
+ * Dans un en-tête de montants, toute puissance de mille est une indication d'échelle — « Montants in
+ * 1,000 », « Amounts in XOF 1,000 », « Montants : 1000 FCFA », « Balance (1,000) », « Montants 1,000s » —
+ * SAUF quand elle est écrite comme un montant, juste après le mot d'intitulé et sans pluriel : « Solde
+ * 1 000 FCFA », « Solde de 1 000 000 ».
+ */
+function powersOfThousandInAmountHeader(plain: string): AmountUnit[] {
+  const units: AmountUnit[] = [];
+  for (const match of plain.matchAll(POWER_OF_THOUSAND)) {
+    const start = match.index as number;
+    const plural = /^'?S(?![A-Z0-9])/.test(plain.slice(start + match[0].length));
+    if (plural || !AMOUNT_WRITTEN_AFTER_ITS_HEADER.test(plain.slice(0, start))) {
+      units.push(POWER_OF_THOUSAND_UNITS[(match[1].match(/000/g) as string[]).length - 1]);
+    }
+  }
+  return units;
+}
 
 /** Unités ÉCRITES dans un texte : mots d'unité (« milliers », « francs entiers ») et indications d'échelle. */
 export function unitsInText(text: string): AmountUnit[] {
@@ -495,8 +504,9 @@ export function unitsInText(text: string): AmountUnit[] {
       if (AMOUNT_HEADER_SCALE_TOKENS[token] !== undefined && endsTheHeader) found.add(AMOUNT_HEADER_SCALE_TOKENS[token]);
     });
     if (AMOUNT_HEADER_BARE_THOUSANDS.test(plain)) found.add('THOUSANDS');
-    const power = AMOUNT_HEADER_POWER_OF_THOUSAND.exec(plain) ?? AMOUNT_HEADER_PLURAL_POWER_OF_THOUSAND.exec(plain);
-    if (power) found.add(POWER_OF_THOUSAND_UNITS[(power[1].match(/000/g) as string[]).length - 1]);
+    for (const unit of powersOfThousandInAmountHeader(plain)) found.add(unit);
+    // « (3 zéros omis) », « three zeroes omitted ».
+    if (tokens.includes('ZEROS') || tokens.includes('ZEROES')) found.add('THOUSANDS');
   }
   return Array.from(found);
 }
