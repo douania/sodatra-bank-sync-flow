@@ -13,12 +13,16 @@ import {
   cellText,
   daysBetween,
   detectBankFromStrictLabel,
+  cellIsoDate,
   establishWithConvention,
+  findDatesInText,
+  hasYearlessDate,
   hiddenSheetNames,
   normalizeLabel,
   readExplicitFields,
   readWorkbook,
   sheetNameToIso,
+  tokenize,
   usefulBounds,
 } from './situationCore';
 import type { AmountUnit, FieldProvenance, FieldState, Sheet, SituationBank } from './situationCore';
@@ -86,8 +90,13 @@ export interface FundPositionReading {
   referenceDate: string | null;
   /** D'où vient la date établie : le fichier, ou la confirmation de l'opérateur. */
   dateProof: 'FILE' | 'OPERATOR' | null;
-  /** État du champ « Situation au » dans l'onglet (absent, valide, invalide). */
+  /**
+   * État de la date de position dans l'onglet : champ absent, valide, invalide (répété, mal formé), ou
+   * contredit par une autre date écrite dans la zone de position (en-tête et lignes des banques).
+   */
   dateField: FieldState;
+  /** Cellules dont la date écrite contredit la date de position (au plus quelques adresses, pour aller vérifier). */
+  dateConflictCells: string[];
   /**
    * Vrai quand la confirmation de l'opérateur peut être demandée : champ « Situation au » ABSENT et onglet
    * lu daté exactement du lendemain calendaire de la date comptable.
@@ -156,7 +165,7 @@ const BLOCK_END = /DEPOSIT FOR THE DAY|PAYMENT FOR THE DAY|TOTAL FUND AVAILABLE/
 
 function unavailable(reason: FundPositionReason): FundPositionReading {
   return {
-    available: false, reason, tabName: null, tabDate: null, referenceDate: null, dateProof: null, dateField: 'ABSENT',
+    available: false, reason, tabName: null, tabDate: null, referenceDate: null, dateProof: null, dateField: 'ABSENT', dateConflictCells: [],
     needsDateAttestation: false, currency: null, currencyProvenance: null, unit: null, unitProvenance: null, dateComparable: false,
     rows: [], issues: [],
   };
@@ -164,6 +173,46 @@ function unavailable(reason: FundPositionReason): FundPositionReading {
 
 const REFERENCE_SCAN_ROWS = 200;
 const REFERENCE_SCAN_COLUMNS = 60;
+
+/** Mots qui disent qu'une date écrite dans la zone de position n'est PAS la date de position. */
+const NON_POSITION_DATE_WORDS: ReadonlySet<string> = new Set([
+  'ECHEANCE', 'ECHEANCES', 'MATURITY', 'MATURITE', 'IMPRIME', 'IMPRIMEE', 'IMPRESSION', 'PRINTED', 'PRINT', 'EDITE', 'EDITEE', 'EDITION',
+  'VALEUR', 'VALUE', 'VALIDITE', 'VALABLE', 'VALID', 'EXPIRE', 'EXPIRATION', 'REVUE', 'REVIEW', 'TAUX', 'RATE',
+]);
+
+/** Une date écrite dans la zone de position ; `iso` nul quand elle est écrite sans année, donc illisible. */
+interface ZoneDate {
+  address: string;
+  iso: string | null;
+  precision: 'DAY' | 'MONTH';
+}
+
+/**
+ * Dates écrites dans la zone de position (lignes 1 à `lastRow`), hors dates explicitement libellées comme
+ * autre chose (échéance, impression, valeur, validité, taux) dans leur cellule ou dans la cellule de gauche.
+ * Toute écriture compte : au jour près, au mois près, sans année. La date du champ reconnu en fait partie :
+ * elle s'accorde par définition avec la date de position retenue.
+ */
+function unlabelledDatesInPositionZone(sheet: Sheet, lastRow: number, lastColumn: number): ZoneDate[] {
+  const dates: ZoneDate[] = [];
+  for (let row = 1; row <= lastRow; row += 1) {
+    for (let column = 1; column <= lastColumn; column += 1) {
+      const address = cellAddress(row, column);
+      const cell = cellAt(sheet, row, column);
+      const text = cellText(cell);
+      const cellDate = cellIsoDate(cell);
+      const written: ZoneDate[] = cellDate
+        ? [{ address, iso: cellDate, precision: 'DAY' }]
+        : findDatesInText(text).map((entry) => ({ address, iso: entry.iso, precision: entry.precision }));
+      if (!cellDate && hasYearlessDate(text)) written.push({ address, iso: null, precision: 'DAY' });
+      if (written.length === 0) continue;
+      const left = column > 1 ? cellText(cellAt(sheet, row, column - 1)) : '';
+      if (tokenize(`${text} ${left}`).some((token) => NON_POSITION_DATE_WORDS.has(token))) continue;
+      dates.push(...written);
+    }
+  }
+  return dates;
+}
 
 function findHeader(sheet: Sheet, lastColumn: number): { row: number; columns: Record<keyof typeof HEADERS, number> } | null {
   for (let row = 1; row <= 6; row += 1) {
@@ -211,8 +260,14 @@ function readCell(sheet: Sheet, row: number, column: number, bank: SituationBank
  *   du lendemain calendaire de D, par la confirmation de l'opérateur pour ce
  *   fichier, cet onglet et cette date.
  * Un champ invalide ou contraire bloque la comparaison : aucune confirmation
- * n'est alors proposée. Devise et unité : champ explicite, sinon convention
- * SODATRA quand rien ne la contredit dans l'onglet.
+ * n'est alors proposée. Il en va de même de TOUTE autre date écrite dans la
+ * zone de position — l'en-tête et les lignes des banques —, quel que soit son
+ * libellé, dès qu'elle n'est ni D ni la date de l'onglet : seules les dates
+ * explicitement libellées échéance, impression, valeur, validité ou taux sont
+ * ignorées. Les dates écrites sous le bloc des banques (échéances des
+ * facilités) ne comptent pas. Le champ de date n'est lu que dans les lignes
+ * d'en-tête. Devise et unité : champ explicite, sinon convention SODATRA
+ * quand rien ne la contredit dans l'onglet.
  */
 export function readFundPosition(
   bytes: ArrayBuffer,
@@ -244,16 +299,42 @@ export function readFundPosition(
     return { ...unavailable('HEADER_NOT_FOUND'), tabName: tab.name, tabDate: tab.date };
   }
   const fieldBounds = usefulBounds(sheet, REFERENCE_SCAN_ROWS, REFERENCE_SCAN_COLUMNS);
-  const fields = readExplicitFields(sheet, fieldBounds, fieldBounds.lastRow);
+  // Les champs explicites ne sont lus que dans les lignes d'en-tête ; les mentions contraires de devise et
+  // d'unité, dans tout l'onglet.
+  const fields = readExplicitFields(sheet, fieldBounds, header.row);
   const currency = establishWithConvention(fields.currency, fields.writtenCurrencies, SODATRA_CONVENTION.currency);
   const unit = establishWithConvention(fields.unit, fields.writtenUnits, SODATRA_CONVENTION.unit);
+  // Zone de position : de la première ligne à la fin du bloc des banques.
+  let positionZoneLastRow = bounds.lastRow;
+  for (let row = header.row + 1; row <= bounds.lastRow; row += 1) {
+    if ([cellText(cellAt(sheet, row, 1)), cellText(cellAt(sheet, row, 2))].some((label) => BLOCK_END.test(normalizeLabel(label)))) {
+      positionZoneLastRow = row - 1;
+      break;
+    }
+  }
+  // Toute autre date écrite dans cette zone, qui n'est ni la date de position retenue ni la date de l'onglet,
+  // contredit la date de position : la comparaison est bloquée et aucune confirmation n'est proposée. Une
+  // date au mois près s'accorde avec ce mois ; une date sans année ne s'accorde avec rien. Il en va de même
+  // d'un libellé de date de position écrit sous l'en-tête, où qu'il soit, dès qu'il porte une autre date.
+  const stated = fields.situationDate.state === 'VALID' ? fields.situationDate.value : null;
+  const expected = [stated ?? accountingDate, tab.date as string];
+  const agrees = (date: ZoneDate) => date.iso !== null && expected.some((day) => (
+    date.precision === 'MONTH' ? day.slice(0, 7) === (date.iso as string).slice(0, 7) : day === date.iso
+  ));
+  const dateConflictCells = [
+    ...unlabelledDatesInPositionZone(sheet, positionZoneLastRow, fieldBounds.lastColumn)
+      .filter((date) => !agrees(date)).map((date) => date.address),
+    ...fields.situationDatesBelowFields.filter((entry) => entry.date !== expected[0]).map((entry) => entry.address),
+  ].filter((address, index, all) => all.indexOf(address) === index).slice(0, 5);
+  const contradicted = dateConflictCells.length > 0;
+  const dateField: FieldState = fields.situationDate.state === 'INVALID' ? 'INVALID' : contradicted ? 'CONTRADICTED' : fields.situationDate.state;
   // Date de situation : le champ explicite s'il est valide ; s'il est ABSENT, la confirmation de l'opérateur,
-  // proposée pour le seul onglet daté du lendemain calendaire de D. Un champ invalide ne se confirme pas.
-  const needsDateAttestation = fields.situationDate.state === 'ABSENT' && daysBetween(accountingDate, tab.date as string) === 1;
+  // proposée pour le seul onglet daté du lendemain calendaire de D. Un champ invalide ou contredit ne se confirme pas.
+  const needsDateAttestation = dateField === 'ABSENT' && daysBetween(accountingDate, tab.date as string) === 1;
   const confirmed = needsDateAttestation && attestation !== undefined
     && attestation.tabName === tab.name && attestation.accountingDate === accountingDate;
-  const referenceDate = fields.situationDate.state === 'VALID' ? fields.situationDate.value : confirmed ? accountingDate : null;
-  const dateProof = fields.situationDate.state === 'VALID' ? ('FILE' as const) : confirmed ? ('OPERATOR' as const) : null;
+  const referenceDate = dateField === 'VALID' ? stated : confirmed ? accountingDate : null;
+  const dateProof = dateField === 'VALID' ? ('FILE' as const) : confirmed ? ('OPERATOR' as const) : null;
   const dateComparable = referenceDate !== null && referenceDate === accountingDate;
   const positionColumn = header.columns.nonValidatedDeposit + 1;
   const issues: FundPositionIssue[] = [];
@@ -302,7 +383,7 @@ export function readFundPosition(
   }
   return {
     available: true, reason: null, tabName: tab.name, tabDate: tab.date, referenceDate, dateProof,
-    dateField: fields.situationDate.state, needsDateAttestation, currency: currency.value, currencyProvenance: currency.provenance,
+    dateField, dateConflictCells, needsDateAttestation, currency: currency.value, currencyProvenance: currency.provenance,
     unit: unit.value, unitProvenance: unit.provenance, dateComparable, rows, issues,
   };
 }

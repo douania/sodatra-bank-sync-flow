@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 
 import { isoToExcelSerial } from './situationCore';
 
-type CellInput = string | number | { date: string } | null | undefined;
+export type CellInput = string | number | { date: string } | null | undefined;
 
 function toBytes(workbook: XLSX.WorkBook, bookType: 'xls' | 'xlsx'): ArrayBuffer {
   const written = XLSX.write(workbook, { type: 'array', bookType }) as ArrayBuffer | Uint8Array;
@@ -376,13 +376,18 @@ export interface SyntheticFundPositionReference {
   currency?: string;
   /** Date de référence écrite en TEXTE (à la place de la cellule date). */
   dateText?: string;
-  /** Autres mentions écrites sur la ligne d'en-tête (date d'impression, période, seconde devise). */
-  texts?: string[];
+  /** Autres cellules écrites sur la ligne d'en-tête (date d'impression, période, seconde devise) ; `{ date }` : cellule date. */
+  texts?: CellInput[];
   /** Champ « Unité » écrit dans l'onglet (après les autres mentions). */
   unit?: string;
 }
 
-export function fundPositionTabSheet(rows: SyntheticFundPositionRow[], reference: SyntheticFundPositionReference = {}): XLSX.WorkSheet {
+export function fundPositionTabSheet(
+  rows: SyntheticFundPositionRow[],
+  reference: SyntheticFundPositionReference = {},
+  /** Lignes écrites SOUS le bloc des banques (facilités et leurs échéances, par exemple). */
+  footerRows: CellInput[][] = [],
+): XLSX.WorkSheet {
   const data: CellInput[][] = [[
     '', '', 'Bank \nBalance', 'Fund Applied', 'Net Balance', 'NonValidated Deposit', '', '',
     reference.date ? 'Situation au' : '', reference.date ? { date: reference.date } : (reference.dateText ?? ''),
@@ -397,11 +402,12 @@ export function fundPositionTabSheet(rows: SyntheticFundPositionRow[], reference
   data.push(['', 'BIS', '', '', '', '', 111]);
   data.push(['Payment for the day']);
   data.push(['', 'TOTAL FUND AVAILABLE', 1, 1, 1, 1, 1]);
+  footerRows.forEach((row) => data.push(row));
   return sheetFromRows(data);
 }
 
 export function fundPositionBytes(
-  tabs: Array<{ name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean; reference?: SyntheticFundPositionReference }>,
+  tabs: Array<{ name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean; reference?: SyntheticFundPositionReference; footerRows?: CellInput[][] }>,
 ): ArrayBuffer {
-  return workbookBytes(tabs.map((tab) => ({ name: tab.name, sheet: fundPositionTabSheet(tab.rows, tab.reference), hidden: tab.hidden })));
+  return workbookBytes(tabs.map((tab) => ({ name: tab.name, sheet: fundPositionTabSheet(tab.rows, tab.reference, tab.footerRows), hidden: tab.hidden })));
 }

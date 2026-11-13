@@ -4,7 +4,7 @@ import test from 'node:test';
 import { compareFundPosition, readFundPosition } from './fundPositionReading';
 import { readMonthlyWorkbook } from './monthlyWorkbook';
 import { csvStatementBytes, fundPositionBytes, monthlyWorkbookBytes, sheetFromRows, tabName, workbookBytes } from './situationSyntheticFixtures';
-import type { SyntheticFundPositionReference, SyntheticFundPositionRow } from './situationSyntheticFixtures';
+import type { CellInput, SyntheticFundPositionReference, SyntheticFundPositionRow } from './situationSyntheticFixtures';
 import type { FundPositionDateAttestation } from './fundPositionReading';
 import { buildAccountBalances, evaluateStatement } from './statementBalances';
 
@@ -20,7 +20,7 @@ const ROWS: SyntheticFundPositionRow[] = [
   { label: 'BICIS', bankBalance: 'n/a', fundApplied: 5 },
 ];
 
-type FundTab = { name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean; reference?: SyntheticFundPositionReference };
+type FundTab = { name: string; rows: SyntheticFundPositionRow[]; hidden?: boolean; reference?: SyntheticFundPositionReference; footerRows?: CellInput[][] };
 
 function reading(tabs: FundTab[] = [{ name: tabName('2026-06-04'), rows: ROWS, reference: AT_D }], date = D, today = TODAY) {
   return readFundPosition(fundPositionBytes(tabs), date, today);
@@ -280,12 +280,17 @@ test('date de position écrite : libellé explicite, une date au jour près, éc
     assert.equal(fund.referenceDate, D, JSON.stringify(reference));
     assert.equal(fund.dateComparable, true, JSON.stringify(reference));
   }
-  // Les autres dates de l'onglet (impression, échéances) ne comptent pas : seule la cellule libellée dit la date.
+  // Ne contredisent pas le champ : une date explicitement libellée autrement (impression, échéance), dans sa
+  // cellule ou dans la cellule de gauche ; la date de l'onglet ; le mois de D ; les dates écrites sous le bloc
+  // des banques (échéances des facilités).
   const amongOtherDates = reading([{
     name: tabName('2026-06-04'),
-    reference: { ...AT_D, otherDate: '2026-06-02', texts: ['Imprimé le 04/06/2026', 'Echéance 12/12/2025'] },
+    reference: { ...AT_D, texts: ['Imprimé le 01/06/2026', 'Echéance 12/12/2025', 'Maturity', { date: '2025-11-30' }, 'Onglet du 04/06/2026', 'Juin 2026'] },
     rows: ROWS.map((row) => (row.label === 'BDK' ? { ...row, note: 'Echéance 05/10/2025' } : row)),
+    footerRows: [['Facility', { date: '2025-03-31' }, { date: '2024-12-31' }], ['', 'Renouvelée le 15/01/2025', '2 mars']],
   }]);
+  assert.equal(amongOtherDates.dateField, 'VALID');
+  assert.deepEqual(amongOtherDates.dateConflictCells, []);
   assert.equal(amongOtherDates.referenceDate, D);
   assert.equal(amongOtherDates.dateComparable, true);
   assert.equal(compareFundPosition(amongOtherDates, D, bdkBalances(), [bdkWorkbook()])
@@ -326,6 +331,90 @@ test('date de position écrite : libellé explicite, une date au jour près, éc
   }]);
   assert.equal(below.referenceDate, null);
   assert.equal(below.dateComparable, false);
+});
+
+test('date de position : toute autre date écrite dans l’en-tête ou sur les lignes des banques bloque, quel que soit son libellé', () => {
+  const tab = tabName('2026-06-04');
+  const confirm: FundPositionDateAttestation = { tabName: tab, accountingDate: D };
+  const balances = bdkBalances();
+  const workbook = bdkWorkbook();
+  const read = (tabs: FundTab[], attestation?: FundPositionDateAttestation) => readFundPosition(fundPositionBytes(tabs), D, TODAY, attestation);
+  // Bloquée : aucune case proposée, la confirmation donnée ne débloque rien, aucun écart chiffré, cellule indiquée.
+  const assertBlocked = (tabs: FundTab[], label: string, cell?: string) => {
+    const fund = read(tabs, confirm);
+    assert.equal(fund.available, true, label);
+    assert.equal(fund.dateField, 'CONTRADICTED', label);
+    assert.equal(fund.needsDateAttestation, false, label);
+    assert.deepEqual([fund.referenceDate, fund.dateProof, fund.dateComparable], [null, null, false], label);
+    if (cell) assert.deepEqual(fund.dateConflictCells, [cell], label);
+    else assert.ok(fund.dateConflictCells.length > 0, label);
+    const comparisons = compareFundPosition(fund, D, balances, [workbook]);
+    assert.ok(comparisons.length > 0, label);
+    for (const comparison of comparisons) {
+      assert.equal(comparison.status, 'NOT_COMPARABLE', label);
+      assert.equal(comparison.reason, 'DATE_NOT_COMPARABLE', label);
+      assert.equal(comparison.delta, null, label);
+    }
+  };
+  // Rien de contredit, rien de prouvé : la case reste demandée, et elle suffit.
+  const assertStillAsked = (tabs: FundTab[], label: string) => {
+    const asked = read(tabs);
+    assert.deepEqual([asked.dateField, asked.needsDateAttestation, asked.referenceDate, asked.dateComparable], ['ABSENT', true, null, false], label);
+    assert.deepEqual(asked.dateConflictCells, [], label);
+    const confirmed = read(tabs, confirm);
+    assert.deepEqual([confirmed.referenceDate, confirmed.dateProof, confirmed.dateComparable], [D, 'OPERATOR', true], label);
+  };
+  // Libellés que l'écran ne reconnaît pas comme le champ de date de position, et date écrite sans libellé.
+  const unknownLabels = ['Situation de trésorerie au', 'Date :', 'FUND POSITION', 'Report date:', 'Etat au', 'Soldes au', 'Bank balance as at', 'Trésorerie du', 'Daily cash', 'Position bancaire', ''];
+  for (const label of unknownLabels) {
+    // Date contraire sous toutes ses écritures : au jour près, au mois près, sans année.
+    for (const written of ['02/06/2026', '2 juin 2026', '2026-06-02', 'June 2, 2026', 'mai 2026', '2 juin', 'June 2', '02/06']) {
+      const dateText = `${label} ${written}`.trim();
+      assertBlocked([{ name: tab, rows: ROWS, reference: { dateText } }], dateText, 'J1');
+    }
+    // Cellule date contraire à droite du libellé.
+    assertBlocked([{ name: tab, rows: ROWS, reference: { texts: [label, { date: '2026-06-02' }] } }], `${label} + cellule date`);
+    // Le même libellé avec D : pas une preuve, la case reste demandée.
+    for (const written of ['03/06/2026', '3 juin 2026', 'June 3, 2026', 'juin 2026']) {
+      assertStillAsked([{ name: tab, rows: ROWS, reference: { dateText: `${label} ${written}`.trim() } }], `${label} ${written}`);
+    }
+  }
+  // Même règle sur la ligne d'une banque, y compris pour un libellé reconnu : hors de l'en-tête, il ne prouve rien.
+  const withNote = (note: string) => ROWS.map((row) => (row.label === 'BDK' ? { ...row, note } : row));
+  for (const note of ['Solde au 02/06/2026', '02/06/2026', 'Situation au 02/06/2026', 'Position arrêtée au 2 juin']) {
+    assertBlocked([{ name: tab, rows: withNote(note) }], `ligne de banque : ${note}`, 'H3');
+  }
+  for (const note of ['Solde au 03/06/2026', 'Situation au 03/06/2026', 'As of 03/06/2026', 'Vu le 04/06/2026', 'Juin 2026']) {
+    assertStillAsked([{ name: tab, rows: withNote(note) }], `ligne de banque : ${note}`);
+  }
+  // Un champ valide égal à D ne couvre pas une autre date écrite à côté de lui.
+  for (const reference of [{ ...AT_D, otherDate: '2026-06-02' }, { ...AT_D, texts: ['Soldes au 02/06/2026'] }, { ...AT_D, texts: ['Mai 2026'] }, { ...AT_D, texts: ['2 juin'] }] as SyntheticFundPositionReference[]) {
+    assertBlocked([{ name: tab, rows: ROWS, reference }], JSON.stringify(reference));
+  }
+  assertBlocked([{ name: tab, rows: withNote('Soldes au 02/06/2026'), reference: AT_D }], 'champ valide, ligne de banque contraire', 'H3');
+  // Sous le bloc des banques : un libellé de date de position reconnu qui porte une autre date, ou une date
+  // illisible, bloque encore ; avec D, il ne prouve rien et la case reste demandée.
+  for (const footer of ['Position arrêtée au 02/06/2026', 'Situation au 2 juin', 'As at 02/06/2026', 'Fund Position as of 1 June 2026']) {
+    assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
+  }
+  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Situation au', { date: '2026-06-02' }]] }], 'bas d’onglet : libellé et cellule date', 'A10');
+  assertStillAsked([{ name: tab, rows: ROWS, footerRows: [['', 'Position arrêtée au 03/06/2026']] }], 'bas d’onglet : libellé à D');
+  // Témoins sous le bloc des banques : échéances des facilités (cellules date sans libellé) et notes datées.
+  assertStillAsked([{
+    name: tab, rows: ROWS,
+    footerRows: [['Facility', { date: '2025-03-31' }, { date: '2024-12-31' }], ['', 'Renouvelée le 15/01/2025'], ['', '12/2025', '2 mars', 'Mai 2025']],
+  }], 'bas d’onglet : échéances');
+  // Témoins dans la zone : dates explicitement libellées autrement, dans la cellule ou dans la cellule de gauche.
+  for (const texts of [
+    ['Echéance 02/06/2026'], ['Maturity', { date: '2026-06-02' }], ['Imprimé le 2 juin'], ['Printed 02/06'], ['Date de valeur 02/06/2026'],
+    ['Taux du 02/06/2026'], ['Validité : mai 2026'], ['Edition du 01/06/2026'],
+  ] as CellInput[][]) {
+    assertStillAsked([{ name: tab, rows: ROWS, reference: { texts } }], JSON.stringify(texts));
+  }
+  // Un intitulé qui ressemble au libellé mais n'introduit aucune date n'est pas le champ : il ne bloque rien.
+  for (const dateText of ['Position au niveau des banques', 'Situation au jour le jour', 'Position du groupe', 'Fund Position', 'Situation du compte 03/06/2026', 'Position du groupe au 03/06/2026']) {
+    assertStillAsked([{ name: tab, rows: ROWS, reference: { dateText } }], dateText);
+  }
 });
 
 test('devise : champ explicite ou convention SODATRA ; mention contraire, ambiguë ou invalide, aucune comparaison', () => {
@@ -493,6 +582,10 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     // Variantes dans un en-tête de montants.
     'Montants K-FCFA', 'Montants en M', 'Montants K', 'Montants M', 'Montants MF', 'Bank Balance (M)', 'Solde en MM', 'Balance K€',
     'K-FCFA', 'K/FCFA', 'kilo francs', '(M)', 'en M', 'en MM', '(,000)', '10^3', 'x10^3', '*1000', '1000s', 'MM FCFA', 'M-FCFA', 'Md FCFA', 'Mrd', 'mln',
+    // Écritures anglaises, signes typographiques et abréviations de fin d'intitulé.
+    'Bank Balance (in 000)', 'Amounts in 000', 'Bank Balance 000', 'Amount (FCFA 000)', 'Balance bn', 'Amount (th)', 'Solde Mn', 'Balance (Mn)',
+    'Montants ’000', '’000', 'Montants en Kilo FCFA', 'Kilo FCFA', 'Mios', 'Montants en Mios', '10³', 'x 10³', 'Montants ÷ 1000', '÷1000',
+    'en centaines', 'Hundreds', 'K.FCFA', '(in 000)', 'Solde Mn XOF', 'Solde (K) FCFA', 'Balance M XOF', 'Montants en M.', 'Deposits K', 'Fund Applied M FCFA',
   ];
   for (const scale of scales) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [scale] } }]);
@@ -503,7 +596,10 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     }
   }
   // Témoins : un montant écrit avec ses milliers, ou un mot voisin, n'est pas une indication d'échelle.
-  for (const harmless of ['Plafond 1 000 FCFA', 'Total 25 000 XOF', 'Solde 1 000 FCFA', 'Montant 10 000 000 FCFA', 'Référence 000123', 'KFW', 'Skf', 'MILLENIUM', 'Taux x 1,05', 'M. DIOP', 'K. FALL', 'Lot K', 'KM 5', 'Agence M']) {
+  for (const harmless of ['Plafond 1 000 FCFA', 'Total 25 000 XOF', 'Solde 1 000 FCFA', 'Montant 10 000 000 FCFA', 'Référence 000123', 'KFW', 'Skf', 'MILLENIUM', 'Taux x 1,05', 'M. DIOP', 'K. FALL', 'Lot K', 'KM 5', 'Agence M',
+    // Dans un intitulé de montants : une initiale au milieu du libellé, un rang de mois, un montant écrit en entier.
+    'CREDIT M DIOP', 'SOLDE M. FALL', 'Solde M-1', 'REMISE EN M. FALL', 'ETS K.F', 'Credit K. FALL', 'Solde K FALL', 'Montant 25 000', 'Balance 1,000,000',
+    'Solde au 1 000 000 XOF', 'Deposit 2000', 'Amount 100 000', 'Solde compte 000123', 'Balance 1.000.000 FCFA', 'Credit M 12']) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [harmless] } }]);
     assert.deepEqual([fund.unit, fund.unitProvenance], ['UNITS', 'CONVENTION'], harmless);
   }

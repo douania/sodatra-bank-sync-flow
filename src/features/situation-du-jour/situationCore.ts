@@ -177,6 +177,30 @@ export function plainUpper(text: string): string {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 }
 
+/**
+ * Vrai si le texte porte une date écrite SANS année que rien n'y permet de dater : « 2 juin », « June 2 »,
+ * « 02/06 ». Une telle date ne peut être ni lue ni comparée. Sert seulement à REFUSER.
+ */
+export function hasYearlessDate(text: string): boolean {
+  const plain = plainUpper(text);
+  const read = findDatesInText(text);
+  const free = (index: number) => !read.some((entry) => index >= entry.index && index < entry.index + entry.length);
+  const isDay = (value: string) => Number(value) >= 1 && Number(value) <= 31;
+  const dayFirst = /(?<![0-9])(\d{1,2})(?:ER|ST|ND|RD|TH)?\s+([A-Z]{3,9})(?![A-Z])/g;
+  for (let match = dayFirst.exec(plain); match; match = dayFirst.exec(plain)) {
+    if (MONTH_NAMES[match[2]] !== undefined && isDay(match[1]) && free(match.index)) return true;
+  }
+  const monthFirst = /(?<![A-Z])([A-Z]{3,9})\.?\s+(\d{1,2})(?:ST|ND|RD|TH)?(?![0-9A-Z])/g;
+  for (let match = monthFirst.exec(plain); match; match = monthFirst.exec(plain)) {
+    if (MONTH_NAMES[match[1]] !== undefined && isDay(match[2]) && free(match.index)) return true;
+  }
+  const numeric = /(?<![0-9/.-])(\d{1,2})\/(\d{2})(?![0-9/.-])/g;
+  for (let match = numeric.exec(plain); match; match = numeric.exec(plain)) {
+    if (isDay(match[1]) && Number(match[2]) >= 1 && Number(match[2]) <= 12 && free(match.index)) return true;
+  }
+  return false;
+}
+
 /** Vrai si le jeton (sans accents, en majuscules) est un nom de mois français ou anglais, abrégé ou non. */
 export function isMonthName(token: string): boolean {
   return MONTH_NAMES[token] !== undefined;
@@ -329,19 +353,20 @@ export function usefulBounds(sheet: Sheet, maxRows = 2_000, maxColumns = 26): Sh
 // ---------------------------------------------------------------------------
 
 /** Unité dans laquelle un document exprime ses montants. */
-export type AmountUnit = 'UNITS' | 'THOUSANDS' | 'MILLIONS' | 'BILLIONS';
+export type AmountUnit = 'UNITS' | 'HUNDREDS' | 'THOUSANDS' | 'MILLIONS' | 'BILLIONS';
 
 export const AMOUNT_UNIT_LABELS: Record<AmountUnit, string> = {
   UNITS: 'francs entiers',
+  HUNDREDS: 'centaines',
   THOUSANDS: 'milliers',
   MILLIONS: 'millions',
   BILLIONS: 'milliards',
 };
 
 const UNIT_CLASS_TOKENS: Record<string, AmountUnit> = {
-  ENTIER: 'UNITS', ENTIERS: 'UNITS',
+  ENTIER: 'UNITS', ENTIERS: 'UNITS', CENTAINE: 'HUNDREDS', CENTAINES: 'HUNDREDS', HUNDREDS: 'HUNDREDS',
   MILLIER: 'THOUSANDS', MILLIERS: 'THOUSANDS', MILLE: 'THOUSANDS', THOUSAND: 'THOUSANDS', THOUSANDS: 'THOUSANDS',
-  MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS', MFCFA: 'MILLIONS', MCFA: 'MILLIONS', MIO: 'MILLIONS', MLN: 'MILLIONS',
+  MILLION: 'MILLIONS', MILLIONS: 'MILLIONS', MXOF: 'MILLIONS', MFCFA: 'MILLIONS', MCFA: 'MILLIONS', MIO: 'MILLIONS', MIOS: 'MILLIONS', MLN: 'MILLIONS',
   MILLIARD: 'BILLIONS', MILLIARDS: 'BILLIONS', MDS: 'BILLIONS', MRD: 'BILLIONS', MRDS: 'BILLIONS', BILLION: 'BILLIONS', BILLIONS: 'BILLIONS',
 };
 /** Mots admis autour de l'unité dans la valeur du champ (« francs entiers », « milliers de francs »). */
@@ -387,42 +412,56 @@ function singleUnit(text: string): AmountUnit | null {
 }
 
 /**
- * Indications d'échelle écrites hors de tout mot d'unité, sur le texte sans accents et en majuscules :
- * « K FCFA », « K-FCFA », « K€ », « KF », « (K) », « en K », « kilo francs », « (000) », « (,000) »,
- * « (en 000) », « 000 FCFA », « '000 », « 1000s », « x1000 », « *1000 », « /1000 », « 10^3 », « M FCFA »,
- * « MM FCFA », « (M) », « en M », « Md FCFA ». Lecture volontairement large : elle ne sert qu'à REFUSER.
- * Un montant écrit avec ses milliers (« 1 000 FCFA ») n'est pas une indication d'échelle.
+ * Indications d'échelle écrites hors de tout mot d'unité, sur le texte sans accents, en majuscules et aux
+ * signes ramenés à leur forme simple (’ → ', ³ → ^3, ÷ → /) : « K FCFA », « K-FCFA », « K.FCFA », « K€ », « KF »,
+ * « (K) », « en K », « kilo francs », « (000) », « (,000) », « (en 000) », « (in 000) », « 000 FCFA »,
+ * « '000 », « 1000s », « x1000 », « *1000 », « /1000 », « 10^3 », « M FCFA », « MM FCFA », « (M) »,
+ * « en M », « Md FCFA ». Lecture volontairement large : elle ne sert qu'à REFUSER. Un montant écrit avec
+ * ses milliers (« 1 000 FCFA ») n'est pas une indication d'échelle.
  */
 const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
-  [/(?<![A-Z0-9])K[\s\-_./]?(?:F\s?CFA|FCFA|CFA|XOF|FRS|F|EUROS?|EUR|€)(?![A-Z0-9])/, 'THOUSANDS'],
-  [/\(\s*K\s*\)|(?<![A-Z0-9])EN\s+K(?![A-Z0-9])|(?<![A-Z0-9])KILO[\s-]?FRANCS?(?![A-Z0-9])/, 'THOUSANDS'],
-  [/\(\s*(?:EN\s+)?[',]?0{3}(?![0-9])[^)]{0,12}\)/, 'THOUSANDS'],
+  [/(?<![A-Z0-9])K(?:[\s\-_/]?(?:F\s?CFA|FCFA|CFA|XOF|FRS|F|EUROS?|EUR|€)|\.\s?(?:F\s?CFA|FCFA|CFA|XOF|FRS))(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*K\s*\)|(?<![A-Z0-9])EN\s+K(?![A-Z0-9])|(?<![A-Z0-9])KILO[\s-]?(?:FRANCS?|F\s?CFA|FCFA|CFA|XOF)(?![A-Z0-9])/, 'THOUSANDS'],
+  [/\(\s*(?:EN\s+|IN\s+)?[',]?0{3}(?![0-9])[^)]{0,12}\)/, 'THOUSANDS'],
   [/(?<![0-9][\s.,']?)'?0{3}(?:'?S)?(?![0-9])\s*(?:F\s?CFA|FCFA|CFA|XOF|FRS)(?![A-Z0-9])/, 'THOUSANDS'],
   [/(?<![0-9A-Z])'0{3}(?![0-9])|(?<![0-9][\s.,']?)0{3}'S(?![A-Z0-9])|(?<![0-9][\s.,']?)1\s?000'?S(?![A-Z0-9])/, 'THOUSANDS'],
   [/(?:[×*/]|(?<![A-Z0-9])X)\s?(?:1[\s.]?000|10\s?\^\s?3)(?![0-9])|(?<![0-9A-Z])10\s?\^\s?3(?![0-9])/, 'THOUSANDS'],
-  [/(?<![A-Z0-9])M{1,2}[\s\-_./]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'MILLIONS'],
-  [/\(\s*M{1,2}\s*\)|(?<![A-Z0-9])EN\s+M{1,2}(?![A-Z0-9])/, 'MILLIONS'],
-  [/(?<![A-Z0-9])(?:MDS?|MRDS?)[\s\-_./]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'BILLIONS'],
+  [/(?<![A-Z0-9])M{1,2}[\s\-_/]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'MILLIONS'],
+  [/\(\s*M{1,2}\s*\)|(?<![A-Z0-9])EN\s+M{1,2}(?![A-Z0-9]|\.\s?[A-Z])/, 'MILLIONS'],
+  [/(?<![A-Z0-9])(?:MDS?|MRDS?)[\s\-_/]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'BILLIONS'],
 ];
 
 /** Mots qui font d'une cellule un en-tête de montants. */
 const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
-  'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'BALANCE', 'SOLDE', 'SOLDES', 'DEBIT', 'CREDIT', 'DEPOSIT', 'DEPOSITS', 'APPLIED',
+  'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'BALANCE', 'BALANCES', 'SOLDE', 'SOLDES', 'DEBIT', 'CREDIT', 'DEPOSIT', 'DEPOSITS', 'APPLIED',
 ]);
-/** Dans un en-tête de montants, une lettre d'échelle isolée suffit : « Montants K », « Balance M », « Solde MF ». */
+/**
+ * Dans un en-tête de montants, une abréviation d'échelle suffit quand elle TERMINE l'intitulé (seule une
+ * devise peut la suivre) : « Montants K », « Balance (M) », « Solde MF », « Balance bn », « Montants en
+ * Kilo FCFA ». Une initiale au milieu d'un libellé (« CREDIT M DIOP », « Solde M-1 ») n'en est pas une.
+ */
 const AMOUNT_HEADER_SCALE_TOKENS: Record<string, AmountUnit> = {
-  K: 'THOUSANDS', KE: 'THOUSANDS', M: 'MILLIONS', MM: 'MILLIONS', MF: 'MILLIONS', MD: 'BILLIONS',
+  K: 'THOUSANDS', KE: 'THOUSANDS', KILO: 'THOUSANDS', TH: 'THOUSANDS',
+  M: 'MILLIONS', MM: 'MILLIONS', MF: 'MILLIONS', MN: 'MILLIONS',
+  MD: 'BILLIONS', BN: 'BILLIONS',
 };
+/** Dans un en-tête de montants, trois zéros qui ne terminent pas un montant écrit : « Balance 000 », « Amounts in 000 », « Amount (FCFA 000) ». */
+const AMOUNT_HEADER_BARE_THOUSANDS = /(?<![0-9][\s.,']?)0{3}(?![0-9])/;
 
 /** Unités ÉCRITES dans un texte : mots d'unité (« milliers », « francs entiers ») et indications d'échelle. */
 export function unitsInText(text: string): AmountUnit[] {
   const found = new Set<AmountUnit>();
   const tokens = tokenize(text);
   for (const token of tokens) if (UNIT_CLASS_TOKENS[token] !== undefined) found.add(UNIT_CLASS_TOKENS[token]);
-  const plain = plainUpper(text);
+  // Signes ramenés à leur forme simple : apostrophe typographique, exposant, signe de division.
+  const plain = plainUpper(text).replace(/[’‘]/g, "'").replace(/³/g, '^3').replace(/÷/g, '/');
   for (const [pattern, unit] of SCALE_PATTERNS) if (pattern.test(plain)) found.add(unit);
   if (tokens.some((token) => AMOUNT_HEADER_WORDS.has(token))) {
-    for (const token of tokens) if (AMOUNT_HEADER_SCALE_TOKENS[token] !== undefined) found.add(AMOUNT_HEADER_SCALE_TOKENS[token]);
+    tokens.forEach((token, index) => {
+      const endsTheHeader = tokens.slice(index + 1).every(isCurrencyToken);
+      if (AMOUNT_HEADER_SCALE_TOKENS[token] !== undefined && endsTheHeader) found.add(AMOUNT_HEADER_SCALE_TOKENS[token]);
+    });
+    if (AMOUNT_HEADER_BARE_THOUSANDS.test(plain)) found.add('THOUSANDS');
   }
   return Array.from(found);
 }
@@ -447,6 +486,11 @@ export interface ExplicitFields {
   currency: ExplicitField<string>;
   /** Champ « Unité » (ou « Unité des montants »). */
   unit: ExplicitField<AmountUnit>;
+  /**
+   * Libellés de date de position écrits SOUS les lignes de champ (lignes des banques, bas de l'onglet) : la
+   * date lue pour chacun, `null` si elle est illisible. Ils ne prouvent rien ; ils servent à REFUSER.
+   */
+  situationDatesBelowFields: Array<{ address: string; date: string | null }>;
   /** Devises écrites n'importe où dans l'onglet, champ compris. */
   writtenCurrencies: string[];
   /** Unités et indications d'échelle écrites n'importe où dans l'onglet, champ compris. */
@@ -465,6 +509,7 @@ export interface ExplicitFields {
  */
 export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastRow: number): ExplicitFields {
   const found: Record<ExplicitFieldKind, Array<string | null>> = { situationDate: [], currency: [], unit: [] };
+  const situationDatesBelowFields: Array<{ address: string; date: string | null }> = [];
   const currencies = new Set<string>();
   const units = new Set<AmountUnit>();
   for (let row = 1; row <= bounds.lastRow; row += 1) {
@@ -473,15 +518,22 @@ export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastR
       if (!text) continue;
       for (const currency of currenciesInText(text)) currencies.add(currency);
       for (const unit of unitsInText(text)) units.add(unit);
-      if (row > fieldLastRow) continue;
       const plain = plainUpper(text);
       for (const kind of Object.keys(EXPLICIT_FIELD_LABELS) as ExplicitFieldKind[]) {
         const label = EXPLICIT_FIELD_LABELS[kind].exec(plain);
         if (!label) continue;
         const own = plain.slice(label.index + label[0].length).trim();
+        // « Position au niveau des banques », « Situation au jour le jour » : le libellé n'introduit aucune date,
+        // ce n'est pas le champ. « Situation au 3 juin » (date illisible) en reste un, invalide.
+        if (kind === 'situationDate' && own !== '' && !/^[0-9]/.test(own) && findDatesInText(own).length === 0) continue;
         const right = cellAt(sheet, row, column + 1);
         const rightDate = cellIsoDate(right);
         const value = own !== '' ? own : rightDate ? formatIsoFr(rightDate) : cellText(right);
+        if (row > fieldLastRow) {
+          // Sous les lignes de champ, rien n'est un champ ; seul un libellé de date de position est relevé, pour refuser.
+          if (kind === 'situationDate') situationDatesBelowFields.push({ address: cellAddress(row, column), date: singleDayDate(value) });
+          continue;
+        }
         found[kind].push(kind === 'situationDate' ? singleDayDate(value) : kind === 'currency' ? singleCurrency(value) : singleUnit(value));
       }
     }
@@ -497,6 +549,7 @@ export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastR
     situationDate: field<string>(found.situationDate, null),
     currency: field<string>(found.currency, currencies),
     unit: field<AmountUnit>(found.unit, units),
+    situationDatesBelowFields,
     writtenCurrencies: Array.from(currencies),
     writtenUnits: Array.from(units),
   };

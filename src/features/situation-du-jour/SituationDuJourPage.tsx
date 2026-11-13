@@ -220,6 +220,7 @@ function FundPosition({ result }: { result: SituationResult }) {
         Situation au : {fundPosition.reading.referenceDate
           ? `${formatIsoFr(fundPosition.reading.referenceDate)} (${fundPosition.reading.dateProof === 'OPERATOR' ? `confirmée par l’opérateur pour l’onglet du ${formatIsoFr(fundPosition.reading.tabDate)}` : 'lue dans le fichier'})`
           : fundPosition.reading.dateField === 'INVALID' ? 'champ invalide ou écrit plusieurs fois'
+            : fundPosition.reading.dateField === 'CONTRADICTED' ? `une autre date est écrite dans l’onglet (${fundPosition.reading.dateConflictCells.join(', ')})`
             : fundPosition.reading.needsDateAttestation ? 'à confirmer par l’opérateur' : 'non établie'} ·
         Devise : {fundPosition.reading.currency && fundPosition.reading.currencyProvenance ? `${fundPosition.reading.currency} (${FIELD_PROVENANCE_LABELS[fundPosition.reading.currencyProvenance]})` : 'non établie (mention contraire, ambiguë ou invalide)'} ·
         Unité : {fundPosition.reading.unit && fundPosition.reading.unitProvenance ? `${AMOUNT_UNIT_LABELS[fundPosition.reading.unit]} (${FIELD_PROVENANCE_LABELS[fundPosition.reading.unitProvenance]})` : 'non établie (mention contraire, ambiguë ou invalide)'}

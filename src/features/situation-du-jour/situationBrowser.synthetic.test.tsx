@@ -396,6 +396,17 @@ test('confirmation de date de la Fund Position : en mémoire, pour ce fichier, c
   await session.addFiles([fund(2000)]);
   assert.equal(session.getState().attestations[fundName], undefined);
   assert.equal(reading().dateComparable, false);
+  // Fichier dont l'en-tête porte une autre date, sous un libellé quelconque : aucune confirmation n'est
+  // proposée, celle qui serait donnée ne débloque rien, et la cellule en cause est indiquée.
+  const contraryBytes = fundPositionBytes([{
+    name: tab, reference: { dateText: 'Soldes au 02/06/2026' },
+    rows: [{ label: 'BDK', bankBalance: 1050, fundApplied: 500, netBalance: 550, nonValidatedDeposit: 700, position: 1250 }],
+  }]);
+  await session.addFiles([{ name: fundName, size: contraryBytes.byteLength, arrayBuffer: async () => contraryBytes }]);
+  confirm();
+  assert.deepEqual([reading().dateField, reading().needsDateAttestation, reading().dateComparable], ['CONTRADICTED', false, false]);
+  assert.deepEqual(reading().dateConflictCells, ['J1']);
+  await session.addFiles([fund(2000)]);
   // Session effacée : plus aucune attestation.
   confirm();
   assert.equal(reading().dateComparable, true);

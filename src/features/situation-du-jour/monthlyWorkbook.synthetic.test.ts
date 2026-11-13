@@ -91,8 +91,13 @@ test('devise et unité du classeur : champ explicite ou convention SODATRA, jama
     assert.equal(withCells({ F1: title }).currency, null, title);
   }
   // Indication d'échelle dans un en-tête de montants : l'unité n'est pas établie.
-  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF', 'AMOUNT KF', 'AMOUNT (K)', 'AMOUNT x1000', 'AMOUNT M FCFA', 'AMOUNT K-FCFA', 'AMOUNT en M', 'AMOUNT K', 'AMOUNT M']) {
+  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF', 'AMOUNT KF', 'AMOUNT (K)', 'AMOUNT x1000', 'AMOUNT M FCFA', 'AMOUNT K-FCFA', 'AMOUNT en M', 'AMOUNT K', 'AMOUNT M',
+    'AMOUNT (in 000)', 'AMOUNTS IN 000', 'AMOUNT 000', 'AMOUNT (FCFA 000)', 'AMOUNT bn', 'AMOUNT (th)', 'AMOUNT Mn', 'AMOUNT ’000', 'AMOUNT Kilo FCFA', 'AMOUNT Mios', 'AMOUNT 10³', 'AMOUNT ÷ 1000', 'Montants en centaines']) {
     assert.deepEqual([withCells({ F1: title }).unit, withCells({ F1: title }).unitProvenance], [null, null], title);
+  }
+  // Témoins : un montant écrit avec ses milliers, une initiale ou un rang de mois dans un intitulé de montants.
+  for (const title of ['AMOUNT 1 000 FCFA', 'Plafond 1 000 FCFA', 'CREDIT M DIOP', 'SOLDE M-1', 'AMOUNT 25 000', 'DEPOSIT 2000']) {
+    assert.deepEqual([withCells({ F1: title }).unit, withCells({ F1: title }).unitProvenance], ['UNITS', 'CONVENTION'], title);
   }
   // Un champ n'est lu que dans l'en-tête. Dans une ligne, même sur la ligne qui suit l'ouverture, ce n'est qu'une
   // mention : concordante, elle laisse la convention ; contraire, elle retire tout.
