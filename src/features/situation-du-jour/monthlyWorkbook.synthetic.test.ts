@@ -91,7 +91,7 @@ test('devise et unité du classeur : champ explicite ou convention SODATRA, jama
     assert.equal(withCells({ F1: title }).currency, null, title);
   }
   // Indication d'échelle dans un en-tête de montants : l'unité n'est pas établie.
-  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF', 'AMOUNT KF', 'AMOUNT (K)', 'AMOUNT x1000', 'AMOUNT M FCFA', 'AMOUNT K-FCFA', 'AMOUNT en M', 'AMOUNT K', 'AMOUNT M', 'AMOUNT in 1,000', 'AMOUNT (1000)', 'AMOUNT en milles', 'AMOUNT (thsd)', 'AMOUNTS in XOF 1,000', 'Montants en unités de 1000',
+  for (const title of ['Montants en milliers', 'Note - Unité : milliers', 'AMOUNT K FCFA', 'AMOUNT (000)', 'KXOF', 'AMOUNT KF', 'AMOUNT (K)', 'AMOUNT x1000', 'AMOUNT M FCFA', 'AMOUNT K-FCFA', 'AMOUNT en M', 'AMOUNT K', 'AMOUNT M', 'AMOUNT in 1,000', 'AMOUNT (1000)', 'AMOUNT en milles', 'AMOUNT (thsd)', 'AMOUNTS in XOF 1,000', 'Montants en unités de 1000', 'Total in 1,000',
     'AMOUNT (in 000)', 'AMOUNTS IN 000', 'AMOUNT 000', 'AMOUNT (FCFA 000)', 'AMOUNT bn', 'AMOUNT (th)', 'AMOUNT Mn', 'AMOUNT ’000', 'AMOUNT Kilo FCFA', 'AMOUNT Mios', 'AMOUNT 10³', 'AMOUNT ÷ 1000', 'Montants en centaines']) {
     assert.deepEqual([withCells({ F1: title }).unit, withCells({ F1: title }).unitProvenance], [null, null], title);
   }

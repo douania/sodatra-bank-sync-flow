@@ -197,7 +197,8 @@ export function findUnreadableDates(text: string): Array<{ index: number; length
   for (let match = monthFirst.exec(plain); match; match = monthFirst.exec(plain)) {
     if (MONTH_NAMES[match[1]] !== undefined && isDay(match[2]) && free(match.index)) found.push({ index: match.index, length: match[0].length });
   }
-  const numeric = /(?<![0-9/.-])(\d{1,2})\/(\d{2})(?![0-9/.-])/g;
+  // Le mois peut tenir sur un chiffre : « 2/6 », « 12/6 ».
+  const numeric = /(?<![0-9/.-])(\d{1,2})\/(\d{1,2})(?![0-9/.-])/g;
   for (let match = numeric.exec(plain); match; match = numeric.exec(plain)) {
     if (isDay(match[1]) && isMonth(match[2]) && free(match.index)) found.push({ index: match.index, length: match[0].length });
   }
@@ -443,9 +444,13 @@ const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
   [/(?<![A-Z0-9])(?:MDS?|MRDS?)[\s\-_/]?(?:F\s?CFA|FCFA|CFA|XOF|EUROS?|EUR|€)(?![A-Z0-9])/, 'BILLIONS'],
   [/(?<![0-9A-Z])10\s?\^\s?6(?![0-9])/, 'MILLIONS'],
   [/(?<![0-9A-Z])10\s?\^\s?9(?![0-9])/, 'BILLIONS'],
-  // « Unité : 1000 F », « unités de 1000 », « units of 1,000 », hors du champ « Unité » lui-même.
-  [/(?<![A-Z])UNITE?S?\s*(?::|=|DE\s|OF\s)\s*10{0,2}(?:[\s.,']?000){1,3}(?![0-9]|[\s.,'][0-9])/, 'THOUSANDS'],
 ];
+/**
+ * « Unité : 1000 F », « unités de 1000 », « units of 1,000 » : une unité de mille, dans un intitulé de
+ * montants ou en tête de cellule. « Prix unité : 1 000 FCFA » est un prix, pas une échelle.
+ */
+const UNIT_OF_A_THOUSAND = /(?<![A-Z])UNITE?S?\s*(?::|=|DE\s|OF\s)\s*10{0,2}(?:[\s.,']?000){1,3}(?![0-9]|[\s.,'][0-9])/;
+const OPENED_BY_A_UNIT_WORD = /^\s*UNITE?S?(?![A-Z])/;
 
 /** Mots qui font d'une cellule un en-tête de montants. */
 const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
@@ -453,12 +458,17 @@ const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
   'CHIFFRES', 'FIGURES', 'VALEURS', 'VALUES', 'SOMMES',
 ]);
 /**
+ * Mots de total : ils font aussi d'une cellule un en-tête de montants pour les puissances de mille (« Total
+ * in 1,000 »), mais pas pour les abréviations de fin d'intitulé (« Total T », « Total BIS K » sont des libellés).
+ */
+const AMOUNT_TOTAL_WORDS: ReadonlySet<string> = new Set(['TOTAL', 'TOTAUX', 'TOTALS']);
+/**
  * Dans un en-tête de montants, une abréviation d'échelle suffit quand elle TERMINE l'intitulé (seule une
  * devise peut la suivre) : « Montants K », « Balance (M) », « Solde MF », « Balance bn », « Montants en
  * Kilo FCFA ». Une initiale au milieu d'un libellé (« CREDIT M DIOP », « Solde M-1 ») n'en est pas une.
  */
 const AMOUNT_HEADER_SCALE_TOKENS: Record<string, AmountUnit> = {
-  K: 'THOUSANDS', KE: 'THOUSANDS', KILO: 'THOUSANDS', TH: 'THOUSANDS', THSD: 'THOUSANDS', THOUS: 'THOUSANDS', TSD: 'THOUSANDS', THS: 'THOUSANDS', THOU: 'THOUSANDS',
+  K: 'THOUSANDS', KE: 'THOUSANDS', KILO: 'THOUSANDS', TH: 'THOUSANDS', THSD: 'THOUSANDS', THOUS: 'THOUSANDS', TSD: 'THOUSANDS', THS: 'THOUSANDS', THOU: 'THOUSANDS', T: 'THOUSANDS',
   E3: 'THOUSANDS', '1E3': 'THOUSANDS', '1K': 'THOUSANDS', X1K: 'THOUSANDS',
   M: 'MILLIONS', MM: 'MILLIONS', MF: 'MILLIONS', MN: 'MILLIONS', MIL: 'MILLIONS', MILL: 'MILLIONS',
   E6: 'MILLIONS', '1E6': 'MILLIONS', '1M': 'MILLIONS', X1M: 'MILLIONS',
@@ -469,21 +479,29 @@ const AMOUNT_HEADER_BARE_THOUSANDS = /(?<![0-9][\s.,']?)0{3}(?![0-9])/;
 /** Une puissance de mille écrite en chiffres, hors d'un nombre plus long : 1000, 1 000, 1,000, 10.000, 1'000'000. */
 const POWER_OF_THOUSAND = /(?<![0-9][\s.,']?)10{0,2}((?:[\s.,']?000){1,3})(?![0-9]|[\s.,'][0-9])/g;
 const POWER_OF_THOUSAND_UNITS: AmountUnit[] = ['THOUSANDS', 'MILLIONS', 'BILLIONS'];
+const ZERO_WORDS: ReadonlySet<string> = new Set(['ZERO', 'ZEROS', 'ZEROES']);
+const OMITTED_WORDS: ReadonlySet<string> = new Set(['OMIS', 'OMITTED', 'SUPPRIMES', 'REMOVED', 'DROPPED']);
 /** Ce qui précède un montant écrit comme tel : le mot d'intitulé, puis au plus un mot de liaison (« Solde 1 000 », « Solde de 1 000 »). */
-const AMOUNT_WRITTEN_AFTER_ITS_HEADER = new RegExp(`(?<![A-Z])(?:${Array.from(AMOUNT_HEADER_WORDS).join('|')})\\s+(?:(?:AU|DE|DU|A)\\s+)?$`);
+const AMOUNT_WRITTEN_AFTER_ITS_HEADER = new RegExp(`(?<![A-Z])(?:${[...AMOUNT_HEADER_WORDS, ...AMOUNT_TOTAL_WORDS].join('|')})\\s+(?:(?:AU|DE|DU|A)\\s+)?$`);
+/** Ce qui introduit une échelle, collé à la puissance de mille : « in 1,000 », « x 1000 », « /1000 ». */
+const SCALE_INTRODUCED = /(?:(?<![A-Z0-9])(?:IN|EN|PAR|PER|BY|X)\s*|(?<![0-9])[×*/]\s*)$/;
 
 /**
- * Dans un en-tête de montants, toute puissance de mille est une indication d'échelle — « Montants in
- * 1,000 », « Amounts in XOF 1,000 », « Montants : 1000 FCFA », « Balance (1,000) », « Montants 1,000s » —
- * SAUF quand elle est écrite comme un montant, juste après le mot d'intitulé et sans pluriel : « Solde
- * 1 000 FCFA », « Solde de 1 000 000 ».
+ * Puissances de mille qui valent indication d'échelle dans une cellule d'intitulé de montants.
+ * Dans les lignes d'en-tête, toutes — « Montants in 1,000 », « Amounts in XOF 1,000 », « Montants : 1000
+ * FCFA », « Balance (1,000) » — SAUF un montant écrit juste après le mot d'intitulé : « Solde 1 000 FCFA »,
+ * « Solde de 1 000 000 ». Sous l'en-tête, où les lignes portent des libellés d'opérations (« DEPOSIT BDK
+ * 1 000 000 »), seulement celles qu'une préposition ou un opérateur introduit. Partout, celles au pluriel
+ * (« 1,000s »).
  */
-function powersOfThousandInAmountHeader(plain: string): AmountUnit[] {
+function powersOfThousandInAmountHeader(plain: string, headerRow: boolean): AmountUnit[] {
   const units: AmountUnit[] = [];
   for (const match of plain.matchAll(POWER_OF_THOUSAND)) {
     const start = match.index as number;
     const plural = /^'?S(?![A-Z0-9])/.test(plain.slice(start + match[0].length));
-    if (plural || !AMOUNT_WRITTEN_AFTER_ITS_HEADER.test(plain.slice(0, start))) {
+    const written = AMOUNT_WRITTEN_AFTER_ITS_HEADER.test(plain.slice(0, start));
+    const introduced = SCALE_INTRODUCED.test(plain.slice(0, start));
+    if (plural || (headerRow ? !written : introduced)) {
       units.push(POWER_OF_THOUSAND_UNITS[(match[1].match(/000/g) as string[]).length - 1]);
     }
   }
@@ -491,7 +509,7 @@ function powersOfThousandInAmountHeader(plain: string): AmountUnit[] {
 }
 
 /** Unités ÉCRITES dans un texte : mots d'unité (« milliers », « francs entiers ») et indications d'échelle. */
-export function unitsInText(text: string): AmountUnit[] {
+export function unitsInText(text: string, headerRow = true): AmountUnit[] {
   const found = new Set<AmountUnit>();
   const tokens = tokenize(text);
   for (const token of tokens) if (UNIT_CLASS_TOKENS[token] !== undefined) found.add(UNIT_CLASS_TOKENS[token]);
@@ -504,10 +522,14 @@ export function unitsInText(text: string): AmountUnit[] {
       if (AMOUNT_HEADER_SCALE_TOKENS[token] !== undefined && endsTheHeader) found.add(AMOUNT_HEADER_SCALE_TOKENS[token]);
     });
     if (AMOUNT_HEADER_BARE_THOUSANDS.test(plain)) found.add('THOUSANDS');
-    for (const unit of powersOfThousandInAmountHeader(plain)) found.add(unit);
     // « (3 zéros omis) », « three zeroes omitted ».
-    if (tokens.includes('ZEROS') || tokens.includes('ZEROES')) found.add('THOUSANDS');
+    if (tokens.some((token) => ZERO_WORDS.has(token)) && tokens.some((token) => OMITTED_WORDS.has(token))) found.add('THOUSANDS');
   }
+  if (tokens.some((token) => AMOUNT_HEADER_WORDS.has(token) || AMOUNT_TOTAL_WORDS.has(token))) {
+    for (const unit of powersOfThousandInAmountHeader(plain, headerRow)) found.add(unit);
+    if (UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');
+  }
+  if (OPENED_BY_A_UNIT_WORD.test(plain) && UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');
   return Array.from(found);
 }
 
@@ -562,7 +584,7 @@ export function readExplicitFields(sheet: Sheet, bounds: SheetBounds, fieldLastR
       const text = cellText(cellAt(sheet, row, column));
       if (!text) continue;
       for (const currency of currenciesInText(text)) currencies.add(currency);
-      for (const unit of unitsInText(text)) units.add(unit);
+      for (const unit of unitsInText(text, row <= fieldLastRow)) units.add(unit);
       const plain = plainUpper(text);
       for (const kind of Object.keys(EXPLICIT_FIELD_LABELS) as ExplicitFieldKind[]) {
         const label = EXPLICIT_FIELD_LABELS[kind].exec(plain);
