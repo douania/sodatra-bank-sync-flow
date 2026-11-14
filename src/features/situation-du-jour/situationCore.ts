@@ -486,19 +486,39 @@ const POWER_OF_THOUSAND = /(?<![0-9][\s.,']?)10{0,2}((?:[\s.,']?000){1,3})(?![0-
 const POWER_OF_THOUSAND_UNITS: AmountUnit[] = ['THOUSANDS', 'MILLIONS', 'BILLIONS'];
 const ZERO_WORDS: ReadonlySet<string> = new Set(['ZERO', 'ZEROS', 'ZEROES']);
 const OMITTED_WORDS: ReadonlySet<string> = new Set(['OMIS', 'OMITTED', 'SUPPRIMES', 'REMOVED', 'DROPPED']);
-/** Ce qui précède un montant écrit comme tel : le mot d'intitulé, puis au plus un mot de liaison (« Solde 1 000 », « Solde de 1 000 »). */
-const AMOUNT_WRITTEN_AFTER_ITS_HEADER = new RegExp(`(?<![A-Z])(?:${[...AMOUNT_HEADER_WORDS, ...AMOUNT_TOTAL_WORDS].join('|')})\\s+(?:(?:AU|DE|DU|A)\\s+)?$`);
-/** Ce qui introduit une échelle, collé à la puissance de mille : « in 1,000 », « x 1000 », « /1000 ». */
-const SCALE_INTRODUCED = /(?:(?<![A-Z0-9])(?:IN|EN|PAR|PER|BY|X)\s*|(?<![0-9])[×*/]\s*)$/;
+/**
+ * Ce qui précède un montant écrit comme tel : le mot d'intitulé d'une opération, au singulier, puis au plus
+ * un mot de liaison (« Solde 1 000 », « Solde de 1 000 »). Un pluriel générique annonce une note, jamais un
+ * montant : « Montants 1 000 FCFA » est une échelle.
+ */
+const AMOUNT_WRITTEN_AFTER_ITS_HEADER = new RegExp(`(?<![A-Z])(?:${[...AMOUNT_HEADER_WORDS, ...AMOUNT_TOTAL_WORDS].filter((word) => !AMOUNT_NOTE_WORDS.has(word)).join('|')})\\s+(?:(?:AU|DE|DU|A)\\s+)?$`);
+/** Une devise écrite devant un nombre : « XOF », « FCFA », « F CFA », « francs », un symbole. */
+const CURRENCY_BEFORE_A_NUMBER = `(?:(?<![A-Z0-9])(?:F\\s?CFA|FRANCS?(?:\\s+CFA)?|FRS|${Object.keys(CURRENCY_TOKENS).join('|')}|F)\\.?|[€£]|\\$)`;
+/** Signes admis entre la préposition, la devise et le nombre. */
+const SIGNS_BEFORE_A_NUMBER = `[\\s:=()]*`;
+/**
+ * Ce qui introduit une échelle devant la puissance de mille : une préposition ou un opérateur, puis au plus
+ * une devise et des signes — « in 1,000 », « x 1000 », « /1000 », « in XOF 1,000 », « en FCFA 1 000 »,
+ * « (in XOF) 1,000 », « en FCFA (1 000) ».
+ */
+const SCALE_INTRODUCER = `(?:(?<![A-Z0-9])(?:IN|EN|PAR|PER|BY|X)|(?<![0-9])[×*/])${SIGNS_BEFORE_A_NUMBER}(?:${CURRENCY_BEFORE_A_NUMBER}${SIGNS_BEFORE_A_NUMBER})*`;
+const SCALE_INTRODUCED = new RegExp(`${SCALE_INTRODUCER}$`);
+/**
+ * Une cellule qui n'écrit QUE une échelle introduite, sans mot d'intitulé : « (en FCFA 1 000) », « in XOF
+ * 1,000 », « en 1 000 FCFA ». Dès qu'un autre mot l'accompagne (« Plafond en 1 000 FCFA »), c'est un montant.
+ */
+const CELL_IS_AN_INTRODUCED_SCALE = new RegExp(`^[^A-Z0-9×*/]*${SCALE_INTRODUCER}10{0,2}((?:[\\s.,']?000){1,3})(?:'?S)?(?:[\\s()]*${CURRENCY_BEFORE_A_NUMBER})?[^A-Z0-9]*$`);
 
 /**
  * Puissances de mille qui valent indication d'échelle dans une cellule d'intitulé de montants.
  * Dans les lignes d'en-tête, toutes — « Montants in 1,000 », « Amounts in XOF 1,000 », « Montants : 1000
- * FCFA », « Balance (1,000) » — SAUF un montant écrit juste après le mot d'intitulé : « Solde 1 000 FCFA »,
- * « Solde de 1 000 000 ». Il en va de même, sous l'en-tête, d'une note au pluriel générique (« Note: all
- * amounts are in XOF 1,000 »). Pour les autres lignes sous l'en-tête, qui portent des libellés d'opérations
- * (« DEPOSIT BDK 1 000 000 »), seulement celles qu'une préposition ou un opérateur introduit. Partout,
- * celles au pluriel (« 1,000s »).
+ * FCFA », « Balance (1,000) » — SAUF un montant écrit juste après un mot d'intitulé au singulier : « Solde
+ * 1 000 FCFA », « Solde de 1 000 000 ». Il en va de même, sous l'en-tête, d'une note au pluriel générique
+ * (« Note: all amounts are in XOF 1,000 »). Pour les autres lignes sous l'en-tête, qui portent des libellés
+ * d'opérations (« DEPOSIT BDK 1 000 000 »), seulement celles qu'une préposition ou un opérateur introduit,
+ * avec ou sans devise intercalée (« Amount in XOF 1,000 », « Solde en FCFA 1 000 »). Partout, celles au
+ * pluriel (« 1,000s »). Hors de tout intitulé de montants, une cellule qui n'écrit qu'une échelle introduite
+ * (« (en FCFA 1 000) ») en est une aussi : voir `CELL_IS_AN_INTRODUCED_SCALE`.
  */
 function powersOfThousandInAmountHeader(plain: string, headerRow: boolean): AmountUnit[] {
   const units: AmountUnit[] = [];
@@ -537,6 +557,8 @@ export function unitsInText(text: string, headerRow = true): AmountUnit[] {
     if (UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');
   }
   if (OPENED_BY_A_UNIT_WORD.test(plain) && UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');
+  const alone = CELL_IS_AN_INTRODUCED_SCALE.exec(plain);
+  if (alone) found.add(POWER_OF_THOUSAND_UNITS[(alone[1].match(/000/g) as string[]).length - 1]);
   return Array.from(found);
 }
 
