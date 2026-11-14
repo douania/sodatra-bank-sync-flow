@@ -447,14 +447,18 @@ const SCALE_PATTERNS: ReadonlyArray<[RegExp, AmountUnit]> = [
 ];
 const OPENED_BY_A_UNIT_WORD = /^\s*UNITE?S?(?![A-Z])/;
 /** Mots qui annoncent une échelle : « Echelle : 1 000 », « Scale: 1,000 », « Multiplier par 1 000 ». */
-const SCALE_WORDS: ReadonlySet<string> = new Set([
-  'ECHELLE', 'SCALE', 'MULTIPLIER', 'MULTIPLIE', 'MULTIPLIES', 'MULTIPLY', 'MULTIPLIED', 'FACTEUR', 'FACTOR', 'COEFFICIENT',
-]);
+const SCALE_WORDS: ReadonlySet<string> = new Set(['ECHELLE', 'SCALE', 'MULTIPLIER', 'MULTIPLIE', 'MULTIPLIES', 'MULTIPLY', 'MULTIPLIED']);
+/**
+ * Cellule de note ou de titre : « NB : », « Note: », « Remarque », « Fund position », « Situation de
+ * trésorerie », « Etat ». Une échelle introduite y vaut pour le document ; dans un libellé d'opération
+ * (« Paiement en FCFA 100 000 »), le même texte écrit un montant.
+ */
+const NOTE_OR_TITLE = /(?<![A-Z])(?:N\.?\s?B\.?|NOTA|NOTES?|REMARQUES?|RAPPEL|FUND|POSITIONS?|SITUATIONS?|TRESORERIE|TREASURY|ETAT)(?![A-Z])/;
 
 /** Mots qui font d'une cellule un en-tête de montants. */
 const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
   'MONTANT', 'MONTANTS', 'AMOUNT', 'AMOUNTS', 'BALANCE', 'BALANCES', 'SOLDE', 'SOLDES', 'DEBIT', 'CREDIT', 'DEPOSIT', 'DEPOSITS', 'APPLIED',
-  'CHIFFRES', 'FIGURES', 'VALEURS', 'VALUES', 'SOMMES',
+  'CHIFFRES', 'FIGURES', 'VALEURS', 'VALUES', 'SOMMES', 'VALEUR', 'VALUE', 'AMT',
 ]);
 /**
  * Mots de total : ils font aussi d'une cellule un en-tête de montants pour les puissances de mille (« Total
@@ -498,24 +502,27 @@ const SIGNS_BEFORE_A_NUMBER = `[\\s:=(),\\-–—]*`;
 /** Ce qui introduit une échelle devant la puissance de mille : une préposition ou un opérateur, puis des signes — « in 1,000 », « x 1000 », « /1000 », « en (1 000) ». */
 const SCALE_INTRODUCER = `(?:(?<![A-Z0-9])(?:IN|EN|PAR|PER|BY|X)|(?<![0-9])[×*/])${SIGNS_BEFORE_A_NUMBER}`;
 const SCALE_INTRODUCED = new RegExp(`${SCALE_INTRODUCER}$`);
+/** Une puissance de mille introduite, écrite avec ou sans décimales nulles : « 1,000 », « 1 000 000 », « 1,000.00 ». */
+const INTRODUCED_POWER = `10{0,2}((?:[\\s.,']?000){1,3})(?:[.,]0{1,2})?(?![0-9]|[\\s.,'][0-9])`;
 /**
- * Une échelle introduite DONT la devise précède le nombre, où qu'elle soit écrite, avec ou sans mot
- * d'intitulé : « Amount in XOF 1,000 », « Solde en FCFA 1 000 », « Note: in XOF 1,000 », « Fund position (in
- * XOF 1,000) », « (in XOF) 1,000 », « en FCFA (1 000) ». Un montant s'écrit avec sa devise après lui
- * (« Plafond en 1 000 FCFA ») ou sans préposition qui l'introduise (« Deposit XOF 1 000 000 »).
+ * Une échelle introduite DONT la devise précède le nombre, dans une cellule d'intitulé de montants, de note
+ * ou de titre : « Amount in XOF 1,000 », « Solde en FCFA 1 000 », « Note: in XOF 1,000 », « Fund position (in
+ * XOF 1,000) », « (in XOF) 1,000 », « en FCFA (1 000) ».
  */
-const SCALE_INTRODUCED_WITH_A_CURRENCY = new RegExp(`${SCALE_INTRODUCER}(?:${CURRENCY_BEFORE_A_NUMBER}${SIGNS_BEFORE_A_NUMBER})+10{0,2}((?:[\\s.,']?000){1,3})(?![0-9]|[\\s.,'][0-9])`, 'g');
+const SCALE_INTRODUCED_WITH_A_CURRENCY = new RegExp(`${SCALE_INTRODUCER}(?:${CURRENCY_BEFORE_A_NUMBER}${SIGNS_BEFORE_A_NUMBER})+${INTRODUCED_POWER}`, 'g');
+/** Une échelle introduite, devise devant le nombre ou non, dans une cellule de note ou de titre : « Note: in 1,000 XOF », « Etat en 1 000 FCFA ». */
+const SCALE_INTRODUCED_IN_A_NOTE = new RegExp(`${SCALE_INTRODUCER}${INTRODUCED_POWER}`, 'g');
 /**
  * « Unité : 1000 F », « unités de 1000 », « units of 1,000 », « Unité : FCFA 1 000 » : une unité de mille,
  * avec ou sans devise devant le nombre, dans un intitulé de montants ou en tête de cellule. « Prix unité :
  * 1 000 FCFA » est un prix, pas une échelle.
  */
-const UNIT_OF_A_THOUSAND = new RegExp(`(?<![A-Z])UNITE?S?\\s*(?::|=|DE\\s|OF\\s)${SIGNS_BEFORE_A_NUMBER}(?:${CURRENCY_BEFORE_A_NUMBER}${SIGNS_BEFORE_A_NUMBER})*10{0,2}(?:[\\s.,']?000){1,3}(?![0-9]|[\\s.,'][0-9])`);
+const UNIT_OF_A_THOUSAND = new RegExp(`(?<![A-Z])UNITE?S?\\s*(?::|=|DE\\s|OF\\s)?${SIGNS_BEFORE_A_NUMBER}(?:${CURRENCY_BEFORE_A_NUMBER}${SIGNS_BEFORE_A_NUMBER})*10{0,2}(?:[\\s.,']?000){1,3}(?![0-9]|[\\s.,'][0-9])`);
 /**
  * Une cellule qui n'écrit QUE une échelle introduite, sans mot d'intitulé : « (en FCFA 1 000) », « in XOF
  * 1,000 », « en 1 000 FCFA ». Dès qu'un autre mot l'accompagne (« Plafond en 1 000 FCFA »), c'est un montant.
  */
-const CELL_IS_AN_INTRODUCED_SCALE = new RegExp(`^[^A-Z0-9×*/]*${SCALE_INTRODUCER}10{0,2}((?:[\\s.,']?000){1,3})(?:'?S)?(?:[\\s()]*${CURRENCY_BEFORE_A_NUMBER})?[^A-Z0-9]*$`);
+const CELL_IS_AN_INTRODUCED_SCALE = new RegExp(`^[^A-Z0-9×*/]*${SCALE_INTRODUCER}(?:${CURRENCY_BEFORE_A_NUMBER}${SIGNS_BEFORE_A_NUMBER})*10{0,2}((?:[\\s.,']?000){1,3})(?:'?S)?(?:[\\s()]*${CURRENCY_BEFORE_A_NUMBER})?[^A-Z0-9]*$`);
 
 /**
  * Puissances de mille qui valent indication d'échelle dans une cellule d'intitulé de montants.
@@ -526,9 +533,10 @@ const CELL_IS_AN_INTRODUCED_SCALE = new RegExp(`^[^A-Z0-9×*/]*${SCALE_INTRODUCE
  * d'opérations (« DEPOSIT BDK 1 000 000 »), seulement celles qu'une préposition ou un opérateur introduit
  * (« Solde en 1 000 FCFA » ; avec la devise devant le nombre, voir `SCALE_INTRODUCED_WITH_A_CURRENCY`). Partout, celles au
  * pluriel (« 1,000s »). Hors de tout intitulé de montants, une cellule qui n'écrit qu'une échelle introduite
- * (« (en FCFA 1 000) ») en est une aussi, de même qu'une échelle introduite dont la devise précède le nombre
- * (« Note: in XOF 1,000 ») et qu'une puissance de mille dans une cellule qui porte un mot d'échelle
- * (« Scale: 1,000 »).
+ * (« (en FCFA 1 000) ») en est une aussi ; dans une cellule de note ou de titre, toute échelle introduite
+ * (« Note: in 1,000 XOF », « Fund position in XOF 1,000 ») ; partout, une puissance de mille dans une cellule
+ * qui porte un mot d'échelle (« Scale: 1,000 »). Dans un libellé d'opération sans mot d'intitulé de montants
+ * (« Paiement en FCFA 100 000 »), une puissance de mille est un montant.
  */
 function powersOfThousandInAmountHeader(plain: string, headerRow: boolean): AmountUnit[] {
   const units: AmountUnit[] = [];
@@ -569,7 +577,16 @@ export function unitsInText(text: string, headerRow = true): AmountUnit[] {
   if (OPENED_BY_A_UNIT_WORD.test(plain) && UNIT_OF_A_THOUSAND.test(plain)) found.add('THOUSANDS');
   const alone = CELL_IS_AN_INTRODUCED_SCALE.exec(plain);
   if (alone) found.add(POWER_OF_THOUSAND_UNITS[(alone[1].match(/000/g) as string[]).length - 1]);
-  for (const match of plain.matchAll(SCALE_INTRODUCED_WITH_A_CURRENCY)) found.add(POWER_OF_THOUSAND_UNITS[(match[1].match(/000/g) as string[]).length - 1]);
+  const amountCell = tokens.some((token) => AMOUNT_HEADER_WORDS.has(token) || AMOUNT_TOTAL_WORDS.has(token));
+  const noteOrTitleCell = NOTE_OR_TITLE.test(plain);
+  if (amountCell || noteOrTitleCell) {
+    for (const match of plain.matchAll(SCALE_INTRODUCED_WITH_A_CURRENCY)) found.add(POWER_OF_THOUSAND_UNITS[(match[1].match(/000/g) as string[]).length - 1]);
+  }
+  if (noteOrTitleCell) {
+    for (const match of plain.matchAll(SCALE_INTRODUCED_IN_A_NOTE)) found.add(POWER_OF_THOUSAND_UNITS[(match[1].match(/000/g) as string[]).length - 1]);
+    // « Note : unité FCFA 1 000 », « Fund position (unit: XOF 1,000) ».
+    if (UNIT_OF_A_THOUSAND.exec(plain) !== null) found.add('THOUSANDS');
+  }
   if (tokens.some((token) => SCALE_WORDS.has(token))) {
     for (const match of plain.matchAll(POWER_OF_THOUSAND)) found.add(POWER_OF_THOUSAND_UNITS[(match[1].match(/000/g) as string[]).length - 1]);
   }

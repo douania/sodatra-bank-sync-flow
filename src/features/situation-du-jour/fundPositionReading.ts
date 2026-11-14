@@ -176,35 +176,49 @@ function unavailable(reason: FundPositionReason): FundPositionReading {
 const REFERENCE_SCAN_ROWS = 200;
 const REFERENCE_SCAN_COLUMNS = 60;
 
-/** Mots qui disent qu'une date écrite n'est PAS la date de position : échéance, valeur, validité, revue, taux. L'impression est lue par `PRINT_WORD`. */
+/** Mots qui disent qu'une date écrite n'est PAS la date de position : échéance, impression, valeur, validité, revue, taux. */
 const NON_POSITION_DATE_WORDS: ReadonlySet<string> = new Set([
-  'ECHEANCE', 'ECHEANCES', 'MATURITY', 'MATURITE', 'VALEUR', 'VALUE', 'VALIDITE', 'VALABLE', 'VALID', 'EXPIRE', 'EXPIRATION', 'REVUE', 'REVIEW', 'TAUX', 'RATE',
+  'ECHEANCE', 'ECHEANCES', 'MATURITY', 'MATURITE', 'IMPRIME', 'IMPRIMEE', 'IMPRESSION', 'PRINTED', 'PRINT', 'EDITE', 'EDITEE', 'EDITION',
+  'VALEUR', 'VALUE', 'VALIDITE', 'VALABLE', 'VALID', 'EXPIRE', 'EXPIRATION', 'REVUE', 'REVIEW', 'TAUX', 'RATE',
 ]);
 /** « Valeur » et « value » ne libellent une date que dans « date de valeur », « value date ». */
 const VALUE_DATE_WORDS: ReadonlySet<string> = new Set(['VALEUR', 'VALUE']);
+/** Mots d'impression qui, lorsqu'ils gouvernent une date, la font exempter comme date d'impression. */
+const PRINT_GOVERNING_WORDS: ReadonlySet<string> = new Set(['IMPRIME', 'IMPRIMEE', 'IMPRESSION', 'PRINTED', 'PRINT', 'EDITE', 'EDITEE', 'EDITION']);
+/** Participes qui datent l'impression du document, quel que soit ce qui est imprimé : « Etat imprimé le », « Fund Position printed on ». */
+const PRINTED_ON_WORDS: ReadonlySet<string> = new Set(['IMPRIME', 'IMPRIMEE', 'PRINTED', 'EDITE', 'EDITEE']);
 /**
  * Mots qui parlent de la production du document — impression, édition, génération, export —, avec leurs
  * accords et le préfixe « ré » : « imprimé », « réimprimés », « impr. », « édition », « généré », « exporté »,
- * « printed », « print », « generated ».
+ * « printed », « print », « generated ». Lecture large : elle ne sert qu'à REFUSER (contrôle de la date
+ * d'impression) ; l'exemption d'une date, elle, ne se fie qu'au mot qui la gouverne.
  */
 const PRINT_WORD = /^(?:RE)?(?:IMPRIME(?:E|S|ES)?|IMPRESSIONS?|IMPR|EDITE(?:E|S|ES)?|EDITIONS?|PRINT(?:ED|ING|S)?|GENERE(?:E|S|ES)?|GENERATED|EXPORTE(?:E|S|ES)?|EXPORTED)$/;
+/** Après un mot d'impression, ce qui annonce une date sans la donner : « le N/A », « : ? », « le 02-juin-2026 », « 02-Jun-2026 », « hier ». */
+const PRINT_DATING_HINT = /^\s*[0-9]|(?:(?<![A-Z])(?:LE|AU|DU|ON|AT)(?![A-Z])|[:=])\s*(?:[0-9?…-]|N\s*[/.]?\s*A(?![A-Z])|TB[ACD](?![A-Z])|NC(?![A-Z])|X{2,}|\.{2,})|(?<![A-Z])(?:HIER|YESTERDAY|TODAY|AUJOURD)/;
+/** Un mot de liaison ou un deux-points laissé en fin de cellule : la date est attendue dans la cellule de droite. */
+const DANGLING_DATE_LINK = /(?:(?<![A-Z])(?:LE|AU|DU|ON|AT)|[:=])[\s.]*$/;
+/** « Date d'impression », « Print date » : la cellule annonce une date. */
+const DATE_WORD = /(?<![A-Z])DATE[DE]?(?![A-Z])/;
 /** Ce qui sépare deux propositions dans une cellule : tiret entouré d'espaces, point-virgule, barre. */
 const CLAUSE_BREAK = /\s[-–—]\s|[;|]/;
 /** Ce qui tient la place d'une date qu'on n'a pas écrite : « N/A », « TBD », « ? », « à préciser », « xx/xx/xxxx ». */
 const DATE_PLACEHOLDER = /^(?:N\s*[/.]?\s*[AD]\.?|NC|TB[ACD]|\?+|-+|\.{2,}|…+|A\s+(?:PRECISER|DEFINIR|CONFIRMER|COMPLETER|RENSEIGNER)|INCONNUE?S?|NEANT|X+(?:[/.-]X+)*|(?:JJ|DD)[/.-].*)$/;
-/** Mots qui rattachent une date à une facilité ou à son contrat : sous le bloc des banques, une telle date n'est pas celle de la position. */
+/** Mots qui nomment une facilité ou son contrat : sous le bloc des banques, le solde d'une facilité n'est pas la position. */
 const FACILITY_WORDS: ReadonlySet<string> = new Set([
   'FACILITE', 'FACILITES', 'FACILITY', 'FACILITIES', 'DECOUVERT', 'DECOUVERTS', 'OVERDRAFT', 'OVERDRAFTS', 'PRET', 'PRETS', 'LOAN', 'LOANS',
   'EMPRUNT', 'EMPRUNTS', 'LIGNE', 'LIGNES', 'ESCOMPTE', 'CAUTION', 'CAUTIONS', 'GARANTIE', 'GARANTIES', 'ENCOURS', 'OUTSTANDING',
   'CONTRAT', 'CONTRATS', 'CONVENTION', 'CONVENTIONS', 'AVENANT', 'AVENANTS', 'AGREEMENT', 'AGREEMENTS',
-  'CREDIT', 'CREDITS', 'CMT', 'CCT', 'DAT', 'SPOT', 'ENGAGEMENT', 'ENGAGEMENTS', 'ECHEANCE', 'ECHEANCES', 'MATURITY',
-  'LIMIT', 'LIMITS', 'LIMITE', 'LIMITES', 'PLAFOND', 'PLAFONDS', 'TIRAGE', 'TIRAGES', 'REMBOURSEMENT', 'REMBOURSEMENTS',
+  'CMT', 'CCT', 'DAT', 'ENGAGEMENT', 'ENGAGEMENTS',
 ]);
 /**
- * « Soldes hors facilités au … », « Soldes et encours au … » parlent de la position : une facilité mise à
- * part, ou citée à la suite de la position, ne fait pas de la date celle d'une facilité.
+ * Une facilité en complément DIRECT du mot de position : « Solde du découvert », « Solde DAT », « Situation des
+ * engagements », « Soldes au titre de la facilité ». Une facilité citée plus loin (« Soldes hors facilités »,
+ * « Soldes et encours », « Soldes, facilités comprises ») ne fait pas de la date celle d'une facilité.
  */
-const FACILITY_SET_ASIDE = /(?<![A-Z])(?:HORS|SANS|EXCLUDING|EXCL\.?|WITHOUT|ET|AND)\s+[A-Z'-]+|&\s*[A-Z'-]+/g;
+const FACILITY_COMPLEMENT = new RegExp(`(?<![A-Z])(?:SOLDES?|BALANCES?|POSITIONS?|SITUATIONS?|ETAT)\\s+(?:(?:AU\\s+TITRE\\s+)?(?:DU|DE\\s+LA|DE\\s+L['’]|DES|DE|D['’]|OF(?:\\s+THE)?)\\s*)?(?:${Array.from(FACILITY_WORDS).join('|')})(?![A-Z])`);
+/** Annonce de note : « NB », « N.B. », « Note », « Nota bene », « Remarque », « Rappel », « P.S. ». */
+const NOTE_LEAD_WORDS: ReadonlySet<string> = new Set(['NB', 'N', 'B', 'NOTE', 'NOTES', 'NOTA', 'BENE', 'REMARQUE', 'REMARQUES', 'RAPPEL', 'PS', 'P', 'S']);
 
 /** Mots qui parlent de la position elle-même : un libellé qui en porte un n'exempte jamais sa date. */
 const POSITION_DATE_WORDS: ReadonlySet<string> = new Set([
@@ -232,7 +246,8 @@ const POSITION_DATE_LABEL = /(?<![A-Z])(?:SOLDES?|BALANCES?|POSITIONS?|SITUATION
 /**
  * Une date écrite dans l'onglet. `iso` nul : écriture illisible (sans année). `exempt` : SON libellé la dit
  * autre chose qu'une date de position. `aboutThePosition` : son libellé parle de soldes, de position ou de
- * situation, sans nommer une facilité. `labelAddress` : la cellule où ce libellé est écrit.
+ * situation, sans nommer une facilité. `labelAddress` : la cellule où ce libellé est écrit. `printGoverned` :
+ * un mot d'impression la gouverne — elle n'est admise que lisible et au moins égale à la date de position.
  */
 interface ZoneDate {
   address: string;
@@ -241,6 +256,13 @@ interface ZoneDate {
   precision: 'DAY' | 'MONTH';
   exempt: boolean;
   aboutThePosition: boolean;
+  printGoverned: boolean;
+}
+
+/** Vrai si une date d'impression est lisible et au moins égale à la date de position ; au mois près, seulement si le mois est postérieur. */
+function printedOnOrAfter(date: Pick<ZoneDate, 'iso' | 'precision'>, positionDate: string): boolean {
+  return date.iso !== null
+    && (date.precision === 'MONTH' ? date.iso.slice(0, 7) > positionDate.slice(0, 7) : date.iso >= positionDate);
 }
 
 /** Vrai si le texte porte un mot qui n'est pas un simple mot de liaison. */
@@ -254,52 +276,45 @@ function hasLabelWord(label: string): boolean {
  * (« Imprimé (provisoire) le … », « Soldes (imprimé) 02/06/2026 »), et le mot qui gouverne la date est le
  * dernier écrit avant elle, mots de liaison passés.
  */
-function readDateLabel(label: string): { tokens: string[]; governing: string | null } {
+function readDateLabel(label: string): { clause: string; tokens: string[]; governing: string | null } {
   const clauses = label.replace(/\([^)]*\)/g, ' ').split(CLAUSE_BREAK).filter(hasLabelWord);
-  const tokens = tokenize(clauses.length > 0 ? clauses[clauses.length - 1] : '');
+  const clause = clauses.length > 0 ? clauses[clauses.length - 1] : '';
+  const tokens = tokenize(clause);
   const words = tokens.filter((token) => !DATE_LINK_WORDS.has(token));
-  return { tokens, governing: words.length > 0 ? words[words.length - 1] : null };
+  return { clause, tokens, governing: words.length > 0 ? words[words.length - 1] : null };
 }
 
 /**
- * Vrai si le libellé date l'impression ou l'édition du document : sa dernière proposition porte un mot
- * d'impression qu'aucun mot de position ne suit avant la date. « Etat imprimé le … », « Imprimé par A. le … »,
- * « Fund Position printed on … » datent l'impression ; « Edition des soldes au … » date les soldes. Même
- * lecture pour l'exemption et pour le contrôle de la date d'impression.
- */
-function saysPrintDate(label: string): boolean {
-  const { tokens } = readDateLabel(label);
-  let lastPrint = -1;
-  tokens.forEach((token, index) => { if (PRINT_WORD.test(token)) lastPrint = index; });
-  return lastPrint >= 0 && !tokens.slice(lastPrint + 1).some((token) => POSITION_DATE_WORDS.has(token));
-}
-
-/**
- * Vrai si le libellé d'une date la dit autre chose qu'une date de position : une date d'impression ; ou le
- * mot qui la gouverne est un mot d'échéance, de valeur, de validité, de revue ou de taux, ET le libellé ne
- * porte aucun mot de position (« Soldes en valeur au … » reste une date de position).
+ * Vrai si le libellé d'une date la dit autre chose qu'une date de position : le mot qui la gouverne est un
+ * mot d'échéance, d'impression, de valeur, de validité, de revue ou de taux, ET le libellé ne porte aucun
+ * mot de position (« Soldes en valeur au … » reste une date de position). Qu'une date d'impression ainsi
+ * exemptée soit lisible et au moins égale à la date de position est contrôlé à part, pour tout l'onglet.
  */
 function saysNotAPositionDate(label: string): boolean {
-  if (saysPrintDate(label)) return true;
   const { tokens, governing } = readDateLabel(label);
   if (governing === null || !NON_POSITION_DATE_WORDS.has(governing)) return false;
+  // « Etat imprimé le … », « Fund Position printed on … » : la date d'impression de l'état lui-même.
+  if (PRINTED_ON_WORDS.has(governing)) return true;
   if (tokens.some((token) => POSITION_DATE_WORDS.has(token))) return false;
   return !VALUE_DATE_WORDS.has(governing) || tokens.includes('DATE');
 }
 
 /**
  * Vrai si le libellé d'une date parle de la position : sa dernière proposition porte un mot de soldes, de
- * position ou de situation, ou se termine par « as at », « as of » ; et il ne nomme pas une facilité.
+ * position ou de situation — sauf si une facilité est nommée AVANT ce mot (dans le libellé, ou plus à gauche
+ * dans la ligne : `before`) ou en est le complément direct — ; ou elle n'écrit, après une annonce de note,
+ * que « as at » ou « as of » (« NB : as at 02/06/2026 »).
  */
-function saysAboutThePosition(label: string): boolean {
-  const { tokens } = readDateLabel(label);
-  const asAt = AS_AT_WORDS.has(tokens.slice(-2).join(' '));
-  return (asAt || tokens.some((token) => POSITION_DATE_WORDS.has(token))) && !namesAFacility(label);
-}
-
-/** Vrai si le texte rattache ce qu'il dit à une facilité ou à son contrat. */
-function namesAFacility(text: string): boolean {
-  return tokenize(plainUpper(text).replace(FACILITY_SET_ASIDE, ' ')).some((token) => FACILITY_WORDS.has(token));
+function saysAboutThePosition(label: string, before: string): boolean {
+  const { clause, tokens } = readDateLabel(label);
+  if (!tokens.some((token) => POSITION_DATE_WORDS.has(token))) {
+    return AS_AT_WORDS.has(tokens.slice(-2).join(' ')) && tokens.slice(0, -2).every((token) => NOTE_LEAD_WORDS.has(token));
+  }
+  const all = tokenize(label.replace(/\([^)]*\)/g, ' '));
+  const firstPositionWord = all.findIndex((token) => POSITION_DATE_WORDS.has(token));
+  const facilityBefore = all.slice(0, firstPositionWord).some((token) => FACILITY_WORDS.has(token))
+    || tokenize(before).some((token) => FACILITY_WORDS.has(token));
+  return !facilityBefore && !FACILITY_COMPLEMENT.test(clause);
 }
 
 /** Les dates écrites dans un texte, lisibles ou non, à leur place et dans l'ordre d'écriture. */
@@ -321,7 +336,14 @@ function datesWrittenInRows(sheet: Sheet, firstRow: number, lastRow: number, las
   const dates: ZoneDate[] = [];
   // Une date d'impression est exemptée ici comme date de position ; qu'elle soit lisible et au moins égale à
   // la date de position est contrôlé pour tout l'onglet par `printMentionsWithoutAnAdmissibleDate`.
-  const read = (label: string) => ({ exempt: saysNotAPositionDate(label), aboutThePosition: saysAboutThePosition(label) });
+  const read = (label: string, before: string) => {
+    const { governing } = readDateLabel(label);
+    return {
+      exempt: saysNotAPositionDate(label),
+      aboutThePosition: saysAboutThePosition(label, before),
+      printGoverned: governing !== null && PRINT_GOVERNING_WORDS.has(governing),
+    };
+  };
   for (let row = firstRow; row <= lastRow; row += 1) {
     for (let column = 1; column <= lastColumn; column += 1) {
       const address = cellAddress(row, column);
@@ -333,14 +355,17 @@ function datesWrittenInRows(sheet: Sheet, firstRow: number, lastRow: number, las
       const left = column > 1 ? cellText(cellAt(sheet, row, column - 1)) : '';
       const leftLabel = plainUpper(left).slice(writtenDates(left).reduce((end, entry) => Math.max(end, entry.index + entry.length), 0));
       const leftAddress = hasLabelWord(leftLabel) ? cellAddress(row, column - 1) : address;
-      if (cellDate) dates.push({ address, labelAddress: leftAddress, iso: cellDate, precision: 'DAY', ...read(leftLabel) });
+      // Ce qui est écrit plus à gauche dans la ligne : une facilité nommée là rattache à elle les dates de la ligne.
+      let before = '';
+      for (let earlier = 1; earlier < column; earlier += 1) before += ` ${plainUpper(cellText(cellAt(sheet, row, earlier)))}`;
+      if (cellDate) dates.push({ address, labelAddress: leftAddress, iso: cellDate, precision: 'DAY', ...read(leftLabel, before) });
       const plain = plainUpper(text);
       written.forEach((entry, position) => {
         const previousEnd = position === 0 ? 0 : written[position - 1].index + written[position - 1].length;
         const own = plain.slice(previousEnd, entry.index);
         const fromLeft = position === 0 && !hasLabelWord(own);
         const label = fromLeft ? `${leftLabel} ${own}` : own;
-        dates.push({ address, labelAddress: fromLeft ? leftAddress : address, iso: entry.iso, precision: entry.precision, ...read(label) });
+        dates.push({ address, labelAddress: fromLeft ? leftAddress : address, iso: entry.iso, precision: entry.precision, ...read(label, before) });
       });
     }
   }
@@ -348,47 +373,59 @@ function datesWrittenInRows(sheet: Sheet, firstRow: number, lastRow: number, las
 }
 
 /**
- * Cellules qui parlent de l'impression ou de l'édition du document sans qu'une date lisible et au moins
- * égale à la date de position suive ce mot : date antérieure, sans année, au mois près sans que le mois
- * suffise, ou absente (« Imprimé le N/A », « Imprimé par A. le 02/06/2026 », « Print date: TBD »). La date
- * est la première écrite après le mot, dans la cellule ; à défaut, dans la première cellule non vide à
- * droite. La cellule signalée est celle de la date fautive, sinon celle du mot. À partir de la ligne
- * `facilityFromRow` (sous le bloc des banques), une cellule qui nomme une facilité ou son contrat ne parle
- * pas de l'impression du document.
+ * Mentions d'impression ou d'édition du document dont la date n'est pas établie au moins égale à la date de
+ * position, dans tout l'onglet. Pour chaque mot d'impression :
+ * - une date écrite après lui dans la cellule doit être lisible et au moins égale à la date de position (au
+ *   mois près : un mois postérieur), sinon la cellule bloque : « Imprimé le 02/06/2026 », « Imprimé par A. le
+ *   02/06/2026 », « Imprimé le 2 juin » ;
+ * - s'il termine la cellule, seul ou suivi d'un mot de liaison (« Imprimé le », « Print date: »), la date est
+ *   celle de la première cellule non vide à droite ; un mot de liaison que ne suit aucune date bloque ;
+ * - sans date, ce qui annonce une date sans la donner bloque : « Imprimé le N/A », « Print date: TBD »,
+ *   « Imprimé le 02-juin-2026 », « Imprimé hier » ;
+ * - un libellé ordinaire (« Frais d'impression », « Edition », « Exporté depuis SAGE ») ne date rien.
+ * La cellule signalée est celle de la date fautive, sinon celle du mot.
  */
-function printMentionsWithoutAnAdmissibleDate(
-  sheet: Sheet, lastRow: number, lastColumn: number, positionDate: string, facilityFromRow: number,
-): string[] {
+function printMentionsWithoutAnAdmissibleDate(sheet: Sheet, lastRow: number, lastColumn: number, positionDate: string): string[] {
   const cells: string[] = [];
-  const admissible = (date: Pick<ZoneDate, 'iso' | 'precision'>) => date.iso !== null
-    && (date.precision === 'MONTH' ? date.iso.slice(0, 7) > positionDate.slice(0, 7) : date.iso >= positionDate);
+  const admissible = (date: Pick<ZoneDate, 'iso' | 'precision'>) => printedOnOrAfter(date, positionDate);
   for (let row = 1; row <= lastRow; row += 1) {
     for (let column = 1; column <= lastColumn; column += 1) {
       const text = cellText(cellAt(sheet, row, column));
       if (!text) continue;
-      const words = Array.from(plainUpper(text).matchAll(/[A-Z0-9]+/g)).filter((word) => PRINT_WORD.test(word[0]));
-      if (words.length === 0 || (row >= facilityFromRow && namesAFacility(text))) continue;
+      const plain = plainUpper(text);
+      const words = Array.from(plain.matchAll(/[A-Z0-9]+/g)).filter((word) => PRINT_WORD.test(word[0]));
+      if (words.length === 0) continue;
       const written = writtenDates(text);
       for (const word of words) {
+        // Ce qui suit le mot, incises entre parenthèses retirées (« Imprimé (provisoire) » termine sa cellule).
+        const rest = plain.slice((word.index as number) + word[0].length).replace(/\([^)]*\)/g, ' ');
         const inCell = written.find((entry) => entry.index > (word.index as number));
         if (inCell) {
           if (admissible(inCell)) continue;
           cells.push(cellAddress(row, column));
           break;
         }
-        // Aucune date après le mot dans la cellule : la première cellule non vide à droite la porte, ou rien.
-        let found: { address: string; iso: string | null; precision: 'DAY' | 'MONTH' } | null = null;
-        for (let next = column + 1; next <= lastColumn && found === null; next += 1) {
-          const right = cellAt(sheet, row, next);
-          const rightDate = cellIsoDate(right);
-          const rightWritten = writtenDates(cellText(right));
-          if (rightDate) found = { address: cellAddress(row, next), iso: rightDate, precision: 'DAY' };
-          else if (rightWritten.length > 0) found = { address: cellAddress(row, next), iso: rightWritten[0].iso, precision: rightWritten[0].precision };
-          else if (cellText(right)) found = { address: cellAddress(row, column), iso: null, precision: 'DAY' };
+        if (rest.trim() === '' || DANGLING_DATE_LINK.test(rest)) {
+          // La date est attendue à droite : la première cellule non vide la porte, ou ne la porte pas.
+          let right: { address: string; iso: string | null; precision: 'DAY' | 'MONTH' } | null = null;
+          for (let next = column + 1; next <= lastColumn; next += 1) {
+            const cell = cellAt(sheet, row, next);
+            const cellDate = cellIsoDate(cell);
+            const cellWritten = writtenDates(cellText(cell));
+            if (cellDate) right = { address: cellAddress(row, next), iso: cellDate, precision: 'DAY' };
+            else if (cellWritten.length > 0) right = { address: cellAddress(row, next), iso: cellWritten[0].iso, precision: cellWritten[0].precision };
+            if (cellDate || cellText(cell)) break;
+          }
+          if (right !== null && admissible(right)) continue;
+          if (right !== null) cells.push(right.address);
+          else if (rest.trim() !== '' || DATE_WORD.test(plain)) cells.push(cellAddress(row, column));
+          else continue;
+          break;
         }
-        if (found !== null && admissible(found)) continue;
-        cells.push(found !== null ? found.address : cellAddress(row, column));
-        break;
+        if (PRINT_DATING_HINT.test(rest) || DATE_WORD.test(plain)) {
+          cells.push(cellAddress(row, column));
+          break;
+        }
       }
     }
   }
@@ -481,10 +518,11 @@ function readCell(sheet: Sheet, row: number, column: number, bank: SituationBank
  * ou qu'aucune date ne suit (« Imprimé le N/A »), bloque. Un libellé de
  * date de position qu'aucune date lisible ne suit (« Soldes au N/A »)
  * bloque de même. Sous le bloc des banques (facilités et leurs échéances)
- * compte toute date autre que D dont le libellé parle de soldes, de
- * position ou de situation, ou se termine par « as at », sans nommer une
- * facilité (« NB : ces soldes sont arrêtés au 02/06/2026 ») ; une date
- * générique ou rattachée à une facilité n'y compte pas. Le champ de date n'est lu
+ * compte toute date autre que D, non exemptée, dont le libellé parle de
+ * soldes, de position ou de situation (« NB : ces soldes sont arrêtés au
+ * 02/06/2026 »), ou qu'annonce « NB : as at » ; une date générique, ou le
+ * solde d'une facilité (nommée avant le mot de position, plus à gauche dans
+ * la ligne, ou en complément direct), n'y compte pas. Le champ de date n'est lu
  * que dans les lignes d'en-tête. Devise et unité : champ explicite, sinon
  * convention SODATRA quand rien ne la contredit dans l'onglet.
  */
@@ -537,9 +575,9 @@ export function readFundPosition(
   // valeur, validité, taux) est ignorée — et une date d'impression ou d'édition seulement si elle est lisible
   // et au moins égale à la date de position. Une date au mois près s'accorde avec ce mois ; une date illisible
   // ne s'accorde avec rien. Il en va de même d'un libellé de date de position qu'aucune date lisible ne suit.
-  // Sous le bloc des banques compte toute date autre que D dont le libellé parle de soldes, de position ou
-  // de situation, ou se termine par « as at », sans nommer une facilité. Dans tout l'onglet, une mention
-  // d'impression ou d'édition du document que ne suit pas une date lisible et au moins égale à D bloque.
+  // Sous le bloc des banques compte toute date autre que D, non exemptée, dont le libellé parle de soldes,
+  // de position ou de situation sans être le solde d'une facilité, ou qu'annonce « NB : as at ». Dans tout
+  // l'onglet, une mention d'impression du document dont la date n'est pas lisible et au moins égale à D bloque.
   const stated = fields.situationDate.state === 'VALID' ? fields.situationDate.value : null;
   const expected = stated ?? accountingDate;
   const agrees = (date: Pick<ZoneDate, 'iso' | 'precision'>) => date.iso !== null && (
@@ -547,11 +585,13 @@ export function readFundPosition(
   );
   const dateConflictCells = [
     ...datesWrittenInRows(sheet, 1, positionZoneLastRow, fieldBounds.lastColumn)
-      .filter((date) => !date.exempt && !agrees(date)).map((date) => date.address),
+      .filter((date) => (!date.exempt && !agrees(date)) || (date.printGoverned && !printedOnOrAfter(date, expected))).map((date) => date.address),
     ...unreadablePositionDatesInZone(sheet, positionZoneLastRow, fieldBounds.lastColumn),
     ...datesWrittenInRows(sheet, positionZoneLastRow + 1, fieldBounds.lastRow, fieldBounds.lastColumn)
-      .filter((date) => date.aboutThePosition && !agrees(date)).map((date) => date.labelAddress),
-    ...printMentionsWithoutAnAdmissibleDate(sheet, fieldBounds.lastRow, fieldBounds.lastColumn, expected, positionZoneLastRow + 1),
+      .filter((date) => date.aboutThePosition && !date.exempt && !agrees(date)).map((date) => date.labelAddress),
+    ...datesWrittenInRows(sheet, positionZoneLastRow + 1, fieldBounds.lastRow, fieldBounds.lastColumn)
+      .filter((date) => date.printGoverned && !printedOnOrAfter(date, expected)).map((date) => date.address),
+    ...printMentionsWithoutAnAdmissibleDate(sheet, fieldBounds.lastRow, fieldBounds.lastColumn, expected),
     ...fields.situationDatesBelowFields.filter((entry) => entry.date !== expected).map((entry) => entry.address),
   ].filter((address, index, all) => all.indexOf(address) === index).slice(0, 5);
   const contradicted = dateConflictCells.length > 0;
