@@ -30,6 +30,7 @@
     "test:payables-cheques": "tsx --test src/features/payables-cheques/*.synthetic.test.ts src/features/payables-cheques/*.synthetic.test.tsx",
     "test:payables-cheques-print": "tsx src/features/payables-cheques/printIsolation.proof.ts",
     "test:treasury-balances": "tsx --test src/features/treasury/*.synthetic.test.ts src/features/treasury/*.synthetic.test.tsx",
+    "test:situation-du-jour": "tsx --test src/features/situation-du-jour/*.synthetic.test.ts src/features/situation-du-jour/*.synthetic.test.tsx",
     "preview": "vite preview"
   },
   "dependencies": {

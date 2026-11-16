@@ -19,6 +19,7 @@ import CollectionsCore from "./pages/CollectionsCore";
 import PayablesCheques from "./pages/PayablesCheques";
 import NotFound from "./pages/NotFound";
 import { TreasuryRoute } from "./features/treasury/TreasuryRoute";
+import { SituationRoute } from "./features/situation-du-jour/SituationRoute";
 import { useDailyV2Access } from "./features/daily-v2/dailyV2Access";
 import { DailyV2AccessFeedback } from "./features/daily-v2/session/DailyV2AccessFeedback";
 import {
@@ -99,6 +100,7 @@ const App = () => (
               <Route path="/collections-remittances" element={<ProtectedRoute><CollectionsCoreRoute /></ProtectedRoute>} />
               <Route path="/payables-cheques" element={<ProtectedRoute><PayablesChequesRoute /></ProtectedRoute>} />
               <Route path="/treasury-balances" element={<ProtectedRoute><TreasuryRoute /></ProtectedRoute>} />
+              <Route path="/situation-du-jour" element={<ProtectedRoute><SituationRoute /></ProtectedRoute>} />
               <Route path="/document-understanding" element={<ProtectedRoute><DocumentUnderstanding /></ProtectedRoute>} />
               <Route path="/daily-statements" element={<ProtectedRoute><DailyV2Route /></ProtectedRoute>} />
               <Route path="/quality-control" element={<ProtectedRoute><QualityControl /></ProtectedRoute>} />
