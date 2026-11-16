@@ -548,6 +548,29 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['', footer]] }], `champ valide, bas d'onglet : ${footer}`, 'B10');
   }
   assertBlocked([{ name: tab, rows: ROWS, footerRows: [['NB : soldes au', { date: '2026-06-02' }]] }], 'bas d’onglet : note et cellule date', 'A10');
+  // Arbitrage A : seul le complément direct qui identifie une facilité sort la date du contrôle. Une facilité citée comme
+  // exclue, nommée avant le mot de position, ou écrite dans la cellule voisine, ne protège pas une date de solde contraire à D.
+  for (const footer of [
+    'Facilités exclues : solde au 02/06/2026', 'NB : découvert exclu, solde global au 02/06/2026', 'NB : hors découvert, soldes au 02/06/2026',
+    'Facilités non comprises : soldes au 02/06/2026', 'Overdraft excluded, total balance as at 02/06/2026', 'Facilité : solde au 30/06/2026',
+    'Facilité BDK - solde au 30/06/2026', 'NB : facilité BDK, solde au 30/06/2026', 'Outstanding balance as at 30/06/2026', 'Encours arrêté au 30/06/2026',
+  ]) {
+    assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
+    assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['', footer]] }], `champ valide, bas d'onglet : ${footer}`, 'B10');
+  }
+  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Facilités : voir ci-dessus', 'Soldes au 02/06/2026']] }], 'bas d’onglet : facilité dans la cellule voisine', 'B10');
+  assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['Facilités : voir ci-dessus', 'Soldes au 02/06/2026']] }], 'champ valide, facilité dans la cellule voisine', 'B10');
+  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Découvert autorisé', 5000000, 'Soldes bancaires au 02/06/2026']] }], 'bas d’onglet : facilité, montant, soldes', 'C10');
+  assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Facilité BDK', 'Solde', { date: '2026-06-30' }]] }], 'bas d’onglet : facilité, solde, cellule date', 'B10');
+  // Arbitrage B : une mention qui DATE l'impression bloque si sa date est antérieure à D ou indéterminable — la date
+  // écrite avant le mot, ou un jour de la semaine sans date.
+  for (const footer of ['Le 02/06/2026, imprimé par A.', 'Imprimé lundi', 'Document du 02/06/2026 imprimé', 'Printed on Monday', 'Edité mardi par A.']) {
+    assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
+    assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['', footer]] }], `champ valide, bas d'onglet : ${footer}`, 'B10');
+  }
+  assertBlocked([{ name: tab, rows: ROWS, reference: { dateText: 'Imprimé lundi' } }], 'en-tête : imprimé lundi', 'J1');
+  assertBlocked([{ name: tab, rows: ROWS, reference: { ...AT_D, texts: ['Imprimé lundi'] } }], 'champ valide, en-tête : imprimé lundi', 'M1');
+  assertBlocked([{ name: tab, rows: ROWS, reference: { ...AT_D, texts: ['Le 02/06/2026, imprimé par A.'] } }], 'champ valide, en-tête : date avant le mot d’impression', 'M1');
   assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Imprimé le', '', { date: '2026-06-02' }]] }], 'bas d’onglet : impression, cellule vide, cellule date', 'C10');
   assertBlocked([{ name: tab, rows: ROWS, footerRows: [['Imprimé le', 'N/A', { date: '2026-06-04' }]] }], 'bas d’onglet : impression, valeur illisible, puis une date', 'A10');
   // Une date qu'un mot d'impression gouverne depuis la cellule de gauche, sans mot de liaison : contrôlée elle aussi.
@@ -592,16 +615,17 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
   for (const footer of [
     ['', 'Soldes au 03/06/2026'], ['', 'Solde juin 2026'], ['', 'Renouvelée le 02/06/2026'], ['Facility', { date: '2026-06-02' }],
     ['', 'Echéance 02/06/2026'], ['', { date: '2026-06-02' }], ['', '02/06/2026'], ['', 'Vu le 04/06/2026'],
-    ['', 'Facilité : solde au 30/06/2026'], ['', 'Outstanding balance as at 30/06/2026'], ['', 'Maturity as at 15/09/2026'], ['', 'Solde au N/A'],
-    ['Soldes au', { date: '2026-06-03' }], ['', 'Loan balance 30/06/2026'], ['', 'Solde au débit'], ['', 'Soldes au titre de la facilité 30/06/2026'],
+    ['', 'Solde de la facilité au 30/06/2026'], ['', 'Balance of the loan as at 30/06/2026'], ['', 'Maturity as at 15/09/2026'], ['', 'Solde au N/A'],
+    ['Soldes au', { date: '2026-06-03' }], ['', 'Loan outstanding 30/06/2026'], ['', 'Solde au débit'], ['', 'Soldes au titre de la facilité 30/06/2026'],
     // Après une annonce de note : la date à D, une date générique, une date rattachée à une facilité.
     ['', 'NB : soldes au 03/06/2026'], ['', 'NB : 02/06/2026'], ['', 'Note : renouvelée le 02/06/2026'], ['', 'Date : 02/06/2026'],
-    ['', 'NB : facilité BDK, solde au 30/06/2026'], ['', 'NB : solde de la facilité au 30/06/2026'], ['', 'Solde du découvert au 30/06/2026'],
+    ['', 'NB : solde de la facilité au 30/06/2026'], ['', 'Solde du découvert au 30/06/2026'],
     ['', 'Note : solde de la ligne de crédit au 30/06/2026'], ['', 'NB : encours au 30/06/2026'],
-    ['', 'Encours arrêté au 30/06/2026'], ['', 'NB : arrêté au 03/06/2026'], ['', 'Facility limit as at 30/06/2026'], ['', '(NB : soldes au 03/06/2026)'],
+    ['', 'NB : arrêté au 03/06/2026'], ['', 'Facility limit as at 30/06/2026'], ['', '(NB : soldes au 03/06/2026)'],
     // Date d'impression au moins égale à D ; date d'édition d'un contrat de facilité.
     ['', 'Imprimé le 04/06/2026'], ['', 'Printed on 03/06/2026'], ['', 'Imprimé (provisoire) le 04/06/2026'], ['', 'Edition juillet 2026'],
     ['', 'Imprimé par A. le 04/06/2026'], ['', 'Réimprimé le 04/06/2026'], ['', 'Lettre de crédit imprimée'], ['Imprimé le', '', { date: '2026-06-04' }],
+    ['', 'Le 04/06/2026, imprimé par A.'], ['', 'Document du 03/06/2026 imprimé'], ['', 'Frais d’impression'], ['', 'Exporté depuis SAGE'], ['', 'Imprimerie du Lundi'],
     // Impression au moins égale à D après un titre ; libellés ordinaires d'une liste de paiements ou d'un gabarit.
     ['', 'Etat imprimé le 04/06/2026'], ['', 'Fund position printed on 04/06/2026'], ['', 'Situation éditée le 04/06/2026 à 18:05'],
     ['', 'IMPRESSION FACTURIERS'], ['', 'Frais d’édition de chéquiers'], ['', 'Chéquier édité'], ['', 'Imprimés fiscaux'], ['', 'Imprimé n° 12'],
@@ -610,8 +634,8 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     ['', 'Généré le 04/06/2026'], ['', 'Facility rate as at 30/06/2026'], ['', 'Limit as of 30/06/2026'],
     // Solde d'une facilité, sous toutes ses tournures : la date n'est pas celle de la position.
     ['', 'Solde du CMT au 30/06/2026'], ['', 'Solde DAT au 30/06/2026'], ['', 'Situation des engagements au 30/06/2026'],
-    ['', 'NB : situation des lignes au 02/06/2026'], ['', 'Facilité BDK - solde au 30/06/2026'], ['Facilité BDK', 'Solde', { date: '2026-06-30' }],
-    ['Découvert ORABANK', 'Solde au 30/06/2026'], ['', 'Rate as of 02/06/2026'], ['', 'Interest accrued as at 30/06/2026'],
+    ['', 'NB : situation des lignes au 02/06/2026'], ['Facilité BDK', 'Solde du découvert au 30/06/2026'],
+    ['', 'Rate as of 02/06/2026'], ['', 'Interest accrued as at 30/06/2026'],
     ['', 'Solde escompte au 30/06/2026'], ['', 'Situation des cautions au 30/06/2026'], ['', 'Etat des garanties au 30/06/2026'], ['', 'Solde hors bilan au 03/06/2026'],
   ] as CellInput[][]) {
     assertStillAsked([{ name: tab, rows: ROWS, footerRows: [footer] }], `bas d'onglet : ${JSON.stringify(footer)}`);
@@ -843,6 +867,8 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'Note: in 1,000 XOF', 'NB : en 1 000 FCFA', 'Note: in 1,000', 'Fund position (in 1,000 XOF)', 'FUND POSITION in 1,000', 'Situation de trésorerie (en 1 000 FCFA)',
     'Etat en 1 000 FCFA', 'Fund position (unit: XOF 1,000)', 'Note : unité FCFA 1 000', 'Fund position - unité : 1 000 FCFA', 'NB : unité = 1 000 FCFA',
     'Amount in XOF 1,000.00', 'Fund position in XOF 1,000.00',
+    // Arbitrage C : une déclaration explicite d'unité, où qu'elle soit écrite.
+    'Exprimé en FCFA 1 000', 'Exprimés en 1 000 FCFA', 'Expressed in XOF 1,000', 'Libellé en FCFA 1 000', 'Stated in 1,000 XOF',
   ];
   for (const scale of scales) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [scale] } }]);
@@ -877,7 +903,8 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
   for (const note of ['Solde : 1 000 000', 'Credit BDK 1 000 000', 'Montant total 1 000 000', 'DEPOSIT BDK 1 000 000', 'Solde reporté 10 000 000', 'Deposit chq 1000', 'Montant : 100 000 FCFA',
     // Une devise que rien n'introduit, ou une préposition qui n'introduit pas le nombre, ne fait pas une échelle.
     'Solde FCFA 1 000 000', 'Deposit XOF 1 000 000', 'Credit en compte 1 000 000', 'Solde en XOF au 1 000 000', 'Deposit in XOF BDK 1 000 000',
-    'VIREMENT EN XOF 1 000 000', 'Paiement en FCFA 100 000', 'Retrait en F CFA 1 000 000']) {
+    'VIREMENT EN XOF 1 000 000', 'Paiement en FCFA 100 000', 'Retrait en F CFA 1 000 000', 'Paiement de 100 000 FCFA', 'Virement 1 000 000',
+    'Remise par 1 000 000', 'Transfer in XOF 1,000,000', 'Dépôt express en FCFA 1 000 000']) {
     assert.deepEqual([noted(note).unit, noted(note).unitProvenance], ['UNITS', 'CONVENTION'], note);
   }
   for (const note of ['Montants in 1,000', 'Total en 1 000 FCFA', 'Montants 1,000s', 'Solde /1000', 'Solde /1,000', 'Montants (unité : 1000 F)', 'Solde (unité : 1000 F)',
@@ -892,11 +919,11 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'Unité : FCFA 1 000', 'Solde (unité : FCFA 1 000)', 'Amount in units of XOF 1,000', 'Solde en unités de FCFA 1 000', 'Note: in XOF 1,000',
     'NB : en FCFA 1 000', 'Etat en FCFA 1 000', 'Amt in XOF 1,000', 'Scale: 1,000', 'Echelle : 1 000', 'Multiplier par 1 000',
     'Amount in XOF - 1,000', 'Amount in XOF – 1,000', 'Solde en FCFA, 1 000', 'Note: in 1,000 XOF', 'NB : en 1 000 FCFA', 'Note : unité FCFA 1 000',
-    'Amount in XOF 1,000.00', 'Valeur en FCFA 1 000']) {
+    'Amount in XOF 1,000.00', 'Valeur en FCFA 1 000', 'Exprimé en FCFA 1 000', 'Expressed in XOF 1,000', 'Libellé en 1 000 FCFA']) {
     assert.deepEqual([noted(note).unit, noted(note).unitProvenance], [null, null], note);
   }
   // Les deux écritures avec devise intercalée, sous l'en-tête et à côté d'un champ de date valide égal à D : aucun écart chiffré.
-  for (const note of ['Amount in XOF 1,000', 'Solde en FCFA 1 000']) {
+  for (const note of ['Amount in XOF 1,000', 'Solde en FCFA 1 000', 'Exprimé en FCFA 1 000']) {
     const fund = noted(note);
     assert.deepEqual([fund.dateField, fund.dateComparable], ['VALID', true], note);
     const comparisons = compareFundPosition(fund, D, balances, [bdkWorkbook()]);

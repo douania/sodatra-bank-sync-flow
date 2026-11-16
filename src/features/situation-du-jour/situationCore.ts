@@ -450,10 +450,11 @@ const OPENED_BY_A_UNIT_WORD = /^\s*UNITE?S?(?![A-Z])/;
 const SCALE_WORDS: ReadonlySet<string> = new Set(['ECHELLE', 'SCALE', 'MULTIPLIER', 'MULTIPLIE', 'MULTIPLIES', 'MULTIPLY', 'MULTIPLIED']);
 /**
  * Cellule de note ou de titre : « NB : », « Note: », « Remarque », « Fund position », « Situation de
- * trésorerie », « Etat ». Une échelle introduite y vaut pour le document ; dans un libellé d'opération
- * (« Paiement en FCFA 100 000 »), le même texte écrit un montant.
+ * trésorerie », « Etat » ; ou qui DÉCLARE une unité : « Exprimé en FCFA 1 000 », « Expressed in XOF 1,000 »,
+ * « Libellé en … ». Une échelle introduite y vaut pour le document ; dans un libellé d'opération (« Paiement
+ * en FCFA 100 000 », « VIREMENT EN XOF 1 000 000 »), le même texte écrit un montant.
  */
-const NOTE_OR_TITLE = /(?<![A-Z])(?:N\.?\s?B\.?|NOTA|NOTES?|REMARQUES?|RAPPEL|FUND|POSITIONS?|SITUATIONS?|TRESORERIE|TREASURY|ETAT)(?![A-Z])/;
+const NOTE_OR_TITLE = /(?<![A-Z])(?:N\.?\s?B\.?|NOTA|NOTES?|REMARQUES?|RAPPEL|FUND|POSITIONS?|SITUATIONS?|TRESORERIE|TREASURY|ETAT|EXPRIMEE?S?|EXPRESSED|STATED|LIBELLEE?S?|DENOMINATED)(?![A-Z])/;
 
 /** Mots qui font d'une cellule un en-tête de montants. */
 const AMOUNT_HEADER_WORDS: ReadonlySet<string> = new Set([
