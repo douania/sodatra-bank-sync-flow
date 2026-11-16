@@ -3,6 +3,7 @@ import { register } from 'node:module';
 import test from 'node:test';
 import React from 'react';
 import type { DailyV2AccountRegistryRow, DailyV2StagingUnitRow } from '../features/daily-v2/dailyV2Types';
+import { createDailyV2SessionLifetime } from '../features/daily-v2/session/dailyV2SessionLifetime';
 
 // Page Daily v2 (pack DAILY-V2-BDK-ORABANK-OPERATIONAL-READINESS) : interactions réelles avec la page.
 // Chaque rendu exécute la page et ses sous-composants ; les gestionnaires sont ceux du dernier rendu
@@ -44,6 +45,18 @@ const ui = {
   activeCanonical: null as null | { id: string },
   /** Barrière optionnelle du dépôt RPC : le dépôt reste en cours tant qu'elle n'est pas levée. */
   depositGate: null as Promise<void> | null,
+  /** Barrière optionnelle des RPC de décision (promotion, supersede) : la décision reste en cours tant qu'elle n'est pas levée. */
+  decisionGate: null as Promise<void> | null,
+  /** Nombre de prochaines RPC de décision qui échouent (erreur fictive), pour éprouver la reprise après échec. */
+  decisionFailures: 0,
+  async decide(name: string, result: unknown): Promise<unknown> {
+    if (ui.decisionGate) await ui.decisionGate;
+    if (ui.decisionFailures > 0) {
+      ui.decisionFailures--;
+      throw new Error(`échec fictif de ${name}`);
+    }
+    return result;
+  },
   versionsUnit: undefined as unknown,
   batchAttemptId: undefined as unknown,
   slot(init: unknown) {
@@ -115,23 +128,49 @@ const ui = {
       if (prefix.every((part, index) => JSON.stringify(parsed[index]) === JSON.stringify(part)) && !entry.fetching) ui.fetchEntry(entry);
     }
   },
+  // Mini-mutation TanStack v5 (5.59.16, Mutation.execute et MutationObserver) : `isPending` est une valeur de rendu,
+  // figée dans les gestionnaires jusqu'au rendu suivant ; deux `mutate` lancent deux exécutions ; onSuccess puis
+  // onSettled du hook (ou, si l'un échoue, onError puis onSettled) sont attendus AVANT la fin de l'état « pending » ;
+  // les rappels passés à l'appel (`mutate(variables, rappels)`) sont ceux de l'observateur, appelés à cette fin, page
+  // montée, sans le filtre de portée de session appliqué aux rappels du hook.
   useMutation(options: {
     mutationFn: (variables: unknown) => Promise<unknown>;
     onSuccess?: (data: unknown, variables: unknown) => unknown;
-    onError?: (error: unknown) => unknown;
+    onError?: (error: unknown, variables: unknown) => unknown;
+    onSettled?: (data: unknown, error: unknown, variables: unknown) => unknown;
   }) {
     const slot = ui.slot(false);
     return {
       isPending: slot.value === true,
-      mutate: (variables: unknown) => {
+      mutate: (variables: unknown, call?: {
+        onSuccess?: (data: unknown, variables: unknown) => unknown;
+        onError?: (error: unknown, variables: unknown) => unknown;
+        onSettled?: (data: unknown, error: unknown, variables: unknown) => unknown;
+      }) => {
         slot.value = true;
-        ui.track(Promise.resolve().then(() => options.mutationFn(variables)).then(
-          async (data) => { slot.value = false; await options.onSuccess?.(data, variables); },
-          async (error) => { slot.value = false; await options.onError?.(error); },
-        ));
+        ui.track((async () => {
+          let data: unknown;
+          let failure: { error: unknown } | null = null;
+          try {
+            await Promise.resolve();
+            data = await options.mutationFn(variables);
+            await options.onSuccess?.(data, variables);
+            await options.onSettled?.(data, null, variables);
+          } catch (error) {
+            failure = { error };
+            await options.onError?.(error, variables);
+            await options.onSettled?.(undefined, error, variables);
+          } finally {
+            slot.value = false;
+          }
+          if (failure) { call?.onError?.(failure.error, variables); call?.onSettled?.(undefined, failure.error, variables); }
+          else { call?.onSuccess?.(data, variables); call?.onSettled?.(data, null, variables); }
+        })());
       },
     };
   },
+  /** Portée de session réelle (`dailyV2SessionScope.ts` exécuté tel quel) : durée de vie réelle, activée au montage. */
+  scope: null as null | { lifetime: ReturnType<typeof createDailyV2SessionLifetime> },
 };
 const testGlobal = globalThis as unknown as Record<string, unknown>;
 testGlobal.__dv2Page = ui;
@@ -164,8 +203,14 @@ const serviceStub = [
     if (globalThis.__dv2Page.depositGate) await globalThis.__dv2Page.depositGate;
     return { outcome: 'deposited', response: { attempt_id: '40000000-0000-4000-8000-000000000001', requested_mode: 'daily', units: [] }, incrementalDelta: null };
   }`,
-  recordingService('promoteDailyV2Unit', `({ outcome: 'promoted' })`),
-  recordingService('supersedeDailyV2Unit', `({ outcome: 'superseded' })`),
+  `export async function promoteDailyV2Unit(...args) {
+    globalThis.__dv2Page.calls.push({ name: 'promoteDailyV2Unit', args });
+    return globalThis.__dv2Page.decide('promoteDailyV2Unit', { outcome: 'promoted' });
+  }`,
+  `export async function supersedeDailyV2Unit(...args) {
+    globalThis.__dv2Page.calls.push({ name: 'supersedeDailyV2Unit', args });
+    return globalThis.__dv2Page.decide('supersedeDailyV2Unit', { outcome: 'superseded' });
+  }`,
   `export async function provisionDailyV2Account(...args) {
     globalThis.__dv2Page.calls.push({ name: 'provisionDailyV2Account', args });
     const account = { ...globalThis.__dv2Page.accounts[0], id: '20000000-0000-4000-8000-0000000000c1',
@@ -203,13 +248,10 @@ const pageReplacements: Record<string, string> = {
   '@/features/daily-v2/dailyV2Access': stub(`export function useDailyV2Access() {
     return { roles: globalThis.__dv2Page.roles, accessState: { status: 'allowed' } }; }`),
   '@/features/daily-v2/session/DailyV2SessionBoundary': stub('export function DailyV2SessionBoundary(props) { return props.children; }'),
-  '@/features/daily-v2/session/dailyV2SessionScope': stub(`export function useDailyV2ScopedMutation(options) { return globalThis.__dv2Page.useMutation(options); }
-    export function useDailyV2SessionScope() { return { lifetime: { isActive: () => true, assertActive: () => {} } }; }`),
   '@/features/daily-v2/session/dailyV2SessionPresentation': stub(`export function dailyV2BuildVersionLabel() { return 'build'; }
     export function dailyV2SessionLabel() { return 'session'; }
     export function dailyV2RuntimeLockPresentation() { return { title: 'verrou', label: 'ouvert' }; }`),
   '@/config/buildProvenance': stub('export function currentBuildProvenance() { return {}; }'),
-  '@/features/daily-v2/session/dailyV2SessionLifetime': stub('export class DailyV2ExpiredViewError extends Error {}'),
   '@/features/daily-v2/session/DailyV2AccessFeedback': stub('export function DailyV2AccessFeedback() { return null; }'),
   '@/features/daily-v2/dailyV2RuntimeTarget': stub(`const all = { read: true, deposit: true, promote: true, admin: true };
     export function currentDailyV2Capabilities() { return all; }
@@ -231,11 +273,20 @@ register(stub(`
   const replacements = ${JSON.stringify(pageReplacements)};
   const ui = ${JSON.stringify(uiPrimitives)};
   const lucide = ${JSON.stringify(stub(`export const AlertCircle = 'i', Eye = 'i', Loader2 = 'i';`))};
+  const scopeReact = ${JSON.stringify(stub(`export function createContext(value) { return { value }; }
+    export function useContext() { return globalThis.__dv2Page.scope; }`))};
+  const scopeQuery = ${JSON.stringify(stub(`export class QueryClient { constructor(options) { this.options = options; } }
+    export function useMutation(options) { return globalThis.__dv2Page.useMutation(options); }`))};
   export function resolve(specifier, context, nextResolve) {
     const parent = context.parentURL || '';
     if (parent.includes('/src/pages/DailyStatementV2.tsx')) {
       if (Object.prototype.hasOwnProperty.call(replacements, specifier)) return { shortCircuit: true, url: replacements[specifier] };
       if (specifier.startsWith('@/components/ui/')) return { shortCircuit: true, url: ui };
+    }
+    // Portée de session réelle : seuls son contexte React et la mutation TanStack sont fournis par le harnais.
+    if (parent.includes('/src/features/daily-v2/session/dailyV2SessionScope.ts')) {
+      if (specifier === 'react') return { shortCircuit: true, url: scopeReact };
+      if (specifier === '@tanstack/react-query') return { shortCircuit: true, url: scopeQuery };
     }
     if (parent.includes('/src/features/daily-v2/DailyV2Tables.tsx')) {
       if (specifier.startsWith('@/components/ui/')) return { shortCircuit: true, url: ui };
@@ -403,7 +454,17 @@ function reset(): void {
   ui.reviewRegistryGate = null;
   ui.activeCanonical = null;
   ui.depositGate = null;
+  ui.decisionGate = null;
+  ui.decisionFailures = 0;
+  ui.scope = { lifetime: activeLifetime() };
 }
+
+function activeLifetime(): ReturnType<typeof createDailyV2SessionLifetime> {
+  const lifetime = createDailyV2SessionLifetime();
+  lifetime.activate();
+  return lifetime;
+}
+ui.scope = { lifetime: activeLifetime() };
 
 // --- Données fictives ---------------------------------------------------------
 const ACCOUNT_A = '20000000-0000-4000-8000-00000000000a';
@@ -1019,4 +1080,315 @@ test('a deposit followed by a redeposit of the same file keeps the same payload 
   const deposits = callsOf('preIngestDailyV2WithIncrementalDelta').map(([payload]) => JSON.stringify(payload));
   assert.equal(deposits.length, 2);
   assert.equal(deposits[0], deposits[1], 'redépôt identique : même payload, l’arbitrage reste serveur');
+});
+
+// --- Gestionnaire de confirmation (pack DAILY-V2-BDK-ORABANK-DAILY-USE-READINESS) ---
+// Reproductions écrites sur la base 88ef056, où elles échouent : motif revérifié sur l'unité relue, motif vide refusé,
+// une seule décision à la fois même avant le rendu suivant. Le test de reprise après échec passe aussi sur la base : il
+// garde la levée du verrou (non-régression). Les tests « contre-revue » ferment les constats F1 à F4 et F8 de la revue
+// indépendante du correctif.
+
+const textareas = (screen: Screen) => findAll(screen.tree, (node) => node.type === 'textarea');
+const errorToastsMatching = (pattern: RegExp, from = 0) =>
+  ui.toasts.slice(from).filter((toast) => toast.kind === 'error' && pattern.test(toast.message)).length;
+const REASON_REFUSED = /motif non vide est obligatoire/;
+const DECISION_IN_FLIGHT = /Une décision est déjà en cours d’envoi/;
+
+async function supersedeScreen(unitId = UNIT_A): Promise<{ screen: Screen; units: Map<string, DailyV2StagingUnitRow> }> {
+  const { screen, units } = await reviewScreen();
+  units.set(unitId, unit(unitId, unitId === UNIT_A ? ACCOUNT_A : ACCOUNT_B, { status: 'conflict' }));
+  ui.activeCanonical = { id: CANONICAL_A };
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  await screen.click('Supersede', screen.row(unitId));
+  return { screen, units };
+}
+
+test('two confirmations before a new render send a single promotion (daily use, concurrence)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  const confirm = screen.button('Confirmer').props.onClick as () => void;
+  // Double clic : deux appels du même gestionnaire avant que React n'ait rendu l'état « pending ».
+  confirm();
+  confirm();
+  await screen.settle();
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined]]);
+  assert.equal(errorToastsMatching(DECISION_IN_FLIGHT), 1);
+  assert.equal(screen.buttons('Confirmer').length, 0, 'dialogue fermé après la promotion');
+});
+
+test('two confirmations before a new render send a single supersede (daily use, concurrence)', async () => {
+  const { screen } = await supersedeScreen();
+  await screen.typeInto((node) => node.type === 'textarea', 'Remplacement fictif');
+  const confirm = screen.button('Confirmer').props.onClick as () => void;
+  confirm();
+  confirm();
+  await screen.settle();
+  assert.equal(callsOf('getActiveDailyV2CanonicalUnit').length, 1);
+  assert.deepEqual(callsOf('supersedeDailyV2Unit'), [[{ oldCanonicalUnitId: CANONICAL_A, newStagingUnitId: UNIT_A, reason: 'Remplacement fictif' }]]);
+});
+
+test('while a decision is pending, captured, current and other-unit handlers send nothing more (daily use, concurrence)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  const captured = screen.button('Confirmer').props.onClick as () => void;
+  let release: () => void = () => {};
+  ui.decisionGate = new Promise<void>((resolve) => { release = resolve; });
+  captured();
+  await new Promise((resolve) => setImmediate(resolve));
+  screen.render();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1, 'promotion en cours');
+  assert.equal(screen.button('Confirmer').props.disabled, true, 'état « pending » visible au rendu suivant');
+  const toastsBefore = ui.toasts.length;
+  // Gestionnaire capturé avant l'envoi, puis gestionnaire du rendu courant, appelés malgré le bouton inactif.
+  captured();
+  (screen.button('Confirmer').props.onClick as () => void)();
+  screen.render();
+  // Dialogue fermé puis décision ouverte sur une autre unité pendant l'envoi : refusée tant que la première court.
+  (screen.button('Annuler').props.onClick as () => void)();
+  screen.render();
+  (screen.button('Promouvoir', screen.row(UNIT_B)).props.onClick as () => void)();
+  screen.render();
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await new Promise((resolve) => setImmediate(resolve));
+  screen.render();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1, 'aucune décision concurrente');
+  assert.equal(errorToastsMatching(DECISION_IN_FLIGHT, toastsBefore), 3);
+  release();
+  await screen.settle();
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined]]);
+  // Après la fin de la première décision, une nouvelle décision est de nouveau possible.
+  await screen.click('Promouvoir', screen.row(UNIT_B));
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined], [UNIT_B, undefined]]);
+});
+
+test('after a failed decision the lock is released and an explicit retry is possible (daily use, reprise)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  ui.decisionFailures = 1;
+  const reviewReadsBefore = callsOf('listDailyV2StagingUnits').length;
+  await screen.click('Confirmer');
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1);
+  assert.ok(ui.toasts.some((toast) => toast.kind === 'error' && toast.message === 'Promotion impossible.'));
+  // F8 : un échec, peut-être ambigu, relit la revue avant toute nouvelle tentative.
+  assert.ok(callsOf('listDailyV2StagingUnits').length > reviewReadsBefore, 'revue relue après l’échec');
+  assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé après l’échec');
+  assert.equal(screen.button('Confirmer').props.disabled, false, 'nouvelle tentative proposée');
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined], [UNIT_A, undefined]]);
+  assert.equal(screen.buttons('Confirmer').length, 0, 'dialogue fermé après le succès');
+  assert.equal(errorToastsMatching(DECISION_IN_FLIGHT), 0);
+
+  // Supersede : échec levé par la page (aucune unité canonical active), puis échec de la RPC, puis succès.
+  const { screen: second } = await supersedeScreen();
+  await second.typeInto((node) => node.type === 'textarea', 'Remplacement fictif');
+  ui.activeCanonical = null;
+  await second.click('Confirmer');
+  assert.equal(callsOf('supersedeDailyV2Unit').length, 0);
+  assert.ok(ui.toasts.some((toast) => toast.kind === 'error' && toast.message === 'Aucune unité canonical active correspondante.'));
+  ui.activeCanonical = { id: CANONICAL_A };
+  ui.decisionFailures = 1;
+  await second.click('Confirmer');
+  assert.equal(callsOf('supersedeDailyV2Unit').length, 1);
+  assert.ok(ui.toasts.some((toast) => toast.kind === 'error' && toast.message === 'Supersede impossible.'));
+  assert.equal(textareas(second)[0].props.value, 'Remplacement fictif', 'motif conservé pour la nouvelle tentative');
+  await second.click('Confirmer');
+  assert.equal(callsOf('supersedeDailyV2Unit').length, 2);
+  assert.equal(second.buttons('Confirmer').length, 0);
+  assert.equal(errorToastsMatching(DECISION_IN_FLIGHT), 0);
+});
+
+test('the required reason is checked against the unit actually re-read, not the one captured at opening (daily use, motif)', async () => {
+  for (const change of [
+    { review_reason_codes: ['ACCOUNT_IDENTITY_NOT_CORROBORATED' as const] },
+    { validation_status: 'needs_review' as const },
+    { aggregates_status: 'unavailable' as const },
+  ]) {
+    const { screen, units } = await reviewScreen();
+    await screen.click('Promouvoir', screen.row(UNIT_A));
+    assert.equal(textareas(screen).length, 0, 'motif non requis à l’ouverture');
+    const captured = screen.button('Confirmer').props.onClick as () => void;
+    // Même unité, même tentative, même contenu et même statut, relue avec un motif désormais obligatoire.
+    units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A, change));
+    ui.invalidate(['daily-v2', 'staging']);
+    await screen.settle();
+    captured();
+    (screen.button('Confirmer').props.onClick as () => void)();
+    await screen.settle();
+    assert.equal(callsOf('promoteDailyV2Unit').length, 0, JSON.stringify(change));
+    assert.equal(errorToastsMatching(REASON_REFUSED), 2);
+    assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
+    assert.equal(textareas(screen).length, 1, 'champ du motif affiché');
+    assert.equal(screen.button('Confirmer').props.disabled, true);
+    await screen.typeInto((node) => node.type === 'textarea', '  Contrôle manuel fictif  ');
+    await screen.click('Confirmer');
+    assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, 'Contrôle manuel fictif']], JSON.stringify(change));
+  }
+});
+
+test('an empty or blank reason is refused before any decision, for a promotion and a supersede (daily use, motif)', async () => {
+  const { screen, units } = await reviewScreen();
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A, { validation_status: 'needs_review' }));
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  for (const blank of ['', '   ', ' \t\n ']) {
+    await screen.typeInto((node) => node.type === 'textarea', blank);
+    assert.equal(screen.button('Confirmer').props.disabled, true);
+    (screen.button('Confirmer').props.onClick as () => void)();
+    await screen.settle();
+  }
+  assert.equal(callsOf('promoteDailyV2Unit').length, 0);
+  assert.equal(errorToastsMatching(REASON_REFUSED), 3);
+  assert.equal(screen.buttons('Confirmer').length, 1, 'dialogue conservé');
+
+  const { screen: second } = await supersedeScreen();
+  for (const blank of ['', '   ', ' \t\n ']) {
+    await second.typeInto((node) => node.type === 'textarea', blank);
+    (second.button('Confirmer').props.onClick as () => void)();
+    await second.settle();
+  }
+  assert.equal(callsOf('getActiveDailyV2CanonicalUnit').length, 0, 'aucune lecture ni décision avec un motif vide');
+  assert.equal(callsOf('supersedeDailyV2Unit').length, 0);
+  assert.equal(errorToastsMatching(REASON_REFUSED), 3);
+  // Le motif transmis est le motif saisi, sans les espaces de bord.
+  await second.typeInto((node) => node.type === 'textarea', '  Remplacement fictif  ');
+  await second.click('Confirmer');
+  assert.deepEqual(callsOf('supersedeDailyV2Unit'), [[{ oldCanonicalUnitId: CANONICAL_A, newStagingUnitId: UNIT_A, reason: 'Remplacement fictif' }]]);
+});
+
+test('a confirm handler captured before the reason changed decides with the reason now displayed (daily use, motif)', async () => {
+  const { screen } = await supersedeScreen();
+  await screen.typeInto((node) => node.type === 'textarea', 'Motif initial');
+  const captured = screen.button('Confirmer').props.onClick as () => void;
+  // Motif effacé après la capture : le gestionnaire capturé ne décide pas avec l'ancien motif.
+  await screen.typeInto((node) => node.type === 'textarea', '');
+  captured();
+  await screen.settle();
+  assert.equal(callsOf('supersedeDailyV2Unit').length, 0);
+  assert.equal(errorToastsMatching(REASON_REFUSED), 1);
+  // Motif corrigé : le gestionnaire capturé transmet le motif affiché, pas celui de sa capture.
+  await screen.typeInto((node) => node.type === 'textarea', 'Motif corrigé');
+  captured();
+  await screen.settle();
+  assert.deepEqual(callsOf('supersedeDailyV2Unit'), [[{ oldCanonicalUnitId: CANONICAL_A, newStagingUnitId: UNIT_A, reason: 'Motif corrigé' }]]);
+
+  // Même règle pour une promotion à motif obligatoire.
+  const { screen: second, units } = await reviewScreen();
+  units.set(UNIT_B, unit(UNIT_B, ACCOUNT_B, { review_reason_codes: ['RUNNING_BALANCE_MISSING'] }));
+  ui.invalidate(['daily-v2', 'staging']);
+  await second.settle();
+  await second.click('Promouvoir', second.row(UNIT_B));
+  await second.typeInto((node) => node.type === 'textarea', 'Motif initial');
+  const capturedPromotion = second.button('Confirmer').props.onClick as () => void;
+  await second.typeInto((node) => node.type === 'textarea', 'Motif corrigé');
+  capturedPromotion();
+  await second.settle();
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_B, 'Motif corrigé']]);
+});
+
+test('a handler called after the decision ended but before the next render sends nothing more (daily use, contre-revue F1)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  const captured = screen.button('Confirmer').props.onClick as () => void;
+  captured();
+  // La décision se termine (verrou levé) sans qu'aucun rendu n'ait eu lieu.
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1);
+  captured();
+  await screen.settle();
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined]]);
+  assert.equal(ui.toasts.filter((toast) => toast.kind === 'success' && toast.message === 'Promotion : promoted').length, 1);
+  assert.equal(screen.buttons('Confirmer').length, 0);
+});
+
+test('the decision lock is released even when the session scope filters the hook callbacks (daily use, contre-revue F2, R2)', async () => {
+  const { screen, units } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  let release: () => void = () => {};
+  ui.decisionGate = new Promise<void>((resolve) => { release = resolve; });
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await new Promise((resolve) => setImmediate(resolve));
+  screen.render();
+  // La durée de vie de la session change pendant la RPC, page restée montée (rechargement à chaud en développement) :
+  // la portée réelle rejette le résultat et ne rappelle ni onSuccess, ni onError, ni onSettled du hook.
+  ui.scope!.lifetime.dispose();
+  ui.scope!.lifetime.activate();
+  // Le serveur a pourtant enregistré la promotion : l'issue est inconnue de l'interface.
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A, { status: 'promoted' }));
+  const reviewReadsBefore = callsOf('listDailyV2StagingUnits').length;
+  release();
+  await screen.settle();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1);
+  assert.equal(ui.toasts.some((toast) => toast.message === 'Promotion : promoted' || toast.message === 'Promotion impossible.'), false, 'rappels du hook filtrés');
+  // R2 : la revue est relue, comme après un échec.
+  assert.ok(callsOf('listDailyV2StagingUnits').length > reviewReadsBefore, 'revue relue après un résultat rejeté');
+  // Le verrou n'est pas resté posé : la confirmation suivante n'est pas refusée comme déjà en cours, mais la vue relue
+  // la déclare périmée, sans seconde RPC.
+  ui.decisionGate = null;
+  await screen.click('Confirmer');
+  assert.equal(errorToastsMatching(DECISION_IN_FLIGHT), 0);
+  assert.equal(errorToastsMatching(/l’unité a changé depuis l’ouverture/), 1);
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1);
+  assert.equal(screen.buttons('Confirmer').length, 0);
+});
+
+test('after a failure, a captured handler called before the next render waits for the re-read (daily use, contre-revue R1)', async () => {
+  const { screen } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  const captured = screen.button('Confirmer').props.onClick as () => void;
+  ui.decisionFailures = 1;
+  captured();
+  // L'échec se termine (verrou levé) sans qu'aucun rendu n'ait eu lieu.
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1);
+  captured();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(callsOf('promoteDailyV2Unit').length, 1, 'aucune reprise avant la relecture');
+  assert.equal(errorToastsMatching(/revue est en cours d’actualisation/), 1);
+  // Après la relecture, la nouvelle tentative explicite est possible.
+  await screen.settle();
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, undefined], [UNIT_A, undefined]]);
+});
+
+test('the handler requires a reason whenever the button does, even if the re-read unit no longer asks for it (daily use, contre-revue F3)', async () => {
+  const { screen, units } = await reviewScreen();
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A, { validation_status: 'needs_review', review_reason_codes: ['RUNNING_BALANCE_MISSING'] }));
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  // Même unité relue sans motif de revue (codes recalculés, même contenu, même statut).
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A));
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  assert.equal(screen.button('Confirmer').props.disabled, true, 'le bouton exige toujours un motif');
+  (screen.button('Confirmer').props.onClick as () => void)();
+  await screen.settle();
+  assert.equal(callsOf('promoteDailyV2Unit').length, 0);
+  assert.equal(errorToastsMatching(REASON_REFUSED), 1);
+});
+
+test('the dialog shows the re-read review codes and never hides a typed reason that would be sent (daily use, contre-revue F4)', async () => {
+  const { screen, units } = await reviewScreen();
+  await screen.click('Promouvoir', screen.row(UNIT_A));
+  assert.doesNotMatch(screen.text(), /Motifs à examiner avant décision/);
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A, { review_reason_codes: ['RUNNING_BALANCE_MISSING'] }));
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  // (a) Les codes qui rendent le motif obligatoire sont ceux de l'unité relue, affichés dans le dialogue.
+  assert.match(screen.text(), /Motifs à examiner avant décision\s*RUNNING_BALANCE_MISSING/);
+  assert.match(screen.text(), /Raison obligatoire/);
+  await screen.typeInto((node) => node.type === 'textarea', 'Motif fictif');
+  // (b) Une nouvelle relecture lève l'obligation : le motif saisi reste affiché, et c'est lui qui est transmis.
+  units.set(UNIT_A, unit(UNIT_A, ACCOUNT_A));
+  ui.invalidate(['daily-v2', 'staging']);
+  await screen.settle();
+  assert.equal(textareas(screen).length, 1, 'motif saisi toujours visible');
+  assert.match(screen.text(), /Raison saisie \(sera transmise\)/);
+  await screen.click('Confirmer');
+  assert.deepEqual(callsOf('promoteDailyV2Unit'), [[UNIT_A, 'Motif fictif']]);
 });

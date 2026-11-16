@@ -4,6 +4,7 @@ import test from 'node:test';
 import { buildDailyV2BackfillIncrementalDelta } from './dailyV2IncrementalDelta';
 import type { DailyV2PreIngestPayload, DailyV2RpcLine, DailyV2RpcUnit } from './dailyV2Types';
 import {
+  DAILY_V2_DECISION_REASON_REQUIRED_MESSAGE,
   DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES,
   DAILY_V2_STAGING_DECISION_STALE_MESSAGES,
   captureDailyV2StagingDecisionContext,
@@ -11,6 +12,7 @@ import {
   checkDailyV2StagingDecisionCurrent,
   describeDailyV2StagingAccount,
   formatDailyV2AccountOption,
+  isDailyV2DecisionReasonRequired,
   isDailyV2StagingAccountIdentified,
   type DailyV2AccountRegistryRow,
   type DailyV2StagingUnitRow,
@@ -1104,4 +1106,49 @@ test('holds a decision on a registered unit while the account registry is re-rea
     assert.equal(checkDailyV2DecisionRegistryRead(historical, read(refreshing, failed)), null);
   }
   for (const message of Object.values(DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES)) assert.match(message, /^Décision suspendue/);
+});
+
+test('requires a reason from the unit itself and confirms one decision at a time (daily use readiness)', () => {
+  const clear = reviewUnit('10000000-0000-4000-8000-000000000001', REVIEW_ACCOUNT_A);
+  assert.equal(isDailyV2DecisionReasonRequired('promote', clear), false);
+  assert.equal(isDailyV2DecisionReasonRequired('supersede', clear), true);
+  for (const change of [
+    { validation_status: 'needs_review' as const },
+    { aggregates_status: 'unavailable' as const },
+    { review_reason_codes: ['RUNNING_BALANCE_MISSING' as const] },
+  ]) {
+    assert.equal(isDailyV2DecisionReasonRequired('promote', { ...clear, ...change }), true, JSON.stringify(change));
+  }
+  assert.match(DAILY_V2_DECISION_REASON_REQUIRED_MESSAGE, /^Décision suspendue/);
+
+  // Gestionnaire de confirmation : motif relu au dernier rendu validé, exigé selon l'unité relue, sans espaces de bord.
+  assert.match(page, /reasonRef\.current = reason;/);
+  assert.match(page, /const decisionReason = reasonRef\.current\.trim\(\);/);
+  // Même règle que le bouton : unité capturée OU unité relue.
+  assert.match(page, /const reasonNeeded = isDailyV2DecisionReasonRequired\(open\.kind, open\.unit\)\s*\|\| isDailyV2DecisionReasonRequired\(open\.kind, check\.unit\);/);
+  assert.match(page, /if \(reasonNeeded && decisionReason === ''\) \{/);
+  assert.match(page, /supersedeMutation\.mutate\(\{ unit: check\.unit, supersedeReason: decisionReason \}, settle\)/);
+  assert.doesNotMatch(page, /supersedeReason: reason \}/);
+  // Verrou synchrone : vérifié avant toute décision, posé juste avant l'envoi, levé à la fin des deux mutations par le
+  // hook et par les rappels de l'appel (non filtrés par la portée de session).
+  const start = page.indexOf('const confirmDecision = () => {');
+  const end = page.indexOf('const preparedAssessment =');
+  assert.ok(start >= 0 && end > start, 'gestionnaire de confirmation repéré');
+  const confirm = page.slice(start, end);
+  const at = (needle: string) => {
+    const index = confirm.indexOf(needle);
+    assert.ok(index >= 0, `présent dans le gestionnaire : ${needle}`);
+    return index;
+  };
+  assert.ok(at('if (decisionInFlightRef.current) {') < at('const view = reviewViewRef.current;'));
+  assert.ok(at('decisionInFlightRef.current = true;') < at('promoteMutation.mutate('));
+  assert.ok(at("if (reasonNeeded && decisionReason === '') {") < at('decisionInFlightRef.current = true;'));
+  assert.match(confirm, /const settle = \{\s*onSettled: \(_data: unknown, error: unknown\) => \{\s*releaseDecision\(\);\s*if \(error instanceof DailyV2ExpiredViewError\) rereadReviewAfterFailedDecision\(\);/);
+  // Après un échec, la suspension « relecture en cours » est posée sans attendre le rendu.
+  assert.match(page, /function rereadReviewAfterFailedDecision\(\) \{[\s\S]{0,400}?reviewViewRef\.current = \{ \.\.\.reviewViewRef\.current, refreshing: true \};/);
+  assert.equal((page.match(/onSettled: releaseDecision,/g) ?? []).length, 2);
+  assert.equal((page.match(/decisionInFlightRef\.current = true;/g) ?? []).length, 1);
+  // Fermeture synchrone du dialogue décidé, relecture de la revue après un échec de décision.
+  assert.match(page, /const closeDecision = \(\) => \{[\s\S]{0,400}?decisionRef\.current = null;\s*setDecisionDialog\(null\);/);
+  assert.equal((page.match(/rereadReviewAfterFailedDecision\(\);/g) ?? []).length, 3);
 });

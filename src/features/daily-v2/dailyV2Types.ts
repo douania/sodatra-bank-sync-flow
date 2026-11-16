@@ -1107,6 +1107,25 @@ export function checkDailyV2DecisionRegistryRead(
   return null;
 }
 
+/**
+ * Motif obligatoire d'une décision : toujours pour un supersede ; pour une promotion, dès que l'unité demande une
+ * revue (validation `needs_review`, agrégats indisponibles ou au moins un code de revue). Évalué sur l'unité
+ * effectivement relue au moment de confirmer, pas seulement sur celle capturée à l'ouverture du dialogue.
+ * Garde d'interface : le serveur reste seul juge.
+ */
+export function isDailyV2DecisionReasonRequired(
+  kind: 'promote' | 'supersede',
+  unit: Pick<DailyV2StagingUnitRow, 'validation_status' | 'aggregates_status' | 'review_reason_codes'>,
+): boolean {
+  if (kind === 'supersede') return true;
+  return unit.validation_status === 'needs_review'
+    || unit.aggregates_status === 'unavailable'
+    || unit.review_reason_codes.length > 0;
+}
+
+export const DAILY_V2_DECISION_REASON_REQUIRED_MESSAGE =
+  'Décision suspendue : un motif non vide est obligatoire pour cette unité. Saisissez-le avant de confirmer.';
+
 export const DAILY_V2_DECISION_REGISTRY_HOLD_MESSAGES: Record<DailyV2DecisionRegistryHold, string> = {
   REGISTRY_REFRESHING: 'Décision suspendue : le registre des comptes est en cours de lecture. La confirmation reprendra une fois le registre lu.',
   REGISTRY_READ_FAILED: 'Décision suspendue : la dernière lecture du registre des comptes a échoué. Les comptes éventuellement affichés viennent d’une lecture antérieure ; relisez le registre avant de confirmer.',
