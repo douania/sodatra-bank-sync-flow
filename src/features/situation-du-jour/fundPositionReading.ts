@@ -221,6 +221,13 @@ const FACILITY_COMPLEMENT = new RegExp(`(?<![A-Z])(?:SOLDES?|BALANCES?|POSITIONS
 const SET_ASIDE_WORDS: ReadonlySet<string> = new Set([
   'HORS', 'SANS', 'EXCLU', 'EXCLUE', 'EXCLUS', 'EXCLUES', 'COMPRIS', 'COMPRISE', 'COMPRISES', 'INCLUS', 'INCLUSE', 'INCLUSES', 'NON',
   'EXCLUDED', 'EXCLUDING', 'EXCL', 'INCLUDED', 'INCLUDING', 'INCL', 'WITHOUT', 'NET',
+  'DEDUIT', 'DEDUITE', 'DEDUITS', 'DEDUITES', 'RETRANCHE', 'RETRANCHEE', 'SOUSTRAIT', 'SOUSTRAITE', 'DEDUCTED', 'NETTED',
+]);
+/** Ce qui ajoute autre chose à la facilité sous le même mot de position : « Solde du découvert et des comptes », une énumération. */
+const COORDINATION = /[,&+]|(?<![A-Z])(?:ET|AND|PLUS|AINSI)(?![A-Z])/;
+/** Mots de position qui NOMMENT ce dont on donne la date ; « arrêté » ne fait que la dater (« Solde du découvert arrêté au … »). */
+const POSITION_NOUNS: ReadonlySet<string> = new Set([
+  'SOLDE', 'SOLDES', 'BALANCE', 'BALANCES', 'POSITION', 'POSITIONS', 'SITUATION', 'SITUATIONS', 'TRESORERIE', 'TREASURY', 'ETAT',
 ]);
 /** Annonce de note : « NB », « N.B. », « Note », « Nota bene », « Remarque », « Rappel », « P.S. ». */
 const NOTE_LEAD_WORDS: ReadonlySet<string> = new Set(['NB', 'N', 'B', 'NOTE', 'NOTES', 'NOTA', 'BENE', 'REMARQUE', 'REMARQUES', 'RAPPEL', 'PS', 'P', 'S']);
@@ -306,11 +313,12 @@ function saysNotAPositionDate(label: string): boolean {
 
 /**
  * Vrai si le libellé d'une date parle de la position : sa dernière proposition porte un mot de soldes, de
- * position ou de situation — sauf le solde d'UNE facilité, seule forme qui l'identifie : la proposition porte un
- * SEUL mot de position, une facilité en est le complément DIRECT (« Solde du découvert au … »), et rien ne la
- * dit exclue ou comprise. Une facilité citée autrement — comme exclue (« Facilités exclues : solde au … »,
- * « Solde du découvert exclu, solde global au … »), avant le mot, à côté d'un autre solde, ou dans une cellule
- * voisine — ne protège pas la date. Ou bien la proposition n'écrit, après une annonce de note, que « as at »
+ * position ou de situation — sauf le solde d'UNE facilité, seule forme qui l'identifie : la proposition nomme
+ * UNE seule chose (« solde », « situation »…), une facilité en est le complément DIRECT (« Solde du découvert
+ * au … »), rien ne la dit exclue, comprise ou déduite, et rien n'y est ajouté (« et des comptes », une
+ * énumération). Une facilité citée autrement — comme exclue (« Facilités exclues : solde au … », « Solde du
+ * découvert exclu, solde global au … »), avec d'autres comptes (« Solde du découvert et des comptes au … »),
+ * avant le mot, ou dans une cellule voisine — ne protège pas la date. Ou bien la proposition n'écrit, après une annonce de note, que « as at »
  * ou « as of » (« NB : as at 02/06/2026 »).
  */
 function saysAboutThePosition(label: string): boolean {
@@ -319,8 +327,9 @@ function saysAboutThePosition(label: string): boolean {
   if (positionWords.length === 0) {
     return AS_AT_WORDS.has(tokens.slice(-2).join(' ')) && tokens.slice(0, -2).every((token) => NOTE_LEAD_WORDS.has(token));
   }
-  const balanceOfOneFacility = positionWords.length === 1 && FACILITY_COMPLEMENT.test(clause)
-    && !tokens.some((token) => SET_ASIDE_WORDS.has(token));
+  const balanceOfOneFacility = tokens.filter((token) => POSITION_NOUNS.has(token)).length === 1 && FACILITY_COMPLEMENT.test(clause)
+    && !tokens.some((token) => SET_ASIDE_WORDS.has(token))
+    && !COORDINATION.test(clause);
   return !balanceOfOneFacility;
 }
 

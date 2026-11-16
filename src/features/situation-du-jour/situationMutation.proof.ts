@@ -836,8 +836,8 @@ const mutants: Mutant[] = [
   // Verdict CTO du 16/11 sur 9da66d4, arbitrages définitifs : facilité en complément direct seulement, mention qui date
   // l'impression (jour de la semaine, date écrite avant le mot), déclaration explicite d'échelle.
   { name: 'f128_facility_cited_elsewhere_than_as_direct_complement_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
-    from: "positionWords.length === 1 && FACILITY_COMPLEMENT.test(clause)",
-    to: "positionWords.length === 1 && tokenize(label).some((token) => FACILITY_WORDS.has(token))" },
+    from: "tokens.filter((token) => POSITION_NOUNS.has(token)).length === 1 && FACILITY_COMPLEMENT.test(clause)",
+    to: "tokens.filter((token) => POSITION_NOUNS.has(token)).length === 1 && tokenize(label).some((token) => FACILITY_WORDS.has(token))" },
   { name: 'f129_print_date_written_before_the_word_after_text_not_checked', file: 'fundPositionReading.ts', test: FUND,
     from: "        if (PRINT_DATING_HINT.test(rest) || DATE_WORD.test(plain) || earlierIsStale) {",
     to: "        if (PRINT_DATING_HINT.test(rest) || DATE_WORD.test(plain)) {" },
@@ -855,11 +855,11 @@ const mutants: Mutant[] = [
     to: ")(?![A-Z])/;" },
   // Relecture indépendante de 5e0d3ba : le complément direct ne protège que le solde d'UNE facilité.
   { name: 'f133_facility_complement_next_to_another_position_word_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
-    from: "positionWords.length === 1 && FACILITY_COMPLEMENT.test(clause)",
+    from: "tokens.filter((token) => POSITION_NOUNS.has(token)).length === 1 && FACILITY_COMPLEMENT.test(clause)",
     to: "FACILITY_COMPLEMENT.test(clause)" },
   { name: 'f134_facility_complement_said_excluded_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
-    from: "\n    && !tokens.some((token) => SET_ASIDE_WORDS.has(token));",
-    to: ";" },
+    from: "\n    && !tokens.some((token) => SET_ASIDE_WORDS.has(token))\n",
+    to: "\n" },
   { name: 'y109_feminine_plural_declaration_not_detected', file: 'situationCore.ts', test: FUND,
     from: "|EXPRIMEE?S?|EXPRESSED|",
     to: "|EXPRIMES?|EXPRESSED|" },
@@ -869,6 +869,16 @@ const mutants: Mutant[] = [
   { name: 'y111_operation_label_written_libelle_taken_for_a_declaration', file: 'situationCore.ts', test: FUND,
     from: "|EXPRIMEE?S?|EXPRESSED|STATED|DENOMINATED)",
     to: "|EXPRIMEE?S?|EXPRESSED|STATED|DENOMINATED|LIBELLEE?S?)" },
+  // Relecture indépendante de d9f35e8 : facilité citée avec d'autres comptes, facilité dite déduite, « arrêté au » qui date sans nommer.
+  { name: 'f135_facility_listed_with_other_accounts_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "\n    && !COORDINATION.test(clause);",
+    to: ";" },
+  { name: 'f136_facility_said_deducted_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "  'DEDUIT', 'DEDUITE', 'DEDUITS', 'DEDUITES', 'RETRANCHE', 'RETRANCHEE', 'SOUSTRAIT', 'SOUSTRAITE', 'DEDUCTED', 'NETTED',\n",
+    to: "" },
+  { name: 'f137_closing_participle_counted_as_a_second_position_word', file: 'fundPositionReading.ts', test: FUND,
+    from: "tokens.filter((token) => POSITION_NOUNS.has(token)).length === 1",
+    to: "positionWords.length === 1" },
 ];
 
 function runs(testFile: string): boolean {

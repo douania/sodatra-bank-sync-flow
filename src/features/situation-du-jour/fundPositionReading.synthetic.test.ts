@@ -559,6 +559,13 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     'Soldes hors solde des facilités au 02/06/2026', 'Solde des facilités non compris, soldes au 02/06/2026', 'Soldes bancaires et solde du découvert au 02/06/2026',
     'Solde des comptes, solde du découvert inclus, au 02/06/2026', 'Total balance excluding balance of the loan as at 02/06/2026', 'Soldes y compris solde DAT au 02/06/2026',
     'Situation des comptes hors situation des engagements au 02/06/2026', 'Solde du découvert exclu au 02/06/2026', 'Solde hors découvert au 02/06/2026',
+    // Une facilité citée AVEC d'autres comptes sous le même mot de position, ou dite déduite : la date est celle d'un solde d'ensemble.
+    'Solde du découvert et des comptes au 02/06/2026', 'Solde du découvert BDK et des comptes courants au 02/06/2026',
+    'Solde du découvert, des comptes et des dépôts au 02/06/2026', 'Balance of the loan and accounts as at 02/06/2026',
+    'Situation des engagements et des comptes au 02/06/2026', 'Solde DAT et comptes au 02/06/2026', 'Solde du découvert déduit au 02/06/2026',
+    'Balance of the overdraft deducted as at 02/06/2026', 'Solde du découvert + comptes au 02/06/2026',
+    // Deux soldes dans la même proposition, sans mot de liaison ni de mise à part.
+    'Soldes bancaires avec solde du découvert au 02/06/2026', 'Situation de trésorerie avec solde du découvert au 02/06/2026',
   ]) {
     assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
     assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['', footer]] }], `champ valide, bas d'onglet : ${footer}`, 'B10');
@@ -640,7 +647,8 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     // Solde d'une facilité, sous toutes ses tournures : la date n'est pas celle de la position.
     ['', 'Solde du CMT au 30/06/2026'], ['', 'Solde DAT au 30/06/2026'], ['', 'Situation des engagements au 30/06/2026'],
     ['', 'NB : situation des lignes au 02/06/2026'], ['Facilité BDK', 'Solde du découvert au 30/06/2026'], ['', 'Solde du découvert BDK au 30/06/2026'],
-    ['', 'Facilité BDK : solde du découvert au 30/06/2026'],
+    ['', 'Facilité BDK : solde du découvert au 30/06/2026'], ['', 'Solde du découvert arrêté au 30/06/2026'], ['', 'Solde du prêt CMT arrêté au 30/06/2026'],
+    ['', 'Solde du découvert (non audité) au 30/06/2026'],
     ['', 'Rate as of 02/06/2026'], ['', 'Interest accrued as at 30/06/2026'],
     ['', 'Solde escompte au 30/06/2026'], ['', 'Situation des cautions au 30/06/2026'], ['', 'Etat des garanties au 30/06/2026'], ['', 'Solde hors bilan au 03/06/2026'],
   ] as CellInput[][]) {
