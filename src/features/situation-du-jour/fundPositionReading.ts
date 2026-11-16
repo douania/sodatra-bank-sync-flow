@@ -217,6 +217,11 @@ const FACILITY_WORDS: ReadonlySet<string> = new Set([
  * « Soldes et encours », « Soldes, facilités comprises ») ne fait pas de la date celle d'une facilité.
  */
 const FACILITY_COMPLEMENT = new RegExp(`(?<![A-Z])(?:SOLDES?|BALANCES?|POSITIONS?|SITUATIONS?|ETAT)\\s+(?:(?:AU\\s+TITRE\\s+)?(?:DU|DE\\s+LA|DE\\s+L['’]|DES|DE|D['’]|OF(?:\\s+THE)?)\\s*)?(?:${Array.from(FACILITY_WORDS).join('|')})(?![A-Z])`);
+/** Mots qui disent une facilité mise à part ou comptée avec le reste : « découvert exclu », « hors », « y compris », « net of ». */
+const SET_ASIDE_WORDS: ReadonlySet<string> = new Set([
+  'HORS', 'SANS', 'EXCLU', 'EXCLUE', 'EXCLUS', 'EXCLUES', 'COMPRIS', 'COMPRISE', 'COMPRISES', 'INCLUS', 'INCLUSE', 'INCLUSES', 'NON',
+  'EXCLUDED', 'EXCLUDING', 'EXCL', 'INCLUDED', 'INCLUDING', 'INCL', 'WITHOUT', 'NET',
+]);
 /** Annonce de note : « NB », « N.B. », « Note », « Nota bene », « Remarque », « Rappel », « P.S. ». */
 const NOTE_LEAD_WORDS: ReadonlySet<string> = new Set(['NB', 'N', 'B', 'NOTE', 'NOTES', 'NOTA', 'BENE', 'REMARQUE', 'REMARQUES', 'RAPPEL', 'PS', 'P', 'S']);
 
@@ -301,17 +306,22 @@ function saysNotAPositionDate(label: string): boolean {
 
 /**
  * Vrai si le libellé d'une date parle de la position : sa dernière proposition porte un mot de soldes, de
- * position ou de situation — sauf si une facilité en est le complément DIRECT (« Solde du découvert au … »),
- * seule forme qui identifie le solde d'une facilité. Une facilité citée ailleurs — comme exclue (« Facilités
- * exclues : solde au … »), avant le mot, ou dans une cellule voisine — ne protège pas la date. Ou bien la
- * proposition n'écrit, après une annonce de note, que « as at » ou « as of » (« NB : as at 02/06/2026 »).
+ * position ou de situation — sauf le solde d'UNE facilité, seule forme qui l'identifie : la proposition porte un
+ * SEUL mot de position, une facilité en est le complément DIRECT (« Solde du découvert au … »), et rien ne la
+ * dit exclue ou comprise. Une facilité citée autrement — comme exclue (« Facilités exclues : solde au … »,
+ * « Solde du découvert exclu, solde global au … »), avant le mot, à côté d'un autre solde, ou dans une cellule
+ * voisine — ne protège pas la date. Ou bien la proposition n'écrit, après une annonce de note, que « as at »
+ * ou « as of » (« NB : as at 02/06/2026 »).
  */
 function saysAboutThePosition(label: string): boolean {
   const { clause, tokens } = readDateLabel(label);
-  if (!tokens.some((token) => POSITION_DATE_WORDS.has(token))) {
+  const positionWords = tokens.filter((token) => POSITION_DATE_WORDS.has(token));
+  if (positionWords.length === 0) {
     return AS_AT_WORDS.has(tokens.slice(-2).join(' ')) && tokens.slice(0, -2).every((token) => NOTE_LEAD_WORDS.has(token));
   }
-  return !FACILITY_COMPLEMENT.test(clause);
+  const balanceOfOneFacility = positionWords.length === 1 && FACILITY_COMPLEMENT.test(clause)
+    && !tokens.some((token) => SET_ASIDE_WORDS.has(token));
+  return !balanceOfOneFacility;
 }
 
 /** Les dates écrites dans un texte, lisibles ou non, à leur place et dans l'ordre d'écriture. */

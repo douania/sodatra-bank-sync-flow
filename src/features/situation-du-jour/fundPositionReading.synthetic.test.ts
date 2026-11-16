@@ -554,6 +554,11 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     'Facilités exclues : solde au 02/06/2026', 'NB : découvert exclu, solde global au 02/06/2026', 'NB : hors découvert, soldes au 02/06/2026',
     'Facilités non comprises : soldes au 02/06/2026', 'Overdraft excluded, total balance as at 02/06/2026', 'Facilité : solde au 30/06/2026',
     'Facilité BDK - solde au 30/06/2026', 'NB : facilité BDK, solde au 30/06/2026', 'Outstanding balance as at 30/06/2026', 'Encours arrêté au 30/06/2026',
+    // Le complément direct ne protège que le solde d'UNE facilité : un seul mot de position, rien qui la dise exclue ou comprise.
+    'Hors solde du découvert, soldes au 02/06/2026', 'Solde global hors solde du découvert au 02/06/2026', 'Solde du découvert exclu, solde global au 02/06/2026',
+    'Soldes hors solde des facilités au 02/06/2026', 'Solde des facilités non compris, soldes au 02/06/2026', 'Soldes bancaires et solde du découvert au 02/06/2026',
+    'Solde des comptes, solde du découvert inclus, au 02/06/2026', 'Total balance excluding balance of the loan as at 02/06/2026', 'Soldes y compris solde DAT au 02/06/2026',
+    'Situation des comptes hors situation des engagements au 02/06/2026', 'Solde du découvert exclu au 02/06/2026', 'Solde hors découvert au 02/06/2026',
   ]) {
     assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
     assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['', footer]] }], `champ valide, bas d'onglet : ${footer}`, 'B10');
@@ -634,7 +639,8 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     ['', 'Généré le 04/06/2026'], ['', 'Facility rate as at 30/06/2026'], ['', 'Limit as of 30/06/2026'],
     // Solde d'une facilité, sous toutes ses tournures : la date n'est pas celle de la position.
     ['', 'Solde du CMT au 30/06/2026'], ['', 'Solde DAT au 30/06/2026'], ['', 'Situation des engagements au 30/06/2026'],
-    ['', 'NB : situation des lignes au 02/06/2026'], ['Facilité BDK', 'Solde du découvert au 30/06/2026'],
+    ['', 'NB : situation des lignes au 02/06/2026'], ['Facilité BDK', 'Solde du découvert au 30/06/2026'], ['', 'Solde du découvert BDK au 30/06/2026'],
+    ['', 'Facilité BDK : solde du découvert au 30/06/2026'],
     ['', 'Rate as of 02/06/2026'], ['', 'Interest accrued as at 30/06/2026'],
     ['', 'Solde escompte au 30/06/2026'], ['', 'Situation des cautions au 30/06/2026'], ['', 'Etat des garanties au 30/06/2026'], ['', 'Solde hors bilan au 03/06/2026'],
   ] as CellInput[][]) {
@@ -868,7 +874,7 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'Etat en 1 000 FCFA', 'Fund position (unit: XOF 1,000)', 'Note : unité FCFA 1 000', 'Fund position - unité : 1 000 FCFA', 'NB : unité = 1 000 FCFA',
     'Amount in XOF 1,000.00', 'Fund position in XOF 1,000.00',
     // Arbitrage C : une déclaration explicite d'unité, où qu'elle soit écrite.
-    'Exprimé en FCFA 1 000', 'Exprimés en 1 000 FCFA', 'Expressed in XOF 1,000', 'Libellé en FCFA 1 000', 'Stated in 1,000 XOF',
+    'Exprimé en FCFA 1 000', 'Exprimés en 1 000 FCFA', 'Exprimées en FCFA 1 000', 'Expressed in XOF 1,000', 'Denominated in XOF 1,000', 'Stated in 1,000 XOF',
   ];
   for (const scale of scales) {
     const fund = reading([{ name: tab, rows: ROWS, reference: { date: D, texts: [scale] } }]);
@@ -904,7 +910,8 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     // Une devise que rien n'introduit, ou une préposition qui n'introduit pas le nombre, ne fait pas une échelle.
     'Solde FCFA 1 000 000', 'Deposit XOF 1 000 000', 'Credit en compte 1 000 000', 'Solde en XOF au 1 000 000', 'Deposit in XOF BDK 1 000 000',
     'VIREMENT EN XOF 1 000 000', 'Paiement en FCFA 100 000', 'Retrait en F CFA 1 000 000', 'Paiement de 100 000 FCFA', 'Virement 1 000 000',
-    'Remise par 1 000 000', 'Transfer in XOF 1,000,000', 'Dépôt express en FCFA 1 000 000']) {
+    'Remise par 1 000 000', 'Transfer in XOF 1,000,000', 'Dépôt express en FCFA 1 000 000', 'Chèque libellé en FCFA 1 000 000',
+    'Virement libellé en XOF 1 000 000', 'Chèque libellé à l’ordre de X en FCFA 1 000 000']) {
     assert.deepEqual([noted(note).unit, noted(note).unitProvenance], ['UNITS', 'CONVENTION'], note);
   }
   for (const note of ['Montants in 1,000', 'Total en 1 000 FCFA', 'Montants 1,000s', 'Solde /1000', 'Solde /1,000', 'Montants (unité : 1000 F)', 'Solde (unité : 1000 F)',
@@ -919,7 +926,7 @@ test('unité : champ explicite ou convention SODATRA ; indication d’échelle o
     'Unité : FCFA 1 000', 'Solde (unité : FCFA 1 000)', 'Amount in units of XOF 1,000', 'Solde en unités de FCFA 1 000', 'Note: in XOF 1,000',
     'NB : en FCFA 1 000', 'Etat en FCFA 1 000', 'Amt in XOF 1,000', 'Scale: 1,000', 'Echelle : 1 000', 'Multiplier par 1 000',
     'Amount in XOF - 1,000', 'Amount in XOF – 1,000', 'Solde en FCFA, 1 000', 'Note: in 1,000 XOF', 'NB : en 1 000 FCFA', 'Note : unité FCFA 1 000',
-    'Amount in XOF 1,000.00', 'Valeur en FCFA 1 000', 'Exprimé en FCFA 1 000', 'Expressed in XOF 1,000', 'Libellé en 1 000 FCFA']) {
+    'Amount in XOF 1,000.00', 'Valeur en FCFA 1 000', 'Exprimé en FCFA 1 000', 'Expressed in XOF 1,000', 'Denominated in 1,000 XOF']) {
     assert.deepEqual([noted(note).unit, noted(note).unitProvenance], [null, null], note);
   }
   // Les deux écritures avec devise intercalée, sous l'en-tête et à côté d'un champ de date valide égal à D : aucun écart chiffré.

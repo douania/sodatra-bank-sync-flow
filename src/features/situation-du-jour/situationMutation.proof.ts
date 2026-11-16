@@ -760,7 +760,7 @@ const mutants: Mutant[] = [
     from: "(?:IMPRIME(?:E|S|ES)?|IMPRESSIONS?",
     to: "(?:IMPRIMEE?|IMPRESSIONS?" },
   { name: 'f112_facility_as_direct_complement_counted', file: 'fundPositionReading.ts', test: FUND,
-    from: "  return !FACILITY_COMPLEMENT.test(clause);",
+    from: "  return !balanceOfOneFacility;",
     to: "  return true;" },
   { name: 'f113_text_in_the_right_cell_without_a_date_admitted', file: 'fundPositionReading.ts', test: FUND,
     from: "            if (cellDate || cellText(cell)) break;\n",
@@ -836,8 +836,8 @@ const mutants: Mutant[] = [
   // Verdict CTO du 16/11 sur 9da66d4, arbitrages définitifs : facilité en complément direct seulement, mention qui date
   // l'impression (jour de la semaine, date écrite avant le mot), déclaration explicite d'échelle.
   { name: 'f128_facility_cited_elsewhere_than_as_direct_complement_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
-    from: "  return !FACILITY_COMPLEMENT.test(clause);",
-    to: "  return !tokenize(label).some((token) => FACILITY_WORDS.has(token));" },
+    from: "positionWords.length === 1 && FACILITY_COMPLEMENT.test(clause)",
+    to: "positionWords.length === 1 && tokenize(label).some((token) => FACILITY_WORDS.has(token))" },
   { name: 'f129_print_date_written_before_the_word_after_text_not_checked', file: 'fundPositionReading.ts', test: FUND,
     from: "        if (PRINT_DATING_HINT.test(rest) || DATE_WORD.test(plain) || earlierIsStale) {",
     to: "        if (PRINT_DATING_HINT.test(rest) || DATE_WORD.test(plain)) {" },
@@ -851,8 +851,24 @@ const mutants: Mutant[] = [
     from: "|LUNDI|MARDI|MERCREDI|JEUDI|VENDREDI|SAMEDI|DIMANCHE|MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)/;",
     to: ")/;" },
   { name: 'y108_explicit_scale_declaration_not_detected', file: 'situationCore.ts', test: FUND,
-    from: "|EXPRIMEE?S?|EXPRESSED|STATED|LIBELLEE?S?|DENOMINATED)(?![A-Z])/;",
+    from: "|EXPRIMEE?S?|EXPRESSED|STATED|DENOMINATED)(?![A-Z])/;",
     to: ")(?![A-Z])/;" },
+  // Relecture indépendante de 5e0d3ba : le complément direct ne protège que le solde d'UNE facilité.
+  { name: 'f133_facility_complement_next_to_another_position_word_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "positionWords.length === 1 && FACILITY_COMPLEMENT.test(clause)",
+    to: "FACILITY_COMPLEMENT.test(clause)" },
+  { name: 'f134_facility_complement_said_excluded_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "\n    && !tokens.some((token) => SET_ASIDE_WORDS.has(token));",
+    to: ";" },
+  { name: 'y109_feminine_plural_declaration_not_detected', file: 'situationCore.ts', test: FUND,
+    from: "|EXPRIMEE?S?|EXPRESSED|",
+    to: "|EXPRIMES?|EXPRESSED|" },
+  { name: 'y110_denominated_declaration_not_detected', file: 'situationCore.ts', test: FUND,
+    from: "|STATED|DENOMINATED)(?![A-Z])/;",
+    to: "|STATED)(?![A-Z])/;" },
+  { name: 'y111_operation_label_written_libelle_taken_for_a_declaration', file: 'situationCore.ts', test: FUND,
+    from: "|EXPRIMEE?S?|EXPRESSED|STATED|DENOMINATED)",
+    to: "|EXPRIMEE?S?|EXPRESSED|STATED|DENOMINATED|LIBELLEE?S?)" },
 ];
 
 function runs(testFile: string): boolean {
