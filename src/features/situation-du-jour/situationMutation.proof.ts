@@ -879,6 +879,16 @@ const mutants: Mutant[] = [
   { name: 'f137_closing_participle_counted_as_a_second_position_word', file: 'fundPositionReading.ts', test: FUND,
     from: "tokens.filter((token) => POSITION_NOUNS.has(token)).length === 1",
     to: "positionWords.length === 1" },
+  // Verdict CTO du 16/11 sur 83470e2 : « facilité avec les comptes ».
+  { name: 'f138_facility_with_other_accounts_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "|PLUS|AINSI|AVEC|WITH|OU|OR)(?![A-Z])/;",
+    to: "|PLUS|AINSI|OU|OR)(?![A-Z])/;" },
+  { name: 'f139_facility_or_other_accounts_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "|PLUS|AINSI|AVEC|WITH|OU|OR)(?![A-Z])/;",
+    to: "|PLUS|AINSI|AVEC|WITH)(?![A-Z])/;" },
+  { name: 'f140_facility_slash_other_accounts_protects_the_date', file: 'fundPositionReading.ts', test: FUND,
+    from: "const COORDINATION = /[,&+/]|",
+    to: "const COORDINATION = /[,&+]|" },
 ];
 
 function runs(testFile: string): boolean {

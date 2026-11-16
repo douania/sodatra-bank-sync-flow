@@ -223,8 +223,11 @@ const SET_ASIDE_WORDS: ReadonlySet<string> = new Set([
   'EXCLUDED', 'EXCLUDING', 'EXCL', 'INCLUDED', 'INCLUDING', 'INCL', 'WITHOUT', 'NET',
   'DEDUIT', 'DEDUITE', 'DEDUITS', 'DEDUITES', 'RETRANCHE', 'RETRANCHEE', 'SOUSTRAIT', 'SOUSTRAITE', 'DEDUCTED', 'NETTED',
 ]);
-/** Ce qui ajoute autre chose à la facilité sous le même mot de position : « Solde du découvert et des comptes », une énumération. */
-const COORDINATION = /[,&+]|(?<![A-Z])(?:ET|AND|PLUS|AINSI)(?![A-Z])/;
+/**
+ * Ce qui ajoute autre chose à la facilité sous le même mot de position : « Solde du découvert et des comptes »,
+ * « … avec les comptes », « … with accounts », « … ou des comptes », « … / comptes », une énumération.
+ */
+const COORDINATION = /[,&+/]|(?<![A-Z])(?:ET|AND|PLUS|AINSI|AVEC|WITH|OU|OR)(?![A-Z])/;
 /** Mots de position qui NOMMENT ce dont on donne la date ; « arrêté » ne fait que la dater (« Solde du découvert arrêté au … »). */
 const POSITION_NOUNS: ReadonlySet<string> = new Set([
   'SOLDE', 'SOLDES', 'BALANCE', 'BALANCES', 'POSITION', 'POSITIONS', 'SITUATION', 'SITUATIONS', 'TRESORERIE', 'TREASURY', 'ETAT',
@@ -315,8 +318,8 @@ function saysNotAPositionDate(label: string): boolean {
  * Vrai si le libellé d'une date parle de la position : sa dernière proposition porte un mot de soldes, de
  * position ou de situation — sauf le solde d'UNE facilité, seule forme qui l'identifie : la proposition nomme
  * UNE seule chose (« solde », « situation »…), une facilité en est le complément DIRECT (« Solde du découvert
- * au … »), rien ne la dit exclue, comprise ou déduite, et rien n'y est ajouté (« et des comptes », une
- * énumération). Une facilité citée autrement — comme exclue (« Facilités exclues : solde au … », « Solde du
+ * au … »), rien ne la dit exclue, comprise ou déduite, et rien n'y est ajouté (« et des comptes », « avec les
+ * comptes », une énumération). Une facilité citée autrement — comme exclue (« Facilités exclues : solde au … », « Solde du
  * découvert exclu, solde global au … »), avec d'autres comptes (« Solde du découvert et des comptes au … »),
  * avant le mot, ou dans une cellule voisine — ne protège pas la date. Ou bien la proposition n'écrit, après une annonce de note, que « as at »
  * ou « as of » (« NB : as at 02/06/2026 »).

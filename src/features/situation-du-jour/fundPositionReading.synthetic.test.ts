@@ -564,8 +564,13 @@ test('date de position : toute autre date écrite dans l’en-tête ou sur les l
     'Solde du découvert, des comptes et des dépôts au 02/06/2026', 'Balance of the loan and accounts as at 02/06/2026',
     'Situation des engagements et des comptes au 02/06/2026', 'Solde DAT et comptes au 02/06/2026', 'Solde du découvert déduit au 02/06/2026',
     'Balance of the overdraft deducted as at 02/06/2026', 'Solde du découvert + comptes au 02/06/2026',
+    // Verdict CTO du 16/11 sur 83470e2 : « facilité avec les comptes » relève de l'arbitrage A — avec, with, ou, or, /.
+    'Solde du découvert avec les comptes au 02/06/2026', 'Balance of the loan with accounts as at 02/06/2026', 'Solde du découvert ou des comptes au 02/06/2026',
+    'Balance of the loan or accounts as at 02/06/2026', 'Solde du découvert / comptes au 02/06/2026', 'Solde du découvert arrêté avec les comptes au 02/06/2026',
+    'Solde du découvert BDK avec comptes courants au 02/06/2026',
     // Deux soldes dans la même proposition, sans mot de liaison ni de mise à part.
     'Soldes bancaires avec solde du découvert au 02/06/2026', 'Situation de trésorerie avec solde du découvert au 02/06/2026',
+    'Solde global dont solde du découvert au 02/06/2026', 'Treasury position showing balance of the loan as at 02/06/2026',
   ]) {
     assertBlocked([{ name: tab, rows: ROWS, footerRows: [['', footer]] }], `bas d'onglet : ${footer}`, 'B10');
     assertBlocked([{ name: tab, rows: ROWS, reference: AT_D, footerRows: [['', footer]] }], `champ valide, bas d'onglet : ${footer}`, 'B10');
