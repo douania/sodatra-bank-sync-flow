@@ -1,4 +1,4 @@
-import type { CollectionEntryInput, EvidenceBasis } from './collectionsCoreTypes';
+import type { CollectionEntryInput, CreditLine, EvidenceBasis } from './collectionsCoreTypes';
 
 function requiredText(value: string, label: string): string {
   const normalized = value.trim();
@@ -85,7 +85,7 @@ export async function buildCollectionEntryPayload(input: CollectionEntryInput) {
 
 export function buildMatchPayload(input: {
   itemId: string;
-  creditLineId: string;
+  creditLine: CreditLine;
   creditConsumedAmount: number;
   settledGrossAmount: number;
   evidenceBasis: EvidenceBasis;
@@ -100,7 +100,15 @@ export function buildMatchPayload(input: {
   }
 
   return {
-    credit_daily_line_id: requiredText(input.creditLineId, 'La ligne bancaire'),
+    credit_daily_line_id: requiredText(input.creditLine.id, 'La ligne bancaire'),
+    expected_canonical_unit_id: input.creditLine.canonicalUnitId,
+    expected_daily_line_hash: input.creditLine.dailyLineHash,
+    expected_account_registry_id: input.creditLine.accountId,
+    expected_accounting_date: input.creditLine.accountingDate,
+    expected_credit_amount: input.creditLine.amount,
+    expected_currency: input.creditLine.currency,
+    expected_source_attempt_id: input.creditLine.sourceAttemptId,
+    expected_source_raw_text_hash: input.creditLine.sourceRawTextHash,
     proposed_credit_consumed_amount: credit,
     proposed_fee_consumed_amount: 0,
     evidence_basis: input.evidenceBasis,

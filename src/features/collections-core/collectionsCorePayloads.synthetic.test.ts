@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildCollectionEntryPayload, buildMatchPayload } from './collectionsCorePayloads';
-import type { CollectionEntryInput } from './collectionsCoreTypes';
+import type { CollectionEntryInput, CreditLine } from './collectionsCoreTypes';
 
 const base: CollectionEntryInput = {
   clientName: 'CLIENT TEST', method: 'CHECK', amount: 100_000, currency: 'XOF',
@@ -9,6 +9,16 @@ const base: CollectionEntryInput = {
   depositDate: '2026-08-04', declaredCreditDate: '', instrumentReference: 'CHQ-42',
   maturityDate: '', invoiceReference: 'FAC-01', slipReference: 'BR-01',
   businessNature: 'STANDARD', note: '',
+};
+
+const creditLine: CreditLine = {
+  id: '22222222-2222-4222-8222-222222222222',
+  canonicalUnitId: '33333333-3333-4333-8333-333333333333',
+  dailyLineHash: 'a'.repeat(64), accountingDate: '2026-08-05', valueDate: '2026-08-05',
+  description: 'CREDIT SYNTHETIQUE', amount: 97_500, unallocatedAmount: 97_500, currency: 'XOF',
+  accountId: '44444444-4444-4444-8444-444444444444',
+  sourceAttemptId: '55555555-5555-4555-8555-555555555555', sourceRawTextHash: 'b'.repeat(64),
+  referenceSignal: 'REFERENCE_NOT_FOUND', reasonCodes: ['EXACT_ACCOUNT', 'EXACT_CURRENCY'],
 };
 
 test('transpose les colonnes métier dans les contrats Core', async () => {
@@ -37,12 +47,14 @@ test('virement et espèces ne fabriquent pas de titre', async () => {
 });
 
 test('le crédit au nominal exige l’égalité des montants', () => {
-  assert.throws(() => buildMatchPayload({ itemId: 'item', creditLineId: 'line', creditConsumedAmount: 90, settledGrossAmount: 100, evidenceBasis: 'EXACT_CREDIT', reason: 'preuve' }));
+  assert.throws(() => buildMatchPayload({ itemId: 'item', creditLine, creditConsumedAmount: 90, settledGrossAmount: 100, evidenceBasis: 'EXACT_CREDIT', reason: 'preuve' }));
 });
 
 test('le crédit net conserve la retenue bancaire observée séparément', () => {
-  const payload = buildMatchPayload({ itemId: 'item', creditLineId: 'line', creditConsumedAmount: 97_500, settledGrossAmount: 100_000, evidenceBasis: 'NET_OF_DISCOUNT', reason: 'crédit net après retenue bancaire' });
+  const payload = buildMatchPayload({ itemId: 'item', creditLine, creditConsumedAmount: 97_500, settledGrossAmount: 100_000, evidenceBasis: 'NET_OF_DISCOUNT', reason: 'crédit net après retenue bancaire' });
   assert.equal(payload.allocation_plan[0].observed_fee_amount, 2_500);
   assert.equal(payload.proposed_credit_consumed_amount, 97_500);
   assert.equal(payload.proposed_fee_consumed_amount, 0);
+  assert.equal(payload.expected_daily_line_hash, creditLine.dailyLineHash);
+  assert.equal(payload.expected_source_raw_text_hash, creditLine.sourceRawTextHash);
 });
